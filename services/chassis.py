@@ -317,6 +317,15 @@ class RunContext:
     def turn(self) -> int:
         return self._chassis.turn
 
+    def last_turn_had_tools(self) -> bool:
+        """Whether the previous turn asked for a tool.
+
+        An empty reply with tool calls is a model that acted without narrating,
+        which is ordinary. An empty reply with neither is a model with nothing
+        to add, and a duty reading that as anything else spins.
+        """
+        return self._chassis.last_had_tools
+
     def context_left(self) -> int:
         """Estimated tokens of room left in the window before eviction starts."""
         return chassis_budget(self._chassis) - estimate_tokens(self._chassis.messages)
@@ -400,6 +409,11 @@ class Chassis:
         self.started_at = utc_now()
         self.usage_totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.last_handoff = ""
+        # Whether the last turn asked for a tool. A turn that calls a tool
+        # without narrating is not a turn that said nothing, and a duty that
+        # reads an empty `ask()` as silence would end every run the moment a
+        # model stopped talking to itself between calls.
+        self.last_had_tools = False
         self.carried = Carried(self.session_dir, self.home_dir)
         self.telemetry_dir = Path(os.environ.get("TELEMETRY_DIR", "/telemetry"))
         self.lifecycle_path = self.telemetry_dir / "agents" / self.slug / "lifecycle.jsonl"
@@ -526,6 +540,7 @@ class Chassis:
                 for call in tool_calls
             ]
         self.messages.append(assistant)
+        self.last_had_tools = bool(tool_calls)
         self.turn += 1
         for call in tool_calls:
             result = self.invoke(call.function.name, call.function.arguments)
@@ -1029,6 +1044,13 @@ EXHAUSTION_PHRASES = (
 
 
 def classify(error: Exception) -> Exception:
+    """Turn a client exception into one the run's caller can act on.
+
+    A refusal from the recorder arrives as a 429 whose body names the limit it
+    hit, and that sentence is the whole diagnosis. It travels with the note, so
+    an operator reading the lifecycle record or the review panel sees which
+    ceiling stopped the run rather than only that something did.
+    """
     """Turn a client exception into one the run's caller can act on.
 
     The one judgement worth stating: a spent balance is not the run's fault.

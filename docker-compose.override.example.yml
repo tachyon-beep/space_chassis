@@ -27,6 +27,12 @@ services:
       UPSTREAM_STREAMING: "0"
     depends_on: [stub]
 
+  review:
+    # The panel serves a bound socket, so it cannot use `network_mode: none`
+    # (Docker will not publish a port for a container with no network). It runs
+    # on its own internal network instead, which has no gateway either.
+    networks: [reviewnet]
+
   diode:
     entrypoint: ["python", "/opt/fake/fake_diode.py"]
     volumes:

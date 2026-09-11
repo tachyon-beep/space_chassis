@@ -562,6 +562,49 @@ services:
     mem_limit: 256m
 
   # ---------------------------------------------------------------------------
+  # The review panel. The fleet monitor answers "is the world working"; this
+  # answers "what did that agent actually think", which needs the conversation,
+  # the reasoning, the tool calls and what came back -- and needs it to stay
+  # cheap while a transcript grows without bound.
+  #
+  # It is read-only, and it is not on the fleet's network. `network_mode: none`
+  # is the stronger form and is unavailable here: Docker refuses to publish a
+  # port for a container that has no network, so a panel with nowhere to route
+  # cannot be reached from the host at all. `reviewnet` below is `internal:
+  # true`, which gives the same guarantee -- no gateway, no route outward --
+  # while leaving the listener the operator needs. The agents are never on it.
+  # ---------------------------------------------------------------------------
+  review:
+    image: space-chassis-agent
+    entrypoint: ["python", "/opt/services/review.py"]
+    restart: unless-stopped
+    networks: [reviewnet]
+    environment:
+      REVIEW_PORT: ${REVIEW_PORT:-8090}
+      # How much of each transcript's tail is parsed to serve a page. A line
+      # holds the whole conversation, so a turn costs about the size of the
+      # conversation: minutes of a real run is megabytes.
+      REVIEW_MAX_BYTES: ${REVIEW_MAX_BYTES:-33554432}
+      REVIEW_CACHE_TURNS: ${REVIEW_CACHE_TURNS:-200}
+      REVIEW_DEFAULT_TURNS: ${REVIEW_DEFAULT_TURNS:-25}
+    ports:
+      # Host loopback only. A panel that can read everything an agent thought
+      # should not turn up on a network by accident.
+      - "${REVIEW_BIND:-127.0.0.1}:${REVIEW_PORT:-8090}:8090"
+    volumes:
+      - ./volumes/transcripts:/transcripts:ro
+      - ./volumes/telemetry:/telemetry:ro
+      - ./volumes/work:/work:ro
+      - ./volumes/home:/home:ro
+      - ./volumes/pump:/pump:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 256
+
+  # ---------------------------------------------------------------------------
   # The window. The implementation is mounted in by whoever builds the vehicle;
   # without it the stack still runs -- the diode volume is simply an empty
   # directory and nothing in the fleet can leave.
@@ -593,6 +636,12 @@ networks:
     internal: true
   # The agents are not on this one.
   modelnet: {}
+  # The review panel's own network: no gateway, and no other member. It exists
+  # so a container can hold a listener the host can reach while having no route
+  # anywhere -- which `network_mode: none` cannot do, because Docker will not
+  # publish a port for a container with no network at all.
+  reviewnet:
+    internal: true
   # An operator may attach a diode here instead of giving it a route to the
   # public internet.
   windowside: {}

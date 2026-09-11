@@ -301,3 +301,36 @@ def test_the_pump_runs_work_the_agent_scheduled(world, stack_of):
     )
     state = json.loads((world.pump / world.slug / "state.json").read_text())
     assert state["entries"]["heartbeat"]["running"] is True
+
+
+def test_a_turn_that_only_called_a_tool_is_not_a_silent_turn(world, stack_of):
+    """A model acting without narrating must not be read as having said nothing.
+
+    A provider is free to return a tool call with no accompanying text, and that
+    is ordinary. The seed duty reads an empty `ask()` as "the model has nothing
+    to add" and hands over -- so without a way to tell the two apart, every run
+    ends the moment a model stops talking between calls. This is the regression
+    that found it.
+    """
+    stack = stack_of(
+        [
+            Reply(tool_calls=[ToolCall("status")]),
+            Reply(text="done, nothing more to add", repeat=100),
+        ]
+    )
+    result = stack.run_chassis()
+    assert result.returncode in (0, 42)
+    turns = stack.transcript()
+    assert len(turns) >= 2, f"the run ended after {len(turns)} turn(s)"
+
+    # The first turn said nothing and called a tool; a second turn followed, so
+    # it was not treated as silence.
+    statuses = [
+        call["function"]["name"]
+        for turn in turns
+        for call in (
+            turn.get("response", {}).get("choices", [{}])[0].get("message", {}).get("tool_calls")
+            or []
+        )
+    ]
+    assert "status" in statuses, statuses

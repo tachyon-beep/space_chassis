@@ -561,8 +561,9 @@ def main(context: RunContext) -> None:
     repeats = 0
     while True:
         reply = context.ask(None)
+        acted = context.last_turn_had_tools()
 
-        if not reply.strip():
+        if not reply.strip() and not acted:
             # Nothing said and nothing asked for. Continuing would spin: the
             # next request would differ only by this empty turn.
             context.handoff(
@@ -572,8 +573,9 @@ def main(context: RunContext) -> None:
 
         # A model repeating itself verbatim is stuck, and a stuck run is
         # indistinguishable from a busy one until something stops it. Three
-        # identical replies is enough to say so out loud.
-        if reply.strip() == previous:
+        # identical replies is enough to say so out loud. A turn that only
+        # acted is not a repeat of itself, so it resets the count.
+        if reply.strip() == previous and (reply.strip() or not acted):
             repeats += 1
             if repeats >= 3:
                 context.handoff(

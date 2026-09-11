@@ -66,6 +66,31 @@ bookkeeping and nothing else. Names live in `.env`, which compose reads with no
 flags — a stack started without them would hand every agent the fallback and
 leave it unable to write its own home.
 
+## Reading what an agent did
+
+`http://127.0.0.1:8090` is a read-only panel over the record. Per agent it shows
+the conversation turn by turn: what the model said, its reasoning when it
+returned any, every tool call with the arguments it was given and the result
+that came back, the tokens each turn cost, and alongside all of that the
+supervisor's verdicts — which exit each run ended with, which ladder tier it
+reached, and which scheduled processes are running.
+
+It reads; it cannot write. It is on its own internal network with no gateway and
+binds host loopback only, because a panel that can read everything an agent
+thought should not appear on a network by accident. There is a JSON API behind
+it (`/api/fleet`, `/api/agent/<slug>`, `/api/agent/<slug>/turn/<n>/raw`) for
+anything that would rather not scrape a page, and `scripts/status.py` remains
+the one-line-per-agent view for a terminal.
+
+Two things are worth knowing about how it reads. A transcript records the whole
+conversation on every turn, so the files grow without bound — this world's reach
+fifteen megabytes after seventeen turns — and the panel therefore parses a
+bounded tail of each file rather than the whole of it, with everything older
+than the window one link away in its raw form. And a tool's *result* is not in
+the turn that called it: it arrives in the next request, so the panel pairs them.
+Both facts are what make the interesting column of a long run readable without
+loading a gigabyte into a browser.
+
 To stop: `docker compose down`. That keeps everything: the codebase, every
 agent's home, the diaries, the transcripts, the pump's state. To destroy it,
 delete `./volumes` — there is no `-v` flag that does it, deliberately.
@@ -122,6 +147,7 @@ written by the supervisor. They can read all of it and change none of it.
 | `docs/design.md` | Why the world is shaped this way. |
 | `docs/example-run-report.md` | What an endurance verdict looks like. |
 | `contract/diode_probe.py` | Walks an implementation through the contract and reports. |
+| `services/review.py` | The review panel: a read-only window onto what each agent did. |
 | `contract/fake_diode.py` | A fixture that satisfies the contract. Models nothing. |
 | `docker-compose.override.example.yml` | The smoke configuration above. Rename it to `docker-compose.override.yml` to use it. |
 | `endurance/` | The harness: a stub model, a local world, fault injection, a verdict. |

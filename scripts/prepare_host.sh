@@ -91,10 +91,53 @@ if [ "$(id -u)" -eq 0 ]; then
         volumes/home volumes/diary
     chown -R "$OWNER_UID:$OWNER_GID" volumes/transcripts volumes/telemetry
     echo "   ownership set to $OWNER_UID:$OWNER_GID"
-else
-    echo "   not root: leaving ownership alone. If the stack cannot write its own"
-    echo "   homes, run: sudo chown -R $OWNER_UID:$OWNER_GID $REPO_DIR/volumes"
 fi
+
+# Verify rather than assume. Every one of these is a bind-mount source for a
+# container that runs as uid 1000 and cannot chown anything, and a source owned
+# by anyone else produces a failure that is genuinely hard to read from the
+# outside: the supervisor loses its lifecycle record, the panel shows a fleet
+# with no runs and no exits, and nothing anywhere says why. Failing here is
+# cheap; failing there costs an afternoon.
+bad_ownership=$(python3 - "$REPO_DIR" "$OWNER_UID" <<'PYTHON'
+import os
+import sys
+from pathlib import Path
+
+repo = Path(sys.argv[1])
+want = int(sys.argv[2])
+roots = [
+    "volumes/work", "volumes/diode", "volumes/pump", "volumes/llm_sock",
+    "volumes/transcripts", "volumes/telemetry", "volumes/home", "volumes/diary",
+]
+wrong = []
+for root in roots:
+    base = repo / root
+    if not base.exists():
+        continue
+    for path in [base, *base.rglob("*")]:
+        try:
+            if path.stat().st_uid != want:
+                wrong.append(str(path.relative_to(repo)))
+        except OSError:
+            continue
+print("\n".join(sorted(set(wrong))[:20]))
+PYTHON
+)
+
+if [ -n "$bad_ownership" ]; then
+    echo ""
+    echo "   These directories are not owned by uid $OWNER_UID, and the containers" >&2
+    echo "   that mount them cannot write to them as a result:" >&2
+    printf '     %s\n' $bad_ownership >&2
+    echo "" >&2
+    echo "   The supervisor loses its lifecycle record when this happens, and the" >&2
+    echo "   review panel then shows a fleet with no runs and no exits." >&2
+    echo "   Fix it with:" >&2
+    echo "     sudo chown -R $OWNER_UID:$OWNER_GID $REPO_DIR/volumes" >&2
+    exit 1
+fi
+echo "   ownership verified: everything under volumes/ belongs to uid $OWNER_UID"
 
 cat <<'NEXT'
 

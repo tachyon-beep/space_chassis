@@ -197,6 +197,53 @@ flies a good trajectory into a contradiction has failed, and the world is built
 so that this failure is visible in the record rather than hidden by a
 convenience.
 
+## 8a. The review panel
+
+`services/review.py` is the one surface that shows the fleet to a human rather
+than to a machine, and three of its properties are deliberate.
+
+**It reads the record, never the agents.** Everything it shows comes from files
+other processes wrote: the recorder's transcript, the supervisor's lifecycle
+log, the pump's state. An agent's account of itself is not evidence, and the
+panel does not ask for one.
+
+**It cannot write.** Every mount is read-only, the container's root filesystem
+is read-only, and a test asserts at the source level that no path here opens a
+file for writing — the same shape as the recorder's "no header is ever written"
+check. The claim is enforced by construction rather than by care, because a
+panel that could amend the record would make the record worthless.
+
+**It is not a grader.** It shows turns, tokens, exits and tiers, and says
+nothing about whether any of it is good. `context_pressure` is the one derived
+number, and it is there because it is the best available predictor of when an
+agent is about to start losing the beginning of its own conversation — not
+because anyone should be scored on it.
+
+Two mechanics are worth recording because they follow from how the record
+works rather than from how a viewer would like it to.
+
+*The transcript repeats the whole conversation on every turn.* A viewer built on
+"parse the file and show the turns" would load hundreds of megabytes to render
+twenty lines, and would get slower for as long as the fleet ran. So the panel
+parses a byte-bounded tail and says so on the page: everything older is one
+click away, untruncated, at `/api/agent/<slug>/turn/<n>/raw`. It also means a
+turn's new material has to be *reconstructed* — the difference between two
+consecutive requests — which the recorder's `open` events make exact, because
+they record how many messages each request carried.
+
+*A tool's result is not in the turn that called it.* It arrives as a `tool`-role
+message in the next request, so the panel pairs calls with the results that
+answer them, by `tool_call_id` where the model supplied one and by order
+otherwise. An unmatched result is attached rather than dropped: a result with
+no home is a fact, and a missing result is a different fact.
+
+Finally, on the network: the panel cannot use `network_mode: none`, which is the
+stronger form used everywhere else here. Docker refuses to publish a port for a
+container that has no network, so a panel with nowhere to route could not be
+reached from the host at all. It runs on its own `internal: true` network
+instead — no gateway, no route outward, and no other member — and binds host
+loopback only.
+
 ## 9. Names with no rank
 
 The fleet is named at random from pools of animals, cars, flowers, colours and

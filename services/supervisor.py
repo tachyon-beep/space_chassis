@@ -114,14 +114,33 @@ class Supervisor:
         self.child: subprocess.Popen | None = None
         self.tier = 0
         self.stopping = False
+        self.record_failed = False
 
     # -- the record ---------------------------------------------------------
     def record(self, event: str, **fields) -> None:
-        with contextlib.suppress(OSError):
+        """Append one line to the record of what this supervisor did.
+
+        A failure to write here is *not* contained and forgotten. The
+        lifecycle record is the account of how an agent got where it is, and a
+        silent failure would leave an operator with a working fleet and no
+        history of it -- which looks exactly like an agent that has never
+        restarted. So the first failure is reported once, loudly, and later ones
+        are suppressed to keep the log readable.
+        """
+        try:
             append_jsonl(
                 self.record_path,
                 {"at": iso(), "event": event, "agent": self.slug, "name": self.name, **fields},
             )
+        except OSError as error:
+            if not self.record_failed:
+                self.record_failed = True
+                log(
+                    f"cannot write the lifecycle record to {self.record_path}: {error}. "
+                    "Every decision about this agent will be unrecorded. The usual "
+                    "cause is a directory under volumes/telemetry that is not owned "
+                    "by uid 1000; re-run scripts/prepare_host.sh."
+                )
 
     def operations_size(self) -> int:
         with contextlib.suppress(OSError):

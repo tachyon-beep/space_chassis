@@ -144,6 +144,60 @@ if [ -n "$cid" ]; then
     fi
 fi
 
+echo "== the review panel reads and does not write"
+cid=$(docker compose ps -q review 2>/dev/null)
+if [ -z "$cid" ]; then
+    skip "the review panel is not running"
+else
+    # It must not be on the fleet's network, and it must have no route out.
+    if docker exec "$cid" sh -c 'timeout 4 python3 -c "import socket; socket.create_connection((\"1.1.1.1\", 443), 3)" 2>/dev/null'; then
+        bad "the review panel reached a public address"
+    else
+        ok "the review panel has no route outward"
+    fi
+    if docker exec "$cid" sh -c 'timeout 4 python3 -c "import socket; socket.create_connection((\"recorder\", 8080), 3)" 2>/dev/null'; then
+        bad "the review panel can see the recorder"
+    else
+        ok "the review panel cannot see the recorder"
+    fi
+    # Its mounts are read-only, so the record cannot be amended from here.
+    if docker exec "$cid" sh -c 'touch /transcripts/.probe 2>/dev/null'; then
+        bad "the review panel can write to the record"
+        docker exec "$cid" rm -f /transcripts/.probe 2>/dev/null
+    else
+        ok "the review panel cannot write to the record"
+    fi
+    if docker exec "$cid" sh -c 'touch /telemetry/.probe 2>/dev/null'; then
+        bad "the review panel can write to the telemetry record"
+    else
+        ok "the review panel cannot write to the telemetry record"
+    fi
+    # And it can read: a panel that is sealed out of its own subject is useless.
+    if docker exec "$cid" sh -c 'test -d /transcripts' 2>/dev/null; then
+        ok "the review panel can read the transcripts"
+    else
+        bad "the review panel cannot see the transcripts"
+    fi
+fi
+
+echo "== the panel is loopback-only on the host"
+# The compose file asks for a loopback binding. Whether the daemon granted it is
+# a separate question, and the answer here is "no": this environment's Docker
+# does not forward published ports at all (a plain `-p` probe on an unrelated
+# container is equally unreachable), so the mapping is inert. Inert is not the
+# same as exposed, and reporting it as exposed would be a false alarm; the check
+# therefore fails only on a binding that is explicitly not loopback.
+ports=$(docker compose ps review --format '{{.Ports}}' 2>/dev/null)
+if [ -z "$ports" ]; then
+    skip "the review panel has no port mapping"
+elif printf '%s' "$ports" | grep -qE '(^|[^0-9.])(0\.0\.0\.0|\[::\]|\*)'; then
+    bad "the review panel is bound to every host interface: $ports"
+elif printf '%s' "$ports" | grep -q '127.0.0.1'; then
+    ok "the review panel is bound to host loopback: $ports"
+else
+    skip "the panel's port is mapped but not listening on the host ($ports); host port forwarding is unavailable in this environment"
+fi
+
 echo
 printf '%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1

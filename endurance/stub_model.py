@@ -67,9 +67,17 @@ class Reply:
     #: How many times this reply may be given before the script moves on. Zero
     #: means the script moves on immediately after giving it once.
     repeat: int = 1
+    #: The model's reasoning for this turn, when a scenario asks for one. Real
+    #: providers differ on whether they return reasoning at all and under which
+    #: name; the stub can therefore produce it or not, and the review panel is
+    #: tested against both. `reasoning_content` is the field this world's
+    #: runtime reads, so that is the one emitted.
+    reasoning: str = ""
 
     def to_message(self, model: str) -> dict:
         message: dict = {"role": "assistant", "content": self.text or None}
+        if self.reasoning:
+            message["reasoning_content"] = self.reasoning
         if self.tool_calls:
             message["content"] = self.text or None
             message["tool_calls"] = [call.wire() for call in self.tool_calls]
@@ -129,7 +137,7 @@ def script_from_file(path: Path) -> list[Reply]:
     """Load a scenario's reply script from JSON.
 
     Shape: a list of objects with `text`, `tool_calls` (name/arguments),
-    `finish`, and `repeat`. Unknown tool names are refused here rather than
+    `finish`, `repeat`, and `reasoning`. Unknown tool names are refused here rather than
     being sent to a duty that would answer "no such tool": a typo in a scenario
     should fail the scenario, not become a turn that looks like the fleet
     behaving oddly.
@@ -155,6 +163,7 @@ def script_from_file(path: Path) -> list[Reply]:
                 tool_calls=calls,
                 finish=str(item.get("finish", "stop")),
                 repeat=int(item.get("repeat", 1)),
+                reasoning=str(item.get("reasoning", "")),
             )
         )
     if not script:
