@@ -1,0 +1,80 @@
+FROM python:3.13-slim
+
+# The floor of the world. Everything here is either a thing you cannot
+# bootstrap from nothing (a compiler, an interpreter, the Python they are made
+# of) or a piece of software this project is expected to hand over working but
+# unintegrated (a database, a message bus). Nothing here is an application:
+# no schema, no subjects, no roles, no client of ours. Deciding what any of it
+# is FOR is the mission.
+#
+# There is deliberately no network at runtime. The one path outward is the
+# diode volume; see README.md.
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       git ca-certificates curl \
+       rustc cargo gcc g++ libc6-dev make pkg-config \
+       postgresql postgresql-contrib nats-server redis-server \
+       sqlite3 jq ripgrep miller datamash bc time procps lsof strace \
+       netcat-openbsd socat \
+    && rm -rf /var/lib/apt/lists/*
+
+# The Python half of the floor. Broad on purpose: a scientific and systems
+# toolkit, including the drivers for the database and the bus, and nothing
+# that presumes a design.
+COPY requirements-agent.txt /opt/requirements-agent.txt
+RUN pip install --no-cache-dir -r /opt/requirements-agent.txt
+
+# The Rust half, resolving offline against the registry mounted at
+# /vendor/registry. A crate the registry does not carry is a crate that has to
+# come through the diode.
+RUN mkdir -p /.cargo \
+    && printf '[source.crates-io]\nreplace-with = "local"\n\n[source.local]\nlocal-registry = "/vendor/registry"\n' \
+       > /.cargo/config.toml
+
+RUN useradd --create-home --uid 1000 --shell /bin/bash agent
+
+# Runtime mountpoints, pre-created under the uid that will mount them: a volume
+# created against a missing mountpoint would come up root-owned, and the
+# container drops every capability.
+RUN mkdir -p /work /home/agent /diary /transcripts /diode /pump /telemetry /vendor \
+             /run/agent \
+    && chown -R agent:agent /work /home/agent /diary /diode /pump \
+    && chmod 0755 /transcripts /telemetry
+
+# The seed. /opt/agent is the floor the supervisor restores from: the agent can
+# overwrite every file in /work and cannot touch this copy.
+# Where the duty lives, and what a fresh world is seeded from. The duty is the
+# fleet's; everything here is replaceable by them.
+COPY --chown=agent:agent tasks/ /opt/agent/
+# The briefing, read-only.
+COPY --chown=agent:agent brief/ /opt/brief/
+# The operator side: the recorder, the supervisor, the pump, the watcher, and
+# the runtime the supervisor launches. Read-only, and mounted into the recorder
+# container as its entrypoint too.
+COPY --chown=agent:agent services/ /opt/services/
+
+# The entrypoint and the world's constants. Both are read by every process in
+# the container, so their modes are stated rather than inherited: COPY preserves
+# whatever the host file happened to be, and a mode of 0600 here produces a
+# container that cannot read its own environment.
+COPY containers/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY containers/agent.env /etc/agent.env
+RUN chmod 0755 /usr/local/bin/entrypoint.sh && chmod 0644 /etc/agent.env \
+    && find /opt -name __pycache__ -type d -prune -exec rm -rf {} +
+
+ENV AGENT_USER=agent \
+    AGENT_HOME=/home/agent \
+    WORK_DIR=/work \
+    SEED_DIR=/opt/agent \
+    DIARY_DIR=/diary \
+    CARGO_HOME=/work/.cargo \
+    CARGO_TARGET_DIR=/work/target \
+    XDG_CACHE_HOME=/home/agent/.cache \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    LANG=C.UTF-8
+
+WORKDIR /work
+USER agent
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

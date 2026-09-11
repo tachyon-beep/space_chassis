@@ -1,0 +1,51 @@
+# The crate set served offline to the agents at /vendor/registry.
+#
+# Only what this manifest locks is synced, so a crate the kitchen does not
+# name is a crate no agent can resolve without going through the diode. It is
+# deliberately a floor rather than a toolkit: enough to build a real service
+# (async runtime, serialisation, error handling, time, threads, HTTP-free
+# networking primitives) and nothing that decides what they should build.
+#
+# Features are enabled generously here for the same reason: a feature the
+# kitchen does not activate is a crate the agent cannot resolve.
+[package]
+name = "kitchen"
+version = "0.0.0"
+edition = "2021"
+resolver = "2"
+
+[dependencies]
+# async runtime and futures
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# serialisation
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+toml = "0.8"
+
+# errors and diagnostics
+anyhow = "1"
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+
+# data and time
+bytes = "1"
+smallvec = { version = "1", features = ["serde"] }
+indexmap = { version = "2", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# concurrency and collections
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+dashmap = "6"
+rayon = "1"
+
+# maths and parsing for anything numeric they write
+rand = "0.8"
+regex = "1"
+num = "0.4"
+itertools = "0.13"

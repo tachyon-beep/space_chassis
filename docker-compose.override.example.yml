@@ -1,0 +1,34 @@
+# Local smoke override: three agents, the contract fixture as the window, and a
+# metronome in place of the model. Enough to prove the topology, the record and
+# the window work together without spending anything.
+#
+# The stub runs as a service rather than on the host, because that is the shape
+# a real upstream has: a recorder belongs on a network the fleet cannot see, and
+# `host.docker.internal` is a convenience this environment does not offer.
+services:
+  stub:
+    image: space-chassis-agent
+    entrypoint: ["python", "/opt/end/stub_model.py", "--port", "8080", "--host", "0.0.0.0", "--ending"]
+    networks: [modelnet]
+    volumes:
+      - ./endurance:/opt/end:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+
+  recorder:
+    environment:
+      LLM_BASE_URL: http://stub:8080/v1
+      LLM_API_KEY: sk-stub
+      OPENROUTER_API_KEY: ""
+      UPSTREAM_SOCKET: ""
+      UPSTREAM_STREAMING: "0"
+    depends_on: [stub]
+
+  diode:
+    entrypoint: ["python", "/opt/fake/fake_diode.py"]
+    volumes:
+      - ./volumes/diode:/diode
+      - ./contract/fake_diode.py:/opt/fake/fake_diode.py:ro

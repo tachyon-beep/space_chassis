@@ -1,0 +1,23 @@
+[project]
+name = "space-chassis"
+version = "0.1.0"
+description = "A world for ten self-modifying agents: a floor of capability, one window outward, and a record they cannot reach"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# The vendored crate registry carries whatever Python its crates happen to
+# ship, which is not this project's code and not this project's business.
+exclude = ["vendor", ".scratch", "endurance/runs"]
+
+[tool.ruff.lint]
+# The services here are deliberately standard-library-first. E501 is off
+# because the docstrings carry the reasoning and the prose reads worse wrapped.
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501", "B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["error::DeprecationWarning"]

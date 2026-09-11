@@ -1,0 +1,598 @@
+# The world, as a topology.
+#
+# The hard rule is that no agent container has a route outward. Everything else
+# here is a decision about what the world is made of, and the comments say why
+# each one is the way it is.
+#
+# Two consequences of the rule shape the whole file:
+#
+#   * every process that needs the outside lives in its own container on a
+#     network the agents cannot reach -- the recorder holds the model
+#     credential and talks to the model; the diode holds the vehicle's
+#     credentials and talks to the vehicle;
+#   * the fleet reaches those processes through volumes, not sockets. The
+#     recorder's per-agent unix socket and the diode's per-agent directory are
+#     the entire interface in both directions.
+#
+# The agent containers join `worknet`, an internal network with no gateway, so
+# they can reach each other and anything they start for themselves. That is
+# deliberate: a control layer needs somewhere to run, and the fleet is expected
+# to build one.
+#
+# Durable state lives under ./volumes as bind mounts rather than named volumes,
+# for two reasons. A named volume cannot carry a variable in its name, so ten
+# agents with distinct homes would need ten hand-written volume lists; a path
+# can. And an operator can read, back up and delete a member's stores with the
+# tools they already have. Directories under ./volumes must be owned by uid
+# 1000 -- scripts/prepare_host.sh does it -- because the containers drop every
+# capability and cannot chown anything.
+#
+# Each service repeats its own mount list rather than sharing an anchor. A YAML
+# sequence alias cannot be merged into a longer list by the compose parser
+# (verified against Compose v5.5.0), and a shared-list-plus-extras anchor would
+# hide exactly the thing a reader wants to see: what this agent, and no other,
+# was given.
+
+name: space-chassis
+
+x-env: &env
+  # Each service sets: AGENT_SLUG, AGENT_NAME, LLM_SOCKET_PATH,
+  # DIODE_DUTY_DIR, PUMP_DUTY_DIR.
+  LLM_BASE_URL: http://localhost/api/v1
+  # Carried as a shape only. The recorder replaces it with the real key.
+  OPENROUTER_API_KEY: sk-dummy
+  LLM_MODEL: ${LLM_MODEL:-deepseek/deepseek-v4-pro}
+  CONTEXT_WINDOW_TOKENS: ${CONTEXT_WINDOW_TOKENS:-200000}
+  CONTEXT_WINDOW_EVICTION_TOKENS: ${CONTEXT_WINDOW_EVICTION_TOKENS:-}
+  # A run ends at either of these and another starts. Empty means a run ends
+  # only when it ends itself, or dies.
+  RUN_MAX_TURNS: ${RUN_MAX_TURNS:-}
+  RUN_MAX_SECONDS: ${RUN_MAX_SECONDS:-}
+  RECORDER_TIMEOUT_SECONDS: ${RECORDER_TIMEOUT_SECONDS:-600}
+  SUPERVISOR_INACTIVITY_SECONDS: ${SUPERVISOR_INACTIVITY_SECONDS:-86400}
+  PUMP_MAX_ENTRIES: ${PUMP_MAX_ENTRIES:-64}
+  PUMP_MAX_CONCURRENT: ${PUMP_MAX_CONCURRENT:-16}
+  TELEMETRY_INTERVAL_SECONDS: ${TELEMETRY_INTERVAL_SECONDS:-5}
+
+x-base: &base
+  build:
+    context: .
+    dockerfile: Dockerfile.agent
+  image: space-chassis-agent
+  restart: unless-stopped
+  init: true
+  # No outside: `internal: true` means no gateway and no NAT, so there is no
+  # route off this network even if something asks for one.
+  networks: [worknet]
+  environment: *env
+  # Resource hygiene for one member of a ten-member fleet, not a containment
+  # boundary: everything valuable here is reachable without them.
+  cpus: ${AGENT_CPUS:-1.0}
+  mem_limit: ${AGENT_MEM:-3g}
+  memswap_limit: ${AGENT_MEM:-3g}
+  pids_limit: 1024
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  stop_grace_period: 20s
+
+# ---------------------------------------------------------------------------
+# The fleet. Ten of the same thing, distinguished only by their durable
+# stores, by the sliver of conversation each holds, and by a name drawn from
+# the pool in scripts/roster.py. The names carry no rank: allocating work is
+# the first problem the mission has to solve, and nothing here solves it for
+# them.
+#
+# Every agent gets: the shared codebase, everyone's record (read-only), the
+# window, its own process directory, the recorder's sockets (read-only), the
+# crate registry, and one home and one diary that are mounted into nobody
+# else. agents 2..10 are in the `fleet` profile so a one-agent run stays
+# cheap; start the whole fleet with `--profile fleet`.
+# ---------------------------------------------------------------------------
+services:
+  agent_1:
+    <<: *base
+    hostname: agent_1
+    environment:
+      <<: *env
+      AGENT_SLUG: ${FLEET_1_SLUG:-agent_1}
+      AGENT_NAME: ${FLEET_1_NAME:-agent_1}
+      LLM_SOCKET_PATH: /llm/sock/${FLEET_1_SLUG:-agent_1}.sock
+      DIODE_DUTY_DIR: /diode/${FLEET_1_SLUG:-agent_1}
+      PUMP_DUTY_DIR: /pump/${FLEET_1_SLUG:-agent_1}
+      LLM_MODEL: ${HOST1_LLM_MODEL:-${LLM_MODEL:-deepseek/deepseek-v4-pro}}
+      CONTEXT_WINDOW_TOKENS: ${HOST1_CONTEXT_WINDOW_TOKENS:-${CONTEXT_WINDOW_TOKENS:-200000}}
+    volumes:
+      - ./volumes/work:/work
+      - ./volumes/transcripts:/transcripts:ro
+      - type: bind
+        source: ./volumes/telemetry
+        target: /telemetry
+        read_only: true
+      - type: bind
+        source: ./volumes/telemetry/mirror
+        target: /telemetry/mirror
+      - ./volumes/diode:/diode
+      - ./volumes/pump:/pump
+      - ./volumes/llm_sock:/llm/sock:ro
+      - ./vendor/registry:/vendor/registry:ro
+      - ./vendor/cargo-config.toml:/.cargo/config.toml:ro
+      - ./volumes/home/${FLEET_1_SLUG:-agent_1}:/home/agent
+      # The supervisor writes its decisions and its mirror into one directory
+      # of its own, while the rest of the record stays read-only: an agent can
+      # read what an operator sees and cannot edit it.
+      - type: bind
+        source: ./volumes/telemetry/agents/${FLEET_1_SLUG:-agent_1}
+        target: /telemetry/agents/${FLEET_1_SLUG:-agent_1}
+      - type: bind
+        source: ./volumes/telemetry/work/${FLEET_1_SLUG:-agent_1}
+        target: /telemetry/work
+      - ./volumes/diary/${FLEET_1_SLUG:-agent_1}:/diary
+
+  agent_2:
+    <<: *base
+    hostname: agent_2
+    profiles: ["fleet"]
+    environment:
+      <<: *env
+      AGENT_SLUG: ${FLEET_2_SLUG:-agent_2}
+      AGENT_NAME: ${FLEET_2_NAME:-agent_2}
+      LLM_SOCKET_PATH: /llm/sock/${FLEET_2_SLUG:-agent_2}.sock
+      DIODE_DUTY_DIR: /diode/${FLEET_2_SLUG:-agent_2}
+      PUMP_DUTY_DIR: /pump/${FLEET_2_SLUG:-agent_2}
+      LLM_MODEL: ${HOST2_LLM_MODEL:-${LLM_MODEL:-deepseek/deepseek-v4-pro}}
+      CONTEXT_WINDOW_TOKENS: ${HOST2_CONTEXT_WINDOW_TOKENS:-${CONTEXT_WINDOW_TOKENS:-200000}}
+    volumes:
+      - ./volumes/work:/work
+      - ./volumes/transcripts:/transcripts:ro
+      - type: bind
+        source: ./volumes/telemetry
+        target: /telemetry
+        read_only: true
+      - type: bind
+        source: ./volumes/telemetry/mirror
+        target: /telemetry/mirror
+      - ./volumes/diode:/diode
+      - ./volumes/pump:/pump
+      - ./volumes/llm_sock:/llm/sock:ro
+      - ./vendor/registry:/vendor/registry:ro
+      - ./vendor/cargo-config.toml:/.cargo/config.toml:ro
+      - ./volumes/home/${FLEET_2_SLUG:-agent_2}:/home/agent
+      # The supervisor writes its decisions and its mirror into one directory
+      # of its own, while the rest of the record stays read-only: an agent can
+      # read what an operator sees and cannot edit it.
+      - type: bind
+        source: ./volumes/telemetry/agents/${FLEET_2_SLUG:-agent_2}
+        target: /telemetry/agents/${FLEET_2_SLUG:-agent_2}
+      - type: bind
+        source: ./volumes/telemetry/work/${FLEET_2_SLUG:-agent_2}
+        target: /telemetry/work
+      - ./volumes/diary/${FLEET_2_SLUG:-agent_2}:/diary
+
+  agent_3:
+    <<: *base
+    hostname: agent_3
+    profiles: ["fleet"]
+    environment:
+      <<: *env
+      AGENT_SLUG: ${FLEET_3_SLUG:-agent_3}
+      AGENT_NAME: ${FLEET_3_NAME:-agent_3}
+      LLM_SOCKET_PATH: /llm/sock/${FLEET_3_SLUG:-agent_3}.sock
+      DIODE_DUTY_DIR: /diode/${FLEET_3_SLUG:-agent_3}
+      PUMP_DUTY_DIR: /pump/${FLEET_3_SLUG:-agent_3}
+      LLM_MODEL: ${HOST3_LLM_MODEL:-${LLM_MODEL:-deepseek/deepseek-v4-pro}}
+      CONTEXT_WINDOW_TOKENS: ${HOST3_CONTEXT_WINDOW_TOKENS:-${CONTEXT_WINDOW_TOKENS:-200000}}
+    volumes:
+      - ./volumes/work:/work
+      - ./volumes/transcripts:/transcripts:ro
+      - type: bind
+        source: ./volumes/telemetry
+        target: /telemetry
+        read_only: true
+      - type: bind
+        source: ./volumes/telemetry/mirror
+        target: /telemetry/mirror
+      - ./volumes/diode:/diode
+      - ./volumes/pump:/pump
+      - ./volumes/llm_sock:/llm/sock:ro
+      - ./vendor/registry:/vendor/registry:ro
+      - ./vendor/cargo-config.toml:/.cargo/config.toml:ro
+      - ./volumes/home/${FLEET_3_SLUG:-agent_3}:/home/agent
+      # The supervisor writes its decisions and its mirror into one directory
+      # of its own, while the rest of the record stays read-only: an agent can
+      # read what an operator sees and cannot edit it.
+      - type: bind
+        source: ./volumes/telemetry/agents/${FLEET_3_SLUG:-agent_3}
+        target: /telemetry/agents/${FLEET_3_SLUG:-agent_3}
+      - type: bind
+        source: ./volumes/telemetry/work/${FLEET_3_SLUG:-agent_3}
+        target: /telemetry/work
+      - ./volumes/diary/${FLEET_3_SLUG:-agent_3}:/diary
+
+  agent_4:
+    <<: *base
+    hostname: agent_4
+    profiles: ["fleet"]
+    environment:
+      <<: *env
+      AGENT_SLUG: ${FLEET_4_SLUG:-agent_4}
+      AGENT_NAME: ${FLEET_4_NAME:-agent_4}
+      LLM_SOCKET_PATH: /llm/sock/${FLEET_4_SLUG:-agent_4}.sock
+      DIODE_DUTY_DIR: /diode/${FLEET_4_SLUG:-agent_4}
+      PUMP_DUTY_DIR: /pump/${FLEET_4_SLUG:-agent_4}
+      LLM_MODEL: ${HOST4_LLM_MODEL:-${LLM_MODEL:-deepseek/deepseek-v4-pro}}
+      CONTEXT_WINDOW_TOKENS: ${HOST4_CONTEXT_WINDOW_TOKENS:-${CONTEXT_WINDOW_TOKENS:-200000}}
+    volumes:
+      - ./volumes/work:/work
+      - ./volumes/transcripts:/transcripts:ro
+      - type: bind
+        source: ./volumes/telemetry
+        target: /telemetry
+        read_only: true
+      - type: bind
+        source: ./volumes/telemetry/mirror
+        target: /telemetry/mirror
+      - ./volumes/diode:/diode
+      - ./volumes/pump:/pump
+      - ./volumes/llm_sock:/llm/sock:ro
+      - ./vendor/registry:/vendor/registry:ro
+      - ./vendor/cargo-config.toml:/.cargo/config.toml:ro
+      - ./volumes/home/${FLEET_4_SLUG:-agent_4}:/home/agent
+      # The supervisor writes its decisions and its mirror into one directory
+      # of its own, while the rest of the record stays read-only: an agent can
+      # read what an operator sees and cannot edit it.
+      - type: bind
+        source: ./volumes/telemetry/agents/${FLEET_4_SLUG:-agent_4}
+        target: /telemetry/agents/${FLEET_4_SLUG:-agent_4}
+      - type: bind
+        source: ./volumes/telemetry/work/${FLEET_4_SLUG:-agent_4}
+        target: /telemetry/work
+      - ./volumes/diary/${FLEET_4_SLUG:-agent_4}:/diary
+
+  agent_5:
+    <<: *base
+    hostname: agent_5
+    profiles: ["fleet"]
+    environment:
+      <<: *env
+      AGENT_SLUG: ${FLEET_5_SLUG:-agent_5}
+      AGENT_NAME: ${FLEET_5_NAME:-agent_5}
+      LLM_SOCKET_PATH: /llm/sock/${FLEET_5_SLUG:-agent_5}.sock
+      DIODE_DUTY_DIR: /diode/${FLEET_5_SLUG:-agent_5}
+      PUMP_DUTY_DIR: /pump/${FLEET_5_SLUG:-agent_5}
+      LLM_MODEL: ${HOST5_LLM_MODEL:-${LLM_MODEL:-deepseek/deepseek-v4-pro}}
+      CONTEXT_WINDOW_TOKENS: ${HOST5_CONTEXT_WINDOW_TOKENS:-${CONTEXT_WINDOW_TOKENS:-200000}}
+    volumes:
+      - ./volumes/work:/work
+      - ./volumes/transcripts:/transcripts:ro
+      - type: bind
+        source: ./volumes/telemetry
+        target: /telemetry
+        read_only: true
+      - type: bind
+        source: ./volumes/telemetry/mirror
+        target: /telemetry/mirror
+      - ./volumes/diode:/diode
+      - ./volumes/pump:/pump
+      - ./volumes/llm_sock:/llm/sock:ro
+      - ./vendor/registry:/vendor/registry:ro
+      - ./vendor/cargo-config.toml:/.cargo/config.toml:ro
+      - ./volumes/home/${FLEET_5_SLUG:-agent_5}:/home/agent
+      # The supervisor writes its decisions and its mirror into one directory
+      # of its own, while the rest of the record stays read-only: an agent can
+      # read what an operator sees and cannot edit it.
+      - type: bind
+        source: ./volumes/telemetry/agents/${FLEET_5_SLUG:-agent_5}
+        target: /telemetry/agents/${FLEET_5_SLUG:-agent_5}
+      - type: bind
+        source: ./volumes/telemetry/work/${FLEET_5_SLUG:-agent_5}
+        target: /telemetry/work
+      - ./volumes/diary/${FLEET_5_SLUG:-agent_5}:/diary
+
+  agent_6:
+    <<: *base
+    hostname: agent_6
+    profiles: ["fleet"]
+    environment:
+      <<: *env
+      AGENT_SLUG: ${FLEET_6_SLUG:-agent_6}
+      AGENT_NAME: ${FLEET_6_NAME:-agent_6}
+      LLM_SOCKET_PATH: /llm/sock/${FLEET_6_SLUG:-agent_6}.sock
+      DIODE_DUTY_DIR: /diode/${FLEET_6_SLUG:-agent_6}
+      PUMP_DUTY_DIR: /pump/${FLEET_6_SLUG:-agent_6}
+      LLM_MODEL: ${HOST6_LLM_MODEL:-${LLM_MODEL:-deepseek/deepseek-v4-pro}}
+      CONTEXT_WINDOW_TOKENS: ${HOST6_CONTEXT_WINDOW_TOKENS:-${CONTEXT_WINDOW_TOKENS:-200000}}
+    volumes:
+      - ./volumes/work:/work
+      - ./volumes/transcripts:/transcripts:ro
+      - type: bind
+        source: ./volumes/telemetry
+        target: /telemetry
+        read_only: true
+      - type: bind
+        source: ./volumes/telemetry/mirror
+        target: /telemetry/mirror
+      - ./volumes/diode:/diode
+      - ./volumes/pump:/pump
+      - ./volumes/llm_sock:/llm/sock:ro
+      - ./vendor/registry:/vendor/registry:ro
+      - ./vendor/cargo-config.toml:/.cargo/config.toml:ro
+      - ./volumes/home/${FLEET_6_SLUG:-agent_6}:/home/agent
+      # The supervisor writes its decisions and its mirror into one directory
+      # of its own, while the rest of the record stays read-only: an agent can
+      # read what an operator sees and cannot edit it.
+      - type: bind
+        source: ./volumes/telemetry/agents/${FLEET_6_SLUG:-agent_6}
+        target: /telemetry/agents/${FLEET_6_SLUG:-agent_6}
+      - type: bind
+        source: ./volumes/telemetry/work/${FLEET_6_SLUG:-agent_6}
+        target: /telemetry/work
+      - ./volumes/diary/${FLEET_6_SLUG:-agent_6}:/diary
+
+  agent_7:
+    <<: *base
+    hostname: agent_7
+    profiles: ["fleet"]
+    environment:
+      <<: *env
+      AGENT_SLUG: ${FLEET_7_SLUG:-agent_7}
+      AGENT_NAME: ${FLEET_7_NAME:-agent_7}
+      LLM_SOCKET_PATH: /llm/sock/${FLEET_7_SLUG:-agent_7}.sock
+      DIODE_DUTY_DIR: /diode/${FLEET_7_SLUG:-agent_7}
+      PUMP_DUTY_DIR: /pump/${FLEET_7_SLUG:-agent_7}
+      LLM_MODEL: ${HOST7_LLM_MODEL:-${LLM_MODEL:-deepseek/deepseek-v4-pro}}
+      CONTEXT_WINDOW_TOKENS: ${HOST7_CONTEXT_WINDOW_TOKENS:-${CONTEXT_WINDOW_TOKENS:-200000}}
+    volumes:
+      - ./volumes/work:/work
+      - ./volumes/transcripts:/transcripts:ro
+      - type: bind
+        source: ./volumes/telemetry
+        target: /telemetry
+        read_only: true
+      - type: bind
+        source: ./volumes/telemetry/mirror
+        target: /telemetry/mirror
+      - ./volumes/diode:/diode
+      - ./volumes/pump:/pump
+      - ./volumes/llm_sock:/llm/sock:ro
+      - ./vendor/registry:/vendor/registry:ro
+      - ./vendor/cargo-config.toml:/.cargo/config.toml:ro
+      - ./volumes/home/${FLEET_7_SLUG:-agent_7}:/home/agent
+      # The supervisor writes its decisions and its mirror into one directory
+      # of its own, while the rest of the record stays read-only: an agent can
+      # read what an operator sees and cannot edit it.
+      - type: bind
+        source: ./volumes/telemetry/agents/${FLEET_7_SLUG:-agent_7}
+        target: /telemetry/agents/${FLEET_7_SLUG:-agent_7}
+      - type: bind
+        source: ./volumes/telemetry/work/${FLEET_7_SLUG:-agent_7}
+        target: /telemetry/work
+      - ./volumes/diary/${FLEET_7_SLUG:-agent_7}:/diary
+
+  agent_8:
+    <<: *base
+    hostname: agent_8
+    profiles: ["fleet"]
+    environment:
+      <<: *env
+      AGENT_SLUG: ${FLEET_8_SLUG:-agent_8}
+      AGENT_NAME: ${FLEET_8_NAME:-agent_8}
+      LLM_SOCKET_PATH: /llm/sock/${FLEET_8_SLUG:-agent_8}.sock
+      DIODE_DUTY_DIR: /diode/${FLEET_8_SLUG:-agent_8}
+      PUMP_DUTY_DIR: /pump/${FLEET_8_SLUG:-agent_8}
+      LLM_MODEL: ${HOST8_LLM_MODEL:-${LLM_MODEL:-deepseek/deepseek-v4-pro}}
+      CONTEXT_WINDOW_TOKENS: ${HOST8_CONTEXT_WINDOW_TOKENS:-${CONTEXT_WINDOW_TOKENS:-200000}}
+    volumes:
+      - ./volumes/work:/work
+      - ./volumes/transcripts:/transcripts:ro
+      - type: bind
+        source: ./volumes/telemetry
+        target: /telemetry
+        read_only: true
+      - type: bind
+        source: ./volumes/telemetry/mirror
+        target: /telemetry/mirror
+      - ./volumes/diode:/diode
+      - ./volumes/pump:/pump
+      - ./volumes/llm_sock:/llm/sock:ro
+      - ./vendor/registry:/vendor/registry:ro
+      - ./vendor/cargo-config.toml:/.cargo/config.toml:ro
+      - ./volumes/home/${FLEET_8_SLUG:-agent_8}:/home/agent
+      # The supervisor writes its decisions and its mirror into one directory
+      # of its own, while the rest of the record stays read-only: an agent can
+      # read what an operator sees and cannot edit it.
+      - type: bind
+        source: ./volumes/telemetry/agents/${FLEET_8_SLUG:-agent_8}
+        target: /telemetry/agents/${FLEET_8_SLUG:-agent_8}
+      - type: bind
+        source: ./volumes/telemetry/work/${FLEET_8_SLUG:-agent_8}
+        target: /telemetry/work
+      - ./volumes/diary/${FLEET_8_SLUG:-agent_8}:/diary
+
+  agent_9:
+    <<: *base
+    hostname: agent_9
+    profiles: ["fleet"]
+    environment:
+      <<: *env
+      AGENT_SLUG: ${FLEET_9_SLUG:-agent_9}
+      AGENT_NAME: ${FLEET_9_NAME:-agent_9}
+      LLM_SOCKET_PATH: /llm/sock/${FLEET_9_SLUG:-agent_9}.sock
+      DIODE_DUTY_DIR: /diode/${FLEET_9_SLUG:-agent_9}
+      PUMP_DUTY_DIR: /pump/${FLEET_9_SLUG:-agent_9}
+      LLM_MODEL: ${HOST9_LLM_MODEL:-${LLM_MODEL:-deepseek/deepseek-v4-pro}}
+      CONTEXT_WINDOW_TOKENS: ${HOST9_CONTEXT_WINDOW_TOKENS:-${CONTEXT_WINDOW_TOKENS:-200000}}
+    volumes:
+      - ./volumes/work:/work
+      - ./volumes/transcripts:/transcripts:ro
+      - type: bind
+        source: ./volumes/telemetry
+        target: /telemetry
+        read_only: true
+      - type: bind
+        source: ./volumes/telemetry/mirror
+        target: /telemetry/mirror
+      - ./volumes/diode:/diode
+      - ./volumes/pump:/pump
+      - ./volumes/llm_sock:/llm/sock:ro
+      - ./vendor/registry:/vendor/registry:ro
+      - ./vendor/cargo-config.toml:/.cargo/config.toml:ro
+      - ./volumes/home/${FLEET_9_SLUG:-agent_9}:/home/agent
+      # The supervisor writes its decisions and its mirror into one directory
+      # of its own, while the rest of the record stays read-only: an agent can
+      # read what an operator sees and cannot edit it.
+      - type: bind
+        source: ./volumes/telemetry/agents/${FLEET_9_SLUG:-agent_9}
+        target: /telemetry/agents/${FLEET_9_SLUG:-agent_9}
+      - type: bind
+        source: ./volumes/telemetry/work/${FLEET_9_SLUG:-agent_9}
+        target: /telemetry/work
+      - ./volumes/diary/${FLEET_9_SLUG:-agent_9}:/diary
+
+  agent_10:
+    <<: *base
+    hostname: agent_10
+    profiles: ["fleet"]
+    environment:
+      <<: *env
+      AGENT_SLUG: ${FLEET_10_SLUG:-agent_10}
+      AGENT_NAME: ${FLEET_10_NAME:-agent_10}
+      LLM_SOCKET_PATH: /llm/sock/${FLEET_10_SLUG:-agent_10}.sock
+      DIODE_DUTY_DIR: /diode/${FLEET_10_SLUG:-agent_10}
+      PUMP_DUTY_DIR: /pump/${FLEET_10_SLUG:-agent_10}
+      LLM_MODEL: ${HOST10_LLM_MODEL:-${LLM_MODEL:-deepseek/deepseek-v4-pro}}
+      CONTEXT_WINDOW_TOKENS: ${HOST10_CONTEXT_WINDOW_TOKENS:-${CONTEXT_WINDOW_TOKENS:-200000}}
+    volumes:
+      - ./volumes/work:/work
+      - ./volumes/transcripts:/transcripts:ro
+      - type: bind
+        source: ./volumes/telemetry
+        target: /telemetry
+        read_only: true
+      - type: bind
+        source: ./volumes/telemetry/mirror
+        target: /telemetry/mirror
+      - ./volumes/diode:/diode
+      - ./volumes/pump:/pump
+      - ./volumes/llm_sock:/llm/sock:ro
+      - ./vendor/registry:/vendor/registry:ro
+      - ./vendor/cargo-config.toml:/.cargo/config.toml:ro
+      - ./volumes/home/${FLEET_10_SLUG:-agent_10}:/home/agent
+      # The supervisor writes its decisions and its mirror into one directory
+      # of its own, while the rest of the record stays read-only: an agent can
+      # read what an operator sees and cannot edit it.
+      - type: bind
+        source: ./volumes/telemetry/agents/${FLEET_10_SLUG:-agent_10}
+        target: /telemetry/agents/${FLEET_10_SLUG:-agent_10}
+      - type: bind
+        source: ./volumes/telemetry/work/${FLEET_10_SLUG:-agent_10}
+        target: /telemetry/work
+      - ./volumes/diary/${FLEET_10_SLUG:-agent_10}:/diary
+
+  # ---------------------------------------------------------------------------
+  # The recorder. Holds the model credential, injects it, and writes the
+  # transcript nobody in the fleet can edit. It is on no network the agents can
+  # see: the unix sockets in ./volumes/llm_sock are the whole interface.
+  # ---------------------------------------------------------------------------
+  recorder:
+    image: space-chassis-agent
+    entrypoint: ["python", "/opt/services/recorder.py"]
+    restart: unless-stopped
+    networks: [modelnet]
+    environment:
+      # No list of agents: the recorder serves whichever sockets are in its
+      # directory, so the fleet's names (drawn at random, per host) never have
+      # to be repeated here and a rename cannot desynchronise the two.
+      RECORDER_STREAMS: stream
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://openrouter.ai/api/v1}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      # Operator ceilings, in the recorder's environment and nowhere else. When
+      # the fleet hits one, the refusal is recorded like any other turn.
+      RECORDER_HOURLY_MAX: ${RECORDER_HOURLY_MAX:-2400}
+      RECORDER_TOKEN_HOURLY_MAX: ${RECORDER_TOKEN_HOURLY_MAX:-200000000}
+      RECORDER_TOKEN_GLOBAL_HOURLY_MAX: ${RECORDER_TOKEN_GLOBAL_HOURLY_MAX:-2000000000}
+      REQUEST_MAX_BYTES: ${REQUEST_MAX_BYTES:-16777216}
+      TRANSCRIPTS_DIR: /transcripts
+      SOCKET_DIR: /llm/sock
+    volumes:
+      - ./volumes/transcripts:/transcripts
+      - ./volumes/llm_sock:/llm/sock
+      # Where each agent announces the name it was given, read-only: the fleet
+      # writes the announcements and this process only reads them. Without it
+      # the recorder cannot know which sockets to open, and a list in the
+      # environment would have to repeat names that are drawn at random.
+      - ./volumes/work:/work:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
+    cpus: 1.0
+    # The recorder resolves the upstream host on every request. Docker's
+    # embedded resolver is one small UDP service per network and drops queries
+    # under that rate once ten sockets are busy, which surfaces to an agent as
+    # a spurious name-resolution failure and costs it a turn.
+    dns: [1.1.1.1, 8.8.8.8]
+
+  # ---------------------------------------------------------------------------
+  # The watcher. Reads every agent's public surfaces and writes one row per
+  # agent to /telemetry/fleet.jsonl. Read-only mounts, no network, and no
+  # channel back into an agent: it observes and cannot influence.
+  # ---------------------------------------------------------------------------
+  fleet_monitor:
+    image: space-chassis-agent
+    entrypoint: ["python", "/opt/services/fleet_monitor.py"]
+    restart: unless-stopped
+    network_mode: none
+    environment:
+      MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-15}
+      # It watches every agent that has ever run, by reading the record.
+    volumes:
+      - ./volumes/telemetry:/telemetry
+      - ./volumes/transcripts:/transcripts:ro
+      - ./volumes/work:/work:ro
+      - ./volumes/home:/home:ro
+      - ./volumes/diary:/diary:ro
+      - ./volumes/pump:/pump:ro
+      - ./volumes/diode:/diode:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+
+  # ---------------------------------------------------------------------------
+  # The window. The implementation is mounted in by whoever builds the vehicle;
+  # without it the stack still runs -- the diode volume is simply an empty
+  # directory and nothing in the fleet can leave.
+  # ---------------------------------------------------------------------------
+  diode:
+    image: space-chassis-agent
+    entrypoint: ["python", "/opt/diode/diode.py"]
+    restart: unless-stopped
+    profiles: ["diode"]
+    # The only service with both faces: `windowside` is outward, `worknet` is
+    # where the agents can see it.
+    networks: [worknet, windowside]
+    environment:
+      DIODE_DIR: /diode
+      # The window serves every agent directory it finds, for the same reason.
+      DIODE_POLL_SECONDS: ${DIODE_POLL_SECONDS:-5}
+      DIODE_HOURLY_MAX: ${DIODE_HOURLY_MAX:-120}
+    volumes:
+      - ./volumes/diode:/diode
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+
+networks:
+  # No gateway. Members can reach each other and nothing else.
+  worknet:
+    internal: true
+  # The agents are not on this one.
+  modelnet: {}
+  # An operator may attach a diode here instead of giving it a route to the
+  # public internet.
+  windowside: {}

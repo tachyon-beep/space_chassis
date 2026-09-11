@@ -1,0 +1,30 @@
+# Runtime artifacts. The durable world lives under ./volumes and is created by
+# scripts/prepare_host.sh; none of it is source.
+volumes/
+*.log
+
+# The operator's environment holds the one credential in the world.
+.env
+
+# Python and tooling caches.
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Endurance runs are large and reproducible from a scenario file. The report is
+# copied to docs/example-run-report.md when one is worth keeping.
+endurance/runs/
+
+# The local smoke configuration: a copy of the example, not a deliverable.
+docker-compose.override.yml
+
+# The offline crate mirror. Tens of megabytes, one command to rebuild
+# (scripts/build_registry.sh), and mounted into containers at run time.
+vendor/registry/
+vendor/registry.tmp/
+vendor/.cargo-home/
+
+# Scratch: throwaway worlds, build logs, probes. Never anyone's deliverable.
+.scratch/

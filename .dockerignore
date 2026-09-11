@@ -1,0 +1,25 @@
+# Build context hygiene. The image needs the code, the brief and the crate
+# registry; it must never carry a run's leftovers, a fleet's home, or a
+# database of anything.
+volumes/
+endurance/runs/
+tests/
+docs/
+site/
+
+.git/
+.github/
+.scratch/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+
+# The registry itself is mounted at run time, not baked: it is large, it is
+# versioned on the host, and an image that carried it would need rebuilding
+# every time a crate is added.
+vendor/.cargo-home/
+vendor/kitchen/target/
+
+.env
+*.log
