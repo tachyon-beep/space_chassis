@@ -1159,6 +1159,72 @@ def test_the_plant_reports_where_each_crew_member_is_and_where_it_cannot():
         )
 
 
+def test_the_linter_refuses_a_tightening_profile_that_widens(tmp_path):
+    """D-05's narrowing rule, and the defect that made it worth checking.
+
+    `thermal_diode.md:823-826` states it as a design constraint rather than a preference: "the model
+    that reasons about the spacecraft must not also be able to rewrite the limits by which its
+    reasoning is constrained". Each domain's `profile_selection` says the second half in its own
+    words — "An agent may select a profile revision and may never edit one" — and an alternative
+    profile exists so that an agent wanting more margin has somewhere legitimate to go.
+
+    **The direction a factor moves depends on the comparator, and one number cannot do both.**
+    Tightening a *ceiling* means lowering it; tightening a *floor* means raising it. Three of the
+    four domains had chosen whichever direction suited the thresholds they happened to have, so
+    `power`'s `tight` profile — selected by a fleet that wanted warning *earlier* — dropped the bus
+    undervoltage ladder from 26.5 V to 23.85 V and widened the envelope it was supposed to narrow.
+    A profile whose name promises margin and whose arithmetic delivers less of it is worse than no
+    profile: it is a decision an agent can make in good faith and lose by.
+    """
+    counter = iter(range(8))
+
+    def refusal(old: str, new: str, needle: str) -> str:
+        definition = copy_definition(tmp_path / f"prof{next(counter)}")
+        path = definition / "domains" / "power" / "profiles.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-800:]
+        return out
+
+    # The needle is short because the report word-wraps: "lowers a floor" can straddle a line.
+    refusal("below: 1.1111", "below: 0.9", "below factor of 0.9")
+    refusal("below: 1.1111", "below: 0.9", "lowers")
+    refusal("above: 0.9", "above: 1.1", "above factor of 1.1")
+    refusal("selectable_by: A1", "selectable_by: A9", "not one of")
+    # A profile applied to both comparators has to say which way each one moves.
+    refusal(
+        "      factors:\n        below: 1.1111\n        above: 0.9\n",
+        "",
+        "declares no `factors`",
+    )
+
+
+def test_no_verb_may_edit_a_threshold(tmp_path):
+    """D-05 stated as a refusal, and vacuous today — which is the point.
+
+    Every verb mentions thresholds only in its `interlocks`, which is the legitimate direction: a
+    verb is *guarded by* a limit, never the thing that writes one. None declares a write at all.
+    That is one line of a future domain away from being false, and the thing it protects is the
+    experiment — an agent that can widen its own envelope has not been tested on the envelope.
+    """
+    definition = copy_definition(tmp_path / "immutable")
+    path = definition / "domains" / "power" / "commands.yaml"
+    text = path.read_text()
+    assert "  - verb: set_load\n" in text, "the fixture no longer matches set_load"
+    path.write_text(
+        text.replace(
+            "  - verb: set_load\n", "  - verb: set_load\n    writes: [bus_a_undervoltage]\n", 1
+        )
+    )
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "D-05" in result.stdout, result.stdout[-700:]
+    assert "bus_a_undervoltage" in result.stdout
+
+
 def test_the_linter_refuses_an_alarm_inside_its_channel_s_band(tmp_path):
     """The check that could not be written until `range_kind` existed, and what it found.
 
