@@ -1159,6 +1159,42 @@ def test_the_plant_reports_where_each_crew_member_is_and_where_it_cannot():
         )
 
 
+def test_the_linter_holds_the_power_inventory_to_its_own_arithmetic(tmp_path):
+    """`demand_w`, `inrush_w`, `bus`, `rated_w`, `ah` and `v_nominal` were read by nothing.
+
+    Seventeen components and twenty-five loads, so the whole quantitative inventory was a set of
+    numbers with no arithmetic between them. The linter has enforced the *mass* closure since the
+    beginning; these are the same check one domain over, and the load budget happens to close
+    (CSM 1723 W, LM 1007 W) with nothing keeping it closed.
+
+    The fourth relationship is the one with teeth: `power.battery_soc_pct` is a percentage whose
+    denominator was declared nowhere, and `battery_charge_j` is a stock with no capacity, so what
+    the vehicle carries in joules existed only as a product nobody computed. It is declared now —
+    and the LM's is declared in *three* parts, because the descent batteries are jettisoned with
+    the descent stage and the ascent flies on 16,576 Wh against a 3.5-hour phase.
+    """
+
+    def refusal(old: str, new: str, needle: str) -> str:
+        definition = copy_definition(tmp_path / f"power{abs(hash((old, new))) % 10000}")
+        path = definition / "domains" / "power" / "components.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-800:]
+        return out
+
+    refusal("csm_total_demand_w: 1723", "csm_total_demand_w: 1800", "its loads sum to")
+    refusal("bus: csm_bus_a", "bus: csm_bus_z", "no component of class")
+    refusal("csm_battery_energy_wh: 3360", "csm_battery_energy_wh: 3000", "its cells carry")
+    # The staged split is the number that decides whether the ascent can be flown.
+    refusal(
+        "lm_battery_energy_ascent_stage_wh: 16576",
+        "lm_battery_energy_ascent_stage_wh: 20000",
+        "against a stated total",
+    )
+
+
 def test_the_linter_refuses_an_electrical_inventory_that_drifted(tmp_path):
     """One machine in two files, and no sentence saying so.
 
