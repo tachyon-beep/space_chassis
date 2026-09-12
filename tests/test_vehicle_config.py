@@ -3054,6 +3054,60 @@ def test_the_missions_clock_is_held_to_the_phase_ladder(tmp_path):
     assert "does not re-derive" in result.stdout
 
 
+def test_the_debt_count_includes_the_files_nothing_walks(tmp_path):
+    """The folder's headline number is the debt count, so an omission in it is invisible.
+
+    The domain files are walked for unset values by `check_domain` and the coupling graph by its
+    edge walk, so every literal `UNCONFIGURED` scalar was counted — **except the eleven in the two
+    files nothing walks**: `mission.yaml`'s initial position, velocity and state-vector basis, and
+    `vehicle.yaml`'s three minimum impulse bits, the LM sublimator's rejection and water
+    consumption and its radiators. Two of them are named in a prose `open_debts` entry somewhere
+    else, which is how they stayed plausible.
+    """
+    import sys as _sys
+
+    _sys.path.insert(0, str(VEHICLE / "tools"))
+    from check_vehicle import walk_unset
+
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    owed = walk_unset(mission) + walk_unset(vehicle)
+    assert owed, "the fixture no longer has unset values in the top-level files"
+
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-1500:]
+    missing = [
+        trail
+        for trail in owed
+        if f"mission.yaml.{trail}:" not in result.stdout
+        and f"vehicle.yaml.{trail}:" not in result.stdout
+    ]
+    assert not missing, f"these unset values are counted by nothing: {missing}"
+
+
+def test_the_linter_refuses_a_debt_that_has_been_answered(tmp_path):
+    """A debt that has been paid and is still on the books is worse than no debt.
+
+    `mission.yaml` carried `initial_state.landing_site: UNCONFIGURED` for as long as it carried the
+    real thing. When the site was chosen it was declared as a **top-level** `landing_site` block —
+    with the derivation, the sub-Earth geometry and a `check_landing_site` that re-derives it — and
+    the placeholder twenty lines above went on reporting the site as undecided, in the same file.
+
+    A note that has outlived its answer tells the next reader to stop looking, and the site is what
+    decides whether the LM can be heard from the surface at all.
+    """
+    definition = copy_definition(tmp_path / "answered")
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    anchor = "  entry_corridor: UNCONFIGURED\n"
+    assert anchor in text, "the fixture no longer matches initial_state's tail"
+    path.write_text(text.replace(anchor, "  landing_site: UNCONFIGURED\n" + anchor, 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "while the top-level `landing_site`" in result.stdout
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
