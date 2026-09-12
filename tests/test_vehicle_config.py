@@ -134,10 +134,29 @@ def test_an_unset_value_is_a_named_debt_and_never_a_default(tmp_path):
     assert strict.returncode == 2, "unfilled debts must fail a --strict build"
     assert "OWED" in strict.stdout
 
-    owed = re.search(r"coupling\.yaml:edge (E-[\w-]+):", strict.stdout)
-    assert owed, f"no coupling edge is reported as owing a value:\n{strict.stdout[:600]}"
-    edge_id = owed.group(1)
-    assert edge_id in strict.stdout, "the debt must name the edge that wants the value"
+    # The candidate must be an edge whose *only* fault is the missing value. Some edges are also
+    # structurally un-integrable — a ratio into a stock, whose flux is the source's outflow and is
+    # declared nowhere — and those keep a debt after the value arrives, which would make this test
+    # assert the wrong thing about the wrong edge.
+    if str(VEHICLE / "tools") not in sys.path:
+        sys.path.insert(0, str(VEHICLE / "tools"))
+    from check_vehicle import stock_flux_basis
+
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    nodes = coupling["nodes"]
+    candidates = []
+    for edge in coupling["edges"]:
+        if (edge.get("sensitivity") or {}).get("value") != "UNCONFIGURED":
+            continue
+        if f"coupling.yaml:edge {edge['id']}:" not in strict.stdout:
+            continue
+        if nodes[edge["to"]].get("kind") == "stock":
+            basis, _ = stock_flux_basis(edge, nodes)
+            if basis is None:
+                continue
+        candidates.append(str(edge["id"]))
+    assert candidates, f"no coupling edge owes only a value:\n{strict.stdout[:600]}"
+    edge_id = candidates[0]
 
     # Patch that edge, and only it, into a fully configured one. The two YAML forms in this file
     # (a flow mapping on one line, a block mapping over several) make a targeted field edit
@@ -3162,8 +3181,8 @@ def test_the_stock_integrator_refuses_what_is_not_a_flux():
     world = plant.load_world(VEHICLE)
 
     for edge_id, needle in (
-        ("E-ZONE-ATM", "not a flux into a stock"),
-        ("E-ATM-ABSORB", "not a flux into a stock"),
+        ("E-ZONE-ATM", "'lag' edge into a stock"),
+        ("E-ATM-ABSORB", "does not establish a flux"),
         ("E-O2-ECLSS", "dimensionless ratio"),
         ("E-LM-O2-ECLSS", "dimensionless ratio"),
     ):
@@ -3187,6 +3206,56 @@ def test_the_stock_integrator_refuses_a_missing_driver():
     with pytest.raises(plant.Unconfigured) as caught:
         plant.stock_flux(world, edge, {edge.source: "three"}, 0.02)
     assert "not a number the sensitivity can multiply" in caught.value.what
+
+
+def test_the_linter_and_the_plant_share_one_stock_flux_rule():
+    """The plant's refusals were unreachable, so eight structural defects were invisible.
+
+    The schedule stops at the first `algebraic` state, long before it reaches a stock, so no tool
+    ever got to the integrator that refuses these edges. Eight of the vehicle's fourteen stock edges
+    cannot be integrated as written and **the linter, `--strict` and the debt count all said nothing
+    about them.** A defect that only a code path nobody reaches can see is a defect nobody has.
+
+    Both tools now call `stock_flux_basis`, in the pattern `derive_schedule` already set, so a rule
+    about what a stock edge means cannot come apart from the rule that checks it. This test holds
+    that in place from both ends: the linter reports each edge as a debt *and* the plant refuses the
+    same edge, from the same function.
+    """
+    plant = _plant()
+    from check_vehicle import stock_flux_basis
+
+    world = plant.load_world(VEHICLE)
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-1500:]
+
+    expected = {
+        "E-ZONE-ATM": "'lag' edge into a stock",
+        "E-ZONE-ATM-LM": "'lag' edge into a stock",
+        "E-PLATE-BAT": "'lag' edge into a stock",
+        "E-O2-ECLSS": "dimensionless ratio",
+        "E-LM-O2-ECLSS": "dimensionless ratio",
+        "E-FC-WATER": "dimensionless ratio",
+        "E-ATM-ABSORB": "does not establish a flux",
+        "E-LM-ATM-ABSORB": "does not establish a flux",
+    }
+    for edge_id, needle in expected.items():
+        edge = next(e for e in world.edges if e.id == edge_id)
+        basis, reason = stock_flux_basis(
+            {"id": edge.id, "kind": edge.kind, "sensitivity": edge.sensitivity}, {}
+        )
+        assert basis is None, f"{edge_id} is now integrable; update this test and the debt"
+        assert needle in reason, f"{edge_id}: {reason}"
+        assert f"coupling.yaml:edge {edge_id}:" in result.stdout, (
+            f"{edge_id} is refused by the plant and not reported by the linter"
+        )
+
+    # And the three that are integrable stay integrable, so the rule is not simply refusing.
+    for edge_id in ("E-CREW-ATM", "E-LM-CREW-ATM", "E-RAD-WATER"):
+        edge = next(e for e in world.edges if e.id == edge_id)
+        basis, reason = stock_flux_basis(
+            {"id": edge.id, "kind": edge.kind, "sensitivity": edge.sensitivity}, {}
+        )
+        assert basis in ("per_second", "per_hour"), f"{edge_id}: {reason}"
 
 
 def test_every_vehicle_yaml_parses():
