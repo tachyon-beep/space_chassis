@@ -1193,6 +1193,81 @@ def test_the_linter_rederives_the_lunar_blackout(tmp_path):
     assert "duration_min" in result.stdout
 
 
+def test_the_linter_rederives_where_the_earth_is_from_the_landing_site(tmp_path):
+    """The site decides one thing nothing else does: whether the LM can be heard at all.
+
+    The coordinates are `chosen` — `apollo_diode.md:1206` asks that the scenario not match a
+    historical site closely enough for a fleet to take the shortcut, and the corpus carries no
+    coordinates for any site, flown or otherwise, so there is nothing to check the *choice* against.
+    The geometry the choice produces is another matter, and it is what this covers: the Earth's
+    elevation from the site, the libration envelope around it, and how far it moves across the
+    surface phase.
+
+    The last of those is the assertion that makes the model mean something. At 0.075 deg/h, the
+    sub-Earth point crosses 1.6 degrees in the 21.5-hour surface stay — so the LM is in contact
+    throughout or never, and a site whose link appeared and disappeared inside one phase would be a
+    different mission rather than a different number.
+    """
+
+    def refusal(old: str, new: str, needle: str) -> str:
+        definition = copy_definition(tmp_path / f"site{abs(hash((old, new))) % 1000}")
+        path = definition / "mission.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-700:]
+        return out
+
+    refusal(
+        "earth_elevation_deg: 41.3",
+        "earth_elevation_deg: 30.0",
+        "the geometry gives",
+    )
+    refusal("longitude_deg: 47.5", "longitude_deg: 150.0", "below the horizon")
+    refusal(
+        "elevation_variation_over_surface_deg: 1.61",
+        "elevation_variation_over_surface_deg: 0.01",
+        "moves it",
+    )
+
+    # And a site whose *mean* link is fine but whose envelope is not: at lat 0 that is lon 85,
+    # where the Earth stands 5 degrees up and libration takes it 2.9 below.
+    definition = copy_definition(tmp_path / "envelope")
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    text = text.replace("latitude_deg: 12.4", "latitude_deg: 0.0", 1)
+    text = text.replace("longitude_deg: 47.5", "longitude_deg: 85.0", 1)
+    text = text.replace("earth_elevation_deg: 41.3", "earth_elevation_deg: 5.0", 1)
+    path.write_text(text)
+    out = run_linter(definition).stdout
+    assert "libration envelope" in out, out[-700:]
+
+
+def test_the_two_halves_of_the_vehicle_have_opposite_comms(tmp_path):
+    """The site's consequence, and the reason it is worth a decision rather than a default.
+
+    In orbit the CSM is silent 46.5 minutes in every 117.8 — 39 % of the time. On the surface the
+    LM is not silent at all, because a near-side site has the Earth permanently in view. So during
+    `descent` and `surface` a fleet hears the LM and not the CSM, and the two trade places at the
+    orbit's cadence during `lunar_orbit`. That is what a 100 km orbit and a near-side landing site
+    do, and it is why the LM-as-lifeboat decision is affordable: the half of the vehicle the crew
+    would move into is the half that can always be talked to.
+    """
+    result = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--blackout"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    assert "never loses the link" in out, out
+    assert "(12.4, 47.5)" in out, out
+    assert "41.3 deg" in out and "1.61 deg" in out, out
+    assert "silent 39 %" in out, out
+
+
 def test_the_plant_computes_the_second_clock():
     """A phase declares one duration and an orbit declares another, and nothing joined them.
 
