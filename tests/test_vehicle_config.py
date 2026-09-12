@@ -2670,6 +2670,139 @@ def test_the_linter_refuses_a_computation_it_cannot_evaluate(tmp_path):
     assert "cannot evaluate" in result.stdout
 
 
+def test_the_linter_refuses_a_counter_with_no_rating(tmp_path):
+    """A count with no rating can be spent forever, and one was, for the life of the file.
+
+    `accumulates:` says a stock counts what has been *spent* rather than what is held, and the
+    rating is what makes "spent" mean anything. `absorber_capacity` carried the field and no
+    rating, so every threshold watching it was watching a number that could not reach its floor —
+    and the three ratings that would have exposed it were declared in two other files and read by
+    nothing. The reverse direction is refused too: an `exhausted_at` on a stock that is *held*
+    rather than counted is a rating whose subject the reader cannot identify.
+    """
+    definition = copy_definition(tmp_path / "counter")
+    path = definition / "coupling.yaml"
+    text = path.read_text()
+    anchor = "    exhausted_at: 72\n"
+    assert anchor in text, "the fixture no longer matches absorber_capacity_csm"
+    path.write_text(text.replace(anchor, "", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "no numeric `exhausted_at`" in result.stdout
+
+    definition = copy_definition(tmp_path / "held")
+    path = definition / "coupling.yaml"
+    text = path.read_text()
+    anchor = '    preloaded: "the helium charge is loaded at the pad'
+    assert anchor in text, "the fixture no longer matches the pressurant_he node"
+    head, _, tail = text.partition(anchor)
+    line, newline, rest = tail.partition("\n")
+    path.write_text(f"{head}{anchor}{line}{newline}    exhausted_at: 10\n{rest}")
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "without `accumulates`" in result.stdout
+
+
+def test_the_linter_refuses_a_fault_that_happens_to_nothing(tmp_path):
+    """Every fault names what it happens *to*, and until round 42 nothing read the field.
+
+    That is the usual cost, and this one had teeth: renaming the ECLSS absorber components left
+    `ECL-04`, the *CSM's* blower failure, naming `lioh_bed_primary`, which had been the LM's
+    primary cartridge. The fault went on looking plausible because every channel in its `perturbs`
+    list was still real, and the linter refused none of it. A component, a state or a coupling node
+    all resolve, because the field already meant all three — twelve of the vehicle's bindings name
+    a node rather than an article, and they are naming the tank or the crew.
+    """
+    definition = copy_definition(tmp_path / "orphan")
+    path = definition / "domains" / "eclss" / "fault_policy.yaml"
+    text = path.read_text()
+    anchor = "  - id: ECL-04-absorber-blower-failure\n    component: csm_lioh_element\n"
+    assert anchor in text, "the fixture no longer matches ECL-04"
+    path.write_text(
+        text.replace(
+            anchor, "  - id: ECL-04-absorber-blower-failure\n    component: lioh_bed_primary\n", 1
+        )
+    )
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "not a component, a state or a node" in result.stdout
+
+
+def test_the_two_absorbers_are_separate_counters():
+    """One counter for two absorbers meant a surface crew spent the CSM's element.
+
+    `E-ATM-ABSORB` runs from `cabin_atm` and `E-LM-ATM-ABSORB` from `lm_cabin_atm`, and the second
+    edge's own note insisted the difference between them "is the edge's endpoints rather than its
+    value" — while both landed on one node, which deleted exactly the distinction the note was
+    defending. A leak is in one cabin; so is an absorber. The ratings were published in
+    `vehicle.yaml#consumables` all along (CSM element 72 man-hours, LM primary 41) and read by
+    nothing, which is also why `eclss.absorber_capacity_pct` divided by nothing while its sibling
+    note cited the *LM's* 41 and 78 as the denominator of the *CSM's* channel.
+    """
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    nodes = coupling["nodes"]
+    for name, rating in (("absorber_capacity_csm", 72), ("absorber_capacity_lm", 41)):
+        assert name in nodes, f"{name} is not a node"
+        assert nodes[name]["exhausted_at"] == rating
+        assert nodes[name]["kind"] == "stock"
+
+    edges = {e["id"]: e["to"] for e in coupling["edges"]}
+    assert edges["E-ATM-ABSORB"] == "absorber_capacity_csm"
+    assert edges["E-LM-ATM-ABSORB"] == "absorber_capacity_lm"
+
+    registry = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    ids = {
+        c["id"]
+        for section in registry.values()
+        if isinstance(section, list)
+        for c in section
+        if isinstance(c, dict) and "id" in c
+    }
+    assert "eclss.absorber_capacity_pct" in ids
+    assert "eclss.lm_absorber_capacity_pct" in ids, "the LM's absorber is unobservable without it"
+
+    # The two counters have different minimum flows, which is the arithmetic consequence of the
+    # crew splitting up: one crew member works the CSM's element while two work the LM's cartridge.
+    stocks = {
+        s["id"]: s
+        for s in yaml.safe_load(
+            (VEHICLE / "domains" / "consumables" / "components.yaml").read_text()
+        )["state"]
+    }
+    assert stocks["absorber_man_hours_csm"]["min_flow_per_s"] == pytest.approx(2.78e-4)
+    assert stocks["absorber_man_hours_lm"]["min_flow_per_s"] == pytest.approx(5.56e-4)
+
+
+def test_the_lm_s_atmosphere_is_injectable():
+    """Ten paired faults, because in `descent`, `surface` and `ascent_rendezvous` the crew are in
+    the LM and no fault could move the air they were breathing.
+
+    The pairing is the fix rather than a cabin parameter on one fault: a leak is in one cabin, and
+    pairing is what lets the two diverge. The divergences are the content — the LM has no leak-rate
+    channel (so an LM leak never appears in `eclss.leak_rate_g_s`, which is derived from the CSM's
+    own mass balance), no regulator-position channel, and a party of two. `ECL-07-suit-loop-fan-failure`
+    has no twin and should not: the suit loop is one shared circuit.
+    """
+    policy = yaml.safe_load((VEHICLE / "domains" / "eclss" / "fault_policy.yaml").read_text())
+    faults = {f["id"]: f for f in policy["faults"]}
+    lm_channels = {
+        "eclss.lm_cabin_pressure_psia",
+        "eclss.lm_cabin_temp_c",
+        "eclss.lm_co2_pp_mmhg",
+        "eclss.lm_pp_o2_mmhg",
+        "eclss.lm_absorber_capacity_pct",
+    }
+    perturbed = {c for f in policy["faults"] for c in f["perturbs"]}
+    assert lm_channels <= perturbed, f"nothing perturbs {sorted(lm_channels - perturbed)}"
+    assert [i for i in faults if i.startswith("ECL-12")], "the LM twins are missing"
+    # And the domain's own claim is that the exception list is empty, which is a stronger claim
+    # than the four-channel one it made until round 42.
+    assert policy["coverage"]["unperturbed"] == []
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
