@@ -2886,6 +2886,107 @@ def test_an_unloadable_vehicle_refuses_instead_of_crashing(tmp_path):
     assert "Traceback" not in result.stderr, result.stderr[-1500:]
 
 
+def test_the_coverage_blocks_checkable_claims_are_checked(tmp_path):
+    """`unperturbed` was the first key in the block to be checked, and checking it made the block
+    *look* read.
+
+    Four other keys sat beside it making claims of exactly the same kind — counts and directions —
+    and nothing had ever compared one of them to the policy. **Five of their first eight numeric
+    claims were wrong**, in both directions: `avionics` said six of its faults crossed a domain
+    boundary and four did, `comms` said four and five did, `gnc` said five and one did, and `gnc`
+    separately said seven of eleven faults moved `gnc.nav_integrity` when nine do.
+
+    `gnc.cross_domain` was the worst of them because it named three couplings that do not exist —
+    `rcs.thruster_[n]_health`, `mission.met_s` and the comms blackout — and they are real
+    relationships with the arrows the wrong way round, which is why the sentence read as true.
+
+    Prose cannot be checked, so each block now declares its claim as a field.
+    """
+    definition = copy_definition(tmp_path / "count")
+    path = definition / "domains" / "gnc" / "fault_policy.yaml"
+    text = path.read_text()
+    anchor = "    faults_outside: 1\n"
+    assert anchor in text, "the fixture no longer matches gnc's coverage claim"
+    path.write_text(text.replace(anchor, "    faults_outside: 5\n", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "claims 5 fault(s) perturb a channel outside" in result.stdout
+
+    # The ladder claim is a count too, and it is the domain's thesis: a navigation fault is
+    # visible because it degrades a ladder, not because it spills into another domain's channels.
+    definition = copy_definition(tmp_path / "ladder")
+    path = definition / "domains" / "gnc" / "fault_policy.yaml"
+    text = path.read_text()
+    anchor = "    faults_perturbing: 9\n"
+    assert anchor in text, "the fixture no longer matches gnc's ladder claim"
+    path.write_text(text.replace(anchor, "    faults_perturbing: 7\n", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "claims 7 fault(s) move" in result.stdout
+
+
+def test_the_linter_refuses_a_false_superlative(tmp_path):
+    """A superlative is a claim about all eleven domains, so it is the one that rots untouched.
+
+    `avionics` said it had "the highest cross-domain reach of any domain on the vehicle", and by
+    round 44 `eclss` had three times as many, because a life-support failure reaches every domain
+    that plans around a consumable while an instrument failure reaches only what that instrument
+    serves. The domain that made the claim never moved; the vehicle around it did.
+    """
+    definition = copy_definition(tmp_path / "superlative")
+    path = definition / "domains" / "avionics" / "fault_policy.yaml"
+    text = path.read_text()
+    anchor = "    faults_outside: 4\n"
+    assert anchor in text, "the fixture no longer matches avionics' coverage claim"
+    path.write_text(text.replace(anchor, anchor + "    outbound_extreme: highest\n", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "claims the vehicle's highest cross-domain reach" in result.stdout
+
+
+def test_the_linter_refuses_a_gated_alarm_that_is_not_gated(tmp_path):
+    """A suppression a fleet is told about and the vehicle does not apply is a silence nobody can
+    explain.
+
+    `comms` suppresses three alarms for a condition it can predict — the lunar occultation — so
+    that when they fire they mean something. The claim that three thresholds carry `gated_by` is
+    exact, and it is the kind a threshold added later silently falsifies.
+    """
+    definition = copy_definition(tmp_path / "gated")
+    path = definition / "domains" / "comms" / "profiles.yaml"
+    text = path.read_text()
+    anchor = '    gated_by: "comm.blackout_state is clear"\n'
+    assert anchor in text, "the fixture no longer matches the gated thresholds"
+    path.write_text(text.replace(anchor, "", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "declares no `gated_by`" in result.stdout
+
+
+def test_the_linter_refuses_a_shared_rule_with_no_pointer(tmp_path):
+    """One rule, one home — and a pointer, or a reader finds neither.
+
+    `power_rule` and `thermal_rule` are declared in the avionics diagnostics and implemented in
+    the power and thermal domains, because two implementations of one rule is how two domains come
+    to disagree. `implemented_by` is what makes "declared here, implemented elsewhere" a fact
+    rather than a claim.
+    """
+    definition = copy_definition(tmp_path / "shared")
+    path = definition / "domains" / "avionics" / "components.yaml"
+    text = path.read_text()
+    anchor = "  - id: power_rule\n    implemented_by: power\n"
+    assert anchor in text, "the fixture no longer matches the power_rule diagnostic"
+    path.write_text(text.replace(anchor, "  - id: power_rule\n", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "declares no `implemented_by` domain" in result.stdout
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
