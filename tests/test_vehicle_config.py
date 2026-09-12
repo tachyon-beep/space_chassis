@@ -3229,8 +3229,6 @@ def test_the_linter_and_the_plant_share_one_stock_flux_rule():
     assert result.returncode == 0, result.stdout[-1500:]
 
     expected = {
-        "E-ZONE-ATM": "'lag' edge into a stock",
-        "E-ZONE-ATM-LM": "'lag' edge into a stock",
         "E-PLATE-BAT": "'lag' edge into a stock",
         "E-O2-ECLSS": "dimensionless ratio",
         "E-LM-O2-ECLSS": "dimensionless ratio",
@@ -3249,6 +3247,20 @@ def test_the_linter_and_the_plant_share_one_stock_flux_rule():
             f"{edge_id} is refused by the plant and not reported by the linter"
         )
 
+    # Two edges the classifier refuses are *not* debts, and the distinction is the whole reason
+    # `advances` exists: E-ZONE-ATM and E-ZONE-ATM-LM land on a stock node — the cabin — but they
+    # drive its *pressure*, which is an algebraic state. A pressure is not a conserved quantity that
+    # something flows into, so they were never fluxes, and they are correctly silent.
+    for edge_id in ("E-ZONE-ATM", "E-ZONE-ATM-LM"):
+        edge = next(e for e in world.edges if e.id == edge_id)
+        basis, _ = stock_flux_basis(
+            {"id": edge.id, "kind": edge.kind, "sensitivity": edge.sensitivity}, {}
+        )
+        assert basis is None, f"{edge_id} should not look like a flux"
+        assert f"coupling.yaml:edge {edge_id}:" not in result.stdout, (
+            f"{edge_id} drives a pressure, not a stock, and must not be reported as a stock debt"
+        )
+
     # And the three that are integrable stay integrable, so the rule is not simply refusing.
     for edge_id in ("E-CREW-ATM", "E-LM-CREW-ATM", "E-RAD-WATER"):
         edge = next(e for e in world.edges if e.id == edge_id)
@@ -3256,6 +3268,79 @@ def test_the_linter_and_the_plant_share_one_stock_flux_rule():
             {"id": edge.id, "kind": edge.kind, "sensitivity": edge.sensitivity}, {}
         )
         assert basis in ("per_second", "per_hour"), f"{edge_id}: {reason}"
+
+
+def test_an_edge_says_which_state_it_advances(tmp_path):
+    """Ten of the vehicle's 41 nodes hold more than one state, and the plant resolved drivers by node.
+
+    On `cabin_atm`, which holds four gas masses, `csm_cabin_o2_kg`, `csm_cabin_n2_kg`,
+    `csm_cabin_co2_kg` and `csm_cabin_h2o_kg` were all handed the same edges — the oxygen supply,
+    the crew's CO2 production and a pressure/temperature relation. **Every gas integrated every
+    other gas's flux**, and a nitrogen state that nothing supplies would have been filled by the
+    crew's breathing.
+
+    `advances` names the state an edge drives, and the linter requires it wherever the node holds
+    more than one state a value can move. It is required rather than inferred because the inference
+    is exactly what was wrong: "the only state on this node" is true today and stops being true the
+    moment a second state lands, silently and in the direction of the plant integrating the wrong
+    thing.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+
+    def incoming(state_id: str) -> list[str]:
+        state = next(s for s in world.states if s.id == state_id)
+        return [
+            e.id
+            for e in world.edges
+            if e.target == state.node
+            and e.id not in world.back_edges
+            and (e.advances is None or e.advances == state.id)
+        ]
+
+    # The four gas masses of one compartment now have four different answers, where before they
+    # had one list between them.
+    assert incoming("csm_cabin_o2_kg") == ["E-O2-ECLSS"]
+    assert incoming("csm_cabin_co2_kg") == ["E-CREW-ATM"]
+    assert incoming("csm_cabin_n2_kg") == [], (
+        "nothing supplies nitrogen, and now nothing pretends to"
+    )
+    # And the pressure is driven by the thermal edge rather than by a mass flux.
+    assert incoming("csm_cabin_pressure_pa") == ["E-ZONE-ATM"]
+
+    # Removing the declaration must be refused rather than silently resolved by node.
+    definition = copy_definition(tmp_path / "advances")
+    path = definition / "coupling.yaml"
+    text = path.read_text()
+    anchor = "    advances: csm_cabin_o2_kg\n"
+    assert anchor in text, "the fixture no longer matches E-O2-ECLSS"
+    path.write_text(text.replace(anchor, "", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "declares no `advances`" in result.stdout
+
+
+def test_the_pressure_is_a_state_on_the_cabin_node():
+    """Pressure belongs where the gas masses are, and moving it there is what gave `E-ZONE-ATM`
+    something to advance.
+
+    It was a state on the `internal` sentinel, which is not a node — so the graph had nowhere to put
+    the cabin's dP/dT, and the edge carried it into the *mass* node instead. A cabin's pressure
+    depends on its temperature and its mass; its mass does not depend on its temperature. Promoted,
+    the edge has a true declaration (`advances: csm_cabin_pressure_pa`), the relation it carries is
+    stated once in the state that computes it, and the 116.86 Pa per kelvin figure survives there.
+    """
+    components = yaml.safe_load((VEHICLE / "domains" / "eclss" / "components.yaml").read_text())
+    by_id = {s["id"]: s for s in components["state"]}
+    assert by_id["csm_cabin_pressure_pa"]["node"] == "cabin_atm"
+    assert by_id["lm_cabin_pressure_pa"]["node"] == "lm_cabin_atm"
+    assert "116.86 Pa per kelvin" in by_id["csm_cabin_pressure_pa"]["provenance"]["relation"]
+
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    edges = {e["id"]: e for e in coupling["edges"]}
+    assert edges["E-ZONE-ATM"]["advances"] == "csm_cabin_pressure_pa"
+    assert edges["E-ZONE-ATM-LM"]["advances"] == "lm_cabin_pressure_pa"
 
 
 def test_every_vehicle_yaml_parses():
