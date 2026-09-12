@@ -1159,6 +1159,62 @@ def test_the_plant_reports_where_each_crew_member_is_and_where_it_cannot():
         )
 
 
+def test_every_objective_says_who_settles_it_and_from_what(tmp_path):
+    """A challenge whose definition of success is prose has no score.
+
+    The `term` field is prose and should be — it is what a person reads. What it could not do is say
+    *who* settles the objective or *from what*: four of the nine terms named a channel inside a
+    sentence, `thermal_margin` ("worst zone margin, all phases") named none at all, and the three
+    outcome objectives were sentences no machine can read.
+
+    `evaluated_by` is the boundary this folder draws everywhere else, applied to scoring. The
+    interesting declaration is `crew_survive`, which is `far_side` and names `crew.available`: the
+    vehicle contributes an availability state that distinguishes resting from incapacitated and
+    **cannot say "dead"**, because `apollo_diode.md:754` puts a model of a person out of scope. An
+    objective whose contribution is narrower than its term is a thing the scorer needs to know, and
+    saying so is the point.
+    """
+    counter = iter(range(8))
+
+    def refusal(objective: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / f"obj{next(counter)}")
+        path = definition / "mission.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-800:]
+        assert objective in out, out[-800:]
+
+    refusal(
+        "o2_margin",
+        "    evaluated_by: vehicle\n    channels: [res.o2_remaining_kg]",
+        "    channels: [res.o2_remaining_kg]",
+        "evaluated_by None",
+    )
+    refusal(
+        "o2_margin",
+        "    evaluated_by: vehicle\n    channels: [res.o2_remaining_kg]",
+        "    evaluated_by: vehicle",
+        "settled by the vehicle",
+    )
+    refusal(
+        "o2_margin",
+        "channels: [res.o2_remaining_kg]",
+        "channels: [res.o2_imaginary_kg]",
+        "not a registered channel",
+    )
+
+    # And the shipped objectives are all evaluable, which is the positive half.
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    for objective in mission["objectives"]:
+        assert objective["evaluated_by"] in {"vehicle", "far_side", "external"}, objective
+        if objective["evaluated_by"] == "vehicle":
+            assert objective.get("channels"), objective
+        if objective["kind"] == "margin":
+            assert objective.get("sense"), objective
+
+
 def test_the_linter_refuses_a_tightening_profile_that_widens(tmp_path):
     """D-05's narrowing rule, and the defect that made it worth checking.
 
