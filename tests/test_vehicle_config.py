@@ -1159,6 +1159,89 @@ def test_the_plant_reports_where_each_crew_member_is_and_where_it_cannot():
         )
 
 
+def test_the_linter_refuses_an_alarm_inside_its_channel_s_band(tmp_path):
+    """The check that could not be written until `range_kind` existed, and what it found.
+
+    `range` carries two meanings and the numbers do not distinguish them. On a physical channel it
+    is an acceptable operating *band* and every alarm fires outside it — cabin pressure ranges
+    4.8-5.2 psia with events at <4.5 and <3.5. On a reserve channel it is the quantity's full
+    *scale* and the alarms fire inside it — `rcs.propellant_remaining_pct` ranges 0-100 with a
+    reserve at <25, which is inside a full span and correct. So "an alarm must lie outside its
+    channel's range" would refuse 34 legitimate thresholds, which is how the ambiguity was found:
+    the check was written, it refused things that were right, and the missing piece turned out to
+    be the field rather than the thresholds.
+
+    Two exemptions, and both are the threshold *saying* it measures something else: a `point_units`
+    differing from the channel's own unit covers the six rate thresholds that watch a level channel
+    with a per-minute limit, and `gated_by` covers a threshold the schema forced onto a channel it
+    is not about. Without one of the two, an alarm inside its own band has nothing to explain it.
+    """
+
+    def refusal(old: str, new: str, needle: str) -> str:
+        definition = copy_definition(tmp_path / f"band{abs(hash((old, new))) % 10000}")
+        path = definition / "domains" / "power" / "profiles.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-800:]
+        return out
+
+    # `bus_a_undervoltage` asserts at 26.5 on a band of 27.0-30.5 — outside, and correct.
+    refusal("assert: 26.5", "assert: 28.0", "inside the region")
+
+    # And the exemption: the same threshold, told to say it measures something else, passes.
+    definition = copy_definition(tmp_path / "exempt")
+    path = definition / "domains" / "power" / "profiles.yaml"
+    text = path.read_text()
+    path.write_text(
+        text.replace(
+            "assert: 26.5",
+            'assert: 28.0\n    point_units: "a different quantity from the channel\'s own"',
+            1,
+        )
+    )
+    assert "inside the region" not in run_linter(definition).stdout
+
+
+def test_the_linter_refuses_a_range_it_cannot_read(tmp_path):
+    """Every numeric range declares whether it is a band or a scale, and a band has width.
+
+    The field was assigned by evidence rather than by taste — a range with an alarm strictly inside
+    it cannot be a band, so it is a scale — and the rule's blind spot is a channel whose range is a
+    band *and wrong*. One was found that way: `thermal.zone_[id]_t_c` declared `[5, 40]` while four
+    of its own thresholds asserted inside it and `lm_descent_freeze` asserted below minus five,
+    because it is a six-zone template and no single band describes six zones.
+    """
+
+    def refusal(old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / f"rk{abs(hash((old, new))) % 10000}")
+        path = definition / "channels.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-800:]
+
+    # A numeric range with no `range_kind` at all. The declaration sits under a comment block, so
+    # the removal is by pattern rather than by the two adjacent lines.
+    definition = copy_definition(tmp_path / "noKind")
+    path = definition / "channels.yaml"
+    text = path.read_text()
+    stripped = re.sub(
+        r"(    range: \[27\.0, 30\.5\]\n)(    #.*?\n)*    range_kind: band\n",
+        r"\1",
+        text,
+        count=1,
+    )
+    assert stripped != text, "the fixture no longer matches the bus voltage range"
+    path.write_text(stripped)
+    out = run_linter(definition).stdout
+    assert "range_kind None" in out, out[-800:]
+    # A band with no width is not a band.
+    refusal("    range: [248, 269]", "    range: [248, 248]", "no width")
+
+
 def test_the_linter_holds_the_power_inventory_to_its_own_arithmetic(tmp_path):
     """`demand_w`, `inrush_w`, `bus`, `rated_w`, `ah` and `v_nominal` were read by nothing.
 
