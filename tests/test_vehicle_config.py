@@ -2803,6 +2803,89 @@ def test_the_lm_s_atmosphere_is_injectable():
     assert policy["coverage"]["unperturbed"] == []
 
 
+def test_the_two_views_of_the_cooling_machine_agree(tmp_path):
+    """`vehicle.yaml#thermal` and the thermal domain describe one machine, and nothing joined them.
+
+    Both were written, both were complete, and the vehicle-level file was read by no tool — so
+    nothing was keeping them agreeing. Writing the join found it immediately: `vehicle.yaml` called
+    its second loop `secondary` and gave it the **LM's** fluid, the LM's flow band and the LM's
+    coolant mass, while the domain has three loops — `loop_lm` carrying exactly those figures, and
+    a `loop_secondary` that is the CSM's second loop with different, chosen numbers. The
+    vehicle-level file named the LM's loop "secondary" and did not mention the CSM's second loop at
+    all, so a reader sizing a loop from it would have sized the wrong vehicle.
+    """
+    definition = copy_definition(tmp_path / "loops")
+    path = definition / "vehicle.yaml"
+    text = path.read_text()
+    anchor = "      - id: loop_lm\n"
+    assert anchor in text, "the fixture no longer matches vehicle.yaml#thermal.loops"
+    path.write_text(text.replace(anchor, "      - id: loop_lmX\n", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "omits 'loop_lm'" in result.stdout
+
+    definition = copy_definition(tmp_path / "fluid")
+    path = definition / "vehicle.yaml"
+    text = path.read_text()
+    anchor = 'fluid: "65 % water / 35 % inhibited ethylene glycol"\n'
+    assert anchor in text, "the fixture no longer matches the LM loop's fluid"
+    path.write_text(text.replace(anchor, 'fluid: "62.5 % ethylene glycol / 37.5 % water"\n', 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "the thermal domain gives" in result.stdout
+
+
+def test_the_linter_refuses_an_orphaned_section(tmp_path):
+    """The thermal block's header was empty and its children were top-level keys.
+
+    `thermal:` followed by a blank line reads as `thermal: null`, and `loops:`, `radiators:` and
+    `zones:` one indent level out are orphans. Every reader that asked for
+    `vehicle["thermal"]["loops"]` got `None`, so the section the file declared was empty and its
+    three subsections were read by no tool at all — complete, plausible, and invisible. The audit
+    that went looking for unread sections found the symptom and not the cause; this is the cause.
+    """
+    definition = copy_definition(tmp_path / "orphan")
+    path = definition / "vehicle.yaml"
+    lines = path.read_text().split("\n")
+    start = next(i for i, line in enumerate(lines) if line.strip() == "loops:")
+    end = next(i for i, line in enumerate(lines) if line.strip() == "comms:")
+    for index in range(start, end - 6):
+        if lines[index].startswith("  ") and lines[index].strip():
+            lines[index] = lines[index][2:]
+    lines.insert(start, "")
+    path.write_text("\n".join(lines))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "declares a top-level section 'loops' that nothing reads" in result.stdout
+    assert "leaves it empty" in result.stdout
+
+
+def test_an_unloadable_vehicle_refuses_instead_of_crashing(tmp_path):
+    """A linter that dies on the input it exists to diagnose is worse than one that misses a fault.
+
+    `vehicle.yaml` is what every cross-file check joins against. When it failed to parse, the
+    linter raised `AttributeError: 'NoneType' object has no attribute 'get'` **from inside a
+    check** and the traceback replaced the report — so the one line that mattered, naming the
+    parse error, was buried under a crash in a check that never got to run. The operator sees a
+    traceback and concludes the tool is broken rather than the definition.
+    """
+    definition = copy_definition(tmp_path / "unloadable")
+    path = definition / "vehicle.yaml"
+    text = path.read_text()
+    anchor = "  loops:\n"
+    assert anchor in text, "the fixture no longer matches the thermal block"
+    path.write_text(text.replace(anchor, "loops:\n", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stderr
+    assert "does not parse" in result.stdout
+    assert "could not be loaded" in result.stdout
+    assert "Traceback" not in result.stderr, result.stderr[-1500:]
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
