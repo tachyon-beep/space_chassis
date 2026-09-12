@@ -28,3 +28,7 @@ vendor/.cargo-home/
 
 # Scratch: throwaway worlds, build logs, probes. Never anyone's deliverable.
 .scratch/
+
+# Filigree issue tracker
+.weft/
+.filigree/
