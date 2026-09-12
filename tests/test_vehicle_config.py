@@ -1159,6 +1159,58 @@ def test_the_plant_reports_where_each_crew_member_is_and_where_it_cannot():
         )
 
 
+def test_the_linter_refuses_an_electrical_inventory_that_drifted(tmp_path):
+    """One machine in two files, and no sentence saying so.
+
+    `vehicle.yaml#electrical` is the vehicle-level view — what it carries, with the mass each item
+    contributes to the mass closure. `domains/power/components.yaml` is the domain's view: the same
+    hardware, one entry per unit, with the bus each load sits on. Both are right, they agreed on
+    every comparable quantity when this check was written, and **nothing was keeping them
+    agreeing** — which is the whole of the problem. A battery re-rated in one file and not the other
+    is two machines wearing one name, and the mass closure would go on summing the mass of the one
+    nobody flies.
+
+    The voltage assertion is the one that is not a plain equality, and it is the interesting one:
+    the two files express the same cell in the shapes their readers need — a group carries a
+    *range* (open-circuit down to loaded), a unit carries the nominal it is modelled at — and the
+    claim the two shapes make about each other is that the nominal lies inside the range.
+    """
+
+    def refusal(rel: str, old: str, new: str, needle: str) -> str:
+        definition = copy_definition(tmp_path / f"elec{abs(hash((old, new))) % 10000}")
+        path = definition / rel
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-800:]
+        return out
+
+    refusal("vehicle.yaml", "modules: 3", "modules: 4", "declares 4 module(s)")
+    refusal("vehicle.yaml", "power_w_each: 1420", "power_w_each: 1200", "is rated")
+    refusal(
+        "vehicle.yaml",
+        "lm_ascent:\n      domain_group: battery_lm_ascent\n      count: 2\n      ah: 296",
+        "lm_ascent:\n      domain_group: battery_lm_ascent\n      count: 2\n      ah: 300",
+        "is 296 Ah",
+    )
+    refusal(
+        "vehicle.yaml",
+        "v: 28\n      mass_kg_each: 56.7",
+        "v: 24\n      mass_kg_each: 56.7",
+        "is modelled at",
+    )
+    # The range/nominal claim: a nominal outside the loaded range is not inside it.
+    refusal("vehicle.yaml", "min_loaded_v: 27", "min_loaded_v: 30", "not inside it")
+    # And a link that names nothing.
+    refusal(
+        "vehicle.yaml",
+        "domain_group: battery_csm",
+        "domain_group: battery_nope",
+        "matches no component",
+    )
+
+
 def test_the_linter_rederives_the_lunar_blackout(tmp_path):
     """The vehicle's one derived figure, and nothing was re-doing its arithmetic.
 
