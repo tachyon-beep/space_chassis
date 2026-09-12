@@ -1159,6 +1159,72 @@ def test_the_plant_reports_where_each_crew_member_is_and_where_it_cannot():
         )
 
 
+def test_the_linter_rederives_the_lunar_blackout(tmp_path):
+    """The vehicle's one derived figure, and nothing was re-doing its arithmetic.
+
+    `mission.yaml#comms_blackout`'s comment makes the claim in as many words: "Apollo's
+    loss-of-signal was about 45 minutes per revolution. The two figures differ by the orbit's
+    eccentricity and by the Earth's own 1.8-degree disc... so the derivation is right to within the
+    effects it deliberately omits, and that is a **stronger** statement than a citation would be."
+    It is stronger only if somebody redoes the arithmetic, and no tool read the block at all —
+    which is exactly the arrangement that let `E-RAD-WATER` say 3.8e-7 while its own relation
+    computed 4.082e-7, a 7 % disagreement nobody could see.
+
+    The block's inputs were not data either: `mu_moon = 4902.8` lived inside the `relation`
+    sentence, so the derivation could not be reproduced from the file without parsing prose.
+    """
+    definition = copy_definition(tmp_path / "blackout")
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    for name, value in (
+        ("orbit", "{altitude_km: 100, period_min: 117.8}"),
+        ("moon_radius_km", "1737.4"),
+        ("mu_moon_km3_s2", "4902.8"),
+    ):
+        assert f"{name}: {value}" in text or f"{name}: {{{value}}}" in text or value in text, name
+
+    broken = text.replace("duration_min: 46.5", "duration_min: 43.0", 1)
+    assert broken != text, "the fixture no longer matches comms_blackout"
+    path.write_text(broken)
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "its own derivation gives" in result.stdout, result.stdout[-700:]
+    assert "duration_min" in result.stdout
+
+
+def test_the_plant_computes_the_second_clock():
+    """A phase declares one duration and an orbit declares another, and nothing joined them.
+
+    "Affects `surface`" and "costs `surface` eight and a half hours of contact" are different
+    statements, and only the second tells a fleet what it is planning around. The projection's own
+    docstring says what it must not be read as — the figure is for a vehicle in a 100 km circular
+    lunar orbit for the whole phase, which is the CSM and only the CSM, because the LM is on the
+    surface for most of `surface` and a vehicle on the surface near the sub-Earth point has the
+    Earth fixed in its sky.
+    """
+    result = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--blackout"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    for phase in ("lunar_orbit", "descent", "surface", "ascent_rendezvous", "lunar_orbit_docked"):
+        assert phase in out, phase
+    for phase in ("translunar_coast", "transearth_coast", "entry"):
+        assert phase not in out, f"{phase} is declared not affected and appears anyway"
+
+    # The arithmetic is the derivation's own: 46.5 min silent per 117.8 min revolution.
+    descent = next(ln for ln in out.splitlines() if ln.strip().startswith("descent"))
+    minutes = 2.5 * 60
+    revolutions = minutes / 117.8
+    assert f"{minutes:7.1f}" in descent, descent
+    assert f"{revolutions:5.2f} rev" in descent, descent
+    assert f"{revolutions * 46.5:6.1f}" in descent, descent
+
+
 def test_the_linter_refuses_a_crew_the_configuration_cannot_hold(tmp_path):
     """The crew are described twice, in two files, and nothing had compared the two.
 
