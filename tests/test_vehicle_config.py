@@ -1159,6 +1159,58 @@ def test_the_plant_reports_where_each_crew_member_is_and_where_it_cannot():
         )
 
 
+def test_a_domain_s_coverage_claim_must_be_true(tmp_path):
+    """Every domain makes the same claim, and **eight of eleven were false**.
+
+    Each `fault_policy.yaml` opens its `coverage` block with "Every channel this domain publishes is
+    perturbed by at least one fault above, except ..." and names the exceptions. It is the most
+    useful claim in the file — it says which channels a fault can never move, which is exactly what
+    a fleet should know before spending an afternoon diagnosing one — and nothing read it.
+
+    The drift is structural rather than careless: `perturbs` is edited when a fault is added and
+    `unperturbed` is edited when somebody remembers, so the two part company in the direction of the
+    claim being *more optimistic* than the policy. `power` said its two battery channels were
+    "perturbed only indirectly through PWR-07" while PWR-07 lists both in its `perturbs`, and
+    `perturbs` is a direct list because that is the only thing it can be.
+
+    The comparison is exact, because a claim with a slack clause is a claim that cannot be checked.
+    """
+
+    def refusal(old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / "coverage")
+        path = definition / "domains" / "power" / "fault_policy.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-900:]
+
+    # An exception that is not really an exception: the claim is more optimistic than the policy.
+    refusal(
+        'unperturbed: ["power.load_shed_class"]',
+        "unperturbed: []",
+        "no fault perturbs",
+    )
+
+    # The positive half: every domain's claim now holds against its own policy.
+    for path in sorted((VEHICLE / "domains").glob("*/fault_policy.yaml")):
+        policy = yaml.safe_load(path.read_text())
+        points = yaml.safe_load((path.parent / "points.yaml").read_text())
+        published = set()
+        for point in points["points"]:
+            published.add(re.sub(r"\[[^\]]*\]", "[]", str(point["channel"])))
+        perturbed = {
+            re.sub(r"\[[^\]]*\]", "[]", str(c))
+            for fault in policy["faults"]
+            for c in (fault.get("perturbs") or [])
+        }
+        declared = {re.sub(r"\[[^\]]*\]", "[]", str(x)) for x in policy["coverage"]["unperturbed"]}
+        assert declared == published - perturbed, (
+            f"{path.parent.name} claims {sorted(declared)} and the truth is "
+            f"{sorted(published - perturbed)}"
+        )
+
+
 def test_every_objective_says_who_settles_it_and_from_what(tmp_path):
     """A challenge whose definition of success is prose has no score.
 
