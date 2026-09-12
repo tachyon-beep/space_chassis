@@ -229,9 +229,11 @@ Consequences worth stating plainly:
 
 ## 7. What the subsystem research adds
 
-`docs/deep_research/` carries eight subsystem studies — power, ECLSS, thermal,
-GNC, propulsion, RCS, communications, consumables — written after this contract
-was first drafted. They converge, independently, on a stronger interface than the
+`docs/deep_research/` carries eleven subsystem studies — power, ECLSS, thermal,
+GNC, propulsion, RCS, communications, consumables, avionics/instrumentation,
+structural/pressure/sequential events, and crew caution/warning — written after
+this contract was first drafted, around a single vehicle study (`apollo_diode.md`).
+They converge, independently, on a stronger interface than the
 one above for anything that moves physical hardware:
 
 | The studies recommend | Why it matters to this side of the wall |

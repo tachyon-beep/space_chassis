@@ -1,7 +1,9 @@
 # Vehicle simulator — design in progress
 
 **Status:** sections 1–8 drafted (1–6 approved, 7–8 pending review). Sections 9–13 not yet written.
-**Specs landed:** apollo, electrical, eclss, gnc, main_propulsion, rcs, communications, thermal, consumables, crew.
+**Specs landed:** apollo, electrical, eclss, gnc, main_propulsion, rcs, communications, thermal, consumables, events, avionics, crew.
+**Sources reviewed:** `corpus-review.md` — what the twelve documents actually contain, where they contradict apollo and each other, and what has to be invented. Read it before treating any spec sentence as a value.
+**Vehicle seed being authored:** `../vehicle/` — `vehicle.yaml`, `mission.yaml`, `coupling.yaml` and the linter that composes them.
 
 **Process:** `superpowers:brainstorming`, architectural path — sections presented and
 approved one at a time. On completion the full design goes to subagent review
@@ -587,7 +589,7 @@ operates the GM, not because of cryptography.
 | 10 | **The window.** Publisher; green on `diode_probe.py`. |
 | 11 | **White-team plane mechanics.** Fault-injection surface, scenario/time control, truth inspection, researcher metrics. |
 | 12 | **Mission profile & scenario ladder.** apollo's nominal / degraded / crisis as GM postures. |
-| 13 | **Reconciliation pass.** All specs against apollo as ground truth — the first job once they have all landed. |
+| 13 | **Reconciliation pass.** All specs against apollo as ground truth — **started**; see `reconciliation/`. |
 
 ### Open questions
 
@@ -596,8 +598,42 @@ operates the GM, not because of cryptography.
 - `PROTOCOL.md` says the window "is not a channel to another agent." Crew are a vehicle
   surface rather than a sibling console, but with `ask_crew` in the vocabulary that
   sentence should be reworded so the distinction is deliberate rather than something a
-  sharp agent notices as a contradiction.
+  sharp agent notices as a contradiction. **Sharper than a wording problem:** say whether
+  crew dialogue is per console or shared. If shared, ten agents can write prose into a
+  vehicle surface and read each other's back — a world-supplied message bus, which
+  `design.md` §8 refuses to supply, and the `perceivable_subset` bound does not cover it
+  (it bounds what the crew may *perceive*, not what they may *repeat*).
 - Who operates the GM for a full run — human, LLM, or LLM with human override?
 - Does `endurance/` ever point at the real sim, or stay on `fake_diode` permanently?
-- Remaining specs expected: avionics/instrumentation, structural/pressure/sequential,
-  mission configuration/phase.
+- Mission configuration/phase is **still unwritten and is now the critical path**: the
+  executive's effect-time revalidation predicate names `phase` (`diode-contract.md:147`) and
+  no document defines it. A first cut is in `../vehicle/mission.yaml`.
+
+### Corrections carried from `corpus-review.md`
+
+Four statements in sections 1–8 are contradicted by the sources. They are listed here rather
+than edited into the prose, because each is a design judgement rather than a typo.
+
+1. **§3.1 "apollo has the graph as a mermaid diagram"** — correct, and it is `apollo_diode.md:258-303`.
+   What apollo does *not* have is mass, inertia, centre of mass, thrust, Isp or any mission
+   duration. The globals are invented, and the provenance field this section mandates is
+   therefore doing real work from the first commit. `../vehicle/vehicle.yaml` carries it.
+2. **§3.7 "from `consumables`' seven kinds"** — the seven are Stock, Rate/capacity, Buffer,
+   Inventory, Entitlement, Margin and Opportunity (`consumables_diode.md:19-30`). Four are
+   named; Inventory, Entitlement and Opportunity are dropped without a note. Say which, and
+   why.
+3. **§3.7 "the vehicle may use claims internally; it must not publish them"** — not separable
+   as written. `RESERVE_RESOURCE`, `RELEASE_RESERVATION`, `REQUEST_ALLOCATION` and
+   `RELEASE_ALLOCATION` are agent-facing verbs (`consumables_diode.md:1008-1011`), and
+   `reserved`, `allocated`, `committed` and `available_to_new` are *required* fields of the
+   schema being adopted (`:1568-1575`). **`available_to_new` is the aggregate other agents'
+   claims leave behind** — publishing it hands over exactly the deconfliction primitive §3.7
+   means to withhold. Declining claims means editing the schema and dropping four verbs.
+4. **§8 "its crew display contract defines crew observability — which panel shows what, in
+   which module"** — it does not. `crew_diode.md:42` says display topology "was not supplied"
+   and "remains configuration item"; `module` appears zero times in the file and `panel` once,
+   as a widget name (`:367`). Table `:352-370` is a list of display *widget types*. The third
+   argument of `review-findings.md:100`'s `(full_truth, crew_position, display_contract) →
+   perceivable_subset` must therefore be **authored**, not extracted, before `ask_crew` can be
+   bounded — and it is the highest-risk unbuilt piece in §5, because a leak in a crew line
+   arrives as a plausible sentence an agent correctly trusts.

@@ -3,8 +3,9 @@
 What `docs/deep_research/` actually contains, what it is worth, and what has to be
 decided before the vehicle simulator can be built from it.
 
-**Scope.** The twelve documents in `docs/deep_research/` — `apollo` plus eleven
-subsystem specifications. Not the design (`integration/simulator-design.md`, reviewed in
+**Scope.** The thirteen documents in `docs/deep_research/` — `apollo` plus twelve
+subsystem specifications. `mission_diode.md` arrived after this review was written, so its
+assessment is in §1.1 rather than in the sections above. Not the design (`integration/simulator-design.md`, reviewed in
 `integration/review-findings.md`) and not the contract (`docs/diode-contract.md`). This
 review asks one question: *if you build the far side of the window out of these documents,
 what do you get, and what do you have to invent?*
@@ -39,30 +40,71 @@ There are no forward citations anywhere: this is a chain, not a panel.
 | `thermal_diode.md` | 1,018 | A TCS schema and safety-semantics layer. Exactly one temperature, and it is a serialisation example. Its one differential equation (`:56-70`) has terms nothing can populate. | `UNSPECIFIED` ×45; `Mission supplied` ×16 |
 | `consumables_diode.md` | 2,291 | Half a genuinely good resource-accounting ontology; the other half is **three serialisations of one 19-field schema** (JSON Schema, Avro, Protobuf — 590 lines) plus transport. | `UNSPECIFIED` ×24; every rule operand a `cfg()` key |
 | `events_diode.md` | 1,138 | A generic event-processing stack — envelope, rule engine, SQLite store, verification — labelled "Structural, Pressure, and Sequential Events". Contains **no** staging, pyro, hatch, docking, jettison or separation event. | `mission configuration items`; `configured` |
-| `avionics_diode.md` | 1,095 | An **aircraft** avionics ICD template: ARINC 429/664, GNSS, elevons, DO-178C. Its one durable contribution is seven sensor-diagnostic functions. | `ICD`; `profile`; `configured` |
+| `avionics_diode.md` | 1,095 | An **aircraft** avionics ICD template: ARINC 429/664, GNSS, elevons, DO-178C. Its one durable contribution is nine diagnostic functions (`:371-509`), which is three more than this review originally counted — see §7.2. | `ICD`; `profile`; `configured` |
 | `crew_diode.md` | 1,047 | A caution/warning and crew-display contract: four alert levels, alert lifecycle with suppress/inhibit/shelve, advisory-only outputs. It supplies **no** display topology (§8). | 4 × `UNSPECIFIED`, all protobuf enum sentinels |
+| `mission_diode.md` | 1,849 | **Arrived after this review was written** (§1.1). Not a mission specification: a domain-neutral execution boundary — trust tiers, an eight-term authorization predicate, a formal state machine, freshness manifests, ten safety invariants, 26 test vectors. Explicitly assumes no domain (`:76`). | 3 × `UNSPECIFIED`; explicit `Must be resolved by deployment` table (`:78-99`) |
+
+**1.1 The late arrival.** `mission_diode.md` was added to the corpus after this review and the
+vehicle seed were written, so it is assessed here rather than in the sections above. Its own
+words are the fairest description: "No mission domain was specified… nothing below depends on
+orbital flight" (`:76`), and its assumptions table leaves mission type, agent count, deadline,
+latency, criticality and units to the deployment. By the census it belongs with
+`communcations_diode.md` and `avionics_diode.md` — a document whose payload for *this* vehicle is
+thin and whose architecture is generic.
+
+**It is nevertheless the most useful of the three, and it was integrated rather than filed.** It
+is the only document in the corpus that is *normative about the boundary* — 23 × `SHALL`, four
+mermaid machines, 82 fenced blocks — and three of its contributions close gaps the earlier twelve
+left open:
+
+- **Freshness, which had a name and no mechanism.** `channels.yaml` carried a per-priority
+  `decision_age_ms` table citing `communcations_diode.md:265`, and nothing anywhere said what to
+  do with it. `:1227-1262` supplies the calculation, the per-guard dependency manifest, and the
+  invariant that makes it a safety property — *RequiredTelemetryStale ⇒ ¬HazardousEffect*.
+  Applying it mechanically found the table was unsatisfiable: it demanded P1 evidence within
+  100 ms on three P1 channels that publish at 1 Hz, so every guard on them could never have
+  passed. Nineteen of the fifty channels a threshold watches were in that position. The rule is
+  now derived (one publish period) and the linter refuses a requirement the publisher cannot meet.
+- **The execution posture, which did not exist.** C-22 fixed the phase set and stopped there, so
+  the vehicle had no abort state: a mission abandoned at the descent and one that succeeded were
+  the same vehicle with a different clock. `:300-347` supplies the machine, and two of its
+  invariants carry the weight — abort dominates every other transition, and `ABORTED` is terminal.
+- **Ten safety invariants as a testable list.** The vehicle's linter enforced some of them by
+  accident and stated none. They are now a table with an enforcement column, in
+  `../vehicle/README.md` ("The invariants, and which of them are enforced").
+
+What was **not** taken: the transport hardening (TLS 1.3 and DTLS 1.3 profiles, COSE/CBOR
+serialisation, the Protobuf schema, the replay ledger) belongs to `docs/diode-contract.md` and is
+already decided there under C-18 and D-01/D-02; the diode counters (`rx_replay_rejects`,
+`rx_auth_failures`) are the *window's* statistics rather than the vehicle's; and the mission
+state machine's actions, guards and timers are SCXML-shaped implementation guidance for the far
+side. `mission_diode.md:309`'s distinction between a vehicle made safe after an abort and a
+vehicle merely waiting is the observation this integration most depends on.
 
 **How much of each is transport rather than domain.** A heading-attribution pass puts the
 transport-and-meta share at roughly: avionics 81%, communications 72%, thermal 49%, main
 propulsion 47%, ECLSS 43%, crew 37%, electrical 35%, events 29%, RCS 22%, consumables 13%,
-GNC 8%, apollo 2%. The four highest are the four whose domain payload is thinnest. Treat
-these as estimates of a judgement, not measurements.
+GNC 8%, apollo 2%, and `mission` roughly 75% — the highest of the set, since its architecture is
+explicitly domain-neutral and its only concrete content is the state machine and the invariants.
+The five highest are the five whose domain payload is thinnest. Treat these as estimates of a
+judgement, not measurements.
 
-**Placeholder census** (`UNSPECIFIED` 219 total: communications 125, thermal 45, consumables
-24, GNC 6, events 5, avionics 4, electrical 4, crew 4, main propulsion 2, apollo 0, ECLSS 0,
-RCS 0. `RIP-REF` 44: propulsion 32, RCS 9, thermal 3. `CRA-REF` 2, both in consumables.
+**Placeholder census** (`UNSPECIFIED` 222 total: communications 125, thermal 45, consumables
+24, GNC 6, events 5, avionics 4, electrical 4, crew 4, mission 3, main propulsion 2, apollo 0,
+ECLSS 0, RCS 0. `RIP-REF` 44: propulsion 32, RCS 9, thermal 3. `CRA-REF` 2, both in consumables.
 `TBD`, `TO BE`, `MISSION-CONFIG`: zero). Three qualifications matter more than the totals:
 
-- 31 of the 219 are protobuf enum sentinels (`FOO_UNSPECIFIED = 0`). The four in `crew_diode`
+- 31 of the 222 are protobuf enum sentinels (`FOO_UNSPECIFIED = 0`). The four in `crew_diode`
   are *all* sentinels: crew defers nothing through this token.
-- 194 of 219 sit in three documents. Seven specs contain no deferred-requirement use of it at
+- 194 of 222 sit in three documents. Seven specs contain no deferred-requirement use of it at
   all and express deferral as prose or a `_cfg` suffix. **A token census understates deferral.**
 - `Sim` is not a deferral token. `apollo:42` defines it as a *recommended baseline that is not
   an assertion about Apollo* — the opposite of `UNSPECIFIED`. The README conflates three
   different things: unimplemented, unverified, and invented-but-flagged.
 
-**Only four of the twelve use RFC-2119 normative keywords at all** (`communcations` 22 ×
-`MUST`, `electrical` 20 × `SHALL`, `events` 16 × `MUST`, `crew` 1). In the other eight you
+**Only five of the thirteen use RFC-2119 normative keywords at all** (`communcations` 22 ×
+`MUST`, `mission` 23 × `SHALL`, `electrical` 20 × `SHALL`, `events` 16 × `MUST`, `crew` 1). In
+the other eight you
 cannot tell a binding requirement from an aspiration — which is also why the three readings of
 `RIP-REF` coexist: `thermal:159` treats it as an *escape from* `UNSPECIFIED`, while
 `main_propulsion:36` and `rcs:29` treat it as a default to be replaced before qualification.
@@ -370,12 +412,23 @@ architecture needs and that apollo does not contain. In rough order of value:
    bandwidth budget (`:1110-1120`, every row re-derived: 32.3 kB/s = 259 kbit/s, 323 with
    framing, ~28 MiB per 15 min). Also `:1616-1653`, **38 concrete integration-test rows** — the
    most directly reusable single artifact in the corpus.
-2. **`avionics:371-509`** — seven diagnostic functions (`sensor_health`, `redundant_vote`,
-   `estimator_innovation_rule`, `cusum_rule`, `actuator_tracking`, `power_rule`, `thermal_rule`,
-   `time_health`). This is the **only** place in the corpus that supplies the diagnostics apollo
-   demands and never specifies: apollo says a silently biased sensor must stay `GOOD` until a
-   real diagnostic catches it (`:688`) and lists eleven fault modes (`:661-671`) without saying
-   what detects any of them. Caveat in §5.
+2. **`avionics:371-509`** — **nine** diagnostic functions, not the seven this review first
+   counted: `sensor_health`, `redundant_vote`, `estimator_innovation_rule`, `cusum_rule`,
+   `actuator_tracking`, `power_rule`, `thermal_rule`, `time_health`, and `authorize_command`.
+   This is the **only** place in the corpus that supplies the diagnostics apollo demands and
+   never specifies: apollo says a silently biased sensor must stay `GOOD` until a real diagnostic
+   catches it (`:688`) and lists eleven fault modes (`:661-671`) without saying what detects any
+   of them. Three of the nine are load-bearing and were landed in `domains/avionics/`:
+   `sensor_health` is the only function in the corpus whose signature satisfies
+   `simulator-design.md:496-508`'s rule that quality cannot see the fault state; `cusum_rule` is
+   the vehicle's only detector for a drift below the reporting instrument's own resolution, which
+   `plant.md` §4 requires (the nominal cabin leak is below `eclss.leak_rate_g_s`'s quantum and
+   "must still happen"); and `authorize_command`'s last two clauses supply a term
+   `mission_diode.md`'s eight-term predicate does not have — an irreversible action needs a
+   *synchronised clock*, because its deadline is measured against one. The first count was wrong
+   for an instructive reason: the functions are defined inside one fenced block and separated by
+   blank lines rather than by headings, so a heading-attribution pass — the method §1's transport
+   shares are computed with — sees one artifact where there are nine. Caveat in §5.
 3. **`rcs:804-853` + `:674-694`** — pulse generation with a residual accumulator, minimum on/off
    time and fire/release hysteresis. apollo's RCS is a boolean valve and a scalar deadband;
    without this, firings are free and chatter is unbounded. `rcs:264-277`'s pulse-resolution

@@ -34,8 +34,10 @@ by someone else; the only thing the two halves share is `docs/diode-contract.md`
 `contract/fake_diode.py` is a fixture that satisfies it and models nothing. A request that
 sounds like "add a thruster command" belongs on the far side of the window, not here.
 
-`docs/deep_research/` (~13k lines) specifies that far side. Don't read it unless the work is
-on the contract itself. `docs/design.md` is the rationale for every decision below; read it
+`docs/deep_research/` (~16.4k lines) specifies that far side. Don't read it unless the work is
+on the contract itself; `docs/deep_research/integration/corpus-review.md` is the map, and
+`docs/deep_research/vehicle/` is the seed of the vehicle. `docs/design.md` is the rationale for
+every decision below; read it
 before arguing with one.
 
 ## Operator side vs. fleet side
