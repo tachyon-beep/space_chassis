@@ -1145,13 +1145,18 @@ def test_the_plant_reports_where_each_crew_member_is_and_where_it_cannot():
     assert "translunar_coast" in out and "csm_lower_equipment_bay" in out
     # A phase that spans a docking reports both of its configurations.
     assert out.count("lunar_orbit ") >= 2 or out.count("  lunar_orbit") >= 2, out[:600]
-    # And the two phases that cannot place the CSM pilot say so, naming her.
-    # The coverage summary is the block after the per-configuration rows.
+    # Every crew member is placed in every phase — and the two that could not place the CM pilot
+    # until `also_present` existed are asserted by *name*, because "every crew member placed" would
+    # pass just as well if the phase lists had been rewritten instead.
     summary = out.split("\n\n", 1)[1]
+    assert "UNPLACED" not in summary, summary
     for phase in ("descent", "surface"):
         line = next((ln for ln in summary.splitlines() if ln.strip().startswith(phase)), None)
-        assert line and "UNPLACED" in line and "csm_pilot" in line, line
-    assert "every crew member placed" in summary, summary
+        assert line and "every crew member placed" in line, line
+        assert "'csm'" in line and "'lm'" in line, (
+            f"{phase} places everyone without the CSM being present, which is the gap the "
+            f"`also_present` declaration exists to close: {line}"
+        )
 
 
 def test_the_linter_refuses_a_crew_the_configuration_cannot_hold(tmp_path):
