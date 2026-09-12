@@ -2987,6 +2987,73 @@ def test_the_linter_refuses_a_shared_rule_with_no_pointer(tmp_path):
     assert "declares no `implemented_by` domain" in result.stdout
 
 
+def test_the_linter_refuses_a_key_swallowed_by_a_block_scalar(tmp_path):
+    """The silent half of the duplicate-key accident: nothing collides, so nothing notices.
+
+    `duplicate_keys` describes this accident and catches the half of it that *clashes* — a block
+    scalar's content indented to the depth of the entry that follows, so the entry is absorbed and
+    its keys overwrite the one above. That check needs a collision to fire. When the absorbed keys
+    are new, nothing is replaced and the declaration simply **does not exist**.
+
+    Two were found this way. `coupling.yaml`'s `C-WATER-BUDGET` lost its `stability` declaration
+    into its own note, so the linter's relay-oscillation rule read it as absent and passed only
+    because no member of that cycle happens to be latched. `consumables/components.yaml`'s
+    `reconciliation` lost two — its `on_mismatch` rule and its whole `provenance` block — so the
+    vehicle's rule about never rewriting the ledger was a sentence no reader of the parsed document
+    could reach.
+    """
+    definition = copy_definition(tmp_path / "swallowed")
+    path = definition / "domains" / "consumables" / "components.yaml"
+    lines = path.read_text().split("\n")
+    start = next(i for i, line in enumerate(lines) if line.strip() == "on_mismatch:")
+    end = next(i for i in range(start, len(lines)) if lines[i].strip() == "provenance:")
+    for index in range(start, end + 5):
+        if lines[index].strip():
+            lines[index] = "  " + lines[index]
+    path.write_text("\n".join(lines))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "prose rather than a key" in result.stdout
+    assert "on_mismatch" in result.stdout
+
+
+def test_the_missions_clock_is_held_to_the_phase_ladder(tmp_path):
+    """The same total is stated three times, each saying the linter holds it, and none was read.
+
+    `phase_total_check`'s note read "the linter re-derives this and refuses a mismatch";
+    `total_duration_provenance` read "sum of the phase durations below; the linter refuses a build
+    where they disagree"; and `total_ticks_provenance` gave the tick count as a sentence. The
+    linter does re-derive the ladder — the trajectory checks trip the moment a phase duration
+    moves — but **none of the three declarations was read**: `sums_to_h` set to 999.0 passed
+    silently.
+
+    That is worse than an unchecked number, because the sentence tells the next reader not to check
+    it by hand.
+    """
+    definition = copy_definition(tmp_path / "total")
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    anchor = "  total_ticks: 34560000\n"
+    assert anchor in text, "the fixture no longer matches the tick count"
+    path.write_text(text.replace(anchor, "  total_ticks: 3456\n", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "192 h at 50 Hz is 34,560,000" in result.stdout
+
+    definition = copy_definition(tmp_path / "sum")
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    anchor = 'computation: "73.0 + 24.5 + 2.5 + 21.5 + 3.5 + 7.5 + 58.5 + 1.0"\n'
+    assert anchor in text, "the fixture no longer matches the phase computation"
+    path.write_text(text.replace(anchor, 'computation: "73.0 + 24.5"\n', 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "does not re-derive" in result.stdout
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
