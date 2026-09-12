@@ -3108,6 +3108,87 @@ def test_the_linter_refuses_a_debt_that_has_been_answered(tmp_path):
     assert "while the top-level `landing_site`" in result.stdout
 
 
+def _plant():
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    return plant
+
+
+def test_the_stock_integrator_reads_its_driver():
+    """The vehicle's most load-bearing piece of simulation code had never executed, and was wrong.
+
+    The schedule stops at the first `algebraic` state — long before it reaches any of the 24 stock
+    states — so the integrator every consumable in the mission depends on was written, reviewed and
+    never run. Handed `lm_cabin_o2_kg` it returned the same 117.89792 kg whether one crew member was
+    aboard or three, because it summed `sensitivity * dt` over every incoming edge and never read a
+    driver. The three edges it summed were `116.86 Pa per K` (a lag relation between zone temperature
+    and cabin pressure), `1.0 kg O2 per kg O2` (a conservation ratio whose flux is the tank's
+    *outflow*, which the ratio does not contain) and `0.03792 kg/h per crew`. Adding
+    pascals-per-kelvin to kilograms-per-hour and calling the result a mass is not an approximation;
+    it is a dimension error wearing a number.
+
+    The three computable edges are exercised here by direct call, because that is the only way to
+    reach them: nothing in the schedule does.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    edge = next(e for e in world.edges if e.id == "E-CREW-ATM")
+    assert edge.sensitivity["unit"] == "kg/h per crew"
+
+    for crew, expected in ((0.0, 0.0), (1.0, 0.03792), (3.0, 0.11376)):
+        flux = plant.stock_flux(world, edge, {edge.source: crew}, 3600.0)
+        assert flux == pytest.approx(expected, rel=1e-6), f"{crew} crew gave {flux}"
+
+    # And the per-second basis is the other half of the unit parse: E-RAD-WATER is kg/s per W.
+    rad = next(e for e in world.edges if e.id == "E-RAD-WATER")
+    assert plant.stock_flux(world, rad, {rad.source: 1000.0}, 1.0) == pytest.approx(4.0816e-4)
+
+
+def test_the_stock_integrator_refuses_what_is_not_a_flux():
+    """Eight of the graph's fourteen stock edges cannot be integrated as written, and each refuses.
+
+    Two kinds, and each needs a different thing declared. A **ratio whose flow is undeclared** —
+    `1.0 kg O2 per kg O2` — converts the source's *outflow* into the target's inflow, and the outflow
+    belongs to whichever state produces it. A **structural relation landing on a stock node** —
+    `116.86 Pa per K` — lands there because the channel hangs off the node, not because anything
+    flows into it: a cabin's pressure depends on its temperature and its mass, but its mass does not
+    depend on its temperature.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+
+    for edge_id, needle in (
+        ("E-ZONE-ATM", "not a flux into a stock"),
+        ("E-ATM-ABSORB", "not a flux into a stock"),
+        ("E-O2-ECLSS", "dimensionless ratio"),
+        ("E-LM-O2-ECLSS", "dimensionless ratio"),
+    ):
+        edge = next(e for e in world.edges if e.id == edge_id)
+        with pytest.raises(plant.Unconfigured) as caught:
+            plant.stock_flux(world, edge, {edge.source: 1.0}, 0.02)
+        assert needle in caught.value.what, f"{edge_id}: {caught.value.what}"
+        assert edge_id in str(caught.value.where) or edge_id in caught.value.what, edge_id
+
+
+def test_the_stock_integrator_refuses_a_missing_driver():
+    """A rate with a time basis still needs something to multiply, and the refusal names it."""
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    edge = next(e for e in world.edges if e.id == "E-CREW-ATM")
+
+    with pytest.raises(plant.Unconfigured) as caught:
+        plant.stock_flux(world, edge, {}, 0.02)
+    assert "which nothing supplies this tick" in caught.value.what
+
+    with pytest.raises(plant.Unconfigured) as caught:
+        plant.stock_flux(world, edge, {edge.source: "three"}, 0.02)
+    assert "not a number the sensitivity can multiply" in caught.value.what
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
