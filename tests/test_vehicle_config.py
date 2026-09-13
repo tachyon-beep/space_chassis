@@ -3232,7 +3232,6 @@ def test_the_linter_and_the_plant_share_one_stock_flux_rule():
         "E-PLATE-BAT": "'lag' edge on a stock",
         "E-O2-ECLSS": "dimensionless ratio",
         "E-LM-O2-ECLSS": "dimensionless ratio",
-        "E-FC-WATER": "dimensionless ratio",
         "E-ATM-ABSORB": "does not establish a flux",
         "E-LM-ATM-ABSORB": "does not establish a flux",
     }
@@ -3381,6 +3380,8 @@ def test_the_linter_reports_the_discharges_it_cannot_establish(tmp_path):
     backwards, so a plant multiplying it by a thrust would get N^2 per (kg/s) and call the result
     kilograms of propellant.
     """
+    if str(VEHICLE / "tools") not in sys.path:
+        sys.path.insert(0, str(VEHICLE / "tools"))
     from check_vehicle import stock_flux_basis
 
     coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
@@ -3389,7 +3390,6 @@ def test_the_linter_reports_the_discharges_it_cannot_establish(tmp_path):
     assert result.returncode == 0, result.stdout[-1500:]
 
     structural = {
-        "E-FC-WATER",
         "E-O2-ECLSS",
         "E-LM-O2-ECLSS",
         "E-ATM-ABSORB",
@@ -3408,7 +3408,15 @@ def test_the_linter_reports_the_discharges_it_cannot_establish(tmp_path):
         )
 
     # The four that are computable stay computable, so the rule is not simply refusing everything.
-    for edge_id in ("E-CREW-ATM", "E-LM-CREW-ATM", "E-RAD-WATER", "E-CREW-WATER"):
+    for edge_id in (
+        "E-CREW-ATM",
+        "E-LM-CREW-ATM",
+        "E-RAD-WATER",
+        "E-CREW-WATER",
+        "E-O2-DRAW",
+        "E-H2-DRAW",
+        "E-FC-WATER",
+    ):
         edge = next(e for e in coupling["edges"] if e["id"] == edge_id)
         basis, reason = stock_flux_basis(edge, nodes)
         assert basis in ("per_second", "per_hour"), f"{edge_id}: {reason}"
@@ -3455,10 +3463,10 @@ def test_a_ratio_refusal_names_the_flow_that_would_fix_it():
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-1500:]
 
+    # `E-O2-FC`, `E-H2-FC` and `E-FC-WATER` left this list in round 59: the first two now run from
+    # the draw nodes rather than from the tanks, and the third applies its ratio to the oxygen draw.
+    # What remains is the pair that needs a *cabin supply* flow, which nothing produces yet.
     needed = {
-        "E-O2-FC": "kg O2",
-        "E-H2-FC": "kg H2",
-        "E-FC-WATER": "kg reactants",
         "E-O2-ECLSS": "kg O2",
         "E-LM-O2-ECLSS": "kg O2",
     }
@@ -3510,7 +3518,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     seen = [state.id for rows in buckets.values() for state in rows]
     assert len(seen) == len(set(seen)), "a state is classified twice"
     assert set(seen) == {s.id for s in world.states}, "a state is classified by nothing"
-    assert sum(len(rows) for rows in buckets.values()) == 124
+    assert sum(len(rows) for rows in buckets.values()) == 126
 
     # `ready` means what it says: only the two classes the reference plant can actually advance.
     assert {s.method for s in buckets["ready"]} <= {"lag", "stock"}
@@ -3532,7 +3540,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "124 states, by what blocks them" in result.stdout
+    assert "126 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -3813,6 +3821,57 @@ def test_the_readme_status_matches_the_tools():
         (f"{states} states, by what blocks them", "the build-order view"),
     ):
         assert needle in readme, f"{what} is stale: expected {needle!r} in the README"
+
+
+def test_the_fuel_cell_reactant_chain_is_grounded_but_for_one_figure():
+    """The cell's draws are nodes now, and everything downstream of them is derivable.
+
+    The tanks the cell drains had no computable outflow: the oxygen inventory is shared between
+    ECLSS and the cells and nothing said at what rate. `fc_o2_draw` and `fc_h2_draw` are flow nodes
+    with the whole chain declared — and **exactly one figure in it is owed**, the cell's per-joule
+    oxygen consumption, which no source publishes (`vehicle.yaml#electrical` carries a standby
+    sustain flow and no operating point).
+
+    Everything else is grounded: the hydrogen draw is the published 8:1 mass ratio, and the water is
+    stoichiometry. The availability edges moved with the draws, which is what let the two
+    `C-REACTANT-DRAW` cycles close again — the path is now `fuel_cell -> fc_o2_draw -> fuel_cell`
+    rather than through the tank, because what limits the cell is the *draw*, not the tank level.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    edges = {e["id"]: e for e in coupling["edges"]}
+    nodes = coupling["nodes"]
+
+    for node, unit in (("fc_o2_draw", "kg O2/s"), ("fc_h2_draw", "kg H2/s")):
+        assert nodes[node]["kind"] == "flow" and nodes[node]["unit"] == unit
+
+    # The chain: the cell sets the draw, the tank supplies it, and the draw limits the cell.
+    assert (edges["E-FC-DRAW-O2"]["from"], edges["E-FC-DRAW-O2"]["to"]) == (
+        "fuel_cell",
+        "fc_o2_draw",
+    )
+    assert (edges["E-O2-DRAW"]["from"], edges["E-O2-DRAW"]["to"]) == ("o2_csm", "fc_o2_draw")
+    assert (edges["E-O2-FC"]["from"], edges["E-O2-FC"]["to"]) == ("fc_o2_draw", "fuel_cell")
+    assert (edges["E-FC-WATER"]["from"], edges["E-FC-WATER"]["to"]) == (
+        "fc_o2_draw",
+        "water_potable",
+    )
+
+    # Both tank drains and the water production are computable, and the water is per kg of oxygen.
+    for edge_id, driver in (("E-O2-DRAW", "to"), ("E-H2-DRAW", "to"), ("E-FC-WATER", "from")):
+        edge = next(e for e in world.edges if e.id == edge_id)
+        node = edge.target if driver == "to" else edge.source
+        flux = plant.stock_flux(
+            world, edge, {edge.source: 1.0, edge.target: 1.0}, 1.0, driver_node=node
+        )
+        assert flux > 0, edge_id
+    water = next(e for e in world.edges if e.id == "E-FC-WATER")
+    assert water.sensitivity["value"] == pytest.approx(36.03056 / 31.9988, rel=1e-3)
+
+    # The two tanks are loaded at the pad, and now say so: with the draws moved off them they had no
+    # inbound edge at all, which is the state the linter refuses unless `preloaded:` explains it.
+    assert nodes["o2_csm"]["preloaded"] and nodes["h2_csm"]["preloaded"]
 
 
 def test_every_vehicle_yaml_parses():
