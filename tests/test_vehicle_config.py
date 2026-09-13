@@ -3487,6 +3487,56 @@ def test_a_ratio_refusal_names_the_flow_that_would_fix_it():
     assert basis == "per_second", reason
 
 
+def test_the_build_order_is_derived_and_partitions_the_vehicle():
+    """The folder's answer to "what do I implement first" has to be computed, not authored.
+
+    An authored worklist drifts the moment anybody lands anything, and a stale build order is worse
+    than none because it sends the next reader to work that is already done. So `plant.py
+    --build-order` classifies every state by `advance()`'s own refusal order — the same sequence of
+    tests the plant runs when it gets there — which means the two cannot disagree.
+
+    The shape it reports is the honest one: **half the vehicle owes a rule**, and that is by
+    construction, because `plant.md` §3's `algebraic`, `discrete`, `dynamics` and `hazard` classes
+    are domain code the configuration deliberately does not carry. The build order is therefore not
+    a list of missing numbers; it is mostly a list of missing *code*.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    buckets = plant.build_order(world)
+
+    # A partition, not an approximation: every state is in exactly one bucket. A classifier written
+    # as a sequence of skips finds its way past exactly the inputs nobody anticipated, which is the
+    # failure this project has already met once in `conserved_dimension`.
+    seen = [state.id for rows in buckets.values() for state in rows]
+    assert len(seen) == len(set(seen)), "a state is classified twice"
+    assert set(seen) == {s.id for s in world.states}, "a state is classified by nothing"
+    assert sum(len(rows) for rows in buckets.values()) == 120
+
+    # `ready` means what it says: only the two classes the reference plant can actually advance.
+    assert {s.method for s in buckets["ready"]} <= {"lag", "stock"}
+    # And a state that owes a rule is never also counted as ready.
+    assert not ({s.id for s in buckets["rule"]} & {s.id for s in buckets["ready"]})
+
+    # The counts are the vehicle's current shape, and a change here is a change in the build order
+    # rather than a cosmetic difference — which is exactly what makes it worth asserting.
+    assert len(buckets["ready"]) == 11
+    assert len(buckets["rule"]) == 61, "half the vehicle is domain code"
+
+
+def test_the_plant_reports_the_build_order():
+    """The view is a CLI contract, not an internal function."""
+    result = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--build-order"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "120 states, by what blocks them" in result.stdout
+    for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
+        assert phrase in result.stdout, f"{phrase!r} missing from the build order"
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
