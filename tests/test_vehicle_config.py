@@ -3537,6 +3537,56 @@ def test_the_plant_reports_the_build_order():
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
 
+def test_a_state_with_an_outbound_edge_and_no_driver_is_reported():
+    """Having *an* edge is not having an input, and the isolation check cannot tell the difference.
+
+    `cabin_zone_t` has an edge — `E-ZONE-ATM` points *out* of it — so it looks connected. But
+    nothing drives it, `zone_csm_cabin_t` is a `lag`, and a lag with no driver has nothing to relax
+    toward. The cabin's temperature has no heat input anywhere in the graph, while the crew, the
+    equipment and the loop all warm it in the prose; the state's own 2,880 s derivation reasons
+    about "a 1 kW cabin load" that no edge carries.
+
+    The check also found three nodes that look identical and are not: **`o2_lm`, `prop_rcs` and
+    `pressurant_he` have no inbound edge because they are filled at the pad and never again**, which
+    they say in `preloaded:`. The first version reported all seven, which is three parts noise to
+    one part signal — and the declaration is exactly what separates a stock that nothing fills from
+    one that is filled once.
+    """
+    _plant()
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    nodes = coupling["nodes"]
+    # The same rule the plant uses: a *back-edge* is not a driver, because `advance()` skips them
+    # when it collects a state's incoming edges. `fuel_cell` is the case that proves it — `E-O2-FC`
+    # points into it, and it is the back-edge of `C-REACTANT-DRAW-O2`, so the node still has nothing
+    # forward driving it. A test that counted any inbound edge would have called it driven.
+    back = {cy["back_edge"] for cy in coupling["cycles"] if cy.get("back_edge")}
+    forward = {e["to"] for e in coupling["edges"] if e["id"] not in back}
+    driving = {"lag", "stock", "delay", "dynamics"}
+    methods = {}
+    for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        for state in (yaml.safe_load(path.read_text()) or {}).get("state") or []:
+            methods[state["id"]] = (state.get("method"), state.get("node"))
+
+    undriven = [
+        name
+        for name in nodes
+        if name not in forward
+        and any(e["from"] == name for e in coupling["edges"])
+        and not nodes[name].get("preloaded")
+        and any(m in driving and n == name for m, n in methods.values())
+    ]
+    assert sorted(undriven) == ["cabin_zone_t", "fuel_cell", "imu", "lm_cabin_zone_t"], undriven
+
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-1200:]
+    for name in undriven:
+        assert f"coupling.yaml:node {name}: has edges but none into it" in result.stdout, name
+    for name in ("o2_lm", "prop_rcs", "pressurant_he"):
+        assert f"coupling.yaml:node {name}: has edges but none into it" not in result.stdout, (
+            f"{name} is pre-loaded and must not be reported as undriven"
+        )
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
