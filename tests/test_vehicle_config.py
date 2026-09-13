@@ -4211,6 +4211,54 @@ def test_the_oxygen_supplies_are_checked_against_the_same_three_declarations(tmp
     assert "The regulator replaces what the cabin loses" in result.stdout
 
 
+def test_a_channel_about_a_cabin_is_paired_or_explained(tmp_path):
+    """A channel that is not paired with its twin is a *claim*, and until round 68 it was implicit.
+
+    The vehicle has two crewed compartments, so a channel about a cabin's air is about one cabin:
+    `eclss.cabin_temp_c` and `eclss.lm_cabin_temp_c` are one quantity in two rooms with no shared air
+    between them. Most ECLSS channels are paired that way. **The CO2 exposure average was not** — a
+    limit that governs how long a surface stay can be extended, published for the cabin the crew
+    leave and none for the one they live in, and nothing could tell that from a channel that is
+    legitimately single because its subject is.
+
+    `presentation.yaml#single_cabin` names each unpaired channel with its reason, and the comparison
+    is exact in both directions: an unpaired channel must be explained, and an explanation of a
+    *paired* channel is stale — a reader told to expect a gap that has been closed.
+    """
+    registry = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    presentation = yaml.safe_load((VEHICLE / "presentation.yaml").read_text())
+    published = {
+        str(c["id"])
+        for section in registry.values()
+        if isinstance(section, list)
+        for c in section
+        if isinstance(c, dict) and "id" in c
+    }
+    eclss = {cid for cid in published if cid.startswith("eclss.")}
+    paired = {
+        cid for cid in eclss if ".lm_" not in cid and cid.replace("eclss.", "eclss.lm_", 1) in eclss
+    }
+    single = {cid for cid in eclss if ".lm_" not in cid and cid not in paired}
+
+    assert single == set(presentation["single_cabin"]), "the declaration and the registry disagree"
+    assert "eclss.co2_pp_1h_avg_mmhg" in paired, "the exposure average gained its twin in round 68"
+    assert len(paired) == 6
+
+    # An unpaired channel with no explanation is refused.
+    definition = copy_definition(tmp_path / "unexplained")
+    path = definition / "presentation.yaml"
+    text = path.read_text()
+    anchor = "  eclss.leak_rate_g_s: >-\n"
+    assert anchor in text, "the fixture no longer matches single_cabin"
+    stripped = re.sub(r"  eclss\.leak_rate_g_s: >-\n(?:    .*\n|\n)*", "", text, count=1)
+    assert stripped != text
+    path.write_text(stripped)
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "does not explain" in result.stdout and "eclss.leak_rate_g_s" in result.stdout
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
