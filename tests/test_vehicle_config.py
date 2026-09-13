@@ -3404,8 +3404,6 @@ def test_the_linter_reports_the_discharges_it_cannot_establish(tmp_path):
         "E-ATM-ABSORB",
         "E-LM-ATM-ABSORB",
         "E-RAD-WATER",
-        "E-PROP-ENG",
-        "E-RCSP-RCS",
         "E-PLATE-BAT",
     }
     for edge_id in structural:
@@ -3429,6 +3427,8 @@ def test_the_linter_reports_the_discharges_it_cannot_establish(tmp_path):
         "E-O2-ECLSS",
         "E-LM-O2-ECLSS",
         "E-WATER-RAD",
+        "E-PROP-ENG",
+        "E-RCSP-RCS",
     ):
         edge = next(e for e in coupling["edges"] if e["id"] == edge_id)
         basis, reason = stock_flux_basis(edge, nodes)
@@ -3969,6 +3969,57 @@ def test_the_water_cycle_edges_have_the_right_way_round(tmp_path):
     assert cycle["back_edge"] == "E-WATER-RAD"
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-800:]
+
+
+def test_the_propulsion_edges_are_stated_as_drains(tmp_path):
+    """`N per kg/s` is thrust per unit of flow — an engine's *production*, under a tank's edge.
+
+    `prop_main` and `prop_rcs` discharge through their outbound edges, and an outbound edge reads
+    its **target** as the driver: the tank drains at whatever rate the thrust demands. Stated as
+    `N per kg/s` the edge gave the plant a force to multiply a propellant mass by, and the
+    dimensional check refused it — correctly, because N per (kg/s) is what an engine *produces*, not
+    what a tank loses.
+
+    Both reversed figures are published rather than owed: Isp 314.5 s and 290 s are in
+    `vehicle.yaml#propulsion`, so `1/(Isp x g0)` closes each edge exactly and **249 became 247**.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    edges = {e["id"]: e for e in coupling["edges"]}
+
+    for edge_id, isp in (("E-PROP-ENG", 314.5), ("E-RCSP-RCS", 290.0)):
+        edge = edges[edge_id]
+        assert edge["sensitivity"]["unit"] == "kg/s per N", edge_id
+        assert edge["sensitivity"]["value"] == pytest.approx(1.0 / (isp * 9.80665), rel=1e-9)
+        # No `advances`: each target carries a single state, so the declaration is not required —
+        # and it would be wrong now, because the edge reads the thrust rather than producing it.
+        assert edge.get("advances") is None, edge_id
+
+    # A thousand newtons of SPS thrust drains 1000/3084.2 kg/s of propellant.
+    e = next(x for x in world.edges if x.id == "E-PROP-ENG")
+    flux = plant.stock_flux(
+        world, e, {e.source: 100.0, e.target: 1000.0}, 1.0, driver_node=e.target
+    )
+    assert flux == pytest.approx(1000.0 / (314.5 * 9.80665), rel=1e-9)
+
+    # `prop_rcs` has no *inbound* edge at all — it is loaded at the pad and never refilled — so the
+    # linter would report it undriven if the declaration were absent.
+    assert coupling["nodes"]["prop_rcs"]["preloaded"]
+
+    definition = copy_definition(tmp_path / "forward")
+    path = definition / "coupling.yaml"
+    text = path.read_text()
+    anchor = '      unit: "kg/s per N"'
+    assert anchor in text, "the fixture no longer matches the propulsion edges"
+    path.write_text(text.replace(anchor, '      unit: "N per kg/s"', 1))
+
+    # A stock-flux failure is reported as a *debt* rather than a refusal — the vehicle genuinely is
+    # not finished — so the build still composes and the edge appears in the owed list by name.
+    result = run_linter(definition)
+    assert result.returncode == 0, result.stdout[-800:]
+    assert "whose unit is 'N'" in result.stdout
+    assert "coupling.yaml:edge E-PROP-ENG:" in result.stdout
 
 
 def test_every_vehicle_yaml_parses():
