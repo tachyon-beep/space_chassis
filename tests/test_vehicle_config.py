@@ -4166,6 +4166,51 @@ def test_what_a_cabin_removes_is_what_its_crew_produce(tmp_path):
     assert "A cabin's equipment that removes a different amount" in result.stdout
 
 
+def test_the_oxygen_supplies_are_checked_against_the_same_three_declarations(tmp_path):
+    """The CO2 join's twin: the regulator replaces what the cabin loses, and both terms are published.
+
+    Round 60 declared these two rates with their arithmetic and nothing checked them beyond
+    re-deriving their own `computation`. They are held to the *other* files now — the crew count, the
+    metabolic rate and the leak — which is the same three-way join the removal rates got in round 66,
+    applied to the supply side.
+
+    The leak is the interesting half. `vehicle.yaml#consumables.leak` was **one figure doing two
+    cabins' work** while its own source named only one of them; it is per cabin now, and the CSM's is
+    declared as borrowed (A11 gives one leak and it is the LM's, 0.05 lb/hr = 0.0226796 kg/h, while
+    the CSM's own is published nowhere). A leak is a property of a seal rather than of a programme,
+    and two cabins with one number between them read as though they had two.
+    """
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    eclss = yaml.safe_load((VEHICLE / "domains" / "eclss" / "components.yaml").read_text())
+    states = {str(s["id"]): s for s in eclss["state"]}
+    leak = vehicle["consumables"]["leak"]
+    o2 = vehicle["consumables"]["metabolic"]["o2_kg_per_crew_day"]
+
+    assert leak["lm_kg_per_h"] == pytest.approx(0.05 * 0.453592, rel=1e-4)
+    assert leak["csm_kg_per_h"] != leak["lm_kg_per_h"], "the two cabins have different seals"
+
+    for state_id, crew_key, leak_per_h in (
+        ("cabin_o2_supply_csm_kg_s", "size", leak["csm_kg_per_h"]),
+        ("cabin_o2_supply_lm_kg_s", "surface_party", leak["lm_kg_per_h"]),
+    ):
+        crew = mission["crew"][crew_key]
+        expected = (leak_per_h + crew * o2 / 24.0) / 3600.0
+        assert states[state_id]["nominal_kg_s"] == pytest.approx(expected, rel=1e-5), state_id
+
+    # A leak changed in `vehicle.yaml` is refused rather than silently absorbed.
+    definition = copy_definition(tmp_path / "leak")
+    path = definition / "vehicle.yaml"
+    text = path.read_text()
+    anchor = "    lm_kg_per_h: 0.0226796\n"
+    assert anchor in text, "the fixture no longer matches the leak block"
+    path.write_text(text.replace(anchor, "    lm_kg_per_h: 0.05\n", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "The regulator replaces what the cabin loses" in result.stdout
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
