@@ -3587,6 +3587,51 @@ def test_a_state_with_an_outbound_edge_and_no_driver_is_reported():
         )
 
 
+def test_the_heat_inputs_are_a_partition_of_the_load_inventory(tmp_path):
+    """`load_budget` names the loads as the heat inputs and nothing said which zone each one warms.
+
+    The thermal domain declares the heat *sources* (`heater_bank_csm`'s own provenance says "the
+    thermal side owns which zones it serves"), the power domain declares the *loads*, and nothing
+    joined them — which is why `zone_csm_cabin_t` was a `lag` with no driver. The assignment lives
+    in the thermal domain rather than as a `zone:` field on each power load, because a field there
+    would be a second declaration of one fact in the file that explicitly refuses to duplicate the
+    numbers.
+
+    The property with teeth is the third: the distinct loads assigned per vehicle must sum to that
+    vehicle's declared demand. It closes **exactly** — 1,723 W of CSM load and 1,007 W of LM load —
+    which is what makes this a partition rather than a wish.
+    """
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    power = yaml.safe_load((VEHICLE / "domains" / "power" / "components.yaml").read_text())
+    loads = {str(r["id"]): r for r in power["loads"]}
+
+    seen: dict[str, set[str]] = {}
+    for block in thermal["heat_inputs"].values():
+        for load_id in block["loads"]:
+            assert load_id in loads, f"{load_id} is not a load"
+            seen.setdefault(str(loads[load_id]["vehicle"]), set()).add(load_id)
+    for vehicle, expected in (("csm", 1723), ("lm", 1007)):
+        total = sum(int(loads[i]["demand_w"] or 0) for i in seen[vehicle])
+        assert total == expected, f"{vehicle}: {total} W assigned against {expected} W declared"
+    # Nothing unaccounted: every load in the inventory heats somewhere.
+    assert sum(len(ids) for ids in seen.values()) == len(loads)
+
+    # A load assigned to no zone is a watt that heats nothing, and the check says which one.
+    definition = copy_definition(tmp_path / "gap")
+    path = definition / "domains" / "thermal" / "components.yaml"
+    text = path.read_text()
+    anchor = "    loads: [csm_imu, csm_guidance_computer, csm_instrumentation]\n"
+    assert anchor in text, "the fixture no longer matches the avionics bay"
+    path.write_text(
+        text.replace(anchor, "    loads: [csm_guidance_computer, csm_instrumentation]\n", 1)
+    )
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "A load assigned to no zone is a watt that heats nothing" in result.stdout
+    assert "csm_imu" in result.stdout
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
