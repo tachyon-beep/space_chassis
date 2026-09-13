@@ -3180,7 +3180,6 @@ def test_the_stock_integrator_refuses_what_is_not_a_flux():
 
     for edge_id, needle in (
         ("E-ZONE-ATM", "'lag' edge on a stock"),
-        ("E-ATM-ABSORB", "does not establish a flux"),
         ("E-RAD-WATER", "whose unit is"),
     ):
         edge = next(e for e in world.edges if e.id == edge_id)
@@ -3228,8 +3227,6 @@ def test_the_linter_and_the_plant_share_one_stock_flux_rule():
 
     expected = {
         "E-PLATE-BAT": "'lag' edge on a stock",
-        "E-ATM-ABSORB": "does not establish a flux",
-        "E-LM-ATM-ABSORB": "does not establish a flux",
         "E-RAD-WATER": "whose unit is",
     }
     for edge_id, needle in expected.items():
@@ -3401,8 +3398,6 @@ def test_the_linter_reports_the_discharges_it_cannot_establish(tmp_path):
     assert result.returncode == 0, result.stdout[-1500:]
 
     structural = {
-        "E-ATM-ABSORB",
-        "E-LM-ATM-ABSORB",
         "E-RAD-WATER",
         "E-PLATE-BAT",
     }
@@ -3429,6 +3424,10 @@ def test_the_linter_reports_the_discharges_it_cannot_establish(tmp_path):
         "E-WATER-RAD",
         "E-PROP-ENG",
         "E-RCSP-RCS",
+        "E-ATM-ABSORB",
+        "E-LM-ATM-ABSORB",
+        "E-CABIN-CO2-REMOVAL",
+        "E-LM-CABIN-CO2-REMOVAL",
     ):
         edge = next(e for e in coupling["edges"] if e["id"] == edge_id)
         basis, reason = stock_flux_basis(edge, nodes)
@@ -3532,7 +3531,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     seen = [state.id for rows in buckets.values() for state in rows]
     assert len(seen) == len(set(seen)), "a state is classified twice"
     assert set(seen) == {s.id for s in world.states}, "a state is classified by nothing"
-    assert sum(len(rows) for rows in buckets.values()) == 128
+    assert sum(len(rows) for rows in buckets.values()) == 129
 
     # `ready` means what it says: only the two classes the reference plant can actually advance.
     assert {s.method for s in buckets["ready"]} <= {"lag", "stock"}
@@ -3542,7 +3541,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # The counts are the vehicle's current shape, and a change here is a change in the build order
     # rather than a cosmetic difference — which is exactly what makes it worth asserting.
     assert len(buckets["ready"]) == 13
-    assert len(buckets["rule"]) == 67, "half the vehicle is domain code"
+    assert len(buckets["rule"]) == 68, "half the vehicle is domain code"
 
 
 def test_the_plant_reports_the_build_order():
@@ -3554,7 +3553,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "128 states, by what blocks them" in result.stdout
+    assert "129 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -4020,6 +4019,68 @@ def test_the_propulsion_edges_are_stated_as_drains(tmp_path):
     assert result.returncode == 0, result.stdout[-800:]
     assert "whose unit is 'N'" in result.stdout
     assert "coupling.yaml:edge E-PROP-ENG:" in result.stdout
+
+
+def test_the_absorbers_remove_from_their_own_cabin(tmp_path):
+    """One removal rate for two absorbers is the round-42 defect one layer up.
+
+    The counters were split then; the *rate that spends them* was not. `co2_removal_kg_s` was a
+    single algebraic state on the `internal` sentinel **reading both counters**, so it converted two
+    beds' remaining capacity into one rate for one vehicle — and a crew on the surface spent the CSM
+    element while a crew back in the CM spent the LM cartridge.
+
+    Split into `co2_removal_csm_kg_s` and `co2_removal_lm_kg_s`, each on its own flow node, the chain
+    is per-compartment end to end: the cabin loses CO2 to its own removal, the removal spends its own
+    counter, and the removal rate is two thirds of the CSM's on the LM because two crew produce it
+    rather than three — a *different* number, and one a shared state could not express.
+
+    It also made the two absorber edges computable. `man-hours per kg CO2` had no time basis, so the
+    classifier refused it; applied to a node carrying `kg CO2/s` it is man-hours per second, which is
+    what the counter integrates. **247 became 245**, and seventeen of the twenty-one stock-adjacent
+    edges now compute.
+    """
+    eclss = yaml.safe_load((VEHICLE / "domains" / "eclss" / "components.yaml").read_text())
+    states = {str(s["id"]): s for s in eclss["state"]}
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    edges = {str(e["id"]): e for e in coupling["edges"]}
+    nodes = coupling["nodes"]
+
+    assert "co2_removal_kg_s" not in states, "the shared removal state is back"
+    for state_id, node in (
+        ("co2_removal_csm_kg_s", "co2_removal_csm"),
+        ("co2_removal_lm_kg_s", "co2_removal_lm"),
+    ):
+        assert states[state_id]["node"] == node
+        assert nodes[node]["kind"] == "flow" and nodes[node]["unit"] == "kg CO2/s"
+
+    # Each removal spends its own counter, and each cabin loses CO2 to its own removal.
+    assert (edges["E-ATM-ABSORB"]["from"], edges["E-ATM-ABSORB"]["to"]) == (
+        "co2_removal_csm",
+        "absorber_capacity_csm",
+    )
+    assert (edges["E-LM-ATM-ABSORB"]["from"], edges["E-LM-ATM-ABSORB"]["to"]) == (
+        "co2_removal_lm",
+        "absorber_capacity_lm",
+    )
+    assert edges["E-CABIN-CO2-REMOVAL"]["drains"] == "csm_cabin_co2_kg"
+    assert edges["E-LM-CABIN-CO2-REMOVAL"]["drains"] == "lm_cabin_co2_kg"
+
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    for edge_id, driver, expected_unit in (
+        ("E-ATM-ABSORB", "from", "man-hours per kg CO2"),
+        ("E-CABIN-CO2-REMOVAL", "to", "kg CO2 per kg CO2"),
+    ):
+        edge = next(e for e in world.edges if e.id == edge_id)
+        assert edge.sensitivity["unit"] == expected_unit, edge_id
+        flux = plant.stock_flux(
+            world,
+            edge,
+            {edge.source: 1.0, edge.target: 1.0},
+            1.0,
+            driver_node=edge.source if driver == "from" else edge.target,
+        )
+        assert flux > 0, edge_id
 
 
 def test_every_vehicle_yaml_parses():
