@@ -3510,7 +3510,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     seen = [state.id for rows in buckets.values() for state in rows]
     assert len(seen) == len(set(seen)), "a state is classified twice"
     assert set(seen) == {s.id for s in world.states}, "a state is classified by nothing"
-    assert sum(len(rows) for rows in buckets.values()) == 122
+    assert sum(len(rows) for rows in buckets.values()) == 124
 
     # `ready` means what it says: only the two classes the reference plant can actually advance.
     assert {s.method for s in buckets["ready"]} <= {"lag", "stock"}
@@ -3520,7 +3520,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # The counts are the vehicle's current shape, and a change here is a change in the build order
     # rather than a cosmetic difference — which is exactly what makes it worth asserting.
     assert len(buckets["ready"]) == 13
-    assert len(buckets["rule"]) == 63, "half the vehicle is domain code"
+    assert len(buckets["rule"]) == 65, "half the vehicle is domain code"
 
 
 def test_the_plant_reports_the_build_order():
@@ -3532,7 +3532,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "122 states, by what blocks them" in result.stdout
+    assert "124 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -3721,6 +3721,51 @@ def test_the_cabin_equilibrium_is_inside_its_own_limit_band(tmp_path):
     result = run_linter(definition)
     assert result.returncode == 1
     assert "trip its own cabin-low alarm" in result.stdout
+
+
+def test_the_cabin_relaxes_toward_supply_plus_its_own_rise(tmp_path):
+    """A cabin has two heat inputs and a `lag` takes one driver — so the two are combined upstream.
+
+    Round 55 gave the cabins a driver and introduced an 8 K error in the same move: relaxing toward
+    `Q/G` *absolute* rather than `supply + Q/G`, which is wrong in the direction that makes a warm
+    cabin look nominal. The fix is not a new method but a node: `cabin_eq_csm_k` and `cabin_eq_lm_k`
+    are algebraic states carrying the equilibrium, fed by two edges each — the heat rate through
+    `1/G` and the coolant supply through one-for-one — and the cabins relax toward them.
+
+    **These are the vehicle's first states whose rule is completely specified**: nothing in either is
+    owed, and every term comes from a declaration that already existed.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    states = {str(s["id"]): s for s in thermal["state"]}
+    loops = {str(x["id"]): x for x in vehicle["thermal"]["loops"]}
+
+    for zone, loop_id, heat, eq, cabin in (
+        ("csm_cabin", "loop_primary", "cabin_heat_csm_w", "cabin_eq_csm_k", "zone_csm_cabin_t"),
+        ("lm_cabin", "loop_lm", "cabin_heat_lm_w", "cabin_eq_lm_k", "zone_lm_cabin_t"),
+    ):
+        supply_k = loops[loop_id]["supply_c"] + 273.15
+        expected = supply_k + states[heat]["total_w"] / states[cabin]["conductance_w_per_k"]
+        assert states[eq]["total_k"] == pytest.approx(expected, abs=0.02), zone
+        # Nothing owed: the rule's every input is a declaration that exists.
+        assert "UNCONFIGURED" not in yaml.safe_dump(states[eq])
+
+    # And the two cabins differ by exactly their heat loads' difference over G.
+    delta = (states["cabin_heat_lm_w"]["total_w"] - states["cabin_heat_csm_w"]["total_w"]) / 125
+    assert states["cabin_eq_lm_k"]["total_k"] - states["cabin_eq_csm_k"][
+        "total_k"
+    ] == pytest.approx(delta, abs=0.02)
+
+    definition = copy_definition(tmp_path / "stale")
+    path = definition / "domains" / "thermal" / "components.yaml"
+    text = path.read_text()
+    anchor = "    total_k: 286.21\n"
+    assert anchor in text, "the fixture no longer matches cabin_eq_csm_k"
+    path.write_text(text.replace(anchor, "    total_k: 290.0\n", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "relax toward an equilibrium its own declarations do not produce" in result.stdout
 
 
 def test_every_vehicle_yaml_parses():
