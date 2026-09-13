@@ -243,44 +243,40 @@ def test_the_derived_schedule_puts_every_producer_before_its_consumer():
     )
 
 
-def test_the_linter_refuses_a_conservation_that_carries_a_ratio(tmp_path):
-    """`conserve` means one quantity travelling, so there is no ratio to choose and nothing to owe.
+def test_no_edge_declares_conserve_any_more():
+    """The conservation machinery is dormant, and that is a fact rather than an oversight.
 
-    This check existed in `coupling.yaml`'s first version and had never once refused anything,
-    because the dimension lookup returned `None` for six of the node units in that file and the
-    guard was `if a and b` — so an edge the linter could not decide was an edge that passed. That
-    is how `E-ATM-ABSORB` spent its life asserting cabin carbon dioxide is *conserved* into
-    absorbent man-hours, and `E-PRESS-PROP` that a bladder pressurant is conserved out of a tank
-    it never leaves. A check that cannot run is not a check that passed, so both halves are driven
-    here: a conservation carrying a number that is not one, and one whose endpoints have no
-    dimension to look up.
+    `conserve` means one quantity travelling between two stocks, so there is no ratio to choose and
+    nothing to owe. Two edges carried it — `E-O2-ECLSS` and `E-LM-O2-ECLSS`, each asserting that a
+    kilogram of oxygen entering a cabin conserves a kilogram leaving the tank — and round 60
+    converted both to `rate`, because the coupling is a *regulator's flow* now rather than a quantity
+    travelling between two stocks. The driver is `cabin_o2_supply_csm`, a flow node, and a flow is
+    what a rate edge applies.
+
+    So the linter's three conservation refusals — an unset value, an undecidable dimension, anything
+    other than a one-for-one ratio — have nothing left to refuse. That is worth asserting rather than
+    leaving unremarked: a check with no inputs looks exactly like a check that passes, and this one
+    spent its first version passing *vacuously* for a different reason (the dimension lookup returned
+    nothing for six node units and the guard skipped the edge).
+
+    The refusals themselves are still exercised by construction in the linter's own suite of tests;
+    what this holds is that the vehicle no longer contains the case.
     """
-    # Half one: a genuine one-for-one conservation, given a ratio it cannot have.
-    definition = copy_definition(tmp_path / "ratio")
-    path = definition / "coupling.yaml"
-    text = path.read_text()
-    start = text.index("  - id: E-O2-ECLSS")
-    end = text.find("\n  - id: ", start)
-    item = text[start:end]
-    assert "kind: conserve" in item and "value: 1.0" in item, "the fixture moved off E-O2-ECLSS"
-    path.write_text(text[:start] + item.replace("value: 1.0", "value: 0.9", 1) + text[end:])
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    conserving = [e["id"] for e in coupling["edges"] if e.get("kind") == "conserve"]
+    assert conserving == [], f"an edge declares `conserve` again: {conserving}"
 
-    result = run_linter(definition)
-    assert result.returncode == 1
-    assert "conservation is one for one" in result.stdout, result.stdout[-800:]
+    # Both converted edges are rates now, and both drive a cabin's oxygen mass.
+    edges = {e["id"]: e for e in coupling["edges"]}
+    for edge_id, advances in (
+        ("E-O2-ECLSS", "csm_cabin_o2_kg"),
+        ("E-LM-O2-ECLSS", "lm_cabin_o2_kg"),
+    ):
+        assert edges[edge_id]["kind"] == "rate", edge_id
+        assert edges[edge_id]["advances"] == advances, edge_id
 
-    # Half two: the same edge, undecidable, because the cabin stops saying which of the four gas
-    # masses and the pressure it holds is the one a conservation can arrive as.
-    definition = copy_definition(tmp_path / "undecidable")
-    path = definition / "coupling.yaml"
-    text = path.read_text()
-    assert text.count("    conserves: mass\n") == 2, "the cabin nodes no longer declare conserves"
-    path.write_text(text.replace("    conserves: mass\n", "", 1))
-
-    result = run_linter(definition)
-    assert result.returncode == 1
-    assert "no dimension for" in result.stdout, result.stdout[-800:]
-    assert "conservation names one quantity travelling" in result.stdout
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-800:]
 
 
 def test_the_linter_refuses_a_node_that_is_not_in_the_graph(tmp_path):
@@ -3183,8 +3179,7 @@ def test_the_stock_integrator_refuses_what_is_not_a_flux():
     for edge_id, needle in (
         ("E-ZONE-ATM", "'lag' edge on a stock"),
         ("E-ATM-ABSORB", "does not establish a flux"),
-        ("E-O2-ECLSS", "dimensionless ratio"),
-        ("E-LM-O2-ECLSS", "dimensionless ratio"),
+        ("E-WATER-RAD", "does not establish a flux"),
     ):
         edge = next(e for e in world.edges if e.id == edge_id)
         with pytest.raises(plant.Unconfigured) as caught:
@@ -3230,8 +3225,6 @@ def test_the_linter_and_the_plant_share_one_stock_flux_rule():
 
     expected = {
         "E-PLATE-BAT": "'lag' edge on a stock",
-        "E-O2-ECLSS": "dimensionless ratio",
-        "E-LM-O2-ECLSS": "dimensionless ratio",
         "E-ATM-ABSORB": "does not establish a flux",
         "E-LM-ATM-ABSORB": "does not establish a flux",
     }
@@ -3390,8 +3383,6 @@ def test_the_linter_reports_the_discharges_it_cannot_establish(tmp_path):
     assert result.returncode == 0, result.stdout[-1500:]
 
     structural = {
-        "E-O2-ECLSS",
-        "E-LM-O2-ECLSS",
         "E-ATM-ABSORB",
         "E-LM-ATM-ABSORB",
         "E-WATER-RAD",
@@ -3460,22 +3451,23 @@ def test_a_ratio_refusal_names_the_flow_that_would_fix_it():
 
     coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
     nodes = coupling["nodes"]
+    stock_nodes = {k for k, v in nodes.items() if v.get("kind") == "stock"}
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-1500:]
 
-    # `E-O2-FC`, `E-H2-FC` and `E-FC-WATER` left this list in round 59: the first two now run from
-    # the draw nodes rather than from the tanks, and the third applies its ratio to the oxygen draw.
-    # What remains is the pair that needs a *cabin supply* flow, which nothing produces yet.
-    needed = {
-        "E-O2-ECLSS": "kg O2",
-        "E-LM-O2-ECLSS": "kg O2",
-    }
-    for edge_id, flow in needed.items():
-        edge = next(e for e in coupling["edges"] if e["id"] == edge_id)
-        basis, reason = stock_flux_basis(edge, nodes)
-        assert basis is None, f"{edge_id} is now integrable; update this test and the debt"
-        assert f"the flow of {flow} " in reason, f"{edge_id}: {reason}"
-        assert "kind: flow` node denominated in" in reason, f"{edge_id}: {reason}"
+    # The class is empty as of round 60, and that is the property worth holding now. Every ratio
+    # that used to be refused — `E-O2-FC`, `E-H2-FC`, `E-FC-WATER`, `E-O2-ECLSS`, `E-LM-O2-ECLSS` —
+    # has a flow node carrying its denominator, and each refusal named the node that would fix it,
+    # which is how five vague debts became one build order and then no debts at all.
+    refused_ratios = [
+        e["id"]
+        for e in coupling["edges"]
+        if (e["from"] in stock_nodes or e["to"] in stock_nodes)
+        and (e.get("sensitivity") or {}).get("value") not in (None, "UNCONFIGURED")
+        and stock_flux_basis(e, nodes)[0] is None
+        and "dimensionless ratio" in stock_flux_basis(e, nodes)[1]
+    ]
+    assert refused_ratios == [], f"a ratio is refused again: {refused_ratios}"
 
     # And the rule is not simply refusing ratios: one whose denominator *is* carried is computable.
     synthetic = {
@@ -3518,7 +3510,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     seen = [state.id for rows in buckets.values() for state in rows]
     assert len(seen) == len(set(seen)), "a state is classified twice"
     assert set(seen) == {s.id for s in world.states}, "a state is classified by nothing"
-    assert sum(len(rows) for rows in buckets.values()) == 126
+    assert sum(len(rows) for rows in buckets.values()) == 128
 
     # `ready` means what it says: only the two classes the reference plant can actually advance.
     assert {s.method for s in buckets["ready"]} <= {"lag", "stock"}
@@ -3528,7 +3520,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # The counts are the vehicle's current shape, and a change here is a change in the build order
     # rather than a cosmetic difference — which is exactly what makes it worth asserting.
     assert len(buckets["ready"]) == 13
-    assert len(buckets["rule"]) == 65, "half the vehicle is domain code"
+    assert len(buckets["rule"]) == 67, "half the vehicle is domain code"
 
 
 def test_the_plant_reports_the_build_order():
@@ -3540,7 +3532,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "126 states, by what blocks them" in result.stdout
+    assert "128 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -3872,6 +3864,49 @@ def test_the_fuel_cell_reactant_chain_is_grounded_but_for_one_figure():
     # The two tanks are loaded at the pad, and now say so: with the draws moved off them they had no
     # inbound edge at all, which is the state the linter refuses unless `preloaded:` explains it.
     assert nodes["o2_csm"]["preloaded"] and nodes["h2_csm"]["preloaded"]
+
+
+def test_the_cabin_oxygen_supplies_are_derived_from_the_losses(tmp_path):
+    """The last two ratio refusals were the cabin supplies, and both are fully grounded.
+
+    `E-O2-ECLSS` said "1 kg enters the cabin per kg of O2" against a *level* rather than a flow, so
+    nothing could apply it. `cabin_o2_supply_csm` and `cabin_o2_supply_lm` are flow nodes now, and
+    what the regulator admits is what the cabin loses: the leak plus the crew's metabolic
+    consumption, both published.
+
+    **`E-O2-SUPPLY-LM` is the better-attested of the two**, because the leak datum is Apollo 11's LM
+    cabin leak of 0.05 lb/hr. The CSM's own leak is published nowhere, yet `consumables` sizes
+    `o2_csm_kg`'s quantum from the same 0.023 kg/h as though it were the CSM's — so the figure is
+    used here, and the attribution conflict is a named debt rather than a silent assumption.
+    """
+    eclss = yaml.safe_load((VEHICLE / "domains" / "eclss" / "components.yaml").read_text())
+    states = {str(s["id"]): s for s in eclss["state"]}
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    edges = {e["id"]: e for e in coupling["edges"]}
+
+    for state_id, expected in (
+        ("cabin_o2_supply_csm_kg_s", (0.023 + 3 * 0.91 / 24) / 3600),
+        ("cabin_o2_supply_lm_kg_s", (0.05 * 0.453592 + 2 * 0.91 / 24) / 3600),
+    ):
+        assert states[state_id]["nominal_kg_s"] == pytest.approx(expected, rel=1e-5), state_id
+        assert states[state_id]["method"] == "algebraic"
+
+    # Every stock edge on the oxygen path computes now, and the two cabin supplies are what closed it.
+    assert edges["E-O2-SUPPLY-CSM"]["to"] == "cabin_o2_supply_csm"
+    assert edges["E-O2-ECLSS"]["from"] == "cabin_o2_supply_csm"
+    assert edges["E-O2-SUPPLY-LM"]["to"] == "cabin_o2_supply_lm"
+    assert edges["E-LM-O2-ECLSS"]["from"] == "cabin_o2_supply_lm"
+
+    definition = copy_definition(tmp_path / "derivation")
+    path = definition / "domains" / "eclss" / "components.yaml"
+    text = path.read_text()
+    anchor = 'computation: "(0.023 + 3 * 0.91 / 24) / 3600"'
+    assert anchor in text, "the fixture no longer matches the CSM supply rule"
+    path.write_text(text.replace(anchor, 'computation: "(0.023 + 3 * 0.91 / 24)"', 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "does not re-derive" in result.stdout
 
 
 def test_every_vehicle_yaml_parses():
