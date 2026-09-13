@@ -3527,7 +3527,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     seen = [state.id for rows in buckets.values() for state in rows]
     assert len(seen) == len(set(seen)), "a state is classified twice"
     assert set(seen) == {s.id for s in world.states}, "a state is classified by nothing"
-    assert sum(len(rows) for rows in buckets.values()) == 132
+    assert sum(len(rows) for rows in buckets.values()) == 134
 
     # `ready` means what it says: only the two classes the reference plant can actually advance.
     assert {s.method for s in buckets["ready"]} <= {"lag", "stock"}
@@ -3537,7 +3537,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # The counts are the vehicle's current shape, and a change here is a change in the build order
     # rather than a cosmetic difference — which is exactly what makes it worth asserting.
     assert len(buckets["ready"]) == 13
-    assert len(buckets["rule"]) == 69, "half the vehicle is domain code"
+    assert len(buckets["rule"]) == 71, "half the vehicle is domain code"
 
 
 def test_the_plant_reports_the_build_order():
@@ -3549,7 +3549,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "132 states, by what blocks them" in result.stdout
+    assert "134 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -4321,15 +4321,11 @@ def test_a_zone_temperature_is_on_a_node_or_declared(tmp_path):
     coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
     states = {str(s["id"]): s for s in thermal["state"]}
 
-    # The radiator was moved onto `radiator_reject` and moved back in the same round: its only
-    # inbound edge there is `E-WATER-RAD`, which is `C-WATER-BUDGET`'s **back-edge**, and neither the
-    # linter nor the plant counts a back-edge as a driver. The node gave the state a home without
-    # giving it an input.
     # Round 70 moved the radiator onto `radiator_reject` and back, because its only inbound edge
     # there was a back-edge. Round 71 gave the node a forward one — `E-ENV-RAD`, from the
-    # environment — so the state is on a node and driven.
+    # environment — and round 72 took the last two zones, so the exemption list is empty and gone.
     assert states["zone_radiator_t"]["node"] == "radiator_reject"
-    assert set(thermal["zones_not_on_nodes"]) == {"csm_service_bay", "lm_descent_bay"}
+    assert thermal.get("zones_not_on_nodes") in (None, {})
     node = coupling["nodes"]["radiator_reject"]
     assert node["state_order"] == ["zone_radiator_t", "radiator_rejection_w"]
     assert next(e for e in coupling["edges"] if e["id"] == "E-ENV-RAD")["kind"] == "algebraic"
@@ -4338,16 +4334,72 @@ def test_a_zone_temperature_is_on_a_node_or_declared(tmp_path):
     definition = copy_definition(tmp_path / "sentinel")
     path = definition / "domains" / "thermal" / "components.yaml"
     text = path.read_text()
-    # The fixture removes a *declared* exemption, which is what the check refuses.
-    anchor = "  lm_descent_bay: >-\n"
-    assert anchor in text, "the fixture no longer matches zones_not_on_nodes"
-    stripped = re.sub(r"  lm_descent_bay: >-\n(?:    .*\n|\n)*", "", text, count=1)
-    assert stripped != text
-    path.write_text(stripped)
+    # The exemption list is gone, so the fixture now builds a *stale* one: a zone declared as having
+    # no node while its state sits on one. That is the direction the round-70 check was missing.
+    path.write_text(text.rstrip("\n") + '\nzones_not_on_nodes:\n  csm_service_bay: "stale"\n')
 
     result = run_linter(definition)
     assert result.returncode == 1
-    assert "no edge can drive it" in result.stdout
+    # The stale direction, because the exemption list is empty now: the fixture adds an entry rather
+    # than removing one.
+    assert "stale exemption" in result.stdout
+
+
+def test_every_thermal_zone_has_a_driver_and_the_exemption_list_is_empty(tmp_path):
+    """Six zones, six nodes, six drivers — and the exemption list retired rather than left standing.
+
+    Rounds 70 and 71 took the crewed cabins and the radiator; this round takes the two bays, whose
+    heat rates were already summed (`heat_inputs` assigns 630 W to the service bay and 180 W to the
+    descent stage) and whose states were on the `internal` sentinel. `service_bay_heat` and
+    `descent_bay_heat` are nodes now, feeding `E-BAY-HEAT-CSM` and `E-BAY-HEAT-LM`.
+
+    **What the edges do not carry is the conductance**, and that is declared rather than filled:
+    `thermal_diode.md:965` calls every thermal constant UNSPECIFIED, so the scalar that turns watts
+    into kelvin is owed and a plausible one would be exactly the invented typical-spacecraft number
+    that document refuses. The zone is drivable and the missing scalar is named — which is strictly
+    better than a zone that is neither.
+
+    Chasing it also found a gap in the round-70 check: it refused a zone with no node and no
+    explanation, but **not a stale explanation** — so the two bays' exemptions survived the round
+    that closed them. It checks both directions now.
+    """
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    states = {str(s["id"]): s for s in thermal["state"]}
+
+    # Every zone is on a node, so there is nothing left to exempt.
+    assert thermal.get("zones_not_on_nodes") in (None, {}), (
+        "the exemption list is stale: every zone has a node now"
+    )
+    assert states["zone_csm_service_t"]["node"] == "service_bay_zone_t"
+    assert states["zone_lm_descent_t"]["node"] == "descent_bay_zone_t"
+    assert states["service_bay_heat_w"]["total_w"] == 630
+    assert states["descent_bay_heat_w"]["total_w"] == 180
+
+    # And each zone's node has an inbound edge, which is the property all of this was for.
+    driven = {str(e["to"]) for e in coupling["edges"]}
+    for zone, state_id, node in (
+        ("csm_cabin", "zone_csm_cabin_t", "cabin_zone_t"),
+        ("csm_avionics_bay", "zone_csm_avionics_t", "coldplate_t"),
+        ("csm_service_bay", "zone_csm_service_t", "service_bay_zone_t"),
+        ("lm_cabin", "zone_lm_cabin_t", "lm_cabin_zone_t"),
+        ("lm_descent_bay", "zone_lm_descent_t", "descent_bay_zone_t"),
+        ("radiator_loop", "zone_radiator_t", "radiator_reject"),
+    ):
+        assert states[state_id]["node"] == node, zone
+        assert node in driven, f"{zone}: {node} has no driver"
+    assert len(vehicle["thermal"]["zones"]) == 6
+
+    # A stale exemption is refused rather than tolerated.
+    definition = copy_definition(tmp_path / "stale")
+    path = definition / "domains" / "thermal" / "components.yaml"
+    text = path.read_text()
+    path.write_text(text.rstrip("\n") + '\nzones_not_on_nodes:\n  csm_service_bay: "stale"\n')
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "stale exemption" in result.stdout
 
 
 def test_every_vehicle_yaml_parses():
