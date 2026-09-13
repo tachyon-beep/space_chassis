@@ -3531,7 +3531,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     seen = [state.id for rows in buckets.values() for state in rows]
     assert len(seen) == len(set(seen)), "a state is classified twice"
     assert set(seen) == {s.id for s in world.states}, "a state is classified by nothing"
-    assert sum(len(rows) for rows in buckets.values()) == 129
+    assert sum(len(rows) for rows in buckets.values()) == 130
 
     # `ready` means what it says: only the two classes the reference plant can actually advance.
     assert {s.method for s in buckets["ready"]} <= {"lag", "stock"}
@@ -3553,7 +3553,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "129 states, by what blocks them" in result.stdout
+    assert "130 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -4081,6 +4081,53 @@ def test_the_absorbers_remove_from_their_own_cabin(tmp_path):
             driver_node=edge.source if driver == "from" else edge.target,
         )
         assert flux > 0, edge_id
+
+
+def test_the_battery_derating_is_a_capacity_not_a_flux():
+    """A cold pack gives up less than it holds, and that belongs on a capacity rather than a charge.
+
+    `E-PLATE-BAT` carried `0.0 J per K` from `coldplate_t` into `battery_energy` — a *capacity*
+    relation landing on a quantity that is conserved, which the linter refused as a lag edge on a
+    stock. `battery_usable_j` is the capacity node now, and the loop runs bus -> charge -> usable
+    capacity -> bus: **the last step is what the bus actually draws on**, and without it `C-BAT-BUS`
+    did not close and the linter said so.
+
+    The nominal derating is 1.0 and the sensitivity is `0.0 J per K`, which the edge's own note
+    already flagged as the review-findings.md #8 case: **a closure computed at nominal passes a
+    fidelity decision that is wrong exactly when it matters.** In the crisis the pack is cold and the
+    derating is not 1.0 — and no source publishes the curve, so it is `UNCONFIGURED` rather than
+    invented.
+    """
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    edges = {str(e["id"]): e for e in coupling["edges"]}
+    nodes = coupling["nodes"]
+    power = yaml.safe_load((VEHICLE / "domains" / "power" / "components.yaml").read_text())
+    states = {str(s["id"]): s for s in power["state"]}
+
+    assert nodes["battery_usable_j"]["kind"] == "flow"
+    assert edges["E-PLATE-BAT"]["to"] == "battery_usable_j"
+    assert edges["E-PLATE-BAT"]["advances"] == "battery_usable_j_j"
+    assert edges["E-BAT-BUS"]["from"] == "battery_usable_j", (
+        "the bus draws on usable energy, not on the raw charge"
+    )
+    assert states["battery_usable_j_j"]["derate_curve"] == "UNCONFIGURED"
+
+    # The cycle it belongs to still closes, with the new step declared as a member.
+    cycle = next(c for c in coupling["cycles"] if c["id"] == "C-BAT-BUS")
+    assert "E-BAT-USABLE" in cycle["members"]
+
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-900:]
+    # And it is no longer a stock-flux debt: only the water clamp is left in that class.
+    stock_debts = [
+        line
+        for line in result.stdout.splitlines()
+        if line.strip().startswith("- coupling.yaml:edge") and "stock" in line
+    ]
+    # Membership rather than a count: the class is what matters, and an unrelated debt whose prose
+    # mentions stocks must not be able to break the assertion.
+    assert not any("E-PLATE-BAT" in line for line in stock_debts), stock_debts
+    assert any("E-RAD-WATER" in line for line in stock_debts), stock_debts
 
 
 def test_every_vehicle_yaml_parses():
