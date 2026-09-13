@@ -3158,8 +3158,10 @@ def test_the_stock_integrator_reads_its_driver():
         flux = plant.stock_flux(world, edge, {edge.source: crew}, 3600.0)
         assert flux == pytest.approx(expected, rel=1e-6), f"{crew} crew gave {flux}"
 
-    # And the per-second basis is the other half of the unit parse: E-RAD-WATER is kg/s per W.
-    rad = next(e for e in world.edges if e.id == "E-RAD-WATER")
+    # And the per-second basis is the other half of the unit parse: `E-WATER-RAD` is `kg/s per W`.
+    # It was `E-RAD-WATER` until round 61 swapped the water cycle's edges so that the stock
+    # discharges through the one carrying the per-watt unit.
+    rad = next(e for e in world.edges if e.id == "E-WATER-RAD")
     assert plant.stock_flux(world, rad, {rad.source: 1000.0}, 1.0) == pytest.approx(4.0816e-4)
 
 
@@ -3179,7 +3181,7 @@ def test_the_stock_integrator_refuses_what_is_not_a_flux():
     for edge_id, needle in (
         ("E-ZONE-ATM", "'lag' edge on a stock"),
         ("E-ATM-ABSORB", "does not establish a flux"),
-        ("E-WATER-RAD", "does not establish a flux"),
+        ("E-RAD-WATER", "whose unit is"),
     ):
         edge = next(e for e in world.edges if e.id == edge_id)
         with pytest.raises(plant.Unconfigured) as caught:
@@ -3220,6 +3222,7 @@ def test_the_linter_and_the_plant_share_one_stock_flux_rule():
     from check_vehicle import stock_flux_basis
 
     world = plant.load_world(VEHICLE)
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-1500:]
 
@@ -3227,11 +3230,19 @@ def test_the_linter_and_the_plant_share_one_stock_flux_rule():
         "E-PLATE-BAT": "'lag' edge on a stock",
         "E-ATM-ABSORB": "does not establish a flux",
         "E-LM-ATM-ABSORB": "does not establish a flux",
+        "E-RAD-WATER": "whose unit is",
     }
     for edge_id, needle in expected.items():
         edge = next(e for e in world.edges if e.id == edge_id)
         basis, reason = stock_flux_basis(
-            {"id": edge.id, "kind": edge.kind, "sensitivity": edge.sensitivity}, {}
+            {
+                "id": edge.id,
+                "kind": edge.kind,
+                "sensitivity": edge.sensitivity,
+                "from": edge.source,
+                "to": edge.target,
+            },
+            coupling["nodes"],
         )
         assert basis is None, f"{edge_id} is now integrable; update this test and the debt"
         assert needle in reason, f"{edge_id}: {reason}"
@@ -3254,10 +3265,17 @@ def test_the_linter_and_the_plant_share_one_stock_flux_rule():
         )
 
     # And the three that are integrable stay integrable, so the rule is not simply refusing.
-    for edge_id in ("E-CREW-ATM", "E-LM-CREW-ATM", "E-RAD-WATER"):
+    for edge_id in ("E-CREW-ATM", "E-LM-CREW-ATM", "E-WATER-RAD"):
         edge = next(e for e in world.edges if e.id == edge_id)
         basis, reason = stock_flux_basis(
-            {"id": edge.id, "kind": edge.kind, "sensitivity": edge.sensitivity}, {}
+            {
+                "id": edge.id,
+                "kind": edge.kind,
+                "sensitivity": edge.sensitivity,
+                "from": edge.source,
+                "to": edge.target,
+            },
+            coupling["nodes"],
         )
         assert basis in ("per_second", "per_hour"), f"{edge_id}: {reason}"
 
@@ -3385,7 +3403,7 @@ def test_the_linter_reports_the_discharges_it_cannot_establish(tmp_path):
     structural = {
         "E-ATM-ABSORB",
         "E-LM-ATM-ABSORB",
-        "E-WATER-RAD",
+        "E-RAD-WATER",
         "E-PROP-ENG",
         "E-RCSP-RCS",
         "E-PLATE-BAT",
@@ -3402,11 +3420,15 @@ def test_the_linter_reports_the_discharges_it_cannot_establish(tmp_path):
     for edge_id in (
         "E-CREW-ATM",
         "E-LM-CREW-ATM",
-        "E-RAD-WATER",
         "E-CREW-WATER",
         "E-O2-DRAW",
         "E-H2-DRAW",
         "E-FC-WATER",
+        "E-O2-SUPPLY-CSM",
+        "E-O2-SUPPLY-LM",
+        "E-O2-ECLSS",
+        "E-LM-O2-ECLSS",
+        "E-WATER-RAD",
     ):
         edge = next(e for e in coupling["edges"] if e["id"] == edge_id)
         basis, reason = stock_flux_basis(edge, nodes)
@@ -3907,6 +3929,46 @@ def test_the_cabin_oxygen_supplies_are_derived_from_the_losses(tmp_path):
     result = run_linter(definition)
     assert result.returncode == 1
     assert "does not re-derive" in result.stdout
+
+
+def test_the_water_cycle_edges_have_the_right_way_round(tmp_path):
+    """One relation, two edges, and until round 61 the stock was on the wrong side of both.
+
+    `E-RAD-WATER` said `kg/s per W` and ran *into* `water_cooling`, so the plant **filled** the tank
+    with the water the radiator consumes. `E-WATER-RAD` ran out of it — the side a stock discharges
+    through — carrying `kg per J`, which is the *forward* relation's unit: the edge's own note said
+    "the inverse of E-RAD-WATER" and then stated the same number in the same unit.
+
+    Swapped, the two are one relation with the stock on opposite sides: the discharge takes
+    `kg/s per W` and computes, and the availability half takes `J per kg` — what a kilogram of water
+    *buys*, 2.45e6 J — and is refused as a stock flux, correctly, because availability is a clamp
+    rather than a slope. The linter's cycle check confirms the pair still closes
+    `radiator_reject -> water_cooling -> radiator_reject`.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    edges = {e["id"]: e for e in coupling["edges"]}
+
+    assert edges["E-WATER-RAD"]["from"] == "water_cooling"
+    assert edges["E-WATER-RAD"]["sensitivity"]["unit"] == "kg/s per W"
+    assert edges["E-RAD-WATER"]["sensitivity"]["unit"] == "J per kg"
+    assert edges["E-RAD-WATER"]["sensitivity"]["value"] == pytest.approx(2.45e6)
+
+    # The discharge computes, and it is the *target* that drives it: the radiator's wattage sets
+    # how fast the water goes.
+    edge = next(e for e in world.edges if e.id == "E-WATER-RAD")
+    flux = plant.stock_flux(
+        world, edge, {edge.source: 100.0, edge.target: 1000.0}, 1.0, driver_node=edge.target
+    )
+    assert flux == pytest.approx(4.0816e-4, rel=1e-3)
+
+    # The cycle still closes, and the linter refuses it if it stops.
+    cycle = next(c for c in coupling["cycles"] if c["id"] == "C-WATER-BUDGET")
+    assert set(cycle["members"]) == {"E-WATER-RAD", "E-RAD-WATER"}
+    assert cycle["back_edge"] == "E-WATER-RAD"
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-800:]
 
 
 def test_every_vehicle_yaml_parses():
