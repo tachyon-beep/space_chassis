@@ -3527,7 +3527,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     seen = [state.id for rows in buckets.values() for state in rows]
     assert len(seen) == len(set(seen)), "a state is classified twice"
     assert set(seen) == {s.id for s in world.states}, "a state is classified by nothing"
-    assert sum(len(rows) for rows in buckets.values()) == 130
+    assert sum(len(rows) for rows in buckets.values()) == 131
 
     # `ready` means what it says: only the two classes the reference plant can actually advance.
     assert {s.method for s in buckets["ready"]} <= {"lag", "stock"}
@@ -3549,7 +3549,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "130 states, by what blocks them" in result.stdout
+    assert "131 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -4257,6 +4257,50 @@ def test_a_channel_about_a_cabin_is_paired_or_explained(tmp_path):
     result = run_linter(definition)
     assert result.returncode == 1
     assert "does not explain" in result.stdout and "eclss.leak_rate_g_s" in result.stdout
+
+
+def test_every_declared_gas_is_held_in_every_cabin(tmp_path):
+    """The round-68 question one file over, and it found the same shape.
+
+    The atmosphere model declares four gases — `o2`, `n2`, `co2`, `h2o` — and `cabin_atm` held four
+    stock states while `lm_cabin_atm` held three. **There was no `lm_cabin_h2o_kg`**, and
+    `lm_water_separator` sits in the same file to remove the vapour that had no state to be in: a
+    component whose subject the model does not hold, which is the round-42 absorber finding arriving
+    in the atmosphere.
+
+    A cabin may legitimately lack a gas, so the rule is a declaration rather than a refusal — the
+    pair goes in `atmosphere_model.absent` with its reason. Nothing is absent today, and the list is
+    what keeps a future one from being silent.
+    """
+    eclss = yaml.safe_load((VEHICLE / "domains" / "eclss" / "components.yaml").read_text())
+    gases = [str(g["id"]) for g in eclss["atmosphere_model"]["gases"]]
+    assert gases == ["o2", "n2", "co2", "h2o"]
+
+    for cabin in ("cabin_atm", "lm_cabin_atm"):
+        held = {
+            str(s["id"])
+            for s in eclss["state"]
+            if str(s.get("node")) == cabin and s.get("method") == "stock"
+        }
+        assert len(held) == 4, f"{cabin} holds {sorted(held)}"
+        for gas in gases:
+            assert any(gas in name for name in held), f"{cabin} has no state for {gas}"
+
+    # And the LM's separator now has something to act on.
+    components = {str(c["id"]) for c in eclss["components"]}
+    assert "lm_water_separator" in components
+
+    # Removing the state is refused rather than silently asymmetric.
+    definition = copy_definition(tmp_path / "asymmetric")
+    path = definition / "domains" / "eclss" / "components.yaml"
+    text = path.read_text()
+    stripped = re.sub(r"  - id: lm_cabin_h2o_kg\n(?:    .*\n|\n)*?(?=  - id: )", "", text, count=1)
+    assert stripped != text, "the fixture no longer matches lm_cabin_h2o_kg"
+    path.write_text(stripped)
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "names a species and no state to hold it" in result.stdout
 
 
 def test_every_vehicle_yaml_parses():
