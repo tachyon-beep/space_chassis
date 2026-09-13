@@ -3432,6 +3432,61 @@ def test_a_stock_that_carries_two_states_says_which_one_drains(tmp_path):
     assert "declares no `drains`" in result.stdout
 
 
+def test_a_ratio_refusal_names_the_flow_that_would_fix_it():
+    """A refusal that names the missing node is worth more than one that describes the symptom.
+
+    Round 50 established that a dimensionless ratio into a stock is not a flux. That is true and it
+    is not actionable: five edges were refused with the same sentence and none of them said what to
+    build. The test a ratio actually needs is not "is this a ratio" but **"does the graph carry the
+    flow the ratio is against"** — `1.0 kg water per kg reactants` applied to a node holding
+    `kg reactants per second` is water per second, which is a flux.
+
+    Nothing in the vehicle carries one, so the refusals stand — and each now names the flow, so the
+    five edges resolve into a specification rather than a diagnosis: four consumer intakes, because
+    `E-O2-FC` and `E-O2-ECLSS` both draw from `o2_csm` while being the cell's draw and the cabin's
+    supply respectively.
+    """
+    if str(VEHICLE / "tools") not in sys.path:
+        sys.path.insert(0, str(VEHICLE / "tools"))
+    from check_vehicle import stock_flux_basis
+
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    nodes = coupling["nodes"]
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-1500:]
+
+    needed = {
+        "E-O2-FC": "kg O2",
+        "E-H2-FC": "kg H2",
+        "E-FC-WATER": "kg reactants",
+        "E-O2-ECLSS": "kg O2",
+        "E-LM-O2-ECLSS": "kg O2",
+    }
+    for edge_id, flow in needed.items():
+        edge = next(e for e in coupling["edges"] if e["id"] == edge_id)
+        basis, reason = stock_flux_basis(edge, nodes)
+        assert basis is None, f"{edge_id} is now integrable; update this test and the debt"
+        assert f"the flow of {flow} " in reason, f"{edge_id}: {reason}"
+        assert "kind: flow` node denominated in" in reason, f"{edge_id}: {reason}"
+
+    # And the rule is not simply refusing ratios: one whose denominator *is* carried is computable.
+    synthetic = {
+        "id": "E-TEST",
+        "kind": "rate",
+        "from": "tank",
+        "to": "sink",
+        "sensitivity": {"value": 1.0, "unit": "kg water per kg reactants"},
+    }
+    world = {
+        "tank": {"kind": "stock", "unit": "kg"},
+        "driver": {"kind": "flow", "unit": "kg reactants/s"},
+        "sink": {"kind": "stock", "unit": "kg"},
+    }
+    synthetic["from"] = "driver"
+    basis, reason = stock_flux_basis(synthetic, world)
+    assert basis == "per_second", reason
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
