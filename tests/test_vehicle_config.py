@@ -3768,6 +3768,53 @@ def test_the_cabin_relaxes_toward_supply_plus_its_own_rise(tmp_path):
     assert "relax toward an equilibrium its own declarations do not produce" in result.stdout
 
 
+def test_the_readme_status_matches_the_tools():
+    """The status section is the one place every count is written down, and it had drifted.
+
+    Three rounds of structural work moved the state count, the node count and the debt count, and
+    the commit messages carried the right figures while the README kept the old ones — which is this
+    folder's own recurring finding arriving at its own status section: **a declaration no tool reads
+    has already drifted.** The paragraph even said "with every one of them named", about a number
+    that was two out of date.
+
+    So every figure is derived here from the tools' own output rather than from a second counter. A
+    counter written for this test would be one more declaration to drift; the linter and the plant
+    already compute all of them, and a test that reads their reports cannot disagree with them.
+    """
+    readme = (VEHICLE / "README.md").read_text()
+    lint = run_linter(VEHICLE)
+    assert lint.returncode == 0, lint.stdout[-1200:]
+    plant = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--readiness"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    order = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--build-order"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+
+    channels, edges = re.search(r"(\d+) channels, (\d+) edges,", lint.stdout).groups()
+    debts = re.search(r"with (\d+) declared debt", lint.stdout).group(1)
+    states, nodes = re.search(r"world: (\d+) states over (\d+) nodes", plant).groups()
+    scalars = re.search(r"UNCONFIGURED scalars\s+(\d+)", plant).group(1)
+    rule = re.search(r"(\d+)\s+\d+ %\s+owes a rule", order).group(1)
+
+    # The sentence that carries them, and the paragraphs that restate two of them.
+    for needle, what in (
+        (f"{channels} channels, {states} states over {nodes} scheduled nodes", "the status line"),
+        (f"with {debts} declared debts", "the debt count"),
+        (f"Current state: **composes, with {debts} declared debts.**", "the header"),
+        (f"The **{scalars}** the plant", "the plant's narrower count"),
+        (f"so {rule} of the {states} states need code", "the domain-code count"),
+        (f"{states} states, by what blocks them", "the build-order view"),
+    ):
+        assert needle in readme, f"{what} is stale: expected {needle!r} in the README"
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
