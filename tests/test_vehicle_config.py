@@ -3510,7 +3510,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     seen = [state.id for rows in buckets.values() for state in rows]
     assert len(seen) == len(set(seen)), "a state is classified twice"
     assert set(seen) == {s.id for s in world.states}, "a state is classified by nothing"
-    assert sum(len(rows) for rows in buckets.values()) == 120
+    assert sum(len(rows) for rows in buckets.values()) == 122
 
     # `ready` means what it says: only the two classes the reference plant can actually advance.
     assert {s.method for s in buckets["ready"]} <= {"lag", "stock"}
@@ -3519,8 +3519,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
 
     # The counts are the vehicle's current shape, and a change here is a change in the build order
     # rather than a cosmetic difference — which is exactly what makes it worth asserting.
-    assert len(buckets["ready"]) == 11
-    assert len(buckets["rule"]) == 61, "half the vehicle is domain code"
+    assert len(buckets["ready"]) == 13
+    assert len(buckets["rule"]) == 63, "half the vehicle is domain code"
 
 
 def test_the_plant_reports_the_build_order():
@@ -3532,7 +3532,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "120 states, by what blocks them" in result.stdout
+    assert "122 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -3575,7 +3575,7 @@ def test_a_state_with_an_outbound_edge_and_no_driver_is_reported():
         and not nodes[name].get("preloaded")
         and any(m in driving and n == name for m, n in methods.values())
     ]
-    assert sorted(undriven) == ["cabin_zone_t", "fuel_cell", "imu", "lm_cabin_zone_t"], undriven
+    assert sorted(undriven) == ["fuel_cell", "imu"], undriven
 
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-1200:]
@@ -3630,6 +3630,50 @@ def test_the_heat_inputs_are_a_partition_of_the_load_inventory(tmp_path):
     assert result.returncode == 1
     assert "A load assigned to no zone is a watt that heats nothing" in result.stdout
     assert "csm_imu" in result.stdout
+
+
+def test_the_cabin_heat_rates_are_derived_from_the_load_inventory(tmp_path):
+    """The heat-rate state is where the thermal and power domains finally meet, so it is checked there.
+
+    `heat_inputs` assigns every load to a zone; the heat-rate state sums that zone's loads. Two
+    declarations of one quantity, in two files, is exactly the shape that drifts — and it drifts in
+    the quiet direction: a load re-rated in `domains/power/` would change what the cabin's equipment
+    actually draws while the thermal state went on relaxing toward the old figure, modelling a cabin
+    cooler than it is.
+
+    The state's `total_w` is re-derived twice on every run: against its own `computation`, and
+    against the loads `heat_inputs` assigns. `cabin_heat_lm_w` at 827 W against the CSM cabin's 733,
+    with two crew rather than three, because the LM has no avionics-bay zone.
+    """
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    power = yaml.safe_load((VEHICLE / "domains" / "power" / "components.yaml").read_text())
+    loads = {str(r["id"]): r for r in power["loads"]}
+    states = {str(s["id"]): s for s in thermal["state"]}
+
+    for state_id, zone, expected in (
+        ("cabin_heat_csm_w", "csm_cabin", 733),
+        ("cabin_heat_lm_w", "lm_cabin", 827),
+    ):
+        state = states[state_id]
+        declared = sum(
+            int(loads[i]["demand_w"] or 0) for i in thermal["heat_inputs"][zone]["loads"]
+        )
+        assert state["total_w"] == declared == expected, state_id
+
+    # A load re-rated under the state's feet is refused rather than absorbed.
+    definition = copy_definition(tmp_path / "rate")
+    path = definition / "domains" / "thermal" / "components.yaml"
+    text = path.read_text()
+    anchor = "    total_w: 733\n"
+    assert anchor in text, "the fixture no longer matches cabin_heat_csm_w"
+    path.write_text(text.replace(anchor, "    total_w: 740\n", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert (
+        "the cabin would relax toward a heat rate its equipment does not produce"
+        in result.stdout.lower()
+    )
 
 
 def test_every_vehicle_yaml_parses():
