@@ -3178,10 +3178,7 @@ def test_the_stock_integrator_refuses_what_is_not_a_flux():
     plant = _plant()
     world = plant.load_world(VEHICLE)
 
-    for edge_id, needle in (
-        ("E-ZONE-ATM", "'lag' edge on a stock"),
-        ("E-RAD-WATER", "whose unit is"),
-    ):
+    for edge_id, needle in (("E-ZONE-ATM", "'lag' edge on a stock"),):
         edge = next(e for e in world.edges if e.id == edge_id)
         with pytest.raises(plant.Unconfigured) as caught:
             plant.stock_flux(world, edge, {edge.source: 1.0}, 0.02)
@@ -3227,7 +3224,6 @@ def test_the_linter_and_the_plant_share_one_stock_flux_rule():
 
     expected = {
         "E-PLATE-BAT": "'lag' edge on a stock",
-        "E-RAD-WATER": "whose unit is",
     }
     for edge_id, needle in expected.items():
         edge = next(e for e in world.edges if e.id == edge_id)
@@ -3397,10 +3393,10 @@ def test_the_linter_reports_the_discharges_it_cannot_establish(tmp_path):
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-1500:]
 
-    structural = {
-        "E-RAD-WATER",
-        "E-PLATE-BAT",
-    }
+    # The class is empty as of round 65. `E-PLATE-BAT` moved to a capacity node in round 64 and
+    # `E-RAD-WATER` became `kind: limit` in this one, so there is no edge left that the classifier
+    # refuses as a flux — which is the property to hold now.
+    structural: set[str] = set()
     for edge_id in structural:
         edge = next(e for e in coupling["edges"] if e["id"] == edge_id)
         basis, reason = stock_flux_basis(edge, nodes)
@@ -4119,15 +4115,8 @@ def test_the_battery_derating_is_a_capacity_not_a_flux():
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
     # And it is no longer a stock-flux debt: only the water clamp is left in that class.
-    stock_debts = [
-        line
-        for line in result.stdout.splitlines()
-        if line.strip().startswith("- coupling.yaml:edge") and "stock" in line
-    ]
-    # Membership rather than a count: the class is what matters, and an unrelated debt whose prose
-    # mentions stocks must not be able to break the assertion.
-    assert not any("E-PLATE-BAT" in line for line in stock_debts), stock_debts
-    assert any("E-RAD-WATER" in line for line in stock_debts), stock_debts
+    assert "against a stock denominated" not in result.stdout
+    assert " is a 'lag' edge on a stock" not in result.stdout
 
 
 def test_every_vehicle_yaml_parses():
