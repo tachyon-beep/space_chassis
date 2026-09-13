@@ -4402,6 +4402,45 @@ def test_every_thermal_zone_has_a_driver_and_the_exemption_list_is_empty(tmp_pat
     assert "stale exemption" in result.stdout
 
 
+def test_the_bay_conductances_owe_one_scalar_each_not_two(tmp_path):
+    """`G = C/tau` with `tau` declared means the conductance and the mass are one obligation.
+
+    The two bays' time constants are **chosen** where the cabin's is derived — the cabin's relation
+    gives `C = 400 kg x 900 J/kg-K = 360,000 J/K` and `G = 125 W/K`, and `tau = C/G` follows. The
+    bays have a tau and a qualitative reason ("the propellant is the mass and the tank wall is the
+    path") and nothing else, so their edges carried `UNCONFIGURED` and the debt was vague.
+
+    Naming *both* the mass and the conductance would be two debts for one unknown, since either
+    determines the other given tau — so the states declare `lumped_mass_kg` alone and the edges'
+    relations say how `1/G` follows from it. What is owed is one scalar per bay: the mass of the
+    propellant and structure the reason already names. `thermal_diode.md:965`'s refusal to publish
+    thermal constants is why it is owed rather than derived, and it is why a plausible number would
+    be exactly the invented figure that document refuses.
+    """
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    states = {str(s["id"]): s for s in thermal["state"]}
+    edges = {str(e["id"]): e for e in coupling["edges"]}
+
+    for state_id, edge_id, tau in (
+        ("zone_csm_service_t", "E-BAY-HEAT-CSM", 7200),
+        ("zone_lm_descent_t", "E-BAY-HEAT-LM", 10800),
+    ):
+        state = states[state_id]
+        assert state["tau_s"] == tau
+        assert state["lumped_mass_kg"] == "UNCONFIGURED"
+        # One obligation, not two: the conductance follows from the mass and tau by division.
+        assert "conductance_w_per_k" not in state, f"{state_id} declares the same unknown twice"
+        assert edges[edge_id]["sensitivity"]["value"] == "UNCONFIGURED"
+        assert "G = C/tau" in edges[edge_id]["sensitivity"]["relation"], edge_id
+
+    # The cabin's, by contrast, is derived from both — which is what makes the pair the template.
+    cabin = states["zone_csm_cabin_t"]
+    assert cabin["conductance_w_per_k"] == 125
+    assert cabin["tau_s"] == 2880
+    assert "360,000 J/K" in cabin["provenance"]["relation"]
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
