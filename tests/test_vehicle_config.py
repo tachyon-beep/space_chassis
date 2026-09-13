@@ -4303,6 +4303,57 @@ def test_every_declared_gas_is_held_in_every_cabin(tmp_path):
     assert "names a species and no state to hold it" in result.stdout
 
 
+def test_a_zone_temperature_is_on_a_node_or_declared(tmp_path):
+    """Six zones carry a temperature state and five carry a *driver*, and the gap hid in the state's home.
+
+    Two sat on the `internal` sentinel — which is not a node, so no edge can terminate on them, and
+    `internal` has no inbound edge at all. The two crewed cabins were in exactly that position until
+    round 55 gave them heat-rate nodes, and the radiator was in it until round 70 moved
+    `zone_radiator_t` onto `radiator_reject`, where a node already existed and was already driven.
+
+    Moving it was not free: `radiator_reject` then held two states, which the linter required an
+    `advances` on `E-WATER-RAD` for, and a `state_order` — because rejection is
+    `epsilon x sigma x A x T^4`, and the frozen lexicographic tiebreak sorts `radiator_rejection_w`
+    *first*, computing the rejection from last tick's temperature. A one-tick error in a quantity
+    that enters every thermal edge on the vehicle.
+    """
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    states = {str(s["id"]): s for s in thermal["state"]}
+
+    # The radiator was moved onto `radiator_reject` and moved back in the same round: its only
+    # inbound edge there is `E-WATER-RAD`, which is `C-WATER-BUDGET`'s **back-edge**, and neither the
+    # linter nor the plant counts a back-edge as a driver. The node gave the state a home without
+    # giving it an input.
+    assert states["zone_radiator_t"]["node"] == "internal"
+    assert set(thermal["zones_not_on_nodes"]) == {
+        "csm_service_bay",
+        "lm_descent_bay",
+        "radiator_loop",
+    }
+    # Its only inbound edge is a back-edge, so it is undriven — which the linter reports.
+    assert "radiator_reject" not in {
+        e["to"]
+        for e in coupling["edges"]
+        if e["id"] not in {c["back_edge"] for c in coupling["cycles"] if c.get("back_edge")}
+    }
+
+    # A zone back on the sentinel with no explanation is refused.
+    definition = copy_definition(tmp_path / "sentinel")
+    path = definition / "domains" / "thermal" / "components.yaml"
+    text = path.read_text()
+    # The fixture removes a *declared* exemption, which is what the check refuses.
+    anchor = "  lm_descent_bay: >-\n"
+    assert anchor in text, "the fixture no longer matches zones_not_on_nodes"
+    stripped = re.sub(r"  lm_descent_bay: >-\n(?:    .*\n|\n)*", "", text, count=1)
+    assert stripped != text
+    path.write_text(stripped)
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "no edge can drive it" in result.stdout
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
