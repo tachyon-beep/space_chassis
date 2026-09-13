@@ -3181,7 +3181,7 @@ def test_the_stock_integrator_refuses_what_is_not_a_flux():
     world = plant.load_world(VEHICLE)
 
     for edge_id, needle in (
-        ("E-ZONE-ATM", "'lag' edge into a stock"),
+        ("E-ZONE-ATM", "'lag' edge on a stock"),
         ("E-ATM-ABSORB", "does not establish a flux"),
         ("E-O2-ECLSS", "dimensionless ratio"),
         ("E-LM-O2-ECLSS", "dimensionless ratio"),
@@ -3229,7 +3229,7 @@ def test_the_linter_and_the_plant_share_one_stock_flux_rule():
     assert result.returncode == 0, result.stdout[-1500:]
 
     expected = {
-        "E-PLATE-BAT": "'lag' edge into a stock",
+        "E-PLATE-BAT": "'lag' edge on a stock",
         "E-O2-ECLSS": "dimensionless ratio",
         "E-LM-O2-ECLSS": "dimensionless ratio",
         "E-FC-WATER": "dimensionless ratio",
@@ -3341,6 +3341,95 @@ def test_the_pressure_is_a_state_on_the_cabin_node():
     edges = {e["id"]: e for e in coupling["edges"]}
     assert edges["E-ZONE-ATM"]["advances"] == "csm_cabin_pressure_pa"
     assert edges["E-ZONE-ATM-LM"]["advances"] == "lm_cabin_pressure_pa"
+
+
+def test_the_stock_integrator_drains_as_well_as_fills():
+    """The outbound half of the integrator was missing entirely, so every tank in the vehicle only filled.
+
+    The README states the rule in as many words — "a back-edge *out* of a stock still drains it,
+    because the stock's own integrator subtracts the flow the back-edge reads" — and no tool
+    implemented any of it: `advance()` summed `incoming` and never looked at an outbound edge. Twelve
+    edges leave stock nodes. With round 47's missing driver and round 49's node-level resolution, the
+    stock integrator has now been wrong in four independent ways, and the reason is the same every
+    time: **it never runs.**
+
+    `E-CREW-WATER` is the one discharge the classifier can establish — `kg/h per crew`, driven by the
+    crew count — and it is the edge the README says was added to stop `water_potable` rising
+    forever.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    edge = next(e for e in world.edges if e.id == "E-CREW-WATER")
+    assert edge.sensitivity["unit"] == "kg/h per crew"
+
+    # A discharge is driven by the *consumer*, not by the stock: reading the tank's own level and
+    # multiplying by a kg/h-per-crew sensitivity is how this returned zero at every crew count.
+    for crew, expected in ((0.0, 0.0), (1.0, 0.094583), (3.0, 0.283749)):
+        flux = plant.stock_flux(
+            world, edge, {edge.source: 137.0, edge.target: crew}, 3600.0, driver_node=edge.target
+        )
+        assert flux == pytest.approx(expected, rel=1e-6), f"{crew} crew gave {flux}"
+
+
+def test_the_linter_reports_the_discharges_it_cannot_establish(tmp_path):
+    """Thirteen of the vehicle's sixteen stock edges cannot be integrated, and each is named.
+
+    The linter reports them so they enter the debt count and fail `--strict`; the plant refuses them
+    with the same words from the same function. `E-PROP-ENG` and `E-RCSP-RCS` are the pair the
+    *dimensional* half of the classifier catches: `N per kg/s` reads as a rate under the time-basis
+    test alone, while its numerator is a force — the number is thrust per unit of flow, stated
+    backwards, so a plant multiplying it by a thrust would get N^2 per (kg/s) and call the result
+    kilograms of propellant.
+    """
+    from check_vehicle import stock_flux_basis
+
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    nodes = coupling["nodes"]
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-1500:]
+
+    structural = {
+        "E-FC-WATER",
+        "E-O2-ECLSS",
+        "E-LM-O2-ECLSS",
+        "E-ATM-ABSORB",
+        "E-LM-ATM-ABSORB",
+        "E-WATER-RAD",
+        "E-PROP-ENG",
+        "E-RCSP-RCS",
+        "E-PLATE-BAT",
+    }
+    for edge_id in structural:
+        edge = next(e for e in coupling["edges"] if e["id"] == edge_id)
+        basis, reason = stock_flux_basis(edge, nodes)
+        assert basis is None, f"{edge_id} is now integrable; update this test and the debt"
+        assert f"coupling.yaml:edge {edge_id}:" in result.stdout, (
+            f"{edge_id} is refused by the plant and not reported by the linter"
+        )
+
+    # The four that are computable stay computable, so the rule is not simply refusing everything.
+    for edge_id in ("E-CREW-ATM", "E-LM-CREW-ATM", "E-RAD-WATER", "E-CREW-WATER"):
+        edge = next(e for e in coupling["edges"] if e["id"] == edge_id)
+        basis, reason = stock_flux_basis(edge, nodes)
+        assert basis in ("per_second", "per_hour"), f"{edge_id}: {reason}"
+
+
+def test_a_stock_that_carries_two_states_says_which_one_drains(tmp_path):
+    """`drains` is `advances` for the outbound side, and it is required for the same reason.
+
+    `cabin_atm` carries four gas masses, so `E-ATM-ABSORB` leaving it has four candidates to choose
+    between — and it is the CO2 the absorber takes, not the nitrogen.
+    """
+    definition = copy_definition(tmp_path / "drains")
+    path = definition / "coupling.yaml"
+    text = path.read_text()
+    stripped = re.sub(r"^    drains: csm_cabin_co2_kg.*\n", "", text, count=1, flags=re.M)
+    assert stripped != text, "the fixture no longer matches E-ATM-ABSORB"
+    path.write_text(stripped)
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "declares no `drains`" in result.stdout
 
 
 def test_every_vehicle_yaml_parses():
