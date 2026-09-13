@@ -3527,7 +3527,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     seen = [state.id for rows in buckets.values() for state in rows]
     assert len(seen) == len(set(seen)), "a state is classified twice"
     assert set(seen) == {s.id for s in world.states}, "a state is classified by nothing"
-    assert sum(len(rows) for rows in buckets.values()) == 131
+    assert sum(len(rows) for rows in buckets.values()) == 132
 
     # `ready` means what it says: only the two classes the reference plant can actually advance.
     assert {s.method for s in buckets["ready"]} <= {"lag", "stock"}
@@ -3537,7 +3537,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # The counts are the vehicle's current shape, and a change here is a change in the build order
     # rather than a cosmetic difference — which is exactly what makes it worth asserting.
     assert len(buckets["ready"]) == 13
-    assert len(buckets["rule"]) == 68, "half the vehicle is domain code"
+    assert len(buckets["rule"]) == 69, "half the vehicle is domain code"
 
 
 def test_the_plant_reports_the_build_order():
@@ -3549,7 +3549,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "131 states, by what blocks them" in result.stdout
+    assert "132 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -4325,18 +4325,14 @@ def test_a_zone_temperature_is_on_a_node_or_declared(tmp_path):
     # inbound edge there is `E-WATER-RAD`, which is `C-WATER-BUDGET`'s **back-edge**, and neither the
     # linter nor the plant counts a back-edge as a driver. The node gave the state a home without
     # giving it an input.
-    assert states["zone_radiator_t"]["node"] == "internal"
-    assert set(thermal["zones_not_on_nodes"]) == {
-        "csm_service_bay",
-        "lm_descent_bay",
-        "radiator_loop",
-    }
-    # Its only inbound edge is a back-edge, so it is undriven — which the linter reports.
-    assert "radiator_reject" not in {
-        e["to"]
-        for e in coupling["edges"]
-        if e["id"] not in {c["back_edge"] for c in coupling["cycles"] if c.get("back_edge")}
-    }
+    # Round 70 moved the radiator onto `radiator_reject` and back, because its only inbound edge
+    # there was a back-edge. Round 71 gave the node a forward one — `E-ENV-RAD`, from the
+    # environment — so the state is on a node and driven.
+    assert states["zone_radiator_t"]["node"] == "radiator_reject"
+    assert set(thermal["zones_not_on_nodes"]) == {"csm_service_bay", "lm_descent_bay"}
+    node = coupling["nodes"]["radiator_reject"]
+    assert node["state_order"] == ["zone_radiator_t", "radiator_rejection_w"]
+    assert next(e for e in coupling["edges"] if e["id"] == "E-ENV-RAD")["kind"] == "algebraic"
 
     # A zone back on the sentinel with no explanation is refused.
     definition = copy_definition(tmp_path / "sentinel")
