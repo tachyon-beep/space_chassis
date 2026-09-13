@@ -3676,6 +3676,53 @@ def test_the_cabin_heat_rates_are_derived_from_the_load_inventory(tmp_path):
     )
 
 
+def test_the_cabin_equilibrium_is_inside_its_own_limit_band(tmp_path):
+    """Four declarations across three files have to agree for the cabin to be a habitable cabin.
+
+    The heat its equipment puts in (from the power domain's load inventory, summed), the lumped
+    conductance, the coolant supply temperature, and the zone's own `limit_c`. Nothing joined them,
+    and the arithmetic is one line: **T = supply + Q/G**.
+
+    Writing it found a swapped pair of fields. `loop_primary` declared `supply_c: [2.8, 7.2]` and
+    `evaporator_outlet_c: 5.3`, while its own source reads *"mixed supply 45 F = 7.2 C, evaporator
+    outlet 41.5 F = 5.3 C over a 37-45 F range"* — the supply carried the evaporator's span and the
+    evaporator carried that span's midpoint. Taken at face value the lower end is a 2.8 C supply, and
+    at 2.8 C the CSM cabin sits at **8.66 C against a 10 C floor**: the vehicle would trip its own
+    cabin-low alarm on every cold pass of a nominal mission.
+
+    `loop_lm` was worse. Its `supply_c: [1.7, 12]` was the *magnitude* of the operating range's cold
+    end with its sign lost, paired with an upper bound from nowhere — and the source gives an
+    operating range, not a supply temperature at all.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    loops = {str(x["id"]): x for x in vehicle["thermal"]["loops"]}
+    zones = {str(x["id"]): x for x in vehicle["thermal"]["zones"]}
+    states = {str(s["id"]): s for s in thermal["state"]}
+
+    for zone, loop_id, heat_id, cabin_id in (
+        ("csm_cabin", "loop_primary", "cabin_heat_csm_w", "zone_csm_cabin_t"),
+        ("lm_cabin", "loop_lm", "cabin_heat_lm_w", "zone_lm_cabin_t"),
+    ):
+        supply = loops[loop_id]["supply_c"]
+        assert isinstance(supply, (int, float)), f"{loop_id}.supply_c is a band, not a supply"
+        equilibrium = supply + states[heat_id]["total_w"] / states[cabin_id]["conductance_w_per_k"]
+        low, high = zones[zone]["limit_c"]
+        assert low < equilibrium < high, f"{zone} sits at {equilibrium:.2f} C in [{low}, {high}]"
+
+    # And a supply that puts the cabin under its own floor is refused rather than absorbed.
+    definition = copy_definition(tmp_path / "cold")
+    path = definition / "vehicle.yaml"
+    text = path.read_text()
+    anchor = "        supply_c: 7.2\n        return_c: [5, 15]"
+    assert anchor in text, "the fixture no longer matches loop_primary"
+    path.write_text(text.replace(anchor, "        supply_c: 1.0\n        return_c: [5, 15]", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "trip its own cabin-low alarm" in result.stdout
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
