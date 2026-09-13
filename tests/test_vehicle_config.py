@@ -4119,6 +4119,53 @@ def test_the_battery_derating_is_a_capacity_not_a_flux():
     assert " is a 'lag' edge on a stock" not in result.stdout
 
 
+def test_what_a_cabin_removes_is_what_its_crew_produce(tmp_path):
+    """Three declarations in three files, joined for the first time.
+
+    The crew count (`mission.yaml#crew`), the metabolic production rate
+    (`vehicle.yaml#consumables.metabolic`), and the removal rate the ECLSS domain declares per
+    compartment. The arithmetic is one line each — **rate = crew x kg_per_crew_day / 86400** — and
+    it is the cabin equilibrium's three-way join applied to a different quantity.
+
+    The two figures are deliberately *not* the same figure, which is the point of the round-63
+    split: the CSM element removes what `size` crew produce and the LM cartridge what
+    `surface_party` produce, so the LM's rate is two thirds of the CSM's on one metabolic constant.
+    A single shared state could not have expressed either.
+    """
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    eclss = yaml.safe_load((VEHICLE / "domains" / "eclss" / "components.yaml").read_text())
+    states = {str(s["id"]): s for s in eclss["state"]}
+    per_day = vehicle["consumables"]["metabolic"]["co2_kg_per_crew_day"]
+
+    for state_id, key, expected in (
+        ("co2_removal_csm_kg_s", "size", 3 * 0.91 / 86400),
+        ("co2_removal_lm_kg_s", "surface_party", 2 * 0.91 / 86400),
+    ):
+        crew = mission["crew"][key]
+        assert states[state_id]["nominal_kg_s"] == pytest.approx(crew * per_day / 86400, rel=1e-5)
+        assert states[state_id]["nominal_kg_s"] == pytest.approx(expected, rel=1e-5)
+
+    # Two thirds, on one metabolic constant — the relationship the split made visible.
+    ratio = (
+        states["co2_removal_lm_kg_s"]["nominal_kg_s"]
+        / states["co2_removal_csm_kg_s"]["nominal_kg_s"]
+    )
+    assert ratio == pytest.approx(mission["crew"]["surface_party"] / mission["crew"]["size"])
+
+    # Move the crew count and the domain's rate is refused rather than silently stale.
+    definition = copy_definition(tmp_path / "crew")
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    anchor = "  surface_party: 2\n"
+    assert anchor in text, "the fixture no longer matches mission.yaml#crew"
+    path.write_text(text.replace(anchor, "  surface_party: 3\n", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "A cabin's equipment that removes a different amount" in result.stdout
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
