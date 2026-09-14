@@ -612,7 +612,7 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
             counted_more += 1
         elif claimed[state.id] == "rule" and actual == "edge" and state.node == "internal":
             sentinel += 1
-        elif claimed[state.id] == "edge" and actual == "rule":
+        elif claimed[state.id] == "edge" and actual == "rule" and state.id == "bus_b_v":
             # **A third kind, added deliberately.** The worklist reports a state with no input at
             # all as owing an *edge* — because no rule can be written without one — where `advance`
             # reports that its rule is domain code. `bus_b_v` is the case: `bus_b` has no inbound
@@ -628,7 +628,11 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
             unexplained.append((state.id, claimed[state.id], actual, state.node))
 
     assert not unexplained, f"a new kind of disagreement: {unexplained}"
-    assert (counted_more, sentinel, no_input) == (23, 13, 1), (counted_more, sentinel, no_input)
+    # `bus_b_v` was the third class when round 100 added it and is not one any more: round 101
+    # gave `bus_b` a source, so it owes a rule like every other `algebraic` state without one. The
+    # assertion below is what keeps the class *declared* rather than deleted — if a state falls
+    # into it again, `no_input` moves and this fails.
+    assert (counted_more, sentinel, no_input) == (23, 13, 0), (counted_more, sentinel, no_input)
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -3739,11 +3743,11 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # the plant wants, so they left this bucket without the code they need going away. The second
     # was the classifier being fixed to agree with `advance()`, which moved thirteen `internal`
     # states *in* here — no edge can reach the sentinel, so their driver is domain code.
-    assert len(buckets["rule"]) == 81, "half the vehicle is domain code"
+    assert len(buckets["rule"]) == 82, "half the vehicle is domain code"
     assert len(buckets["value"]) == 26
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code.
-    assert len(buckets["edge"]) == 12
+    assert len(buckets["edge"]) == 11
     assert len(buckets["ready"]) == 15
 
 
