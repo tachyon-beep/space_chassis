@@ -3550,14 +3550,18 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # been counted as ready because the integrator never read a level, which is the defect the
     # round found — the build order was reporting a state as advanceable that could only have
     # produced a wrong number.
-    assert len(buckets["ready"]) == 11
-    # 71 -> 69 when forty-three discrete states gained a `moved_by`. The two still owed put an
-    # `UNCONFIGURED` in their spec, and `walk_unset` counts any unset scalar as a value the plant
-    # wants — so they moved out of this bucket without the domain code they need going away. The
-    # field is a *configuration* obligation and the classifier asks only whether a scalar is set;
-    # that mismatch is recorded in the README rather than papered over here.
-    assert len(buckets["rule"]) == 69, "half the vehicle is domain code"
+    assert len(buckets["ready"]) == 14
+    # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
+    # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
+    # the plant wants, so they left this bucket without the code they need going away. The second
+    # was the classifier being fixed to agree with `advance()`, which moved thirteen `internal`
+    # states *in* here — no edge can reach the sentinel, so their driver is domain code.
+    assert len(buckets["rule"]) == 82, "half the vehicle is domain code"
     assert len(buckets["value"]) == 26
+    # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
+    # are advanceable, and the thirteen `internal` states need code.
+    assert len(buckets["edge"]) == 12
+    assert len(buckets["ready"]) == 14
 
 
 def test_the_plant_reports_the_build_order():
