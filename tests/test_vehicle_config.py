@@ -1105,6 +1105,99 @@ def test_the_linter_holds_the_posture_that_permits_action(tmp_path):
     assert "mission.yaml:posture recovery: is the source of no transition" in out, out[-1200:]
 
 
+def test_the_linter_holds_a_derived_initial_against_the_law_it_cites(tmp_path):
+    """The cabin oxygen load is the one initial in the corpus that is a *computed consequence*.
+
+    `atmosphere_model` states the law (`P = (sum_i n_i) R T / V`), the cabin volume per compartment,
+    the molar mass of each gas, and takes the temperature from the zone — and the two states that
+    the law determines declared their arithmetic as `initial_provenance.relation`, **prose**, so
+    nothing evaluated it. Both were seven-figure literals from a sum done once by hand, and the pair
+    disagreed: `csm_cabin_o2_kg` at 2.653760 implied 6,894.8 Pa per psi while `lm_cabin_o2_kg` at
+    3.013592 implied slightly less, so one law applied to two cabins had been rounded two ways.
+
+    A derived initial now binds the figures its relation names, exactly as an edge's sensitivity
+    does, and the two states are held against the *same* constants and each other's arithmetic: the
+    cabin's nominal pressure and temperature (from the zone that declares them, and the vehicle-level
+    copy is held to it by the zone join), the volume and the molar mass from the atmosphere model,
+    and the two physical constants. Re-rate a cabin's temperature in **both** files — consistently,
+    so no join can complain — and the initial refuses, which is the case this test keeps.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    documents = linter.load_documents(
+        VEHICLE,
+        yaml.safe_load((VEHICLE / "vehicle.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "coupling.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "mission.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "channels.yaml").read_text()),
+    )
+    report = linter.Report()
+    linter.check_initial_sources(
+        VEHICLE,
+        documents["vehicle.yaml"],
+        documents["coupling.yaml"],
+        report,
+        documents,
+    )
+    assert report.refusals == [], report.refusals
+    states = {
+        s["id"]: s
+        for s in documents["domains/eclss/components.yaml"]["state"]
+        if s.get("id", "").endswith("cabin_o2_kg")
+    }
+    assert sorted(states) == ["csm_cabin_o2_kg", "lm_cabin_o2_kg"], sorted(states)
+    for sid, value in (("csm_cabin_o2_kg", 2.653596), ("lm_cabin_o2_kg", 3.013405)):
+        state = states[sid]
+        assert state["initial"] == value, (sid, state["initial"])
+        assert state.get("initial_derivation"), f"{sid} derives nothing"
+
+    def refusal(name: str, edits: list[tuple[str, str, str]], needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        for rel, old, new in edits:
+            path = definition / rel
+            text = path.read_text()
+            assert old in text, f"the fixture no longer matches {rel}: {old!r}"
+            path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1200:]
+
+    eclss = "domains/eclss/components.yaml"
+    # The derivation removed: the relation is prose again, and prose cannot be evaluated.
+    refusal(
+        "no-derivation",
+        [(eclss, "    initial_derivation:\n      expression: \"psi_to_pa * pressure_psia",
+          "    unused_derivation:\n      expression: \"psi_to_pa * pressure_psia")],
+        "declares this initial as `derived` and binds nothing",
+    )
+    # The value put back to the literal nothing could re-derive.
+    refusal(
+        "old-literal",
+        [(eclss, "    initial: 2.653596\n", "    initial: 2.653760\n")],
+        "and `initial` declares 2.65376",
+    )
+    # The cabin re-rated in *both* files, so no join can complain — and the initial refuses anyway,
+    # because it was computed from the old nominal.
+    definition = copy_definition(tmp_path / "rerated")
+    for rel in ("vehicle.yaml", "domains/thermal/components.yaml"):
+        path = definition / rel
+        text = path.read_text()
+        assert "nominal_temperature_k: 295" in text, rel
+        path.write_text(text.replace("nominal_temperature_k: 295", "nominal_temperature_k: 300"))
+    out = run_linter(definition).stdout
+    assert "and `initial` declares 2.653596" in out, out[-1200:]
+    # And a renamed source reads exactly like one that is unset.
+    refusal(
+        "renamed-source",
+        [(eclss, 'volume_m3: "domains/eclss/components.yaml:atmosphere_model.volume_m3.csm"',
+          'volume_m3: "domains/eclss/components.yaml:atmosphere_model.volume_m3.cabin"')],
+        "A source that has been renamed reads exactly like a source that is unset",
+    )
+
+
 def test_the_linter_refuses_a_quality_function_that_can_see_the_fault_state(tmp_path):
     """`simulator-design.md:496-508`, made mechanical — and nothing implemented it before.
 
