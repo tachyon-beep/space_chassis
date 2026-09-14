@@ -2614,6 +2614,96 @@ def test_an_argument_a_fleet_can_send_names_something_the_vehicle_has(tmp_path):
     assert "loop_secondary" in empty[0]
 
 
+def test_a_keyed_state_says_which_article_it_is_about(tmp_path):
+    """One value stood for two hatches, and the corpus's own gate text said "any hatch".
+
+    `hatch_state` was `enum[closed,latched,open]` — one value for `hatch_crew_csm` and
+    `hatch_crew_lm` — while `set_hatch_valve` names *one* of them, the threshold that guards the
+    cabin's differential pressure is `gated_by: "any hatch in the open or latched position"`, and
+    two faults written against `hatch_crew_lm` perturb the shared value. So the vehicle could be in
+    two different conditions — the CSM tunnel hatch open with the LM hatch sealed, or the reverse —
+    and publish one word for them. The LM's hatch is the one that opens onto the lunar surface, and
+    `mission.yaml#objectives.surface_mission` names this channel as part of what settles an EVA.
+
+    The domain already had the right shape two entries down. `docking_latch_state` is
+    `map[latch_id, ...]` and its own note gives the argument: *"a count cannot express `eleven of
+    twelve engaged`, and `eleven of twelve` is the state a crew has to reason about."* The registry
+    has carried `map[...]` channels since `controls.breakers`, and both are published, so this is
+    the corpus's own convention arriving at the one state that was not keyed by its article.
+
+    **And writing it found a hole in the binding that holds a channel to its state.** That binding
+    compares the two `enum[...]` lists — so a channel whose *value* vocabulary differs is refused,
+    which it has been for rounds. It did not compare the **key**: change the channel's
+    `map[hatch_id, ...]` to `map[latch_id, ...]` and the linter composed, which is how the fixture
+    for this found it. The key is half the claim a keyed channel makes, so it is compared now.
+
+    The asymmetry is deliberate. A channel that promises a key over a state holding a single value
+    is refused — it is publishing a value the vehicle cannot hold. A channel that publishes
+    *something about* a keyed state, with no placeholder in its own name to instantiate the key,
+    gets a note instead: `cw.active_lights` is a list of which systems are lit, and
+    `structure.docking_latches` is a count of `docking_latch_state`'s members whose own debt
+    carries what it owes.
+    """
+    structure = "domains/structure/components.yaml"
+    channels = "channels.yaml"
+    keyed = '"map[hatch_id,enum[closed,latched,open]]"'
+
+    # The state and its channel are one claim, and this is the shape both carry.
+    components = yaml.safe_load((VEHICLE / structure).read_text())
+    hatch = next(s for s in components["state"] if s["id"] == "hatch_state")
+    assert hatch["unit"] == "map[hatch_id,enum[closed,latched,open]]", hatch["unit"]
+    registry = yaml.safe_load((VEHICLE / channels).read_text())
+    row = next(r for section in registry.values() if isinstance(section, list)
+               for r in section if isinstance(r, dict) and r.get("id") == "structure.hatch_state")
+    assert row["unit"] == hatch["unit"], row["unit"]
+
+    def refusal(name: str, edits: list[tuple[str, str, str]], needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        for rel, old, new in edits:
+            path = definition / rel
+            text = path.read_text()
+            assert old in text, f"the fixture no longer matches {old!r}"
+            path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, f"{needle!r} did not fire:\n{out[-1500:]}"
+
+    # The key, from both sides — the channel's and the state's.
+    refusal(
+        "channel_key",
+        [(channels, keyed, '"map[latch_id,enum[closed,latched,open]]"')],
+        "whose unit is 'map[hatch_id,enum[closed,latched,open]]'",
+    )
+    refusal(
+        "state_key",
+        [(structure, keyed, '"map[latch_id,enum[closed,latched,open]]"')],
+        "whose unit is 'map[latch_id,enum[closed,latched,open]]'",
+    )
+    # A keyed channel over a state that holds one value.
+    refusal(
+        "over_scalar",
+        [(structure, keyed, '"enum[closed,latched,open]"')],
+        "publishing a value the vehicle cannot hold",
+    )
+    # And the value vocabulary, which the binding already compared.
+    refusal(
+        "value_enum",
+        [(channels, keyed, '"map[hatch_id,enum[closed,latched,open,sealed]]"')],
+        "publishes ['closed', 'latched', 'open', 'sealed']",
+    )
+
+    # The note, and the negative that makes it readable: the seven channels that instantiate a keyed
+    # state one key at a time must not be described as projections.
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-900:]
+    notes = [
+        line
+        for line in result.stdout.splitlines()
+        if line.strip().startswith("- ") and "about* the map rather than a key of it" in line
+    ]
+    assert len(notes) == 1, notes
+    assert "cw.active_lights" in notes[0]
+
+
 def test_the_cabin_volume_is_one_number_in_three_files(tmp_path):
     """The denominator of every partial pressure the crew read, declared seven times.
 
