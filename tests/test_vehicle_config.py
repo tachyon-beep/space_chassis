@@ -448,6 +448,78 @@ def test_an_unset_domain_value_is_a_debt_named_by_its_path(tmp_path):
     assert "sublimator_lm" not in result.stdout, "supplying the value must retire the debt"
 
 
+def test_every_state_in_a_declared_order_is_actually_advanced():
+    """A `state_order` is a claim about a sequence, and nothing checked that it can run.
+
+    `radiator_reject` holds two states and its order puts `zone_radiator_t` **first** — the round-71
+    fix, so that rejection (`epsilon x sigma x A x T^4`) is computed from *this* tick's temperature
+    rather than last tick's. But both of the node's inbound edges, `E-ENV-RAD` and `E-WATER-RAD`,
+    declare `advances: radiator_rejection_w`. **The state the order puts first is the one state on
+    the node that nothing advances**, and the order describes a sequence whose first step never
+    runs.
+
+    The existing check verified that an order names the node's states and that a multi-state node
+    has one. Nothing verified that the order can *execute* — which is the round-71
+    `zone_csm_cabin_t` finding generalised: a state on a node is not driven because an edge reaches
+    the node, it is driven because an edge **says it advances it**.
+
+    Only a state whose *method* needs an edge is in question. `alert_lifecycle` is the alert
+    system's own computation and the states on `structure_config` are moved by irreversible events;
+    demanding an edge for those would be demanding the graph model a mechanism it does not
+    describe. So the rule is `advance`'s own: a `lag`, `stock`, `delay` or `dynamics` state needs a
+    driver unless it is a tank filled at the pad.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+
+    # Which states each node's order covers, and which its edges say they advance.
+    by_node: dict[str, set[str]] = {}
+    for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        for state in doc.get("state") or []:
+            if isinstance(state, dict) and state.get("method") in {
+                "lag",
+                "stock",
+                "delay",
+                "dynamics",
+            }:
+                by_node.setdefault(str(state.get("node")), set()).add(str(state.get("id")))
+    # **Back-edges included in the exclusion**, which is the whole reason the radiator is on the
+    # list: `E-WATER-RAD` is `C-WATER-BUDGET`'s back-edge, and neither the linter nor the plant
+    # counts a back-edge as a driver. A test that counted it would find nothing wrong.
+    back = world.back_edges
+    advanced: dict[str, set[str]] = {}
+    for edge in coupling["edges"]:
+        if edge.get("advances") and edge.get("id") not in back:
+            advanced.setdefault(str(edge["to"]), set()).add(str(edge["advances"]))
+
+    # The linter's own set, rather than a second implementation of its node selection: it reports
+    # only nodes that **declare a `state_order`**, which is the claim being checked. Recomputing
+    # the same rule here would be two implementations of one check, and the five below are the
+    # ones it names.
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-900:]
+    reported = sorted(
+        line.split(":node ", 1)[1].split(":", 1)[0]
+        for line in result.stdout.splitlines()
+        if "declares a state_order over" in line
+    )
+    assert reported == [
+        "coolant_flow",
+        "crew_state",
+        "fuel_cell",
+        "radiator_reject",
+        "vehicle_dynamics",
+    ], reported
+
+    # The two that are new this round, and both are the same defect: the state the order puts
+    # first is the one nothing advances.
+    assert "no inbound edge advances 'zone_radiator_t'" in result.stdout
+    assert "no inbound edge advances 'attitude'" in result.stdout
+    assert "no inbound edge advances 'source_converter_v'" in result.stdout
+
+
 def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     """The worklist's docstring promised the two "cannot disagree". They do, thirty-six times.
 
@@ -5918,7 +5990,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 248 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 253 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -6058,7 +6130,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "248", "the view must agree with the headline count"
+    assert owed == "253", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
