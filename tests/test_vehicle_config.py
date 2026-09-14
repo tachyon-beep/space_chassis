@@ -1327,7 +1327,7 @@ def test_the_linter_refuses_a_tightening_profile_that_widens(tmp_path):
     refusal(
         "      factors:\n        below: 1.1111\n        above: 0.9\n",
         "",
-        "declares no `factors`",
+        "declares neither `factors` nor a `factor`",
     )
 
 
@@ -4240,6 +4240,123 @@ def test_every_stock_declares_where_it_starts():
             )
 
 
+def test_the_narrowing_rule_reads_both_places_alternatives_are_declared():
+    """The rule that caught `power.tight` had never run on seven of the eleven domains.
+
+    A profile's `factors` scale its thresholds, and the direction depends on the comparator:
+    tightening a ceiling means lowering it, tightening a floor means raising it. One number cannot
+    do both — that is the defect the rule was written for, and `power`'s `tight`, selected by a
+    fleet wanting warning *earlier*, dropped the bus undervoltage ladder from 26.5 V to 23.85 V.
+
+    `check_profiles` read `profiles_doc.get("alternatives")`, which is where four domains put the
+    list. The other **seven** nest it under `profile_selection.alternatives`, so the rule had never
+    been applied to thirteen alternatives — including one in `rcs` named `tight`, the same name as
+    the one that was wrong. Every one declares a single scalar `factor`.
+
+    A scalar is an *unmet requirement* rather than a false claim, and the distinction decides the
+    instrument: a domain that declares the two-key form and gets a direction wrong is refused,
+    because it made a claim and the claim is false. A domain that declares one number is owed, and
+    the obligation is named and counted. Which way `rcs.conservative` moves — `factor: 1.5` for "a
+    wider deadband and a *lower* authority floor" — is its author's judgement, not the linter's.
+    """
+    shapes = {}
+    for path in sorted((VEHICLE / "domains").glob("*/profiles.yaml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        nested = (doc.get("profile_selection") or {}).get("alternatives") or []
+        top = doc.get("alternatives") or []
+        assert not (nested and top), f"{path.parent.name} declares alternatives twice"
+        shapes[path.parent.name] = nested or top
+
+    assert sum(1 for v in shapes.values() if v) == 11, "a domain declares no alternatives at all"
+    nested = [d for d, v in shapes.items() if d in ("avionics", "comms", "rcs")]
+    assert nested, "the nested shape has gone"
+    # The seven that nest them are the ones the old read missed.
+    scalar = [
+        (d, a["id"])
+        for d, alts in shapes.items()
+        for a in alts
+        if isinstance(a.get("factor"), (int, float)) and "factors" not in a
+    ]
+    assert len(scalar) == 13, f"{len(scalar)} alternatives still declare a scalar factor: {scalar}"
+
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-900:]
+    for domain, alt_id in scalar:
+        line = next(
+            (
+                x
+                for x in result.stdout.splitlines()
+                if f"domains/{domain}/profiles.yaml:alternative {alt_id}.factors" in x
+            ),
+            None,
+        )
+        assert line is not None, f"{domain}/{alt_id} is not reported as owed"
+        assert "One number cannot tighten both" in line, line
+
+
+def test_the_presentation_references_resolve_and_the_table_is_whole(tmp_path):
+    """Five claims about other files, and nothing resolved any of them.
+
+    `presentation.yaml` names the frozen contract and the probe that tests it; `coupling.yaml`
+    names the corpus document it was generated from and the design section that fixes its
+    provenance rule. Each is a reference in the folder's own sense — a name whose whole value is
+    that it points at something — and all four are right today, which is the condition under which
+    the fifth is written wrong.
+
+    The conformance table is the vehicle's claim to satisfy `docs/diode-contract.md` §9: twelve
+    rows for the contract's twelve numbered checks. Nothing joined the two, so a dropped row would
+    leave a check nobody claims and a duplicate would claim one twice — neither visible in a table
+    that reads perfectly.
+
+    The seed's provenance was the seventh unread block, and it is the declaration determinism
+    rests on: `plant.md` §6 keys every stochastic stream to it.
+    """
+    presentation = yaml.safe_load((VEHICLE / "presentation.yaml").read_text())
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    repo = VEHICLE.parents[2]
+
+    for value in (
+        presentation["contract"],
+        presentation["contract_probe"],
+        coupling["generated_from"],
+        coupling["provenance_rules"],
+    ):
+        assert (repo / str(value).split("#", 1)[0]).exists(), value
+
+    numbers = sorted(row["check"] for row in presentation["conformance"])
+    assert numbers == list(range(1, 13)), numbers
+    assert {row["status"] for row in presentation["conformance"]} <= {
+        "demonstrated",
+        "satisfied_by_configuration",
+        "far_side",
+        "shared",
+        "vacuous",
+    }
+
+    # A renamed reference is refused, and so is a table with a hole in it.
+    definition = copy_definition(tmp_path / "refs")
+    path = definition / "presentation.yaml"
+    text = path.read_text()
+    broken = text.replace(
+        "contract: docs/diode-contract.md", "contract: docs/diode-contract-v2.md", 1
+    )
+    assert broken != text, "the fixture no longer matches presentation.yaml"
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "presentation.yaml:contract" in result.stdout, result.stdout[-900:]
+
+    definition = copy_definition(tmp_path / "holes")
+    path = definition / "presentation.yaml"
+    text = path.read_text()
+    broken = text.replace("  - check: 12", "  - check: 13", 1)
+    assert broken != text
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "skips [12]" in result.stdout, result.stdout[-900:]
+
+
 def test_the_guidance_model_is_re_derived_rather_than_trusted(tmp_path):
     """Three `gnc` blocks were the last of the nine a deletion test found unread, and all three
     declare things arithmetic can check.
@@ -5113,7 +5230,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 254 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 267 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -5253,7 +5370,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "254", "the view must agree with the headline count"
+    assert owed == "267", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
