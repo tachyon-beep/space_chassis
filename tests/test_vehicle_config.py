@@ -448,6 +448,63 @@ def test_an_unset_domain_value_is_a_debt_named_by_its_path(tmp_path):
     assert "sublimator_lm" not in result.stdout, "supplying the value must retire the debt"
 
 
+def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
+    """The worklist's docstring promised the two "cannot disagree". They do, thirty-six times.
+
+    Running `advance` over every state with a permissive value map — every node supplied a number,
+    so a refusal is about *structure* rather than about a value missing somewhere else — lands
+    thirty-six states in a different bucket from the one `build_order` gives them. The correction is
+    not to the classifier, which is sound, but to the sentence: the two answer different questions
+    on purpose.
+
+    **Twenty-three are the worklist counting more.** `advance` refuses on the parameter its *method*
+    needs and nothing else; `build_order` walks the whole spec, so a state whose `initial` or
+    `moved_by` or `basis` is unset is reported as owing a value even where the plant would advance
+    it from a number it was handed. That is the honest direction for a worklist — the spec *is*
+    incomplete.
+
+    **Thirteen are the `internal` sentinel**, which `build_order` routes to `rule` and `advance`
+    calls a missing edge. No edge can reach the sentinel, so its driver is domain code, and `rule`
+    is the file an implementer should open.
+
+    This test is the pin: any disagreement that is **not** one of those two fails, so a third kind
+    cannot appear unnoticed. And the property the docstring should have claimed — that the
+    classification never sends a reader somewhere the answer is not — is the one round 95 fixed for
+    sixteen states.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    permissive = dict.fromkeys(world.nodes, 1.0)
+    buckets = plant.build_order(world)
+    claimed = {state.id: name for name, rows in buckets.items() for state in rows}
+
+    unexplained = []
+    counted_more = sentinel = 0
+    for state in world.states:
+        try:
+            plant.advance(world, state, permissive, 1.0)
+            actual = "ready"
+        except plant.Unconfigured as exc:
+            where = str(exc.where)
+            if where.startswith("coupling.yaml:edge") or "no incoming edge" in str(exc):
+                actual = "edge"
+            elif where.startswith(f"domains/{state.domain}/components.yaml:state {state.id}."):
+                actual = "value"
+            else:
+                actual = "rule"
+        if actual == claimed[state.id]:
+            continue
+        if claimed[state.id] == "value":
+            counted_more += 1
+        elif claimed[state.id] == "rule" and actual == "edge" and state.node == "internal":
+            sentinel += 1
+        else:
+            unexplained.append((state.id, claimed[state.id], actual, state.node))
+
+    assert not unexplained, f"a new kind of disagreement: {unexplained}"
+    assert (counted_more, sentinel) == (23, 13), (counted_more, sentinel)
+
+
 def test_a_delay_state_owes_its_delay(tmp_path):
     """A transport delay is its own method, and it owes a delay the way a lag owes a tau.
 
