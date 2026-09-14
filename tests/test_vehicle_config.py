@@ -4060,6 +4060,56 @@ def test_an_irreversible_event_names_configurations_that_exist(tmp_path):
     assert "bogus_cfg" in result.stdout, result.stdout[-900:]
 
 
+def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
+    """The rule says "each node with more than one producing state". The code said "unless internal".
+
+    `check_domains` requires a node advanced by two or more states to declare a `state_order` or
+    to claim `independent`, and the comment beside it records what the requirement is for: the
+    frozen lexicographic tiebreak sorted `link_snr` before `tx_power`, on a node where transmit
+    power is a term in the link budget, so the derived order computed this tick's ratio from last
+    tick's power. *"Silence about them means the alphabet decides."*
+
+    The loop implementing it read `if node and node != "internal"`, and neither `plant.md` nor
+    `coupling.yaml` says why. So 54 states across nine domains stayed alphabetical. The sentinel
+    is the worse place for it, not the better one: a node's producing states are at least joined
+    by edges that say what feeds what, and `internal` states have no edges at all — that is what
+    the sentinel means — so the alphabet was the only signal there was.
+
+    Nine domains owe the declaration and no source in the corpus supplies it, so each is a debt
+    naming its own states rather than a refusal: the honest instrument for a declaration that is
+    needed and unset.
+    """
+    owed = []
+    for components_path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        components = yaml.safe_load(components_path.read_text()) or {}
+        on_sentinel = sorted(
+            str(s["id"])
+            for s in components.get("state") or []
+            if isinstance(s, dict) and str(s.get("node")) == "internal" and s.get("id")
+        )
+        if len(on_sentinel) < 2:
+            assert "internal_order" not in components, (
+                f"{components_path.parent.name} declares an order for fewer than two sentinel states"
+            )
+            continue
+        assert "internal_order" not in components, (
+            f"{components_path.parent.name} declares one — update this test to check it"
+        )
+        owed.append((components_path.parent.name, on_sentinel))
+
+    assert len(owed) == 9, f"{len(owed)} domains owe an `internal_order`: {[d for d, _ in owed]}"
+    assert sum(len(s) for _, s in owed) == 54, "the sentinel's state count moved"
+
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-900:]
+    reported = [line for line in result.stdout.splitlines() if "internal_order:" in line]
+    assert len(reported) == 9, f"{len(reported)} of 9 reported"
+    for domain, states in owed:
+        line = next(x for x in reported if f"domains/{domain}/" in x)
+        for state in states:
+            assert state in line, f"{domain}'s debt does not name {state}"
+
+
 def test_vehicle_yaml_counts_its_own_open_debts():
     """The file's `VEHICLE_SECTIONS` comment said these were counted, and nothing counted them.
 
@@ -4732,7 +4782,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 232 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 241 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -4872,7 +4922,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "232", "the view must agree with the headline count"
+    assert owed == "241", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
