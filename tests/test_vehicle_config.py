@@ -4240,6 +4240,67 @@ def test_every_stock_declares_where_it_starts():
             )
 
 
+def test_a_command_cannot_be_grouped_under_a_domain_of_its_own(tmp_path):
+    """`conflict_domain` says which commands must not both take effect in one tick, unvalidated.
+
+    The console expands the field and the first valid command in a domain wins, so a typo does not
+    fail — it makes the command's collisions silently stop happening and two contradictory orders
+    are both accepted. The console already knows: `conflict_domains` falls back to the literal text
+    when a template will not expand, with the comment that *"a domain that cannot be expanded is a
+    domain nothing can collide in, which is worse than a wrong one."* A fallback at runtime is what
+    the linter is for at build time.
+
+    **Four verbs had the defect the gate check was written for and did not reach.**
+    `power.source_<id>`, `power.contactor_<id>`, `power.load_<id>` and `power.breaker_<id>` name
+    `id`, and their arguments are called `source`, `battery`, `load` and `breaker` — the same eight-
+    verb class round 43 recorded when it fixed the *gate* templates and left the conflict domains
+    beside them, because the check was written for the field rather than for the defect.
+
+    The effect was over-broad rather than under-broad, which is why nothing noticed: an
+    unexpandable template falls back to its literal text, so **every** `set_source` shared one
+    conflict domain no matter which source it named, and two commands touching different sources
+    in one tick refused each other.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    allowed = set(linter.DOMAINS) | set(linter.PREFIX_DOMAIN)
+    seen = 0
+    for path in sorted((VEHICLE / "domains").glob("*/commands.yaml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        for verb in doc.get("commands") or []:
+            conflict = str(verb.get("conflict_domain") or "")
+            assert conflict, f"{path.parent.name}/{verb['verb']} declares no conflict_domain"
+            assert conflict.split(".")[0] in allowed, (verb["verb"], conflict)
+            for placeholder in re.findall(r"<([^>]+)>", conflict):
+                spec = (verb.get("argument_schema") or {}).get(placeholder)
+                assert isinstance(spec, dict) and spec.get("type") == "enum", (
+                    verb["verb"],
+                    conflict,
+                    placeholder,
+                )
+            seen += 1
+    assert seen == 58, f"{seen} verbs"
+
+    # Both spellings of a domain are legitimate — `PREFIX_DOMAIN` exists so a reference may be
+    # qualified by the directory or by the channel prefix, and the corpus uses both.
+    assert "res" in linter.PREFIX_DOMAIN and "prop" in linter.PREFIX_DOMAIN
+    assert "comms" in linter.DOMAINS and "comm" in linter.PREFIX_DOMAIN
+
+    definition = copy_definition(tmp_path / "conflict")
+    path = definition / "domains" / "gnc" / "commands.yaml"
+    text = path.read_text()
+    broken = text.replace("conflict_domain: gnc.guidance", "conflict_domain: gncz.guidance", 1)
+    assert broken != text, "the fixture no longer matches gnc/commands.yaml"
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "neither a domain directory" in result.stdout, result.stdout[-900:]
+
+
 def test_the_acceleration_ceiling_is_a_property_of_two_sets(tmp_path):
     """`uncommanded_acceleration`'s limit is the largest acceleration the thrust can explain.
 
