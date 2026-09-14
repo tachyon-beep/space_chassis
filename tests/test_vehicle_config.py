@@ -2793,6 +2793,76 @@ def test_the_declared_links_nothing_resolved(tmp_path):
     assert "res.o2_remaining_kg" in recon["inputs"]
 
 
+def test_the_corpus_says_how_many_spacecraft_it_has(tmp_path):
+    """`vehicle:` is written sixty-seven times and no list existed to hold a value against.
+
+    Every power source, load and bus, every atmosphere, every thermal zone and loop, every component
+    the crew can be in — all of them say which spacecraft they belong to, and the probe is one word:
+    `vehicle: csmx` on a power component composed, and so did a thermal zone moved to a spacecraft
+    that does not exist. Sixty-seven declarations of a fact about hardware, resolved by nothing.
+
+    **And the rule could not simply be written, which is the round's real finding: the key carried
+    three meanings.** A spacecraft id sixty-seven times; the *document* `mission.yaml` registers its
+    channels against (`vehicle: vehicle.yaml`), once; and the narrative of what this side does about
+    a contract check, twelve times in `presentation.yaml`'s conformance table — where the linter
+    *required* it to be non-empty, so the overload was enforced by a check. One key, three meanings,
+    and no rule that could be written about any of them. The two minority senses are
+    `vehicle_document` and `disposition` now, and the list the majority is held against is
+    `vehicle.yaml#spacecraft` — the only place in the corpus that says how many spacecraft there are.
+
+    Two of the sixty-seven are held here as well: the keys of `atmosphere_model.volume_m3`, which
+    `check_cabin_volumes` uses as the authority for the cabin volume and which were a second, silent
+    enumeration of the same fact.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    assert vehicle["spacecraft"] == ["csm", "lm"], vehicle["spacecraft"]
+
+    def refusal(name: str, edits: list[tuple[str, str, str]], needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        for rel, old, new in edits:
+            path = definition / rel
+            text = path.read_text()
+            assert old in text, f"the fixture no longer matches {old!r}"
+            path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, f"{needle!r} did not fire:\n{out[-1500:]}"
+
+    refusal(
+        "component",
+        [("domains/power/components.yaml", "    vehicle: csm\n", "    vehicle: csmx\n")],
+        "names spacecraft 'csmx'",
+    )
+    refusal(
+        "atmosphere",
+        [("domains/eclss/components.yaml", "  volume_m3:\n    csm: 5.9\n", "  volume_m3:\n    csmx: 5.9\n")],
+        "states the ideal-gas law for 'csmx'",
+    )
+    # The list itself: emptied, and malformed. A string is the case that matters, because iterating
+    # one gives its characters and sixty-seven refusals about spacecraft named 'c'.
+    refusal(
+        "empty",
+        [("vehicle.yaml", "spacecraft:\n  - csm\n  - lm\n", "spacecraft: []\n")],
+        "declares no spacecraft at all",
+    )
+    refusal(
+        "string",
+        [("vehicle.yaml", "spacecraft:\n  - csm\n  - lm\n", "spacecraft: csm, lm\n")],
+        "not a non-empty list of spacecraft names",
+    )
+    # And the two renamed senses, put back: the document reference becomes a spacecraft id, and
+    # the conformance column stops being one.
+    refusal(
+        "document",
+        [("mission.yaml", "vehicle_document: vehicle.yaml\n", "vehicle: vehicle.yaml\n")],
+        "names spacecraft 'vehicle.yaml'",
+    )
+    refusal(
+        "disposition",
+        [("presentation.yaml", "    disposition:", "    vehicle:")],
+        "declares no `disposition`",
+    )
+
+
 def test_the_cabin_volume_is_one_number_in_three_files(tmp_path):
     """The denominator of every partial pressure the crew read, declared seven times.
 
