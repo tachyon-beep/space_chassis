@@ -2337,6 +2337,94 @@ def test_the_bus_declares_the_voltage_its_edges_divide_by(tmp_path):
     assert "has no 'components.csm_bus_a.v_nominal'" in result.stdout, result.stdout[-1200:]
 
 
+def test_the_loops_fluid_is_one_substance_described_three_ways(tmp_path):
+    """Two arithmetic facts the corpus stated in prose, and neither was ever evaluated.
+
+    `domains/thermal/components.yaml`'s `coolant_loop_t` worked it out in its relation: *"25 L of
+    62.5/37.5 glycol-water at 1,050 kg/m3 is 26.25 kg"*. `loop_transport_t` worked it out in its
+    own: *"25 L at the published 200 lb/hr ... gives 17.4 min = 1,042 s of transit"*. Both are
+    relations, and a relation is prose — which is why round 104 could only report the consequence
+    as a debt: two of the three CSM loops declared a volume and no coolant mass, because the
+    density that turns one into the other lived in a sentence.
+
+    The loops declare the fluid now — its density, its published nominal flow, and the mass the
+    first two put in the loop — and the two relations are checked. The mass *is* the density
+    applied to the volume, and the nominal flow converted at the density has to land inside the
+    band, because the band and the nominal are one flow in two units and the density is the
+    conversion between them.
+
+    The LM's loop is the negative that matters: it declares a coolant mass and **no density**,
+    because its mass is published directly (TN D-6724's "about 25 lb") rather than derived from a
+    volume, and a density back-computed from the two would be a number invented to make a check
+    pass. So the rule applies where the density is declared, and the asymmetry is a fact about the
+    sources.
+
+    This also closes the debt round 104 opened, by the route that round recommended: **254 became
+    252**, and the two retired debts are the mass this check now derives.
+    """
+    thermal = "domains/thermal/components.yaml"
+    vehicle = "vehicle.yaml"
+
+    def refusal(name: str, edits: list[tuple[str, str, str]], needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        for rel, old, new in edits:
+            path = definition / rel
+            text = path.read_text()
+            assert old in text, f"the fixture no longer matches {old!r}"
+            path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, f"{needle!r} did not fire:\n{out[-1500:]}"
+
+    # A mass that is not the density applied to the volume. Both files move so the join is silent
+    # and the derivation is what has to catch it — and 30 is the case that found the comparison
+    # rule too permissive: one significant figure of 26.25 *is* 30, so trailing zeros count now.
+    refusal(
+        "mass",
+        [
+            (vehicle, "        coolant_mass_kg: 26.25\n", "        coolant_mass_kg: 30\n"),
+            (thermal, "    coolant_mass_kg: 26.25\n", "    coolant_mass_kg: 30\n"),
+        ],
+        "a coolant mass of 30 kg. The mass *is* the density applied to the volume",
+    )
+    # The volume, moved under a mass derived from it.
+    refusal(
+        "volume",
+        [
+            (vehicle, "        loop_volume_l: 25\n", "        loop_volume_l: 20\n"),
+            (thermal, "    volume_l: 25\n", "    volume_l: 20\n"),
+        ],
+        "which is 21 kg, and a coolant mass of 26.25 kg",
+    )
+    # The published nominal, outside its own band — and the same refusal reached the other way, by
+    # moving the density the conversion depends on.
+    refusal(
+        "band",
+        [
+            (vehicle, "        nominal_flow_lb_per_h: 200\n", "        nominal_flow_lb_per_h: 260\n"),
+            (thermal, "    nominal_flow_lb_per_h: 200\n", "    nominal_flow_lb_per_h: 260\n"),
+        ],
+        "outside its own band",
+    )
+    refusal(
+        "density",
+        [
+            (vehicle, "        fluid_density_kg_m3: 1050\n", "        fluid_density_kg_m3: 1400\n"),
+            (thermal, "    fluid_density_kg_m3: 1050\n", "    fluid_density_kg_m3: 1400\n"),
+        ],
+        "outside its own band",
+    )
+    # And the last edge that was inlining an undeclared figure: the pump edge divides the loop's
+    # published flow by the bus voltage, and both are declarations now.
+    refusal(
+        "pump",
+        [
+            (vehicle, "        nominal_flow_lb_per_h: 200\n", "        nominal_flow_lb_per_h: 210\n"),
+            (thermal, "    nominal_flow_lb_per_h: 200\n", "    nominal_flow_lb_per_h: 210\n"),
+        ],
+        "E-BUS-PUMP.sensitivity.derivation",
+    )
+
+
 def test_the_cabin_volume_is_one_number_in_three_files(tmp_path):
     """The denominator of every partial pressure the crew read, declared seven times.
 
@@ -6858,7 +6946,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 254 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 252 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -6998,7 +7086,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "254", "the view must agree with the headline count"
+    assert owed == "252", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
