@@ -2527,6 +2527,93 @@ def test_a_zone_is_one_compartment_in_two_files(tmp_path):
     assert "10000 ms" in dwell[0]
 
 
+def test_an_argument_a_fleet_can_send_names_something_the_vehicle_has(tmp_path):
+    """Two verbs offered values that name nothing anywhere, and one loop had nothing on it.
+
+    `set_coolant_pump` offers `pump_1`, `pump_2` and `pump_lm`, which are components of the thermal
+    domain — and adding a fourth, `pump_9`, **composed**: nothing bound a verb's argument to the
+    objects it names. The console validates a command against this enum, so a name in it is a name
+    the record accepts; a fleet offered a pump the vehicle does not have gets a resolved command and
+    no machinery.
+
+    The binding is inferred from the argument's *name* where it can be — an argument called `pump`
+    names pumps, `hatch` names hatches — which reaches fourteen arguments across six domains and is
+    silent on vocabularies. The alternative trigger, "every value here is a component id", was
+    measured rather than guessed and is wrong five times on this corpus: `select_sensor.group`
+    names `imu` and `radar` beside `cabin_pressure` and `co2`, `ask_crew.position` names `tunnel`
+    beside five crew stations, and three more. A rule that refuses five legitimate declarations is
+    a rule nobody keeps. Two arguments name inventory rather than one class —
+    `select_antenna.antenna` names the *vehicle-level* antenna ids and `set_source.source` names
+    both the fuel cells and the batteries, which are two classes here — and each declares which
+    vocabulary it uses, so the check tests what the file says rather than what its name suggests.
+
+    **And writing the loop half found the round's real gap.** The pumps and the bypass valve each
+    carry a `loop` field naming their circuit, and no tool read it. The link says `loop_primary` has
+    both CSM pumps, `loop_lm` has its own, and **`loop_secondary` has nothing** — no pump, no valve,
+    no node, no state — while three verbs offer it and `set_coolant_loop`'s `mode` enum exists to
+    select it. A fleet can put the vehicle on a loop that cannot flow.
+
+    The two verbs whose arguments named nothing were fixed rather than excused: `hatch` offered
+    `crew_csm`, `crew_lm` and `tunnel` while `hatch_crew_csm` and `hatch_crew_lm` were commanded by
+    nothing, and `interface` offered `csm_lm_forward`, a name that appears nowhere else in the
+    corpus at all.
+    """
+    def refusal(name: str, edits: list[tuple[str, str, str]], needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        for rel, old, new in edits:
+            path = definition / rel
+            text = path.read_text()
+            assert old in text, f"the fixture no longer matches {old!r}"
+            path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, f"{needle!r} did not fire:\n{out[-1500:]}"
+
+    t_cmd = "domains/thermal/commands.yaml"
+    # The probe that started this: a pump the vehicle does not have.
+    refusal(
+        "pump",
+        [(t_cmd, "values: [pump_1, pump_2, pump_lm]", "values: [pump_1, pump_2, pump_lm, pump_9]")],
+        "names 'pump_9', which is not a 'pump' in this domain",
+    )
+    # The name-match narrowing, on a verb that declares nothing: a hatch argument that offers the
+    # tunnel, which is a component but not a hatch.
+    refusal(
+        "hatch",
+        [("domains/structure/commands.yaml", "values: [hatch_crew_csm, hatch_crew_lm]", "values: [hatch_crew_csm, hatch_crew_lm, tunnel]")],
+        "which is not a 'hatch' in this domain",
+    )
+    # The two declared vocabularies, each tested against what it declares rather than its name.
+    refusal(
+        "vehicle_entry",
+        [("domains/comms/commands.yaml", "values: [high_gain, omni_a, omni_b, sband_steerable], names: vehicle_entry", "values: [hga, omni], names: vehicle_entry")],
+        "which vehicle.yaml does not declare as any object's id",
+    )
+    refusal(
+        "components",
+        [("domains/power/commands.yaml", "battery_lm_ascent_1, battery_lm_ascent_2],\n               names: component", "battery_lm_ascent_1, battery_lm_ascent_2, battery_9],\n               names: component")],
+        "which is not a component of this domain",
+    )
+    # And the link between a machine and its circuit, in the direction that is a refusal.
+    refusal(
+        "on_loop",
+        [("domains/thermal/components.yaml", "    loop: loop_lm\n", "    loop: loop_lm9\n")],
+        "which is not a loop vehicle.yaml#thermal.loops declares",
+    )
+
+    # The loop with nothing on it is a debt, not a refusal: the second string is a real thing
+    # `apollo_diode.md:97` describes, and what is owed is whether the model carries its pump or
+    # treats it as a passive spare. The two loops that do have machinery must not be reported.
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-900:]
+    empty = [
+        line
+        for line in result.stdout.splitlines()
+        if line.strip().startswith("- ") and "has no component of the thermal domain on it" in line
+    ]
+    assert len(empty) == 1, empty
+    assert "loop_secondary" in empty[0]
+
+
 def test_the_cabin_volume_is_one_number_in_three_files(tmp_path):
     """The denominator of every partial pressure the crew read, declared seven times.
 
@@ -7048,7 +7135,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 252 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 253 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -7188,7 +7275,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "252", "the view must agree with the headline count"
+    assert owed == "253", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
