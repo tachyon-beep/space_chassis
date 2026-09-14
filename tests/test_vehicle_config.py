@@ -3978,6 +3978,124 @@ def test_the_registry_coverage_claim_is_data_rather_than_a_sentence(tmp_path):
     assert "claims 117 and the policies give 42" in result.stdout, result.stdout[-900:]
 
 
+def test_a_configuration_cannot_declare_two_different_masses(tmp_path):
+    """`mass_kg` and `mass_breakdown_total_kg` are one quantity, and only one of them was checked.
+
+    The breakdown was summed against `mass_breakdown_total_kg`, and `mass_kg` went to
+    `check_propulsion` as a burn's wet mass. **Nothing required the two to agree**, so a
+    configuration could declare a 400 kg disagreement and compose — and the README quotes the
+    unchecked one in its mass-closure table. A fleet's trajectory and its mass closure would have
+    been working from two different vehicles.
+
+    This is the same shape the folder has found four times before (the phase sum, the cabin leak,
+    the bay's mass-and-conductance, the threshold's `assert`/`clear`). The difference is that here
+    *both names are right* — the breakdown's total really is the configuration's mass — so the fix
+    is not to collapse them into one but to make them agree.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    for cfg in vehicle["configurations"]:
+        assert cfg["mass_kg"] == cfg["mass_breakdown_total_kg"], cfg["id"]
+        assert sum(cfg["mass_breakdown"].values()) == cfg["mass_kg"], cfg["id"]
+
+    definition = copy_definition(tmp_path / "mass")
+    path = definition / "vehicle.yaml"
+    text = path.read_text()
+    broken = text.replace("mass_kg: 28807", "mass_kg: 28407", 1)
+    assert broken != text, "the fixture no longer matches vehicle.yaml"
+    path.write_text(broken)
+
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "vehicle.yaml:configuration csm_alone" in result.stdout, result.stdout[-900:]
+    assert "which are the same quantity" in result.stdout, result.stdout[-900:]
+
+
+def test_an_irreversible_event_names_configurations_that_exist(tmp_path):
+    """`from_configuration` and `to_configuration` say what an event irreversibly *does*, unread.
+
+    `verb`, `arm_required` and `observable` were all checked; the two fields that say what the
+    event does to the vehicle were read by nothing. Writing the join found the defect it was
+    written for — `lm_ascent_jettison` ran `csm_alone -> csm_alone`, the configuration defined as
+    "CSM alone *after* the LM is jettisoned" — which was only expressible because the vehicle the
+    event actually begins in had no configuration at all.
+
+    The mission spends 7.5 hours in it. `lunar_orbit_docked` is named "docked again" and declared
+    `csm_alone`; `ascent_rendezvous` ended there too. All three files were individually consistent.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    declared = {c["id"] for c in vehicle["configurations"]}
+    assert "csm_lm_ascent_docked" in declared, "the re-docked configuration is missing again"
+
+    events = yaml.safe_load((VEHICLE / "domains" / "structure" / "components.yaml").read_text())[
+        "one_way_events"
+    ]
+    by_id = {e["id"]: e for e in events}
+    for event in events:
+        for field in ("from_configuration", "to_configuration"):
+            value = event[field]
+            assert value in declared or value in {"any", "depends on the device"}, (
+                event["id"],
+                field,
+            )
+
+    # `lm_ascent_jettison` removes the ascent stage, so it has to begin where the ascent stage is.
+    jettison = by_id["lm_ascent_jettison"]
+    assert jettison["from_configuration"] == "csm_lm_ascent_docked"
+    assert jettison["to_configuration"] == "csm_alone"
+    # And the two phases either side of it name the same vehicle, in order.
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    phases = {p["id"]: p["configurations"] for p in mission["phases"]}
+    assert phases["ascent_rendezvous"] == ["lm_ascent_stage", "csm_lm_ascent_docked"]
+    assert phases["lunar_orbit_docked"] == ["csm_lm_ascent_docked", "csm_alone"]
+
+    # A dangling endpoint is refused, which is the check the live definition cannot demonstrate.
+    definition = copy_definition(tmp_path / "endpoint")
+    path = definition / "domains" / "structure" / "components.yaml"
+    text = path.read_text()
+    broken = text.replace("from_configuration: csm_lm_docked", "from_configuration: bogus_cfg", 1)
+    assert broken != text, "the fixture no longer matches structure/components.yaml"
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "bogus_cfg" in result.stdout, result.stdout[-900:]
+
+
+def test_vehicle_yaml_counts_its_own_open_debts():
+    """The file's `VEHICLE_SECTIONS` comment said these were counted, and nothing counted them.
+
+    `channels.yaml`, `coupling.yaml` and the eleven domains each report their `open_debts` as
+    debts. `vehicle.yaml`'s **nine** were read by no code at all, and the linter's own comment
+    beside the section name claimed otherwise: *"counted and printed, like every other
+    `open_debts` in the folder"*. Dropping eight of the nine left the headline count unchanged.
+
+    What was missing from the number that exists to count what is missing is not marginal — the
+    inertia tensor per configuration, the thermal zones' capacities and conductances, the minimum
+    impulse bit for all three RCS systems, the forty-four thrusters' geometry, the fuel cell's
+    reactant consumption, the ullage motors and the power inventory's unchecked relationships.
+    **A file's own statement that a section is read is not evidence that it is**, which is this
+    folder's oldest finding pointed at the tool that enforces it.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    entries = vehicle["open_debts"]
+    assert len(entries) >= 9, f"vehicle.yaml declares only {len(entries)} open debts"
+
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-900:]
+    reported = [
+        line
+        for line in result.stdout.splitlines()
+        if line.strip().startswith("- vehicle.yaml:open_debts:")
+    ]
+    assert len(reported) == len(entries), (
+        f"{len(entries)} entries declared and {len(reported)} counted; the rest are in no number"
+    )
+
+    # The headline is the sum of the two halves, which is what makes it worth quoting.
+    owed = re.search(r"OWED \(a value that is needed and unset\) — (\d+)", result.stdout)
+    assert owed, result.stdout[:400]
+    assert f"with {owed.group(1)} declared debt(s)" in result.stdout
+
+
 def test_the_fuel_cell_reactant_chain_is_grounded_but_for_one_figure():
     """The cell's draws are nodes now, and everything downstream of them is derivable.
 
@@ -4614,7 +4732,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 223 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 232 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -4754,7 +4872,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "223", "the view must agree with the headline count"
+    assert owed == "232", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
