@@ -1720,10 +1720,18 @@ def test_the_linter_holds_the_power_inventory_to_its_own_arithmetic(tmp_path):
     (CSM 1723 W, LM 1007 W) with nothing keeping it closed.
 
     The fourth relationship is the one with teeth: `power.battery_soc_pct` is a percentage whose
-    denominator was declared nowhere, and `battery_charge_j` is a stock with no capacity, so what
-    the vehicle carries in joules existed only as a product nobody computed. It is declared now —
-    and the LM's is declared in *three* parts, because the descent batteries are jettisoned with
-    the descent stage and the ascent flies on 16,576 Wh against a 3.5-hour phase.
+    denominator was declared nowhere, and `battery_charge_j` is a stock that declared no capacity,
+    so what the vehicle carries in joules existed only as a product nobody computed. It is declared
+    now — and the LM's is declared in *three* parts, because the descent batteries are jettisoned
+    with the descent stage and the ascent flies on 16,576 Wh against a 3.5-hour phase.
+
+    The fifth is the one nothing read at all, and it is the field the whole experiment turns on:
+    `inrush_w` is declared on all twenty-five loads, the file's own comment says the starting
+    transient "is what makes a marginal bus drop a pump — the flagship chain of the experiment",
+    and no two numbers had ever been compared. The bound here is the fields' own definition and
+    nothing more — a transient is not below the steady draw it settles to — because the check that
+    would *use* the figure is the bus peak at switching, and that needs the tie's routing, which is
+    why the corpus's `open_debts` names it rather than a check pretending to it.
     """
 
     def refusal(old: str, new: str, needle: str) -> str:
@@ -1744,6 +1752,23 @@ def test_the_linter_holds_the_power_inventory_to_its_own_arithmetic(tmp_path):
         "lm_battery_energy_ascent_stage_wh: 16576",
         "lm_battery_energy_ascent_stage_wh: 20000",
         "against a stated total",
+    )
+    # The two figures relationship 1 sums, and the comparison relationship 5 makes. A pump whose
+    # start is below its own running draw is a start nothing on the bus can see.
+    refusal(
+        "    demand_w: 250\n    inrush_w: 420\n",
+        "    demand_w: 250\n    inrush_w: 240\n",
+        "its start is the one event on this bus that cannot be detected",
+    )
+    refusal(
+        "    demand_w: 250\n    inrush_w: 420\n",
+        "    demand_w: 250\n",
+        "A load with no starting transient",
+    )
+    refusal(
+        "    demand_w: 250\n    inrush_w: 420\n",
+        "    inrush_w: 420\n",
+        "the load budget would close on arithmetic over a hole",
     )
 
 
@@ -4646,6 +4671,22 @@ def _plant():
     return plant
 
 
+def _linter():
+    """The linter as a module, so a test can call the same rule the check calls.
+
+    Not a convenience: `resolve_dotted` is *the* walk the three path idioms share — `derives_from`,
+    an edge's `derivation`, and `initial_source` — and a test that re-implements it is the second
+    copy of one rule this folder keeps finding and removing.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle
+
+    return check_vehicle
+
+
 def test_the_stock_integrator_reads_its_driver():
     """The vehicle's most load-bearing piece of simulation code had never executed, and was wrong.
 
@@ -5807,13 +5848,16 @@ def test_every_stock_declares_where_it_starts():
     assert len(stocks) == 25, f"{len(stocks)} stocks"
 
     seeded = plant.initial_values(world)
-    # Fifteen stocks declare a value; six of them are the accumulators on the `internal`
+    # Sixteen stocks declare a value; six of them are the accumulators on the `internal`
     # sentinel — `bias_accumulator`, `sensor_bus_errors`, `frame_loss`, `recorder`,
     # `pulse_residual`, `impulse_total` — which are one shared key and are not seeded.
     declared = [s for s in stocks if isinstance(s.spec.get("initial"), (int, float))]
-    assert len(declared) == 15, f"{len(declared)} stocks declare a numeric initial"
-    assert len(seeded) == 9, f"{len(seeded)} stocks carry a value the plant can start from"
-    # The ones the corpus can supply, and the numbers it supplies them with.
+    assert len(declared) == 16, f"{len(declared)} stocks declare a numeric initial"
+    assert len(seeded) == 10, f"{len(seeded)} stocks carry a value the plant can start from"
+    # The ones the corpus can supply, and the numbers it supplies them with. The last is the
+    # battery's charge, which stopped being owed in this round: 3,360 Wh of entry cells times
+    # 3,600, which is the same energy `check_power_inventory` holds against the cells' own
+    # `ah x v_nominal`.
     for node, expected in (
         ("o2_csm", 279.0),
         ("o2_lm", 24.1),
@@ -5822,16 +5866,26 @@ def test_every_stock_declares_where_it_starts():
         ("water_cooling", 13.0),
         ("absorber_capacity_csm", 72.0),
         ("absorber_capacity_lm", 41.0),
+        ("battery_energy", 12096000.0),
     ):
         assert seeded[node] == expected, node
     # `internal` is one key shared by every state on the sentinel, so it is not seeded.
     assert "internal" not in seeded
 
-    # Every numeric initial is grounded, and every `initial_source` resolves and agrees.
-    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
-    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    # Every numeric initial is grounded, and every `initial_source` resolves and agrees — through
+    # `initial_factor` where the source is published in other units than the state integrates.
+    # Two widenings here, both of them the same defect one level down: the walk is the linter's own
+    # `resolve_dotted` rather than a second copy of it, and the documents are every document the
+    # corpus has rather than the two this assertion was written against. The battery is why — its
+    # charge is stated in the *power* domain's load budget, which is neither `vehicle.yaml` nor
+    # `coupling.yaml`, so the narrow version would have read a resolvable link as a broken one.
+    linter = _linter()
+    documents: dict[str, object] = {}
+    for path in sorted(VEHICLE.rglob("*.yaml")):
+        documents[str(path.relative_to(VEHICLE))] = yaml.safe_load(path.read_text()) or {}
     for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
-        components = yaml.safe_load(path.read_text()) or {}
+        components = documents[str(path.relative_to(VEHICLE))]
+        assert isinstance(components, dict)
         for state in components.get("state") or []:
             if state.get("method") != "stock":
                 continue
@@ -5846,16 +5900,98 @@ def test_every_stock_declares_where_it_starts():
             if not source:
                 continue
             filename, dotted = source.split(":", 1)
-            node = {"vehicle.yaml": vehicle, "coupling.yaml": coupling}[filename]
-            for step in dotted.split("."):
-                node = (
-                    node[step]
-                    if isinstance(node, dict)
-                    else next(row for row in node if str(row.get("id")) == step)
-                )
-            assert abs(float(node) - float(state["initial"])) < 1e-9, (
-                f"{state['id']} says {state['initial']} and {source} says {node}"
+            assert filename in documents, f"{state['id']} names {filename!r}, which is not loaded"
+            node = linter.resolve_dotted(documents[filename], dotted)
+            factor = state.get("initial_factor", 1)
+            resolved = float(node) * float(factor)
+            assert abs(resolved - float(state["initial"])) < 1e-9, (
+                f"{state['id']} says {state['initial']} and {source} x {factor} says {resolved}"
             )
+
+
+def test_the_linter_refuses_a_stock_initial_whose_source_stopped_agreeing(tmp_path):
+    """The link from a stock's starting amount back to the declaration it came from, end to end.
+
+    The assertion above holds the corpus; this holds the check. Every surface of that link had
+    gone unexercised — `check_initial_sources` was written with the initial conditions and no test
+    ever broke one — which matters more for this idiom than for most, because the whole point of
+    `initial_source` is that it is *not* a provenance note: it is the other declaration, resolvable
+    and comparable, and a check whose refusals are never fired is a check whose silence means
+    nothing. `initial_factor` is the newest link in it: a source published in watt-hours against a
+    state that integrates joules, where the honest alternatives were a conversion or a debt.
+    """
+
+    def refusal(name: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        path = definition / "domains" / "power" / "components.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, f"{needle!r} did not fire:\n{out[-1500:]}"
+
+    # The two declarations drift apart, which is the failure the field exists to catch.
+    refusal(
+        "drift",
+        "    initial: 12096000\n",
+        "    initial: 12000000\n",
+        "One of the two is the load and the other is a copy of it",
+    )
+    # Dropped, the conversion is gone and the source is read as joules: 3,360 J of charge.
+    refusal(
+        "dropped",
+        "    initial_factor: 3600\n",
+        "",
+        "resolves to 3360. One of the two is the load",
+    )
+    # Wrong, and the message says which factor it used — so the reader can see the error is the
+    # conversion rather than the source.
+    refusal(
+        "wrong-factor",
+        "    initial_factor: 3600\n",
+        "    initial_factor: 60\n",
+        "times `initial_factor: 60`",
+    )
+    # Not a number to convert with, in both of the ways a number can fail to be one.
+    refusal(
+        "factor-text",
+        "    initial_factor: 3600\n",
+        "    initial_factor: sixty\n",
+        "which is not a number to convert a source with",
+    )
+    refusal(
+        "factor-zero",
+        "    initial_factor: 3600\n",
+        "    initial_factor: 0\n",
+        "is 0, which is not a number to convert a source with",
+    )
+    # The path itself: a document the check cannot load, a key the document does not have, and a
+    # value that is not a number. Each is a link that has stopped linking.
+    refusal(
+        "no-document",
+        "domains/power/components.yaml:load_budget.csm_battery_energy_wh",
+        "domains/power/nowhere.yaml:load_budget.csm_battery_energy_wh",
+        "the documents this check can resolve are",
+    )
+    refusal(
+        "no-key",
+        "domains/power/components.yaml:load_budget.csm_battery_energy_wh",
+        "domains/power/components.yaml:load_budget.csm_battery_energy_j",
+        "has no 'load_budget.csm_battery_energy_j'",
+    )
+    refusal(
+        "not-a-number",
+        "domains/power/components.yaml:load_budget.csm_battery_energy_wh",
+        "domains/power/components.yaml:load_budget.provenance",
+        "which is not a number to compare an initial against",
+    )
+    # And the form, which is the one refusal a reader can fix without opening a second file.
+    refusal(
+        "no-document-named",
+        "domains/power/components.yaml:load_budget.csm_battery_energy_wh",
+        "load_budget.csm_battery_energy_wh",
+        "which names no document. The form is `<file>.yaml:<dotted.path>`",
+    )
 
 
 def test_every_discrete_state_says_what_moves_it(tmp_path):
@@ -7469,7 +7605,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 253 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 252 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -7609,7 +7745,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "253", "the view must agree with the headline count"
+    assert owed == "252", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
