@@ -1011,6 +1011,100 @@ def test_the_linter_refuses_a_posture_the_registry_does_not_carry(tmp_path):
     assert "parked" in result.stdout
 
 
+def test_the_linter_holds_the_posture_that_permits_action(tmp_path):
+    """Ten postures declare whether a fleet may act from them, and nothing read the field.
+
+    `hazardous_actions_permitted` is the permission the execution machine exists to grant: exactly
+    one posture (`execute`) says yes, `complete` and `aborted` are terminal and say no, and *no tool
+    compared any of it* — the block's other five fields were validated and this one was declared ten
+    times and read never. `mission_diode.md`:1727 puts *"no hazardous verb is enabled in ABORTED"*
+    in the list a startup verifies statically, and TV-E (`:1395`) refuses any hazardous request with
+    the abort latch set, so the vehicle-side half of that test vector is that a transition *into* a
+    permitting posture re-reads the latch — which `prepare -> execute` does, and which nothing held.
+
+    The same reading found the other half of the round: four of the eight non-terminal postures —
+    `init`, `hold`, `recovery`, `aborting` — were the source of no transition at all, so the guards
+    that leave them (`INITIALIZED`, `g_resume`, `g_standby`, `SAFE_EFFECTS_CONFIRMED`) declared no
+    telemetry dependency. `mission_diode.md`:1720-1729 requires *every guard declares its telemetry
+    dependencies*, and the three that resume or stand down are the ones the corpus's own
+    `safe -> standby` note is about: *"deciding on a stale latch is how a fleet resumes an abandoned
+    mission."*
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    report = linter.Report()
+    linter.check_mission_model(mission, report)
+    assert report.refusals == [], report.refusals
+    postures = mission["postures"]
+    assert len(postures) == 10, f"{len(postures)} postures"
+    permitting = [p["id"] for p in postures if p["hazardous_actions_permitted"]]
+    assert permitting == ["execute"], permitting
+    terminal = sorted(p["id"] for p in postures if p["terminal"])
+    assert terminal == ["aborted", "complete"], terminal
+    # Every non-terminal posture is the source of a transition, and the one into a permitting
+    # posture carries the latch.
+    rows = {r["transition"]: r for r in mission["transition_evidence"]}
+    sources = {t.split("->")[0].strip() for t in rows}
+    for pid in [p["id"] for p in postures if not p["terminal"]]:
+        assert pid in sources, f"{pid} is the source of no transition"
+    assert "mission.abort_latched" in rows["prepare -> execute"]["requires"]
+    assert "mission.abort_latched" in rows["hold -> execute"]["requires"]
+
+    def refusal(name: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        path = definition / "mission.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1200:]
+
+    # A terminal posture that permits hazardous actions: the property mission_diode.md:1727 asks a
+    # startup to verify, and the one an edit to a *terminal* entry would silently break.
+    refusal(
+        "terminal-permits",
+        '    entry: "SAFE_EFFECTS_CONFIRMED"\n',
+        '    hazardous_actions_permitted: true\n    entry: "SAFE_EFFECTS_CONFIRMED"\n',
+        "is true on a terminal posture",
+    )
+    # A permission that is not a boolean is a permission nothing can evaluate.
+    refusal(
+        "permission-word",
+        "    hazardous_actions_permitted: true\n",
+        "    hazardous_actions_permitted: yes-please\n",
+        "is 'yes-please', not a boolean",
+    )
+    # A machine that permits action nowhere can authorize nothing.
+    refusal(
+        "nothing-permitted",
+        "    hazardous_actions_permitted: true\n",
+        "    hazardous_actions_permitted: false\n",
+        "permits hazardous actions in no posture",
+    )
+    # The latch dropped from the transition into the one permitting posture.
+    refusal(
+        "no-latch",
+        '      mission.abort_latched: {max_age_ms: 1000, why: "invariant E; the latch is re-read',
+        '      mission_abort_latch: {max_age_ms: 1000, why: "invariant E; the latch is re-read',
+        "requires no `mission.abort_latched`",
+    )
+    # A guard with no telemetry dependency at all, which is what four of them had: the transition
+    # is deleted, and the posture that could only be left by it says so.
+    definition = copy_definition(tmp_path / "guard-gone")
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    start = text.index('  - transition: "recovery -> standby"')
+    end = text.index('  - transition: "any -> aborting"')
+    path.write_text(text[:start] + text[end:])
+    out = run_linter(definition).stdout
+    assert "mission.yaml:posture recovery: is the source of no transition" in out, out[-1200:]
+
+
 def test_the_linter_refuses_a_quality_function_that_can_see_the_fault_state(tmp_path):
     """`simulator-design.md:496-508`, made mechanical — and nothing implemented it before.
 
@@ -7767,7 +7861,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 255 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 268 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -7907,7 +8001,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "255", "the view must agree with the headline count"
+    assert owed == "268", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
