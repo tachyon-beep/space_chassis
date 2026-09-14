@@ -4503,6 +4503,49 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert owed == "223", "the view must agree with the headline count"
 
 
+def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
+    """`basis: UNCONFIGURED` is a *decision*, not an undecided one — and this round found nothing to settle.
+
+    Round 75 called the 28 entries carrying it "open judgements" and proposed finishing them. They are
+    correctly declared: `UNCONFIGURED` is the class for a value no source supplies, and the twenty-eight
+    are owed values rather than undecided ones. That is the useful answer, and it corrects the premise.
+
+    Two of them, though, carry a number the plant **uses** while the entry says its magnitudes are
+    owed: `pressurant_pressure_psi.tau_s = 5`, integrated as a lag and the seed of PRP-03, and
+    `pressurant_he_kg.quantum = 1.0e-05`, without which the fixed-point stock cannot exist. Read
+    against `basis: UNCONFIGURED` those look contradictory until a reader finds the sentence that
+    reconciles them — and a reader who does not cannot tell whether to use the number or ignore it.
+
+    So an owed entry carrying a numeric *integrator parameter* must mark that parameter a placeholder:
+    `tau_s`, `quantum`, `delay_s` and `lambda_per_h` are the four the plant reads, and whose absence
+    stops a tick rather than merely leaving a quantity unset.
+    """
+    propulsion = yaml.safe_load(
+        (VEHICLE / "domains" / "propulsion" / "components.yaml").read_text()
+    )
+    consumables = yaml.safe_load(
+        (VEHICLE / "domains" / "consumables" / "components.yaml").read_text()
+    )
+    p_states = {str(s["id"]): s for s in propulsion["state"]}
+    c_states = {str(s["id"]): s for s in consumables["state"]}
+
+    assert p_states["pressurant_pressure_psi"]["provenance"]["basis"] == "UNCONFIGURED"
+    assert "placeholder" in p_states["pressurant_pressure_psi"]["tau_s_placeholder"]
+    assert c_states["pressurant_he_kg"]["provenance"]["basis"] == "UNCONFIGURED"
+    assert "picked because the helium feed is slow" in c_states["pressurant_he_kg"]["quantum_placeholder"]
+
+    definition = copy_definition(tmp_path / "unmarked")
+    path = definition / "domains" / "propulsion" / "components.yaml"
+    text = path.read_text()
+    i = text.index("    tau_s_placeholder: >-")
+    j = text.index("    provenance:", i)
+    path.write_text(text[:i] + text[j:])
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "does not say it is a placeholder" in result.stdout
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
