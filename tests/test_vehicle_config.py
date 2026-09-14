@@ -2704,6 +2704,95 @@ def test_a_keyed_state_says_which_article_it_is_about(tmp_path):
     assert "cw.active_lights" in notes[0]
 
 
+def test_the_declared_links_nothing_resolved(tmp_path):
+    """A measured question, not a hunch: which declared references does a rename silence?
+
+    The method is one broken reference per case — a field whose value names another declaration,
+    changed to a name that exists nowhere — and eleven of them were tried. **Eight were held and
+    three were not**, and each of the three was the unchecked half of a pair the linter already
+    held somewhere else:
+
+    | the link | held where | not held |
+    |---|---|---|
+    | a channel row's `inputs` | `derives_from` on a threshold, resolved by path | resolved by nothing |
+    | a crew position's `controls` | the same position's panels' `shows`, against the registry *and* the perception bound | resolved by neither |
+    | a thermal zone's `source` | the zone's `implemented_by` and `cooled_by` | resolved by nothing |
+
+    `inputs` is the sharpest of the three, because it is not merely unchecked but **required**:
+    every `derived` row must carry it, so the corpus has thirty-odd lists of channel names and no
+    tool had ever read a value in one. The first check that did found the reconciliation channel's
+    own residual — `delta_recon = observed - ledger`, whose `observed` term was `res.[resource]_kg`,
+    a channel no row has ever declared and none can, because the six resources publish their
+    amounts under names of their own.
+
+    Two things went wrong while writing it, and both are this folder's own shapes. The `inputs`
+    resolution ran inside the row loop, where the registry is still being built, and refused eleven
+    legitimate forward references — a value looked up before the thing it points at exists. And the
+    zone-source check read `vehicle.yaml`'s zones, where `source` is not a field at all: the two
+    zone lists are different shapes, so a one-sided field is invisible to the intersection rule and
+    the check was vacuous until the probe said so.
+    """
+    channels = "channels.yaml"
+    crew = "domains/crew/components.yaml"
+    thermal = "domains/thermal/components.yaml"
+
+    def refusal(name: str, edits: list[tuple[str, str, str]], needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        for rel, old, new in edits:
+            path = definition / rel
+            text = path.read_text()
+            assert old in text, f"the fixture no longer matches {old!r}"
+            path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, f"{needle!r} did not fire:\n{out[-1500:]}"
+
+    refusal(
+        "input",
+        [(channels, "    inputs: [comm.hga_pointing_error_deg, comm.tx_power_w]",
+          "    inputs: [comm.hga_pointing_error_deg, comm.tx_power_x_w]")],
+        "lists 'comm.tx_power_x_w' among its inputs",
+    )
+    # An instantiated template, which is how the corpus names most of its inputs: the resolution
+    # goes through the same index every other channel reference in the file gets.
+    refusal(
+        "template_input",
+        [(channels, "    inputs: [gnc.body_rate_xyz_deg_s, gnc.imu_alignment_error_deg]",
+          "    inputs: [gnc.body_rate_xyz_deg_x, gnc.imu_alignment_error_deg]")],
+        "lists 'gnc.body_rate_xyz_deg_x' among its inputs",
+    )
+    refusal(
+        "control",
+        [(crew, "      controls: [controls.switches, controls.breakers, structure.hatch_state]",
+          "      controls: [controls.switches, controls.breakers, structure.hatch_state_x]")],
+        "controls 'structure.hatch_state_x', which is not a registered channel",
+    )
+    refusal(
+        "blind_control",
+        [(crew, "      controls: [controls.switches, controls.breakers]",
+          "      controls: [controls.switches, controls.breakers, eclss.lm_cabin_pressure_psia]")],
+        "which this position cannot perceive",
+    )
+    refusal(
+        "heater",
+        [(thermal, "    source: heater_bank_csm\n", "    source: heater_bank_csm_x\n")],
+        "and no component of class `heater` in this domain carries that id",
+    )
+
+    # And the correction the first of them found: the residual's two terms are both channels.
+    registry = yaml.safe_load((VEHICLE / channels).read_text())
+    rows = {
+        str(row["id"]): row
+        for section in registry.values()
+        if isinstance(section, list)
+        for row in section
+        if isinstance(row, dict) and row.get("id")
+    }
+    recon = rows["res.recon_[resource]_kg"]
+    assert "res.[resource]_kg" not in recon["inputs"], recon["inputs"]
+    assert "res.ledger_[resource]_kg" in recon["inputs"]
+    assert "res.o2_remaining_kg" in recon["inputs"]
+
+
 def test_the_cabin_volume_is_one_number_in_three_files(tmp_path):
     """The denominator of every partial pressure the crew read, declared seven times.
 
