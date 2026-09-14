@@ -1105,6 +1105,116 @@ def test_the_linter_holds_the_posture_that_permits_action(tmp_path):
     assert "mission.yaml:posture recovery: is the source of no transition" in out, out[-1200:]
 
 
+def test_the_linter_holds_what_a_panel_displays_and_how_finely(tmp_path):
+    """The display contract's two `shows` columns, neither of which any tool read.
+
+    `domains/crew/components.yaml#display_contract` gives every crew position its panels and every
+    panel the readouts it shows — and its own `why` says it is *"the third argument of the
+    perception function"*, the one conflict register D-06 records as the reason `ask_crew` cannot be
+    safely enabled. What the linter held was membership: the position exists in
+    `channels.yaml#crew_positions`, the channel is registered, and the channel is in that position's
+    `perceivable` list. **`displayed_precision` (37 declarations) and `units` (30) were compared to
+    nothing.**
+
+    Reading them is a bound rather than a repair, and the corpus sits on the safe side of every part
+    of it: a panel may round a channel's published precision and may not invent resolution; `exact`
+    belongs to the channels the registry itself publishes as `exact`; and a displayed unit must be
+    the channel's own or one the dimensional map puts in the same dimension. The two units that
+    failed the last rule — `psid` and `% nominal` — are the finding: each appears in this block and
+    nowhere else any check looked, so the map that "covers the units this vehicle actually uses" did
+    not know them.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    # The tool's own registry builder, not a second reading of `channels.yaml`.
+    registry = linter.check_channels(
+        yaml.safe_load((VEHICLE / "channels.yaml").read_text()), linter.Report()
+    )
+    crew = yaml.safe_load((VEHICLE / "domains" / "crew" / "components.yaml").read_text())
+    readouts = [
+        readout
+        for position in crew["display_contract"]["positions"]
+        for panel in position.get("panels") or []
+        for readout in panel.get("shows") or []
+    ]
+    assert len(readouts) == 37, f"{len(readouts)} readouts"
+    assert all("displayed_precision" in r for r in readouts), "a readout declares no precision"
+    analogue = [r for r in readouts if r["displayed_precision"] != "exact"]
+    assert len(analogue) == 22, f"{len(analogue)} analogue readouts"
+    # One analogue readout declares no unit and is the only one that may: a quaternion component is
+    # dimensionless, and a panel that printed "dimensionless" beside it would be printing prose.
+    unitless = [r["channel"] for r in analogue if "units" not in r]
+    assert unitless == ["gnc.attitude_q[0..3]"], unitless
+    # Every rounding is a rounding: no panel shows more resolution than its channel publishes, and
+    # every displayed unit is the channel's own or in its dimension.
+    index = linter.ChannelIndex(registry)
+    for readout in analogue:
+        row = index.row(readout["channel"])
+        assert float(readout["displayed_precision"]) >= float(row["precision"]), readout["channel"]
+        assert row["unit"] in linter.DIMENSION, row["unit"]
+        if "units" not in readout:
+            assert row["unit"] == "dimensionless", readout["channel"]
+            continue
+        assert readout["units"] in linter.DIMENSION, readout["units"]
+        assert linter.DIMENSION[readout["units"]] == linter.DIMENSION[row["unit"]], readout[
+            "channel"
+        ]
+
+    def refusal(name: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        path = definition / "domains" / "crew" / "components.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1200:]
+
+    # The panel that would report a change the instrument never measured.
+    refusal(
+        "finer-than-published",
+        "{channel: eclss.cabin_pressure_psia, displayed_precision: 0.1, units: psia}",
+        "{channel: eclss.cabin_pressure_psia, displayed_precision: 0.001, units: psia}",
+        "may not invent resolution",
+    )
+    # An analogue quantity shown exactly, and a discrete one shown to figures.
+    refusal(
+        "exact-on-analogue",
+        "{channel: eclss.cabin_pressure_psia, displayed_precision: 0.1, units: psia}",
+        "{channel: eclss.cabin_pressure_psia, displayed_precision: exact, units: psia}",
+        "an analogue quantity shown exactly is a claim",
+    )
+    refusal(
+        "figures-on-discrete",
+        "{channel: power.bus_tie_state, displayed_precision: exact}",
+        "{channel: power.bus_tie_state, displayed_precision: 0.5}",
+        "this is a discrete quantity",
+    )
+    # The unit the panel shows it in, against the unit the channel publishes.
+    refusal(
+        "wrong-dimension",
+        "{channel: eclss.cabin_pressure_psia, displayed_precision: 0.1, units: psia}",
+        "{channel: eclss.cabin_pressure_psia, displayed_precision: 0.1, units: degC}",
+        "A panel in a different dimension is not a rounding",
+    )
+    refusal(
+        "no-unit",
+        "{channel: eclss.cabin_pressure_psia, displayed_precision: 0.1, units: psia}",
+        "{channel: eclss.cabin_pressure_psia, displayed_precision: 0.1}",
+        "has nothing to report it in",
+    )
+    # And a unit the map does not know is a debt rather than a refusal, with the unit named.
+    refusal(
+        "unknown-unit",
+        "{channel: structure.cabin_dp_psi, displayed_precision: 0.1, units: psid}",
+        "{channel: structure.cabin_dp_psi, displayed_precision: 0.1, units: psig}",
+        "the dimensional map does not know ['psig']",
+    )
+
+
 def test_the_linter_holds_a_derived_initial_against_the_law_it_cites(tmp_path):
     """The cabin oxygen load is the one initial in the corpus that is a *computed consequence*.
 
