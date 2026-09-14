@@ -4240,6 +4240,68 @@ def test_every_stock_declares_where_it_starts():
             )
 
 
+def test_the_acceleration_ceiling_is_a_property_of_two_sets(tmp_path):
+    """`uncommanded_acceleration`'s limit is the largest acceleration the thrust can explain.
+
+    `apollo_diode.md:210`'s event on this channel is exactly "uncommanded impulse", and the entry
+    held two different accounts of what its value *is*: `point_units` says "the largest component
+    the configured thrust can explain", while the note said the value "is owed — it needs a noise
+    floor and the smallest impulse the vehicle can produce ... the minimum impulse bit that
+    `domains/rcs/` records as unpublished". Those are different questions. The ceiling is derivable
+    from data the corpus already declares — every engine's thrust and every configuration's mass —
+    and the impulse bit sizes the *detectability*, which is a separate obligation already counted
+    where it lives.
+
+    The statistic is computed rather than quoted for a reason worth keeping: it is the **LM ascent
+    engine on the ascent stage alone**, 15,569 N against 4,888 kg = 0.32479 g, and it wins by a hair
+    over the CSM's own 0.32279 g with the LM gone. A reader who guessed which of the two it was
+    would be 0.6 % wrong, in the direction that misses the event.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    propulsion = yaml.safe_load(
+        (VEHICLE / "domains" / "propulsion" / "components.yaml").read_text()
+    )
+    engines = {
+        c["id"]: c.get("thrust_n") or c.get("thrust_max_n")
+        for c in propulsion["components"]
+        if c.get("class") == "engine"
+    }
+    assert set(engines) == {"sps", "dps", "aps"}
+    stage = {"sps": "csm_", "dps": "lm_descent_", "aps": "lm_ascent_"}
+    best, winner = 0.0, None
+    for engine, thrust in engines.items():
+        for cfg in vehicle["configurations"]:
+            if not any(k.startswith(stage[engine]) for k in cfg["mass_breakdown"]):
+                continue
+            accel = thrust / cfg["mass_kg"] / 9.80665
+            if accel > best:
+                best, winner = accel, f"{engine} on {cfg['id']}"
+    assert winner == "aps on lm_ascent_stage", winner
+    assert abs(best - 0.32479) < 5e-5, best
+    # And the CSM's own ceiling is a hair below it, which is why the figure is computed.
+    sps_alone = engines["sps"] / 28807 / 9.80665
+    assert sps_alone < best and best - sps_alone < 0.005
+
+    structure = yaml.safe_load((VEHICLE / "domains" / "structure" / "profiles.yaml").read_text())
+    threshold = next(t for t in structure["thresholds"] if t["id"] == "uncommanded_acceleration")
+    assert threshold["derives_from"] == "vehicle.yaml:max_explainable_acceleration_g"
+    assert abs(threshold["assert"] - best) < 1e-3 * best, threshold["assert"]
+    # The two accounts of what the value is are separated now, and the note says so.
+    assert "detectability" in threshold["provenance"]["note"]
+
+    # Weakening the ascent engine moves the ceiling to the CSM's figure — a 0.63 % change that the
+    # one-per-cent tolerance this check first copied from `rederive` accepted in silence.
+    definition = copy_definition(tmp_path / "thrust")
+    path = definition / "domains" / "propulsion" / "components.yaml"
+    text = path.read_text()
+    broken = text.replace("thrust_n: 15569", "thrust_n: 12569", 1)
+    assert broken != text, "the fixture no longer matches propulsion/components.yaml"
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "0.322789" in result.stdout, result.stdout[-900:]
+
+
 def test_a_limit_that_is_a_property_of_the_registry_is_re_derived(tmp_path):
     """`sensor_stale`'s limit is twice the slowest publish period, and the registry says which.
 
@@ -5407,7 +5469,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 248 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 246 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -5547,7 +5609,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "248", "the view must agree with the headline count"
+    assert owed == "246", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
