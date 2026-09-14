@@ -1793,6 +1793,77 @@ def test_the_linter_refuses_an_electrical_inventory_that_drifted(tmp_path):
     )
 
 
+def test_the_engines_the_mission_is_flown_on_are_one_set_of_figures(tmp_path):
+    """The Δv budget is walked with `vehicle.yaml`, and the plant's mass flow is computed without it.
+
+    `check_propulsion` decides whether the mission closes by reading `isp_s` and the propellant
+    load from `vehicle.yaml#propulsion` and nothing else. The domains that own the engines declare
+    the same figures again — `domains/propulsion/components.yaml` for the three main engines,
+    `domains/rcs/components.yaml` for the 100 lbf article — and those are the copies the plant
+    computes with: the RCS domain's mass flow is `mdot = F / (Isp * g0)` from its own 290 s.
+
+    So a divergence fails in the worst available direction. An SPS re-rated in the domain and not
+    in the vehicle file leaves the budget check reporting a healthy reserve while the plant burns
+    propellant at the domain's Isp — `check_propulsion`'s own stated failure mode, "a mission that
+    looks flyable and is not", arrived at from the other side.
+
+    The link is declared rather than inferred for the same reason `domain_group` is: the two files
+    name one engine differently (`lm_dps` against `dps`), and one component stands for three
+    vehicle entries where the article is identical. The third closure is arithmetic rather than
+    equality — the strings claiming a system sum to that system's `thrusters`, and the article
+    count is what the vehicle entries add up to.
+    """
+
+    def refusal(rel: str, old: str, new: str, needle: str) -> str:
+        definition = copy_definition(tmp_path / f"prop{abs(hash((old, new))) % 10000}")
+        path = definition / rel
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-900:]
+        return out
+
+    # The figure the mission closes on, re-rated on one side only.
+    refusal(
+        "domains/propulsion/components.yaml", "    isp_s: 314.5", "    isp_s: 314", "in the tank"
+    )
+    refusal(
+        "domains/propulsion/components.yaml",
+        "    thrust_max_n: 43192",
+        "    thrust_max_n: 43000",
+        "in the tank",
+    )
+    # The arithmetic: 16 + 12 + 16 = 44, and each system's strings sum to that system.
+    refusal("domains/rcs/components.yaml", "    count: 44", "    count: 40", "total 44 thrusters")
+    refusal(
+        "domains/rcs/components.yaml",
+        "  - id: rcs_string_cm\n    kind: discrete\n    class: string\n    thrusters: 12",
+        "  - id: rcs_string_cm\n    kind: discrete\n    class: string\n    thrusters: 10",
+        "thrusters against the 12",
+    )
+    # And the link itself, in both directions, plus the Isp the plant cannot compute without.
+    refusal(
+        "domains/propulsion/components.yaml",
+        "    vehicle_keys: [lm_aps]\n",
+        "",
+        "declares no `vehicle_keys`",
+    )
+    refusal(
+        "domains/propulsion/components.yaml",
+        "    vehicle_keys: [sps]",
+        "    vehicle_keys: [nope]",
+        "which vehicle.yaml#propulsion does not",
+    )
+    refusal(
+        "domains/propulsion/components.yaml",
+        "    vehicle_keys: [sps]",
+        "    vehicle_keys: [lm_dps]",
+        "claimed by no component",
+    )
+    refusal("domains/rcs/components.yaml", "    isp_s: 290\n", "", "declares no `isp_s`")
+
+
 def test_the_linter_rederives_the_lunar_blackout(tmp_path):
     """The vehicle's one derived figure, and nothing was re-doing its arithmetic.
 
