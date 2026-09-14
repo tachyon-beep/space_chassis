@@ -1988,7 +1988,10 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
         [
             ("    gain_db: 26.7\n", "    gain_db: 25.0\n"),
             ("    beamwidth_deg: 9.4\n    steerable: true\n", "    beamwidth_deg: 9.4\n    steerable: false\n"),
-            ("    vehicle_keys: [omni_a, omni_b]\n    gain_db: 2\n", "    vehicle_keys: [omni_a, omni_b]\n    gain_db: 3.0\n"),
+            (
+                "    vehicle_keys: [omni_a, omni_b]\n    pattern: near_isotropic\n    gain_db: 2\n",
+                "    vehicle_keys: [omni_a, omni_b]\n    pattern: near_isotropic\n    gain_db: 3.0\n",
+            ),
             ("    dc_w: 36\n", "    dc_w: 40\n"),
             ("    dc_w: 72\n    rf_w: 11.2\n", "    dc_w: 72\n    rf_w: 12.0\n"),
             ("      lm_sband_low:\n        dc_w: 20\n", "      lm_sband_low:\n        dc_w: 25\n"),
@@ -2055,6 +2058,104 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
     assert len(unclaimed) == 1, unclaimed
     assert "vehicle.yaml:comms.antennas.sband_steerable" in unclaimed[0]
     assert "`select_antenna` offers it" in unclaimed[0]
+
+
+def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
+    """The corpus states the gain-beamwidth product in three files and evaluates it in none.
+
+    `vehicle.yaml`'s note on the high-gain antenna is the sentence this test exists for: "the gains
+    are sourced and the beamwidths are **derived**, because the first version of this entry carried
+    `beamwidth_deg: 1.0` and that number is not physically possible beside a 26.7 dB gain. Any
+    aperture antenna obeys the gain-beamwidth product `G = 41253 / theta^2`". So the folder already
+    knew the relation, already caught one impossible number with it, and left it as prose — in that
+    note, in the domain component's note, and in `E-GEOM-LINK`'s relation, which computes its
+    -0.54 dB per degree as `-24 * 2 / 9.4^2`.
+
+    That last one is why it matters. The beamwidth this identity determines is what every pointing
+    loss the fleet reads is scaled by, and the antenna is declared in two files, so the *join* can
+    catch a divergence between them — this is the only thing that can catch the vehicle-level pair
+    drifting together, which is the case the second fixture below sets up.
+
+    The rule needs one declaration to be universal, and the corpus already makes the case for it:
+    the omni's 180 degrees is not a half-power width. 2 dBi against the product would be 161
+    degrees, and the vehicle's own note says the product "is meaningless this close to isotropic".
+    So every antenna that declares both figures declares which relation governs them, `aperture` or
+    `near_isotropic`, and the second is a claim that carries its reason — the discipline
+    `state_order: independent` gets, arriving at the one quantity on this vehicle where a wrong
+    number was already found.
+    """
+
+    def refusal(name: str, edits: list[tuple[str, str, str]], needles: list[str]) -> None:
+        """Break several independent declarations at once and demand every refusal by name.
+
+        Independent because they are different figures, or different antennas: the linter reports
+        the whole pass, so one broken copy answers for every break in it and a check with six
+        fixtures does not cost six linter runs.
+        """
+        definition = copy_definition(tmp_path / name)
+        for rel, old, new in edits:
+            path = definition / rel
+            text = path.read_text()
+            assert old in text, f"the fixture no longer matches {old!r}"
+            path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        for needle in needles:
+            assert needle in out, f"{needle!r} did not fire:\n{out[-1500:]}"
+
+    dom = "domains/comms/components.yaml"
+    product = "the ideal-aperture product `G = 41253 / theta^2` puts the half-power width of a"
+    # The gain, moved on the vehicle side only. Both refusals fire and they are different
+    # complaints: the pair no longer closes, and the two files no longer agree about the gain.
+    refusal(
+        "gain",
+        [("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", "      pattern: aperture\n      gain_db: 26.8\n")],
+        [product, "declares gain_db 26.7 at `hga` and vehicle.yaml#comms.antennas.high_gain declares 26.8"],
+    )
+    # And the pair moved in *both* files, so the join is silent — the case only this check can see —
+    # alongside one of the three feeds, which is a pair too: there is no way for one feed of a dish
+    # to be an aperture and another not to be, so the antenna's declaration governs them all.
+    refusal(
+        "width",
+        [
+            ("vehicle.yaml", "      gain_db: 26.7\n      beamwidth_deg: 9.4\n", "      gain_db: 26.7\n      beamwidth_deg: 9.3\n"),
+            (dom, "    beamwidth_deg: 9.4\n    steerable: true\n", "    beamwidth_deg: 9.3\n    steerable: true\n"),
+            ("vehicle.yaml", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 18.7}", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 20.0}"),
+        ],
+        [product, "declares 26.7 dB with a 9.3-degree beamwidth", "declares 20.7 dB with a 20.0-degree beamwidth"],
+    )
+    # The declaration itself, reported once per antenna rather than once per figure — asking per
+    # figure would report one gap four times on the high-gain antenna, which is the same lie as
+    # reporting it in only one of them — and, in the same copy, the exemption shown to be
+    # load-bearing: the omni's own figures are acceptable only *because* it is declared.
+    refusal(
+        "declared",
+        [
+            ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", "      gain_db: 26.7\n"),
+            ("vehicle.yaml", "    - id: omni_a\n      pattern: near_isotropic\n", "    - id: omni_a\n      pattern: aperture\n"),
+        ],
+        [
+            "and no `pattern`, so nothing says whether the two are one figure or two",
+            "declares 2 dB with a 180-degree beamwidth, and the ideal-aperture product",
+        ],
+    )
+    # A claim that exempts itself from a rule carries its reason, the discipline
+    # `state_order: independent` gets.
+    refusal(
+        "unreasoned",
+        [
+            ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", "      pattern: near_isotropic\n      gain_db: 26.7\n"),
+            (dom, "    pattern: aperture\n    gain_db: 26.7\n", "    pattern: near_isotropic\n    gain_db: 26.7\n"),
+        ],
+        ["without a `pattern_note`"],
+    )
+    # One gap, one refusal: the missing declaration above is one fact about the antenna, and the
+    # high-gain entry has four pairs it governs.
+    definition = copy_definition(tmp_path / "once")
+    path = definition / "vehicle.yaml"
+    text = path.read_text()
+    path.write_text(text.replace("      pattern: aperture\n      gain_db: 26.7\n", "      gain_db: 26.7\n", 1))
+    out = run_linter(definition).stdout
+    assert len([line for line in out.splitlines() if "and no `pattern`" in line]) == 1, out[-900:]
 
 
 def test_the_cabin_volume_is_one_number_in_three_files(tmp_path):
@@ -4565,6 +4666,23 @@ def test_the_readme_status_matches_the_tools():
     assert set(written) == {debts}, (
         f"the README states the debt count as {sorted(set(written))}; the linter says {debts}"
     )
+
+    # And the tools' own prose, which is the same claim in the same shape one directory over and
+    # had drifted further. `tools/plant.py` told a reader that "`check_vehicle.py` ... reports 202
+    # declared debts by path" and that "the linter reports 202 debts" — both true when they were
+    # written, both read by nothing since, and both 51 adrift by the time this was added. A figure a
+    # reader uses to size the remaining work is exactly the figure this folder exists to keep
+    # honest, and where it is written makes no difference to that.
+    #
+    # Only the tools are scanned, and only the `N declared debts` form: the quotation marks are
+    # everywhere in Python and stripping them the way the README's scan does would mangle the text,
+    # so the phrase itself is the marker. A tool that wants to record a *historical* count quotes
+    # it, exactly as the README's own history section does.
+    for tool in sorted((VEHICLE / "tools").glob("*.py")):
+        in_tool = re.findall(r"(\d+) declared debts?", tool.read_text())
+        assert set(in_tool) <= {debts}, (
+            f"{tool.name} states the debt count as {sorted(set(in_tool))}; the linter says {debts}"
+        )
 
     # And the reconciliation README's prose count of *these* tests, which is the one figure a
     # reader uses to judge how much of the definition is held in place. It said one hundred
