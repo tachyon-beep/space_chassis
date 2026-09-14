@@ -4240,6 +4240,65 @@ def test_every_stock_declares_where_it_starts():
             )
 
 
+def test_a_points_layer_is_the_registrys_layer(tmp_path):
+    """`layer` is declared twice per channel and only the registry's copy was checked.
+
+    The registry validates its own — a channel with a layer outside
+    `{measurement, estimate, service}` is refused, and so is one with no layer at all — and each
+    domain's `points.yaml` repeats the field for the same channel with **nothing comparing the
+    two**. That is round 79's `mass_kg` exactly: one quantity declared twice with only one of the
+    two read, except that here it is the *copy* that is unchecked.
+
+    What a disagreement decides is not cosmetic, and `presentation.yaml` says so — a service state
+    is layer A with a different subject, and the mapping *"decides whether a commanded valve
+    position carries a quality code."* A domain that marked a service channel as a measurement
+    would put a SUSPECT code on a statement of what the vehicle did, and a fleet would go looking
+    for a sensor fault in `rcs.mode`.
+
+    The mapping's keys are the third declaration of the same vocabulary, and it is checked against
+    the registry too: a layer with no mapping is a kind of channel the contract has no layer for.
+    """
+    channels = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    registered = {}
+    for rows in channels.values():
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if isinstance(row, dict) and row.get("id") and row.get("layer"):
+                registered[str(row["id"])] = str(row["layer"])
+    assert len(registered) == 148, len(registered)
+    assert set(registered.values()) == {"measurement", "estimate", "service"}
+
+    points = 0
+    for path in sorted((VEHICLE / "domains").glob("*/points.yaml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        for row in doc.get("points") or []:
+            cid = str(row["channel"])
+            points += 1
+            # Every point names a channel the registry knows, and restates its layer.
+            if cid in registered:
+                assert row["layer"] == registered[cid], (cid, row["layer"], registered[cid])
+            else:
+                # A template instantiation; its layer must still be one of the three.
+                assert row["layer"] in set(registered.values()), (cid, row["layer"])
+    assert points == 142, points
+
+    mapping = yaml.safe_load((VEHICLE / "presentation.yaml").read_text())["epistemic_layers"][
+        "mapping"
+    ]
+    assert set(mapping) == set(registered.values())
+
+    definition = copy_definition(tmp_path / "layer")
+    path = definition / "domains" / "avionics" / "points.yaml"
+    text = path.read_text()
+    broken = text.replace("layer: service", "layer: measurement", 1)
+    assert broken != text, "the fixture no longer matches avionics/points.yaml"
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert ".layer" in result.stdout, result.stdout[-900:]
+
+
 def test_the_postures_transitions_and_objectives_are_validated(tmp_path):
     """The blocks that decide what the strike is — swept the way the command registry's were.
 
