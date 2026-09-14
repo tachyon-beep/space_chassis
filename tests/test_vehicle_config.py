@@ -1831,6 +1831,109 @@ def test_the_linter_holds_a_domain_s_declared_reads(tmp_path):
     assert "fc_o2_draw" not in report.debts[0], "an internal read was counted as cross-domain"
 
 
+def test_the_linter_holds_every_draw_on_a_stock(tmp_path):
+    """The `consumers` ledger was read by nothing, and its own header says what to check.
+
+    Twelve draws on the stocks, each naming the stock, the coupling edge it corresponds to and a
+    rate — and until this round **the word `consumers` appeared in no tool in the folder**. The
+    header is what makes it checkable: *"Every draw on a stock, with the edge it corresponds to in
+    coupling.yaml or the reason it has none."* Three of the twelve failed that sentence in one way or
+    another, and the fourth rule — a declared `derivation` is evaluated against the rate — found the
+    number this test pins.
+
+    **`E-FC-WATER` records that its sensitivity read 0.45 until the arithmetic was done**, and that
+    0.45 "is not a number this reaction can produce: it asserts that 55 % of the reactant mass
+    becomes neither electricity nor water nor heat". The edge was corrected to 1.126 and a check was
+    written to re-evaluate every `computation` — and the consumer entry for the same reaction still
+    declared `rate_kg_s: 0.45` with the identical sentence as its relation, because that block had no
+    reader. The same shape one entry down: `evaporator_water` declared 8.9e-4 kg/s, which is 2,345 W
+    at the 3.8e-7 the water cycle's edges carried *before* they were swapped, while the relation
+    beside it cited 2.45e6 J/kg — the figure the edge now carries.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    documents = linter.load_documents(
+        VEHICLE,
+        yaml.safe_load((VEHICLE / "vehicle.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "coupling.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "mission.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "channels.yaml").read_text()),
+    )
+    report = linter.Report()
+    linter.check_consumers(documents, report)
+    assert report.refusals == [], report.refusals
+    consumers = documents["domains/consumables/components.yaml"]["consumers"]
+    assert len(consumers) == 12, f"{len(consumers)} consumers"
+    # Ten name an edge and two do not; the two with none say where the draw is carried, and the
+    # four whose rate is an unpublished figure are owed rather than guessed — three of them the same
+    # unknown, because the product water's rate is the cell's oxygen draw times 1.126.
+    named = [c for c in consumers if c.get("edge")]
+    assert len(named) == 10, f"{len(named)} consumers name an edge"
+    reasoned = [c for c in consumers if not c.get("edge") and (c.get("provenance") or {}).get("note")]
+    assert len(reasoned) == 2, f"{len(reasoned)} edge-less consumers carry a reason"
+    owed = [c["id"] for c in consumers if c.get("rate_kg_s") == "UNCONFIGURED"]
+    assert owed == [
+        "fuel_cell_o2",
+        "fuel_cell_h2",
+        "fuel_cell_product_water",
+        "pressurant_blowdown",
+    ], owed
+    # And six rates are held against their own arithmetic, including the two that were wrong.
+    derived = [c for c in consumers if c.get("derivation")]
+    assert len(derived) == 6, f"{len(derived)} consumers declare a derivation"
+    assert next(c for c in consumers if c["id"] == "evaporator_water")["rate_kg_s"] == 9.5714e-4
+
+    def refusal(name: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        path = definition / "domains" / "consumables" / "components.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1200:]
+
+    # The reference that names the edge computing the draw rather than the one taking the stock
+    # down — the value it held before this round.
+    refusal(
+        "wrong-edge",
+        "    edge: E-O2-DRAW\n",
+        "    edge: E-FC-DRAW-O2\n",
+        "and never touches 'o2_csm'",
+    )
+    # The rate the derivation was written to hold, put back.
+    refusal(
+        "stale-rate",
+        "    rate_kg_s: 9.5714e-4\n",
+        "    rate_kg_s: 8.9e-4\n",
+        "and `rate_kg_s` declares",
+    )
+    # A consumer of a node this domain does not integrate.
+    refusal(
+        "not-its-stock",
+        "  - id: cabin_leak\n    stock: o2_csm\n",
+        "  - id: cabin_leak\n    stock: bus_a\n",
+        "which no stock state of consumables advances",
+    )
+    # The reason the header promises, removed.
+    refusal(
+        "no-reason",
+        '      note: "as the metabolic draw above',
+        '      reason_removed: "as the metabolic draw above',
+        "is not declared and no `provenance.note` says where the draw is carried",
+    )
+    # A derivation whose source has been renamed, which reads exactly like one that is unset.
+    refusal(
+        "renamed-source",
+        "        csm_kg_per_h: \"vehicle.yaml:consumables.leak.csm_kg_per_h\"\n",
+        "        csm_kg_per_h: \"vehicle.yaml:consumables.leak.csm_kg_per_hour\"\n",
+        "A source that has been renamed reads exactly like a source that is unset",
+    )
+
+
 def test_the_linter_refuses_an_electrical_inventory_that_drifted(tmp_path):
     """One machine in two files, and no sentence saying so.
 
@@ -7664,7 +7767,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 253 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 255 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -7804,7 +7907,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "253", "the view must agree with the headline count"
+    assert owed == "255", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
