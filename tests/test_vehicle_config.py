@@ -448,6 +448,77 @@ def test_an_unset_domain_value_is_a_debt_named_by_its_path(tmp_path):
     assert "sublimator_lm" not in result.stdout, "supplying the value must retire the debt"
 
 
+def test_a_cabin_pair_is_paired_in_fact_and_not_only_in_name(tmp_path):
+    """The LM's one-hour CO2 average read the **CSM's** cabin, and every check passed.
+
+    `check_cabin_pairing` asks whether an ECLSS channel has an `lm_` twin, and until round 102 that
+    was the whole of the pairing rule. `eclss.lm_co2_pp_1h_avg_mmhg` had a twin — and its `from` was
+    `csm_cabin_co2_kg` with `eclss.co2_pp_mmhg` as its input, so **the pair was paired by id and
+    unpaired in fact**, with a note verbatim identical to the CSM channel's.
+
+    During `descent`, `surface` and `ascent_rendezvous` — 27.5 h with the crew in the LM and the CSM
+    empty — a fleet watching that channel against the 3 mmHg one-hour limit would have been
+    watching the compartment nobody was in, on the channel Apollo 13's crisis turned on.
+
+    The comparison is extended to the *state each one reads*: a channel's twin must read a state in
+    the other compartment, and the compartments are coupling nodes. It found exactly one instance,
+    and both directions refuse.
+    """
+    points = {}
+    states = {}
+    for path in sorted((VEHICLE / "domains").glob("*")):
+        if not path.is_dir():
+            continue
+        components = yaml.safe_load((path / "components.yaml").read_text()) or {}
+        for state in components.get("state") or []:
+            states[str(state["id"])] = str(state.get("node"))
+        for row in (yaml.safe_load((path / "points.yaml").read_text()) or {}).get("points") or []:
+            points[str(row["channel"])] = str(row.get("from"))
+
+    def node_of(name: str) -> str:
+        # A point's `from` names a state in its domain or a coupling node; a name that is not a
+        # state is the node itself.
+        return states.get(name) or name
+
+    # The pair reads one compartment each, and nothing else in ECLSS is paired by name only.
+    assert node_of(points["eclss.lm_co2_pp_1h_avg_mmhg"]) == "lm_cabin_atm"
+    assert node_of(points["eclss.co2_pp_1h_avg_mmhg"]) == "cabin_atm"
+    assert points["eclss.lm_co2_pp_1h_avg_mmhg"] == "lm_cabin_co2_kg"
+
+    channels = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    published = {
+        str(r["id"])
+        for rows in channels.values()
+        if isinstance(rows, list)
+        for r in rows
+        if isinstance(r, dict) and str(r.get("id", "")).startswith("eclss.")
+    }
+    checked = 0
+    for cid in sorted(published):
+        if ".lm_" in cid:
+            continue
+        twin = cid.replace("eclss.", "eclss.lm_", 1)
+        if twin not in published:
+            continue
+        mine, theirs = points.get(cid), points.get(twin)
+        if not mine or not theirs:
+            continue
+        checked += 1
+        assert node_of(mine) != node_of(theirs), (cid, node_of(mine), node_of(theirs))
+    assert checked >= 6, checked
+
+    # And reverting the fix is refused — in either direction.
+    definition = copy_definition(tmp_path / "paired")
+    path = definition / "domains" / "eclss" / "points.yaml"
+    text = path.read_text()
+    broken = text.replace("from: lm_cabin_co2_kg", "from: csm_cabin_co2_kg", 1)
+    assert broken != text, "the fixture no longer matches eclss/points.yaml"
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "paired by name" in result.stdout, result.stdout[-900:]
+
+
 def test_a_transport_delay_carries_its_temperature_rather_than_transforming_it():
     """The weakest-documented edge in the file: `UNCONFIGURED`, with no relation and no note.
 
