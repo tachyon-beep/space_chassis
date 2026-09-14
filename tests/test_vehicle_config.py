@@ -1105,6 +1105,101 @@ def test_the_linter_holds_the_posture_that_permits_action(tmp_path):
     assert "mission.yaml:posture recovery: is the source of no transition" in out, out[-1200:]
 
 
+def test_the_linter_holds_every_frame_name_to_the_frame_registry(tmp_path):
+    """One vehicle, five frames — and a fleet told two different names for the same one.
+
+    `vehicle.yaml#frames` declares `EARTH_J2000`, `MOON_J2000`, `LVLH`, `BODY` and `HGA_BORESIGHT`,
+    and `mission.yaml` names the frame its state vector is in from that list. `rcs`'s two
+    frame-taking verbs offered `body`, `lvlh`, `inertial_earth` and `inertial_moon` — **no value in
+    common with the registry** — so the generated `HELP.md`, which is the only description of the
+    command surface a fleet gets, said `EARTH_J2000` for `load_state_vector` and `inertial_earth`
+    for `request_translation`. Nothing joined the two vocabularies because nothing read either: the
+    linter mentioned `EARTH_J2000` zero times, and the argument's *values* were checked by no rule
+    at all.
+
+    The rule is `check_argument_vocabularies`' third vocabulary, and like `component` it is inferred
+    from the argument's name wherever the name says it — an argument called `frame` names a frame,
+    the way one called `pump` names pumps. The same check holds `mission.yaml`'s two frame
+    references, keyed on the document and the key because `frame` is overloaded: in
+    `presentation.yaml` it is the telemetry envelope.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    documents = linter.load_documents(
+        VEHICLE,
+        yaml.safe_load((VEHICLE / "vehicle.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "coupling.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "mission.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "channels.yaml").read_text()),
+    )
+    report = linter.Report()
+    linter.check_argument_vocabularies(documents, report)
+    assert report.refusals == [], report.refusals
+    frames = {str(f["id"]) for f in documents["vehicle.yaml"]["frames"]}
+    assert frames == {"EARTH_J2000", "MOON_J2000", "LVLH", "BODY", "HGA_BORESIGHT"}, frames
+    # Every frame-taking argument in the corpus takes its values from that list.
+    for name, verb in (
+        ("domains/gnc/commands.yaml", "load_state_vector"),
+        ("domains/rcs/commands.yaml", "set_attitude_target"),
+        ("domains/rcs/commands.yaml", "request_translation"),
+    ):
+        schema = next(
+            v for v in documents[name]["commands"] if v.get("verb") == verb
+        )["argument_schema"]
+        assert set(schema["frame"]["values"]) <= frames, (verb, schema["frame"]["values"])
+
+    def refusal(name: str, rel: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        path = definition / rel
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {rel}: {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1200:]
+
+    # The vocabulary that was there before this round, on one of the two verbs.
+    refusal(
+        "old-frame-names",
+        "domains/rcs/commands.yaml",
+        "      frame: {type: enum, values: [BODY, LVLH, EARTH_J2000, MOON_J2000]}\n"
+        "      quaternion:",
+        "      frame: {type: enum, values: [body, lvlh, inertial_earth, inertial_moon]}\n"
+        "      quaternion:",
+        "which `vehicle.yaml#frames` does not declare",
+    )
+    # A frame invented for one verb, which is how a second vocabulary starts.
+    refusal(
+        "invented-frame",
+        "domains/rcs/commands.yaml",
+        "      frame: {type: enum, values: [BODY, LVLH, EARTH_J2000, MOON_J2000]}\n"
+        "      dv_m_s:",
+        "      frame: {type: enum, values: [BODY, LVLH, EARTH_J2000, MOON_J2000, SUN_FIXED]}\n"
+        "      dv_m_s:",
+        "which `vehicle.yaml#frames` does not declare",
+    )
+    # A frame renamed in the registry: every argument that names it refuses, which is what makes
+    # this a vocabulary rather than a copy.
+    refusal(
+        "registry-renamed",
+        "vehicle.yaml",
+        "  - id: EARTH_J2000\n",
+        "  - id: EARTH_J2000_FRAME\n",
+        "names 'EARTH_J2000', which `vehicle.yaml#frames` does not declare",
+    )
+    # And the mission's own state vector, which names its frame from the same list.
+    refusal(
+        "mission-frame",
+        "mission.yaml",
+        "  frame: EARTH_J2000\n  met_at_state:",
+        "  frame: EARTH_FIXED\n  met_at_state:",
+        "mission.yaml:initial_state.frame",
+    )
+
+
 def test_the_linter_holds_what_a_panel_displays_and_how_finely(tmp_path):
     """The display contract's two `shows` columns, neither of which any tool read.
 
