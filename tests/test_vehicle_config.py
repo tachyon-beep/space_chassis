@@ -4240,6 +4240,55 @@ def test_every_stock_declares_where_it_starts():
             )
 
 
+def test_every_field_a_command_declares_is_validated(tmp_path):
+    """Found by mutating each field in turn and watching which mutations composed.
+
+    Five of the fourteen fields on the fifty-eight verbs were unvalidated, and every one is *read*
+    by something, which is what makes them worth checking. `execution_class` decides whether a
+    command may be held for a due time; `maximum_queue_age_s` decides when it expires;
+    `allowed_phases` decides which phases offer the verb; `help` is the whole of what a fleet is
+    told; and `gate.kind` is **read by nothing at all**.
+
+    The sharpest is `execution_class`: three tools compare it against the literal `deferred`, so
+    `defered` does not fail a build — it makes a deferrable verb take effect in the tick it is
+    accepted. And `allowed_phases` *absent* composed, which is not the same as one naming every
+    phase: the availability check can tell the difference and a reader cannot.
+    """
+    phases = {
+        str(p["id"]) for p in yaml.safe_load((VEHICLE / "mission.yaml").read_text())["phases"]
+    }
+    verbs = 0
+    for path in sorted((VEHICLE / "domains").glob("*/commands.yaml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        for verb in doc.get("commands") or []:
+            verbs += 1
+            where = f"{path.parent.name}/{verb['verb']}"
+            assert verb.get("execution_class") in {"declarative", "deferred", "armed"}, where
+            age = verb.get("maximum_queue_age_s")
+            assert isinstance(age, (int, float)) and age > 0, where
+            allowed = verb.get("allowed_phases")
+            assert isinstance(allowed, list) and allowed, where
+            assert set(map(str, allowed)) <= phases, where
+            assert (verb.get("gate") or {}).get("kind") == "preference", where
+            assert str(verb.get("help") or "").strip(), where
+    assert verbs == 58, f"{verbs} verbs"
+
+    for old, new, expect in (
+        ("execution_class: declarative", "execution_class: defered", "execution_class"),
+        ("maximum_queue_age_s: 60", "maximum_queue_age_s: 0", "maximum_queue_age_s"),
+        ("kind: preference", "kind: service_owned", "gate.kind"),
+    ):
+        definition = copy_definition(tmp_path / expect.replace(".", "_"))
+        path = definition / "domains" / "gnc" / "commands.yaml"
+        text = path.read_text()
+        broken = text.replace(old, new, 1)
+        assert broken != text, f"the fixture no longer matches {old!r}"
+        path.write_text(broken)
+        result = run_linter(definition)
+        assert result.returncode == 1, (expect, result.stdout[-700:])
+        assert expect in result.stdout, (expect, result.stdout[-700:])
+
+
 def test_a_command_cannot_be_grouped_under_a_domain_of_its_own(tmp_path):
     """`conflict_domain` says which commands must not both take effect in one tick, unvalidated.
 
