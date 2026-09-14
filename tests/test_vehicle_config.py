@@ -4240,6 +4240,59 @@ def test_every_stock_declares_where_it_starts():
             )
 
 
+def test_the_adversarys_ids_and_rates_are_validated(tmp_path):
+    """Two more fields on the 128 faults that composed under mutation.
+
+    **Fault ids are unique across the whole vehicle, because they key the randomness.** `faults.py`
+    derives every stochastic stream from `(master_seed, domain, component_id, purpose)` and
+    `--check` asserts that name-keying holds — *"no existing fault's events moved"* is the property
+    that makes a run reproducible when a fault is added. Two faults sharing an id would take the
+    same stream: their draws would be the same numbers in the same order, and a vehicle with two
+    faults would behave like a vehicle with one of them applied twice.
+
+    **`seeding.unit` is a one-word vocabulary declared 66 times and validated nowhere.** It is the
+    rate's *time basis*, and `faults.py` scales the hazard by it across the mission's ladder — so
+    `per_hour`, which reads like `per_h`, is a silent change of rate rather than a refusal.
+    """
+    import collections
+
+    ids = collections.Counter()
+    units = collections.Counter()
+    faults = 0
+    for path in sorted((VEHICLE / "domains").glob("*/fault_policy.yaml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        for fault in doc.get("faults") or []:
+            faults += 1
+            ids[fault["id"]] += 1
+            seeding = fault.get("seeding") or {}
+            if "hazard" in seeding:
+                units[str(seeding.get("unit"))] += 1
+    assert faults == 128, faults
+    assert set(ids.values()) == {1}, [i for i, n in ids.items() if n > 1]
+    assert set(units) == {"per_h"}, dict(units)
+
+    definition = copy_definition(tmp_path / "faults")
+    path = definition / "domains" / "gnc" / "fault_policy.yaml"
+    text = path.read_text()
+    broken = text.replace("unit: per_h", "unit: per_hour", 1)
+    assert broken != text
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "seeding.unit" in result.stdout, result.stdout[-900:]
+
+    # A duplicate id **across two domains**, which is the case a per-domain check would miss.
+    definition = copy_definition(tmp_path / "collide")
+    path = definition / "domains" / "avionics" / "fault_policy.yaml"
+    text = path.read_text()
+    broken = text.replace("id: AVI-01-instrumentation-power", "id: GNC-01-imu-drift", 1)
+    assert broken != text
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "declared again" in result.stdout, result.stdout[-900:]
+
+
 def test_a_points_layer_is_the_registrys_layer(tmp_path):
     """`layer` is declared twice per channel and only the registry's copy was checked.
 
