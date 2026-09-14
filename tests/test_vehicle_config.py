@@ -505,19 +505,17 @@ def test_every_state_in_a_declared_order_is_actually_advanced():
         for line in result.stdout.splitlines()
         if "declares a state_order over" in line
     )
-    assert reported == [
-        "coolant_flow",
-        "crew_state",
-        "fuel_cell",
-        "radiator_reject",
-        "vehicle_dynamics",
-    ], reported
+    # One, after the narrowing. `radiator_reject` is fixed — both heat inputs now advance
+    # `zone_radiator_t`, which is what the node's own order says comes first — and the other three
+    # have an advanced head: `body_rate` is driven by `E-RCS-DYN` and `fuel_cell_power_w` by the
+    # cell's own edges, with `attitude` and `source_converter_v` derived from them.
+    assert reported == ["coolant_flow"], reported
 
-    # The two that are new this round, and both are the same defect: the state the order puts
-    # first is the one nothing advances.
-    assert "no inbound edge advances 'zone_radiator_t'" in result.stdout
-    assert "no inbound edge advances 'attitude'" in result.stdout
-    assert "no inbound edge advances 'source_converter_v'" in result.stdout
+    # And the one that is left is not an edge problem: `E-BUS-PUMP`'s own relation says "a DC
+    # motor's speed follows its terminal voltage, and a centrifugal pump's flow follows its speed,
+    # so the flow tracks the bus linearly" — the edge gives a *flow*, correctly, and the pump's
+    # speed is commanded by `set_coolant_pump`, which no edge carries.
+    assert "no inbound edge advances 'pump_1_speed_rpm'" in result.stdout
 
 
 def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
@@ -3679,7 +3677,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # been counted as ready because the integrator never read a level, which is the defect the
     # round found — the build order was reporting a state as advanceable that could only have
     # produced a wrong number.
-    assert len(buckets["ready"]) == 14
+    assert len(buckets["ready"]) == 15
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -3689,8 +3687,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     assert len(buckets["value"]) == 26
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code.
-    assert len(buckets["edge"]) == 12
-    assert len(buckets["ready"]) == 14
+    assert len(buckets["edge"]) == 11
+    assert len(buckets["ready"]) == 15
 
 
 def test_the_plant_reports_the_build_order():
@@ -5990,7 +5988,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 253 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 249 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -6130,7 +6128,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "253", "the view must agree with the headline count"
+    assert owed == "249", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
