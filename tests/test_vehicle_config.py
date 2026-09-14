@@ -435,7 +435,14 @@ def test_an_unset_domain_value_is_a_debt_named_by_its_path(tmp_path):
     # The sublimator's rejection is the domain's one genuinely unpublished figure.
     unset = "    rejection_w: UNCONFIGURED"
     assert unset in text, "the fixture no longer matches the thermal components"
-    path.write_text(text.replace(unset, "    rejection_w: 1500", 1))
+    text = text.replace(unset, "    rejection_w: 1500", 1)
+    # **And the total has to move with it.** `load_budget.total_rejection_capacity_w` is the sum of
+    # the parts that have values — it is 4,933 today because the sublimator's figure is the one
+    # missing — so supplying the figure and leaving the total is a capacity the vehicle does not
+    # have. `check_thermal_budget` refused this fixture the first time it ran, which is the closure
+    # doing exactly what it was written for.
+    text = text.replace("total_rejection_capacity_w: 4933", "total_rejection_capacity_w: 6433", 1)
+    path.write_text(text)
 
     result = run_linter(definition, strict=True)
     assert "sublimator_lm" not in result.stdout, "supplying the value must retire the debt"
@@ -4231,6 +4238,103 @@ def test_every_stock_declares_where_it_starts():
             assert abs(float(node) - float(state["initial"])) < 1e-9, (
                 f"{state['id']} says {state['initial']} and {source} says {node}"
             )
+
+
+def test_a_check_that_iterates_a_missing_block_is_not_a_check(tmp_path):
+    """Three blocks could be deleted outright and the build stayed green.
+
+    A deletion test — remove a block, run every tool, diff the output — found nine blocks the
+    vehicle does not notice losing. Three of them were worse than unread: **the linter had code
+    for them, and the code could not run.** `quality_assignment` was guarded by
+    `if isinstance(quality, dict)`, `display_contract` by `or {}` and an empty loop, and
+    `atmosphere_model` by an early `return` — so all three reported on nothing when the block was
+    gone, which is indistinguishable from reporting that all is well.
+
+    Between them they are four hundred lines: the quality-assignment function
+    `simulator-design.md:496-508` requires, the display contract the perception bound is
+    cross-checked against, and the atmosphere model that makes a cabin's contents species rather
+    than one mass. Each is now refused by name when absent.
+    """
+    for domain, key, filename in (
+        ("avionics", "quality_assignment", "components.yaml"),
+        ("crew", "display_contract", "components.yaml"),
+        ("eclss", "atmosphere_model", "components.yaml"),
+    ):
+        definition = copy_definition(tmp_path / domain)
+        path = definition / "domains" / domain / filename
+        lines = path.read_text().split("\n")
+        start = next(i for i, line in enumerate(lines) if line.startswith(f"{key}:"))
+        end = start + 1
+        while end < len(lines) and not re.match(r"^[A-Za-z_]", lines[end]):
+            end += 1
+        removed = end - start
+        assert removed > 5, f"{domain}/{key} is only {removed} lines"
+        path.write_text("\n".join(lines[:start] + lines[end:]))
+
+        result = run_linter(definition)
+        assert result.returncode == 1, f"{domain}/{key} deleted and nothing noticed"
+        assert f":{key}" in result.stdout, result.stdout[-900:]
+
+
+def test_the_blocks_no_tool_read_name_things_that_resolve(tmp_path):
+    """Three more of the nine, and what makes them worth wiring is that they are full of names.
+
+    `consumables/ledgers` names twelve channel ids across four rows, `crew/alert_overlays` names
+    three overlay ids a verb has to be able to set, and `thermal/load_budget` states a rejection
+    total that is the sum of two figures in its own file. All fifteen names and the closure are
+    right today — which is exactly the condition under which the sixteenth is added wrong, and
+    until this round nothing read any of them.
+    """
+    report = run_linter(VEHICLE)
+    assert report.returncode == 0, report.stdout[-900:]
+
+    # The thermal total is a closure over its own file's parts.
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    parts = [thermal["radiator_model"]["csm"]["rejection_w"]]
+    parts += [
+        c["rejection_w"]
+        for c in thermal["components"]
+        if isinstance(c.get("rejection_w"), (int, float))
+    ]
+    assert sum(parts) == thermal["load_budget"]["total_rejection_capacity_w"], parts
+
+    # Every ledger channel resolves, and the resource is a coupling node.
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    raw_nodes = coupling["nodes"]
+    nodes = (
+        {str(n["id"]) for n in raw_nodes}
+        if isinstance(raw_nodes, list)
+        else {str(k) for k in raw_nodes}
+    )
+    assert nodes, "no coupling nodes were read"
+    consumables = yaml.safe_load(
+        (VEHICLE / "domains" / "consumables" / "components.yaml").read_text()
+    )
+    assert len(consumables["ledgers"]) == 4
+    for row in consumables["ledgers"]:
+        assert row["resource"] in nodes, row["resource"]
+
+    # A deletion the checks exist to catch, in the shape a typo takes.
+    definition = copy_definition(tmp_path / "ledger")
+    path = definition / "domains" / "consumables" / "components.yaml"
+    text = path.read_text()
+    broken = text.replace('"res.ledger_o2_kg"', '"res.ledger_o2_kq"', 1)
+    assert broken != text, "the fixture no longer matches consumables/components.yaml"
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "res.ledger_o2_kq" in result.stdout, result.stdout[-900:]
+
+    # And the budget's, which is the closure that has no other reader.
+    definition = copy_definition(tmp_path / "budget")
+    path = definition / "domains" / "thermal" / "components.yaml"
+    text = path.read_text()
+    broken = text.replace("total_rejection_capacity_w: 4933", "total_rejection_capacity_w: 5933", 1)
+    assert broken != text, "the fixture no longer matches thermal/components.yaml"
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "load_budget.total_rejection_capacity_w" in result.stdout, result.stdout[-900:]
 
 
 def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
