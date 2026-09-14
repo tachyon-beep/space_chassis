@@ -2260,6 +2260,82 @@ def test_an_edge_whose_value_is_another_declaration_s_function(tmp_path):
         ["cannot be evaluated"],
     )
 
+    # Five more edges whose inputs were declared all along, and the one declaration they were
+    # missing. Each fixture moves the *authority* — in both files where the join would otherwise
+    # refuse first, so that the derivation is what has to catch it.
+    broken(
+        "sps",
+        [
+            ("vehicle.yaml", "    isp_s: 314.5\n", "    isp_s: 320\n"),
+            ("domains/propulsion/components.yaml", "    thrust_n: 91188\n    isp_s: 314.5\n", "    thrust_n: 91188\n    isp_s: 320\n"),
+        ],
+        ["E-PROP-ENG.sensitivity.derivation: derives 0.000318661"],
+    )
+    broken(
+        "thruster",
+        [("domains/rcs/components.yaml", "    thrust_n: 445\n    isp_s: 290\n", "    thrust_n: 445\n    isp_s: 295\n")],
+        ["E-RCSP-RCS.sensitivity.derivation"],
+    )
+    broken(
+        "heaviest",
+        [("vehicle.yaml", "    mass_kg: 44085\n", "    mass_kg: 45085\n")],
+        ["E-ENG-DYN.sensitivity.derivation: derives 2.218"],
+    )
+    # One cabin's conductance, and the negative that matters: the *other* cabin's edge must not
+    # move, because the two edges bind their own compartment's field rather than a shared literal.
+    broken(
+        "conductance",
+        [("domains/thermal/components.yaml", "    tau_s: 2880\n    conductance_w_per_k: 125\n    provenance:\n      basis: derived", "    tau_s: 2880\n    conductance_w_per_k: 150\n    provenance:\n      basis: derived")],
+        ["E-CABIN-HEAT-CSM.sensitivity.derivation: derives 0.00666667"],
+    )
+    definition = copy_definition(tmp_path / "conductance_other")
+    path = definition / "domains" / "thermal" / "components.yaml"
+    text = path.read_text()
+    path.write_text(
+        text.replace(
+            "    tau_s: 2880\n    conductance_w_per_k: 125\n    provenance:\n      basis: derived",
+            "    tau_s: 2880\n    conductance_w_per_k: 150\n    provenance:\n      basis: derived",
+            1,
+        )
+    )
+    out = run_linter(definition).stdout
+    assert "E-CABIN-HEAT-LM.sensitivity.derivation" not in out, out[-1200:]
+
+
+def test_the_bus_declares_the_voltage_its_edges_divide_by(tmp_path):
+    """Three edges wrote `1/28` and no file declared a bus voltage.
+
+    `domains/power/components.yaml` declared `csm_bus_a`, `csm_bus_b` and `lm_bus` with a `v_band`
+    envelope and nothing else. The 28 V that turns every watt on this vehicle into amps was a
+    *battery's* `v_nominal`, the low end of a fuel cell's 27-31 V range, and the string
+    `apollo_diode.md:157`'s "28 V bus" — the same shape `mission.yaml#comms_blackout`'s `mu_moon`
+    had before it became a field, and the reason `E-AMP-LOAD`'s `1 / 28` could not be bound to
+    anything.
+
+    So the buses declare a nominal, and the edge that divides by it binds it. The fixture moves the
+    nominal and demands the refusal, then removes it and demands that the source stop resolving —
+    because a source that has been deleted reads exactly like one that was never written.
+    """
+    definition = copy_definition(tmp_path / "bus")
+    path = definition / "domains" / "power" / "components.yaml"
+    text = path.read_text()
+    anchor = "    # it is a promotion rather than a choice.\n    v_nominal: 28\n"
+    assert anchor in text, "the fixture no longer matches the bus declaration"
+    path.write_text(text.replace(anchor, "    # it is a promotion rather than a choice.\n    v_nominal: 30\n", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "E-AMP-LOAD.sensitivity.derivation: derives 0.0333333" in result.stdout, result.stdout[-1200:]
+
+    definition = copy_definition(tmp_path / "no_bus_v")
+    path = definition / "domains" / "power" / "components.yaml"
+    text = path.read_text()
+    path.write_text(text.replace(anchor, "", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "has no 'components.csm_bus_a.v_nominal'" in result.stdout, result.stdout[-1200:]
+
 
 def test_the_cabin_volume_is_one_number_in_three_files(tmp_path):
     """The denominator of every partial pressure the crew read, declared seven times.
@@ -3484,30 +3560,56 @@ def test_the_linter_rederives_a_derived_edge_sensitivity(tmp_path):
     assert "does not re-derive" in result.stdout
 
 
-def test_the_linter_refuses_a_computation_it_cannot_evaluate(tmp_path):
-    """The expression is arithmetic over literals, and nothing else.
+def test_the_linter_refuses_an_expression_it_cannot_evaluate(tmp_path):
+    """The expression is arithmetic over numbers, and nothing else — on both surfaces now.
 
-    A `computation` is evaluated by the linter, so it must not be able to name anything: a
-    relation that reached a variable would make the check depend on state it does not have, and a
-    relation that reached a *function* would make the configuration executable.
+    A `computation` is evaluated by the linter, so it must not be able to name anything: a relation
+    that reached a variable would make the check depend on state it does not have, and a relation
+    that reached a *function* would make the configuration executable. That was the whole of the
+    property when `computation` was the only surface, and the fixture used to inject its payload
+    into `E-AMP-LOAD`'s `1 / 28`.
+
+    `E-AMP-LOAD` binds its bus voltage now, so the `computation` case moves to an edge that still
+    carries one — and the derivation is a *second* surface, which is why this test grew rather than
+    being repointed. A derivation's expression is allowed identifiers, and the property is kept by
+    construction instead: every name must be a declared input, every input is substituted as a
+    numeric literal, and only then is the result required to be arithmetic. So the payload is
+    injected twice, once where names are forbidden outright and once where they are bound and
+    substituted away.
     """
-    definition = copy_definition(tmp_path / "vehicle")
+    payload = "__import__(chr(111)+chr(115)).getpid()"
+
+    definition = copy_definition(tmp_path / "computation")
     path = definition / "coupling.yaml"
     text = path.read_text()
-    anchor = '      computation: "1 / 28"\n'
-    assert anchor in text, "the fixture no longer matches E-AMP-LOAD"
-    injected = (
-        "      computation: "
-        + chr(34)
-        + "__import__(chr(111)+chr(115)).getpid()"
-        + chr(34)
-        + chr(10)
-    )
-    path.write_text(text.replace(anchor, injected, 1))
+    anchor = '      computation: "1 / 2.45e6"\n'
+    assert anchor in text, "the fixture no longer matches E-WATER-RAD"
+    path.write_text(text.replace(anchor, f'      computation: "{payload}"\n', 1))
 
     result = run_linter(definition)
     assert result.returncode == 1
     assert "cannot evaluate" in result.stdout
+
+    # And on the derivation, where the same payload is *bound* so that substitution runs: what the
+    # evaluator finally sees is `1.0(1.0)`, which is not arithmetic, and that is the refusal.
+    definition = copy_definition(tmp_path / "derivation")
+    path = definition / "coupling.yaml"
+    text = path.read_text()
+    anchor = '        expression: "1 / v_bus"\n        inputs:\n          v_bus: "domains/power/components.yaml:components.csm_bus_a.v_nominal"\n'
+    assert anchor in text, "the fixture no longer matches E-AMP-LOAD"
+    path.write_text(
+        text.replace(
+            anchor,
+            '        expression: "__import__(v_bus)"\n        inputs:\n'
+            '          __import__: 1\n'
+            '          v_bus: "domains/power/components.yaml:components.csm_bus_a.v_nominal"\n',
+            1,
+        )
+    )
+
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "cannot be evaluated" in result.stdout, result.stdout[-1200:]
 
 
 def test_the_linter_refuses_a_counter_with_no_rating(tmp_path):
@@ -6756,7 +6858,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 253 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 254 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -6896,7 +6998,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "253", "the view must agree with the headline count"
+    assert owed == "254", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
