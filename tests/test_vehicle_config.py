@@ -2425,6 +2425,108 @@ def test_the_loops_fluid_is_one_substance_described_three_ways(tmp_path):
     )
 
 
+def test_a_zone_is_one_compartment_in_two_files(tmp_path):
+    """Two files list the same six zones, and until this round they agreed on almost nothing.
+
+    `vehicle.yaml#thermal.zones` carries a zone's `limit_c` band and `dwell_min_s`; the thermal
+    domain's copy carries its `vehicle` and the heater bank `source` that drives it. What the two
+    share is `regulated` — on all six, in both files — and the cabins' `volume_m3`. The ids were
+    compared and the cabin volumes were compared (against `atmosphere_model`, two rounds ago), and
+    **`regulated` was read by nothing at all**: a zone the vehicle regulates and the domain does
+    not is a compartment with a heater on one side of the join and none on the other, and the
+    thresholds that watch it live on the domain's side.
+
+    So the zones are compared by the intersection rule too, which is also what compares the cabin's
+    nominal pressure and temperature the moment they are declared rather than when somebody
+    remembers to add them here.
+
+    The band has a second half, and it is the round's real find. `thermal_diode.md:131` requires
+    "paired heat/cool thresholds with a minimum dwell for any regulated zone", so the zone declares
+    the band and the dwell, and the domain declares the thresholds that implement them — and the
+    link between the two was nowhere. `limit_c` was at least read, by `check_cabin_equilibrium`, as
+    a band the cabin's equilibrium must lie inside. **`dwell_min_s` was read by nothing**, on any of
+    the six zones, while every threshold beside it carried its own `dwell_assert_ms` — and one of
+    them had already drifted: `csm_avionics_bay` declares a 30-second minimum and
+    `avionics_plate_high`, the threshold that holds its band, alarms after 10. That is this
+    folder's oldest sentence, and it was true of a field on six entries.
+
+    The link is declared rather than inferred, and `csm_avionics_bay` is why: its band is held by a
+    *plate* threshold on `thermal.avionics_plate_c` rather than by a zone channel, so no rule over
+    channel names could find it. The two cabins and the avionics bay name theirs; the drift is
+    reported as a debt rather than refused, because which of the two figures the vehicle means is a
+    decision — either the threshold holds the dwell the zone requires, or the zone's minimum is the
+    cabin's written onto a compartment whose instrument moves faster.
+    """
+    thermal = "domains/thermal/components.yaml"
+    vehicle = "vehicle.yaml"
+
+    def refusal(name: str, edits: list[tuple[str, str, str]], needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        for rel, old, new in edits:
+            path = definition / rel
+            text = path.read_text()
+            assert old in text, f"the fixture no longer matches {old!r}"
+            path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, f"{needle!r} did not fire:\n{out[-1500:]}"
+
+    # `regulated`, which was compared by nothing: the domain is flipped in both directions, so the
+    # message is the mirror of itself and neither side is assumed to be the authority.
+    refusal(
+        "regulated_bay",
+        [(thermal, "  - id: csm_service_bay\n    vehicle: csm\n    regulated: false\n", "  - id: csm_service_bay\n    vehicle: csm\n    regulated: true\n")],
+        "gives regulated as False and the thermal domain gives True",
+    )
+    # The cabin's nominal temperature, drifted in one file and then in both — the first is the
+    # join's business and the second is only the edge's.
+    refusal(
+        "nominal_one_file",
+        [(thermal, "    nominal_pressure_psia: 5\n    nominal_temperature_k: 295\n", "    nominal_pressure_psia: 5\n    nominal_temperature_k: 300\n")],
+        "gives nominal_temperature_k as 295 and the thermal domain gives 300",
+    )
+    refusal(
+        "nominal_both",
+        [
+            (
+                vehicle,
+                "        # edges that differentiate the law convert it, the way `E-BUS-PUMP` converts pounds.\n        nominal_pressure_psia: 5\n        nominal_temperature_k: 295\n",
+                "        # edges that differentiate the law convert it, the way `E-BUS-PUMP` converts pounds.\n        nominal_pressure_psia: 5\n        nominal_temperature_k: 300\n",
+            ),
+            (thermal, "    nominal_pressure_psia: 5\n    nominal_temperature_k: 295\n", "    nominal_pressure_psia: 5\n    nominal_temperature_k: 300\n"),
+        ],
+        "E-ZONE-ATM.sensitivity.derivation",
+    )
+    # The link itself, and the band it claims to implement.
+    refusal(
+        "no_link",
+        [(vehicle, "        implemented_by: [csm_cabin_low, csm_cabin_high]\n", "")],
+        "is regulated and declares a band with no `implemented_by`",
+    )
+    refusal(
+        "bad_link",
+        [(vehicle, "implemented_by: [csm_cabin_low, csm_cabin_high]", "implemented_by: [csm_cabin_low, csm_cabin_highh]")],
+        "which no domain's profiles.yaml declares",
+    )
+    refusal(
+        "band",
+        [(vehicle, "        limit_c: [10, 30]\n        regulated: true\n        dwell_min_s: 30\n", "        limit_c: [10, 25]\n        regulated: true\n        dwell_min_s: 30\n")],
+        "outside the band it is said to implement",
+    )
+
+    # And the drift the rule found, with the negative that makes it a rule rather than a complaint:
+    # the two cabins' dwells already agree with their thresholds and are not reported.
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-900:]
+    dwell = [
+        line
+        for line in result.stdout.splitlines()
+        if line.strip().startswith("- ") and "shorter than the zone's own minimum" in line
+    ]
+    assert len(dwell) == 1, dwell
+    assert "csm_avionics_bay" in dwell[0]
+    assert "10000 ms" in dwell[0]
+
+
 def test_the_cabin_volume_is_one_number_in_three_files(tmp_path):
     """The denominator of every partial pressure the crew read, declared seven times.
 
