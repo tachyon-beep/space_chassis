@@ -1904,6 +1904,144 @@ def test_the_engines_the_mission_is_flown_on_are_one_set_of_figures(tmp_path):
     )
 
 
+def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
+    """The fourth join, and the two files that describe the link's hardware with nothing between them.
+
+    `vehicle.yaml#comms` is the vehicle-level bill of materials NR ch.18 and `apollo_diode.md:157-168`
+    supply: the transmitters with their DC and RF watts, the antennas with their gains and
+    beamwidths. `domains/comms/components.yaml` was written as the domain's view of the same
+    hardware, and its own header states the claim — *"All of it is already in `vehicle.yaml#comms`;
+    these entries are the domain's view of it, and they exist so that a threshold or a fault can
+    name the object it is about."* Nothing read that claim, and the five fields the two views share
+    — `gain_db`, `beamwidth_deg`, `steerable`, `dc_w` and `rf_w` — were compared by no tool.
+
+    It matters more than a duplicate usually does because the copies have already been *used*.
+    `E-GEOM-LINK`'s -0.54 dB per degree is computed from the 9.4-degree beamwidth and its relation
+    cites `vehicle.yaml#comms.antennas.high_gain` by name; `E-AMP-LOAD`'s 0.0357 A per watt is
+    applied to "the 36 W transceiver and the 72 W power amplifier", which its relation places in
+    `vehicle.yaml#comms.transmitters`. So the vehicle-level copy is the one the graph's arithmetic
+    was argued from, and the domain's is the one a fault names — COM-02, COM-07 and COM-08 happen to
+    `sband_power_amplifier` and `sband_transceiver` — and the one the domain's code will read when
+    the link budget is implemented.
+
+    Two shapes the link has to survive, and both are declared rather than inferred. One antenna
+    component stands for two vehicle entries (`omni` for `omni_a`/`omni_b`), and one transmitter for
+    two power levels (`lm_sband` for `lm_sband_low`/`lm_sband_high`) — the second of which is why
+    `levels` exists: it is keyed by the vehicle entry ids, so the link and the figures are one
+    declaration rather than two that have to be kept in step. The first version of that component
+    carried `low_dc_w`, `high_dc_w`, `rf_w_low` and `rf_w_high`, four names no other component on
+    the vehicle uses and no tool read — which is what a quantity looks like when it is written for a
+    reader rather than for a rule.
+    """
+
+    def refusal(rel: str, old: str, new: str, needle: str) -> str:
+        definition = copy_definition(tmp_path / f"comm{abs(hash((rel, old, new))) % 10000}")
+        path = definition / rel
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1200:]
+        return out
+
+    def drift(rel: str, edits: list[tuple[str, str]], needles: list[str]) -> str:
+        """Break several independent declarations at once and demand every refusal by name.
+
+        The linter reports the whole pass rather than the first fault, so one broken copy answers
+        for every break in it. They are grouped here so that none of them can mask another: a
+        component stripped of its `vehicle_keys` is not compared at all, which is why that break
+        has a copy to itself rather than sharing one with the figures it would hide.
+        """
+        definition = copy_definition(tmp_path / f"comm{abs(hash(tuple(edits))) % 10000}")
+        path = definition / rel
+        text = path.read_text()
+        for old, new in edits:
+            assert old in text, f"the fixture no longer matches {old!r}"
+            text = text.replace(old, new, 1)
+        path.write_text(text)
+        out = run_linter(definition).stdout
+        for needle in needles:
+            assert needle in out, f"{needle!r} did not fire:\n{out[-1600:]}"
+        return out
+
+    dom = "domains/comms/components.yaml"
+    # The figures `E-GEOM-LINK` and `E-AMP-LOAD` were argued from, re-rated on the side the graph
+    # does not read — plus the omni against both its entries, and the two-level transmitter whose
+    # level keys are the vehicle entry ids. Every one is a plain inequality between two files.
+    drift(
+        dom,
+        [
+            ("    gain_db: 26.7\n", "    gain_db: 25.0\n"),
+            ("    beamwidth_deg: 9.4\n    steerable: true\n", "    beamwidth_deg: 9.4\n    steerable: false\n"),
+            ("    vehicle_keys: [omni_a, omni_b]\n    gain_db: 2\n", "    vehicle_keys: [omni_a, omni_b]\n    gain_db: 3.0\n"),
+            ("    dc_w: 36\n", "    dc_w: 40\n"),
+            ("    dc_w: 72\n    rf_w: 11.2\n", "    dc_w: 72\n    rf_w: 12.0\n"),
+            ("      lm_sband_low:\n        dc_w: 20\n", "      lm_sband_low:\n        dc_w: 25\n"),
+            ("      lm_sband_high:\n        dc_w: 90\n        rf_w: 18.6\n", "      lm_sband_high:\n        dc_w: 90\n        rf_w: 20.0\n"),
+            (
+                "    levels:\n      lm_sband_low:\n",
+                "    levels:\n      lm_sband_medium:\n        dc_w: 50\n        rf_w: 5.0\n      lm_sband_low:\n",
+            ),
+            # A figure written one level up from where it belongs. Nothing else in the copy reads
+            # it, which is exactly why it is compared rather than skipped: the rule is that every
+            # field the component and the vehicle entry share is held, wherever it is written.
+            (
+                "    vehicle_keys: [lm_sband_low, lm_sband_high]\n    levels:\n",
+                "    vehicle_keys: [lm_sband_low, lm_sband_high]\n    dc_w: 20\n    levels:\n",
+            ),
+        ],
+        [
+            "declares gain_db 25.0 at `hga` and vehicle.yaml#comms.antennas.high_gain declares 26.7",
+            "declares steerable False at `hga` and vehicle.yaml#comms.antennas.high_gain declares True",
+            "declares gain_db 3.0 at `omni` and vehicle.yaml#comms.antennas.omni_a declares 2",
+            "declares dc_w 40 at `sband_transceiver` and vehicle.yaml#comms.transmitters.sband_transceiver declares 36",
+            "declares rf_w 12.0 at `sband_power_amplifier` and vehicle.yaml#comms.transmitters.sband_power_amplifier declares 11.2",
+            "declares dc_w 25 at `lm_sband.levels.lm_sband_low` and vehicle.yaml#comms.transmitters.lm_sband_low declares 20",
+            "declares rf_w 20.0 at `lm_sband.levels.lm_sband_high` and vehicle.yaml#comms.transmitters.lm_sband_high declares 18.6",
+            "declares `levels.lm_sband_medium`, which no entry of `vehicle_keys` claims",
+            "declares dc_w 20 at `lm_sband` and vehicle.yaml#comms.transmitters.lm_sband_high declares 90",
+        ],
+    )
+    # And the other direction, which is the one that would leave the edge's slope belonging to an
+    # antenna the domain no longer describes. It goes in its own copy because moving the *vehicle*
+    # figure moves it under every domain component that claims it, and this asserts the one.
+    refusal(
+        "vehicle.yaml",
+        "      beamwidth_deg: 9.4\n      steerable: true\n",
+        "      beamwidth_deg: 12.0\n      steerable: true\n",
+        "declares beamwidth_deg 9.4 at `hga` and vehicle.yaml#comms.antennas.high_gain declares 12.0",
+    )
+    # The link itself, in both directions, and the level that a claimed entry has to have.
+    refusal(dom, "    vehicle_keys: [omni_a, omni_b]\n", "", "declares no `vehicle_keys`")
+    refusal(
+        dom,
+        "    vehicle_keys: [high_gain]\n",
+        "    vehicle_keys: [high_ga1n]\n",
+        "which vehicle.yaml#comms does not declare",
+    )
+    refusal(
+        dom,
+        "      lm_sband_high:\n        dc_w: 90\n        rf_w: 18.6\n",
+        "",
+        "claims 'lm_sband_high' and declares no `levels.lm_sband_high`",
+    )
+
+    # The reverse direction is a debt rather than a refusal, and it is not vacuous: the LM's
+    # steerable antenna is declared by `vehicle.yaml`, offered by `select_antenna`, and claimed by
+    # no component of the comms domain — which is why its gain and beamwidth are owed in one file
+    # and the other file has no object to name while it waits.
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-900:]
+    unclaimed = [
+        line
+        for line in result.stdout.splitlines()
+        if line.strip().startswith("- ") and "claimed by no component" in line
+    ]
+    assert len(unclaimed) == 1, unclaimed
+    assert "vehicle.yaml:comms.antennas.sband_steerable" in unclaimed[0]
+    assert "`select_antenna` offers it" in unclaimed[0]
+
+
 def test_the_cabin_volume_is_one_number_in_three_files(tmp_path):
     """The denominator of every partial pressure the crew read, declared seven times.
 
@@ -6322,7 +6460,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 252 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 253 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -6462,7 +6600,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "252", "the view must agree with the headline count"
+    assert owed == "253", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
