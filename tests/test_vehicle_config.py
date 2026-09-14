@@ -4471,6 +4471,38 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     assert "with 223 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
+def test_the_debts_view_groups_by_what_each_one_wants():
+    """The view that looks for round 74's class of inflation, and the answer for the prose half.
+
+    Round 74 found twenty-six thresholds reporting `assert` and `clear` separately — one missing limit
+    counted as two. `--debts` is how that is looked for now: it splits the owed list into literal
+    `UNCONFIGURED` scalars and prose `open_debts`, groups the first by the field it wants and the
+    second by the file that keeps it.
+
+    **Run against the corpus the round after, the prose half is clean.** `coupling.yaml`'s nineteen
+    per-edge debts and the seventeen edge ids named inside its eight `open_debts` sentences are
+    *disjoint*, and the one subject named from two files — the inertia tensor, in `coupling.yaml` and
+    `domains/rcs/` — is one missing datum with two genuinely different consequences, each recorded
+    where it bites. That is the folder's style rather than a double-count, and it is worth being able
+    to say so, because the count is the headline claim.
+    """
+    result = subprocess.run(
+        [sys.executable, str(LINTER), "--dir", str(VEHICLE), "--debts"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "grouped by what each wants" in result.stdout
+    assert "a literal `UNCONFIGURED` scalar" in result.stdout
+    assert "a prose obligation in an `open_debts` list" in result.stdout
+    assert "by the field it wants" in result.stdout
+    assert "by the file that keeps it" in result.stdout
+
+    owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
+    assert owed == "223", "the view must agree with the headline count"
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
