@@ -4240,6 +4240,30 @@ def test_every_stock_declares_where_it_starts():
             )
 
 
+def test_a_profile_that_scales_nothing_says_what_it_changes(tmp_path):
+    """Four alternatives declare the identity, and each is accurate rather than lazy.
+
+    `comms.burst` multiplies a *rate*, `gnc.radar_aided` weights a *measurement*,
+    `rcs.conservative` widens a controller *deadband*, `rcs.safe_vector` is a mode whose content is
+    the safe target. None of them moves a published limit — so a factor that scaled one would be
+    the wrong number, and `rcs.conservative`'s original `factor: 1.5` would have *raised* a ceiling
+    if it had been read as a threshold scale. The identity is the true statement.
+
+    But the identity on its own is indistinguishable from a profile somebody scaled by one and
+    never thought about, so an all-identity `factors` has to carry a `factors_note` saying what it
+    changes instead. That is what makes the declaration read rather than decorative.
+    """
+    definition = copy_definition(tmp_path / "identity")
+    path = definition / "domains" / "rcs" / "profiles.yaml"
+    text = path.read_text()
+    broken = text.replace("      factors_note: >-", "      factors_unused: >-", 1)
+    assert broken != text, "the fixture no longer matches rcs/profiles.yaml"
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "scales every threshold by one" in result.stdout, result.stdout[-900:]
+
+
 def test_the_narrowing_rule_reads_both_places_alternatives_are_declared():
     """The rule that caught `power.tight` had never run on seven of the eleven domains.
 
@@ -4268,30 +4292,50 @@ def test_the_narrowing_rule_reads_both_places_alternatives_are_declared():
         shapes[path.parent.name] = nested or top
 
     assert sum(1 for v in shapes.values() if v) == 11, "a domain declares no alternatives at all"
-    nested = [d for d, v in shapes.items() if d in ("avionics", "comms", "rcs")]
-    assert nested, "the nested shape has gone"
-    # The seven that nest them are the ones the old read missed.
-    scalar = [
-        (d, a["id"])
-        for d, alts in shapes.items()
-        for a in alts
-        if isinstance(a.get("factor"), (int, float)) and "factors" not in a
-    ]
-    assert len(scalar) == 13, f"{len(scalar)} alternatives still declare a scalar factor: {scalar}"
+    assert shapes["avionics"] and shapes["rcs"], "the nested shape has gone"
 
+    # The thirteen that declared one number now declare one per comparator, and every domain's
+    # list covers the comparators its own valued thresholds use.
+    total = 0
+    identity = []
+    for domain, alts in shapes.items():
+        doc = yaml.safe_load((VEHICLE / "domains" / domain / "profiles.yaml").read_text())
+        comparators = {
+            str(t.get("comparator"))
+            for t in doc.get("thresholds") or []
+            if isinstance(t.get("assert"), (int, float))
+        }
+        for alt in alts:
+            total += 1
+            assert "factor" not in alt, f"{domain}/{alt['id']} still declares a scalar factor"
+            factors = alt["factors"]
+            assert set(factors) >= comparators, (domain, alt["id"], factors, comparators)
+            for comparator, value in factors.items():
+                if comparator == "below":
+                    assert value >= 1, f"{domain}/{alt['id']} lowers a floor"
+                else:
+                    assert value <= 1, f"{domain}/{alt['id']} raises a ceiling"
+            if all(v == 1.0 for v in factors.values()):
+                identity.append((domain, alt["id"]))
+                # A profile that scales nothing says what it changes instead — a rate, a
+                # measurement weight, a control parameter.
+                assert alt.get("factors_note"), (
+                    f"{domain}/{alt['id']} scales nothing and says nothing"
+                )
+    assert total == 17, f"{total} alternatives"
+
+    # Four of them move something other than a limit, and each is accurate rather than lazy.
+    assert sorted(identity) == [
+        ("comms", "burst"),
+        ("gnc", "radar_aided"),
+        ("rcs", "conservative"),
+        ("rcs", "safe_vector"),
+    ], identity
+
+    # And the whole corpus composes, with none of the thirteen outstanding.
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
-    for domain, alt_id in scalar:
-        line = next(
-            (
-                x
-                for x in result.stdout.splitlines()
-                if f"domains/{domain}/profiles.yaml:alternative {alt_id}.factors" in x
-            ),
-            None,
-        )
-        assert line is not None, f"{domain}/{alt_id} is not reported as owed"
-        assert "One number cannot tighten both" in line, line
+    assert "One number cannot tighten both" not in result.stdout
 
 
 def test_the_presentation_references_resolve_and_the_table_is_whole(tmp_path):
@@ -5230,7 +5274,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 267 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 254 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -5370,7 +5414,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "267", "the view must agree with the headline count"
+    assert owed == "254", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
