@@ -5064,6 +5064,86 @@ def test_the_cabin_heat_rates_are_derived_from_the_load_inventory(tmp_path):
     )
 
 
+def test_the_equilibrium_check_resolves_what_the_zone_declares(tmp_path):
+    """The check found all four of its inputs by convention, and skipped silently when one moved.
+
+    `check_cabin_equilibrium` is the check that found the swapped `supply_c`/`evaporator_outlet_c`
+    pair — the one whose own docstring says the difference is invisible without it. And it found
+    everything it needed by hand:
+
+    - the loop, from `served = {"csm_cabin": "loop_primary", "lm_cabin": "loop_lm"}` — a literal in
+      the tool, with a comment admitting the corpus says it nowhere;
+    - the heat state, from `f"cabin_heat_{zone.split('_')[0]}_w"` — string surgery on the zone id;
+    - the cabin's temperature state, by scanning the domain for a node named `cabin_zone_t` or
+      `lm_cabin_zone_t`;
+    - the equilibrium state, from `f"cabin_eq_{zone.split('_')[0]}_k"`.
+
+    **And every one of those lookups ended in a `continue` or an `if ... is not None`.** So renaming
+    `cabin_heat_csm_w` *composed*: the check went quiet, and the probe that proved it is the first
+    fixture below. That is this folder's oldest sentence arriving at the check that exists to make a
+    difference visible.
+
+    Writing the fixture that unset the heat rate found the other half: `float(heat.get("total_w") or
+    0)` is zero for a missing value and a `ValueError` for the string `UNCONFIGURED`, so the check's
+    most important input was the one that would either vanish or take the linter down with a
+    traceback — which is what the committed version did when the fixture was run against it.
+
+    The zone declares the four links now — `cooled_by`, `temperature_state`, `heat_state`,
+    `equilibrium_state` — the check refuses one that does not resolve, and the two tests that used
+    to repeat the pairing read the declaration instead.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    states = {str(s["id"]): s for s in thermal["state"]}
+    zones = {str(z["id"]): z for z in vehicle["thermal"]["zones"]}
+    loops = {str(x["id"]): x for x in vehicle["thermal"]["loops"]}
+    for zone in ("csm_cabin", "lm_cabin"):
+        declared = zones[zone]
+        for field in ("cooled_by", "temperature_state", "heat_state", "equilibrium_state"):
+            assert declared.get(field), f"{zone} declares no {field}"
+        assert declared["cooled_by"] in loops
+        for field in ("temperature_state", "heat_state", "equilibrium_state"):
+            assert declared[field] in states, declared[field]
+
+    def refusal(name: str, edits: list[tuple[str, str, str]], needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        for rel, old, new in edits:
+            path = definition / rel
+            text = path.read_text()
+            assert old in text, f"the fixture no longer matches {old!r}"
+            path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, f"{needle!r} did not fire:\n{out[-1500:]}"
+
+    # Each of the four links, moved in both files so the zone join is silent and only the
+    # resolution can catch it — which is exactly what the check could not do before.
+    def both(field: str, old: str, new: str) -> list[tuple[str, str, str]]:
+        return [
+            ("vehicle.yaml", f"        {field}: {old}\n", f"        {field}: {new}\n"),
+            ("domains/thermal/components.yaml", f"    {field}: {old}\n", f"    {field}: {new}\n"),
+        ]
+
+    refusal("heat", both("heat_state", "cabin_heat_csm_w", "cabin_heat_csm_x"),
+            "which is not a state in domains/thermal/components.yaml")
+    refusal("temperature", both("temperature_state", "zone_csm_cabin_t", "zone_csm_cabin_x"),
+            "which is not a state in domains/thermal/components.yaml")
+    refusal("equilibrium", both("equilibrium_state", "cabin_eq_csm_k", "cabin_eq_csm_x"),
+            "which is not a state in domains/thermal/components.yaml")
+    refusal("loop", both("cooled_by", "loop_primary", "loop_primary_x"),
+            "which is not a loop vehicle.yaml#thermal.loops declares")
+    # And the two inputs the states are supposed to carry.
+    refusal(
+        "unset_heat",
+        [("domains/thermal/components.yaml", "    total_w: 733\n", "    total_w: UNCONFIGURED\n")],
+        "declares 'UNCONFIGURED' as its `total_w`",
+    )
+    refusal(
+        "no_conductance",
+        [("domains/thermal/components.yaml", "    tau_s: 2880\n    conductance_w_per_k: 125\n    provenance:\n      basis: derived", "    tau_s: 2880\n    provenance:\n      basis: derived")],
+        "carries no numeric `conductance_w_per_k`",
+    )
+
+
 def test_the_cabin_equilibrium_is_inside_its_own_limit_band(tmp_path):
     """Four declarations across three files have to agree for the cabin to be a habitable cabin.
 
@@ -5088,14 +5168,17 @@ def test_the_cabin_equilibrium_is_inside_its_own_limit_band(tmp_path):
     zones = {str(x["id"]): x for x in vehicle["thermal"]["zones"]}
     states = {str(s["id"]): s for s in thermal["state"]}
 
-    for zone, loop_id, heat_id, cabin_id in (
-        ("csm_cabin", "loop_primary", "cabin_heat_csm_w", "zone_csm_cabin_t"),
-        ("lm_cabin", "loop_lm", "cabin_heat_lm_w", "zone_lm_cabin_t"),
-    ):
-        supply = loops[loop_id]["supply_c"]
-        assert isinstance(supply, (int, float)), f"{loop_id}.supply_c is a band, not a supply"
-        equilibrium = supply + states[heat_id]["total_w"] / states[cabin_id]["conductance_w_per_k"]
-        low, high = zones[zone]["limit_c"]
+    # The four links are read from the zone's own declaration rather than repeated here: the pairs
+    # were a hand-written list in this test until the corpus declared them, which is the same defect
+    # the check had in the tool.
+    for zone in ("csm_cabin", "lm_cabin"):
+        declared = zones[zone]
+        supply = loops[declared["cooled_by"]]["supply_c"]
+        assert isinstance(supply, (int, float)), f"{zone}.cooled_by holds a band, not a supply"
+        heat = states[declared["heat_state"]]
+        cabin = states[declared["temperature_state"]]
+        equilibrium = supply + heat["total_w"] / cabin["conductance_w_per_k"]
+        low, high = declared["limit_c"]
         assert low < equilibrium < high, f"{zone} sits at {equilibrium:.2f} C in [{low}, {high}]"
 
     # And a supply that puts the cabin under its own floor is refused rather than absorbed.
@@ -5128,15 +5211,17 @@ def test_the_cabin_relaxes_toward_supply_plus_its_own_rise(tmp_path):
     states = {str(s["id"]): s for s in thermal["state"]}
     loops = {str(x["id"]): x for x in vehicle["thermal"]["loops"]}
 
-    for zone, loop_id, heat, eq, cabin in (
-        ("csm_cabin", "loop_primary", "cabin_heat_csm_w", "cabin_eq_csm_k", "zone_csm_cabin_t"),
-        ("lm_cabin", "loop_lm", "cabin_heat_lm_w", "cabin_eq_lm_k", "zone_lm_cabin_t"),
-    ):
-        supply_k = loops[loop_id]["supply_c"] + 273.15
-        expected = supply_k + states[heat]["total_w"] / states[cabin]["conductance_w_per_k"]
-        assert states[eq]["total_k"] == pytest.approx(expected, abs=0.02), zone
+    zones = {str(x["id"]): x for x in vehicle["thermal"]["zones"]}
+    for zone in ("csm_cabin", "lm_cabin"):
+        declared = zones[zone]
+        supply_k = loops[declared["cooled_by"]]["supply_c"] + 273.15
+        heat = states[declared["heat_state"]]
+        cabin = states[declared["temperature_state"]]
+        eq = states[declared["equilibrium_state"]]
+        expected = supply_k + heat["total_w"] / cabin["conductance_w_per_k"]
+        assert eq["total_k"] == pytest.approx(expected, abs=0.02), zone
         # Nothing owed: the rule's every input is a declaration that exists.
-        assert "UNCONFIGURED" not in yaml.safe_dump(states[eq])
+        assert "UNCONFIGURED" not in yaml.safe_dump(eq)
 
     # And the two cabins differ by exactly their heat loads' difference over G.
     delta = (states["cabin_heat_lm_w"]["total_w"] - states["cabin_heat_csm_w"]["total_w"]) / 125
