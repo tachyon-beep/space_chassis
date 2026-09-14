@@ -1812,6 +1812,13 @@ def test_the_engines_the_mission_is_flown_on_are_one_set_of_figures(tmp_path):
     vehicle entries where the article is identical. The third closure is arithmetic rather than
     equality — the strings claiming a system sum to that system's `thrusters`, and the article
     count is what the vehicle entries add up to.
+
+    The comparison is the **intersection** of the keys the two files share rather than a list of
+    field names, because the first version of this check *was* a list of four names and the engines
+    share six. `throttle_ratio`, `qualified_restarts`, `engine` and `throttleable` sat outside it,
+    agreeing by luck — the same defect, in the fix for it. A hand-written list of what to compare
+    is how a shared field gets left out; the last four fixtures below exist so that a future
+    version cannot go back to one quietly.
     """
 
     def refusal(rel: str, old: str, new: str, needle: str) -> str:
@@ -1826,13 +1833,16 @@ def test_the_engines_the_mission_is_flown_on_are_one_set_of_figures(tmp_path):
 
     # The figure the mission closes on, re-rated on one side only.
     refusal(
-        "domains/propulsion/components.yaml", "    isp_s: 314.5", "    isp_s: 314", "in the tank"
+        "domains/propulsion/components.yaml",
+        "    isp_s: 314.5",
+        "    isp_s: 314",
+        "described twice",
     )
     refusal(
         "domains/propulsion/components.yaml",
         "    thrust_max_n: 43192",
         "    thrust_max_n: 43000",
-        "in the tank",
+        "described twice",
     )
     # The arithmetic: 16 + 12 + 16 = 44, and each system's strings sum to that system.
     refusal("domains/rcs/components.yaml", "    count: 44", "    count: 40", "total 44 thrusters")
@@ -1862,6 +1872,36 @@ def test_the_engines_the_mission_is_flown_on_are_one_set_of_figures(tmp_path):
         "claimed by no component",
     )
     refusal("domains/rcs/components.yaml", "    isp_s: 290\n", "", "declares no `isp_s`")
+    # And the fields the first version of this check left out, which is the defect it was written
+    # to catch arriving inside the fix for it. It compared a hand-written list of four fields and
+    # the engines share six, so `throttle_ratio`, `qualified_restarts`, `engine` and `throttleable`
+    # were outside it and agreeing by luck. The comparison is now the *intersection* of the keys
+    # the two files share, minus a declared structural set, so a field added to both is compared
+    # without anybody remembering to add it to a list here.
+    refusal(
+        "domains/propulsion/components.yaml",
+        "    throttle_ratio: 10",
+        "    throttle_ratio: 8",
+        "described twice",
+    )
+    refusal(
+        "domains/propulsion/components.yaml",
+        "    qualified_restarts: 50",
+        "    qualified_restarts: 40",
+        "described twice",
+    )
+    refusal(
+        "domains/propulsion/components.yaml",
+        "    engine: AJ10-137",
+        "    engine: AJ10-138",
+        "described twice",
+    )
+    refusal(
+        "domains/propulsion/components.yaml",
+        "    isp_s: 309.4\n    throttleable: false",
+        "    isp_s: 309.4\n    throttleable: true",
+        "described twice",
+    )
 
 
 def test_the_linter_rederives_the_lunar_blackout(tmp_path):
