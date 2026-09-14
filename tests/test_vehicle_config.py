@@ -3536,7 +3536,14 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
 
     # The counts are the vehicle's current shape, and a change here is a change in the build order
     # rather than a cosmetic difference — which is exactly what makes it worth asserting.
-    assert len(buckets["ready"]) == 13
+    #
+    # `ready` fell 13 -> 11 when the ten stocks with no declared initial condition were marked
+    # owed. That is the classification working: an integrator with no level to integrate from
+    # cannot be advanced, so it is blocked by a *value* rather than counted as ready. It had
+    # been counted as ready because the integrator never read a level, which is the defect the
+    # round found — the build order was reporting a state as advanceable that could only have
+    # produced a wrong number.
+    assert len(buckets["ready"]) == 11
     assert len(buckets["rule"]) == 71, "half the vehicle is domain code"
 
 
@@ -3842,6 +3849,25 @@ def test_the_readme_status_matches_the_tools():
     # records this very drift says *it said "… with 254 declared debts …" while the tools said 124,
     # 45 and 252* — and those are the evidence, not a claim, so the quoted spans come out first and
     # what remains is what the file is currently telling a reader.
+    # And the build-order view the README embeds, which is an *output* rather than a figure and had
+    # therefore drifted further than any of them: it read "12 owes a value / 36 owes an edge / 61
+    # owes a rule" against the tool's 24 / 28 / 71, under a sentence promising that "`plant.py
+    # --build-order` classifies every state by `advance()`'s own refusal order ... so the two cannot
+    # disagree". They disagreed by ten states in one bucket and fifteen in another. An embedded
+    # transcript is the most convincing thing in a README and the least likely to be re-run.
+    order_view = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--build-order"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    # The four bucket lines are the block the README embeds; the "first of the N" listings below
+    # them are the view's tail and are not quoted.
+    buckets = [line for line in order_view.splitlines() if re.match(r"^\s+\d+\s+\d+ %", line)]
+    assert len(buckets) == 4, buckets
+    for line in buckets:
+        assert line in readme, f"the README's build-order block is stale: missing {line!r}"
+
     asserted = re.sub(r'"[^"]*"', "", readme)
     written = re.findall(r"(\d+) declared debts?", asserted)
     assert written, "the README states no debt count at all"
@@ -4058,6 +4084,153 @@ def test_an_irreversible_event_names_configurations_that_exist(tmp_path):
     result = run_linter(definition)
     assert result.returncode == 1, result.stdout[-900:]
     assert "bogus_cfg" in result.stdout, result.stdout[-900:]
+
+
+def test_a_stock_integrates_its_level_and_carries_the_residue():
+    """The integrator returned the tick's flux as the tank's new value, and never read the tank.
+
+    `stock_flux` returns a *delta* — `sensitivity x driver x dt` — and the stock branch summed
+    those deltas and returned the sum as the node's value. So a tank holding 279 kg with a drain
+    became `-6.4e-06` on the first tick: **the integrator did not integrate**, in the one class
+    the plant claims it can advance and `--build-order` counts as "ready now". `lag` read
+    `current`; `stock` did not.
+
+    This test is `plant.md` §4's own worked example, which is this vehicle's: a 0.0064 g/s leak
+    against a 1 mg quantum is 0.128 quanta per tick at the 50 Hz tick, so *"every tick rounds to
+    zero and the stock never moves"* — "the leak never happens". The Bresenham residual
+    accumulator is what makes it happen exactly, and the assertion below is the one that
+    distinguishes the two: over a second the level must fall by the true flow to within one
+    quantum, where a quantum-only implementation loses **nothing at all**.
+    """
+    plant = _plant()
+
+    def make_world():
+        empty = {
+            "kind": "sink",
+            "domain": "x",
+            "unit": "W",
+        }
+        stock = plant.State(
+            id="o2_csm_kg",
+            domain="consumables",
+            node="o2_csm",
+            method="stock",
+            unit="kg",
+            spec={"quantum": 1e-6},
+        )
+        sink = plant.State(id="sink", domain="x", node="sink", method="lag", unit="kg", spec={})
+        edge = plant.Edge(
+            id="E",
+            source="o2_csm",
+            target="sink",
+            kind="rate",
+            sensitivity={"value": 0.0064e-3, "unit": "kg/s per W"},
+            drains="o2_csm_kg",
+        )
+        return plant.World(
+            root=VEHICLE,
+            states=[stock, sink],
+            edges=[edge],
+            back_edges=set(),
+            schedule=["o2_csm"],
+            nodes={
+                "o2_csm": {
+                    "kind": "stock",
+                    "domain": "consumables",
+                    "unit": "kg",
+                    "preloaded": "pad",
+                },
+                "sink": empty,
+            },
+            channels={},
+            frame_fields=[],
+            verbs={},
+        )
+
+    world = make_world()
+    dt = 0.02
+    values = {"o2_csm": 279.0, "sink": 1.0}
+    for _ in range(50):
+        values = plant.step(world, values, dt)
+
+    moved = 279.0 - values["o2_csm"]
+    quantum = 1e-6
+    assert moved > 0, "the leak never happens — the accumulator is not carrying the residue"
+    assert abs(moved - 6.4e-6) <= quantum, f"moved {moved}, which is more than one quantum out"
+
+    # The level is integrated from, not replaced: 50 ticks of 0.128 quanta cannot leave a
+    # 279 kg tank within a milligram of zero, which is what returning the flux would do.
+    assert values["o2_csm"] > 278.0, "the level was replaced by the flux rather than integrated"
+    assert "o2_csm_kg__residual" in values, "no residue is carried between ticks"
+
+
+def test_every_stock_declares_where_it_starts():
+    """A stock's initial amount is what the plant integrates *from*, and nothing declared one.
+
+    The integrator bug hid this and this hid the bug. `vehicle.yaml#consumables` carries the
+    loads, `coupling.yaml`'s `preloaded` prose names them a second time, the atmosphere model
+    derives the cabin oxygen from the published volume and pressure — and **no state carried a
+    starting amount**, because a branch that never reads a level never asks for one.
+
+    So every stock now declares `initial`, and a numeric one must say where it came from: either
+    `initial_source`, a resolvable path into the document that declares the same number, or its
+    own `initial_provenance`. A figure with neither is a guess wearing a unit.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    stocks = [s for s in world.states if s.method == "stock"]
+    assert len(stocks) == 25, f"{len(stocks)} stocks"
+
+    seeded = plant.initial_values(world)
+    # Fifteen stocks declare a value; six of them are the accumulators on the `internal`
+    # sentinel — `bias_accumulator`, `sensor_bus_errors`, `frame_loss`, `recorder`,
+    # `pulse_residual`, `impulse_total` — which are one shared key and are not seeded.
+    declared = [s for s in stocks if isinstance(s.spec.get("initial"), (int, float))]
+    assert len(declared) == 15, f"{len(declared)} stocks declare a numeric initial"
+    assert len(seeded) == 9, f"{len(seeded)} stocks carry a value the plant can start from"
+    # The ones the corpus can supply, and the numbers it supplies them with.
+    for node, expected in (
+        ("o2_csm", 279.0),
+        ("o2_lm", 24.1),
+        ("h2_csm", 24.5),
+        ("water_potable", 14.0),
+        ("water_cooling", 13.0),
+        ("absorber_capacity_csm", 72.0),
+        ("absorber_capacity_lm", 41.0),
+    ):
+        assert seeded[node] == expected, node
+    # `internal` is one key shared by every state on the sentinel, so it is not seeded.
+    assert "internal" not in seeded
+
+    # Every numeric initial is grounded, and every `initial_source` resolves and agrees.
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        components = yaml.safe_load(path.read_text()) or {}
+        for state in components.get("state") or []:
+            if state.get("method") != "stock":
+                continue
+            assert "initial" in state, f"{state['id']} declares no initial condition"
+            if state["initial"] == "UNCONFIGURED":
+                assert state.get("initial_note"), f"{state['id']} is owed with no note"
+                continue
+            source = state.get("initial_source")
+            assert source or state.get("initial_provenance"), (
+                f"{state['id']} declares {state['initial']!r} with no grounding"
+            )
+            if not source:
+                continue
+            filename, dotted = source.split(":", 1)
+            node = {"vehicle.yaml": vehicle, "coupling.yaml": coupling}[filename]
+            for step in dotted.split("."):
+                node = (
+                    node[step]
+                    if isinstance(node, dict)
+                    else next(row for row in node if str(row.get("id")) == step)
+                )
+            assert abs(float(node) - float(state["initial"])) < 1e-9, (
+                f"{state['id']} says {state['initial']} and {source} says {node}"
+            )
 
 
 def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
@@ -4782,7 +4955,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 241 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 251 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -4922,7 +5095,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "241", "the view must agree with the headline count"
+    assert owed == "251", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
