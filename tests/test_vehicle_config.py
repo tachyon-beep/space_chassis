@@ -4240,6 +4240,60 @@ def test_every_stock_declares_where_it_starts():
             )
 
 
+def test_the_guidance_model_is_re_derived_rather_than_trusted(tmp_path):
+    """Three `gnc` blocks were the last of the nine a deletion test found unread, and all three
+    declare things arithmetic can check.
+
+    The interesting one is `trajectory_segment`, because it is `rederive`'s idiom applied to six
+    *formulas* instead of one number. The segment states its own boundary conditions — position,
+    velocity and acceleration at both ends — and those six conditions determine all six quintic
+    coefficients, so whether the declared expressions are the determined ones is a question the
+    algebra answers. **A sign flipped in one of twenty-five terms would leave a trajectory that
+    still starts and ends in the right place**, which is why a derivation needs a reader more than
+    a number does.
+
+    The other two are consistency claims: the error state's blocks must be the covariance's blocks
+    and three times as many as the dimension says, and the filter's rates must divide the *mission's*
+    tick, which is declared in a different file.
+    """
+    gnc = yaml.safe_load((VEHICLE / "domains" / "gnc" / "components.yaml").read_text())
+    estimator = gnc["estimator"]
+    vector = estimator["error_vector"]
+    assert set(estimator["covariance_units_per_block"]) == set(vector)
+    assert estimator["dimension"] == 3 * len(vector) == 15
+    assert estimator["sub_stepping"]["plant_tick_hz"] == 50
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    assert estimator["sub_stepping"]["plant_tick_hz"] == mission["met_epoch_provenance"]["tick_hz"]
+
+    # `gnc` was the only domain with a components file and no `open_debts`, which is how the two
+    # limits named inside `trajectory_segment`'s note stayed out of every count.
+    assert gnc["open_debts"], "gnc declares no obligations again"
+    assert any("jerk" in str(d) for d in gnc["open_debts"])
+    assert any("keep-out" in str(d) or "keep_out" in str(d) for d in gnc["open_debts"])
+
+    # A flipped sign in `a3` is caught by the boundary conditions, not by a reader.
+    definition = copy_definition(tmp_path / "quintic")
+    path = definition / "domains" / "gnc" / "components.yaml"
+    text = path.read_text()
+    broken = text.replace('a3: "10*(pf-p0)', 'a3: "10*(p0-pf)', 1)
+    assert broken != text, "the fixture no longer matches gnc/components.yaml"
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "do not satisfy their own boundary conditions" in result.stdout, result.stdout[-900:]
+
+    # And the tick the filter sub-steps inside is the mission's, not its own.
+    definition = copy_definition(tmp_path / "tick")
+    path = definition / "domains" / "gnc" / "components.yaml"
+    text = path.read_text()
+    broken = text.replace("plant_tick_hz: 50", "plant_tick_hz: 60", 1)
+    assert broken != text
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "sub_stepping.plant_tick_hz" in result.stdout, result.stdout[-900:]
+
+
 def test_a_check_that_iterates_a_missing_block_is_not_a_check(tmp_path):
     """Three blocks could be deleted outright and the build stayed green.
 
@@ -5059,7 +5113,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 251 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 254 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -5199,7 +5253,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "251", "the view must agree with the headline count"
+    assert owed == "254", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
