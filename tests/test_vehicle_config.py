@@ -4240,6 +4240,86 @@ def test_every_stock_declares_where_it_starts():
             )
 
 
+def test_a_threshold_that_derives_its_limit_is_not_a_second_debt(tmp_path):
+    """Three `gnc` thresholds take their limit from a component field the domain also owes.
+
+    The alignment error is measured "against the platform's alignment budget", the gyro bias
+    against `imu.drift_deg_per_h`, the radar's altitude against `landing_radar.range_km` — and all
+    three of those fields are `UNCONFIGURED`. So **each missing datum was counted twice**, once
+    where the quantity lives and once where it is used, and `drift_deg_per_h` was counted *three*
+    times because a fault's seeding names it as well.
+
+    That is the inflation round 74 removed from `assert`/`clear`, arriving through a different
+    door: two files instead of two fields. The instrument is the same in spirit — name the
+    dependency so the use is not a second obligation — and `derives_from` is where it is named.
+
+    The factor is not decoration, which is why it is checked: the bias threshold is in deg/s and
+    the drift it is sized from is in deg/h (1/3600), and the radar's range is published in
+    kilometres while the altitude channel is in metres (1,000).
+    """
+    gnc = yaml.safe_load((VEHICLE / "domains" / "gnc" / "profiles.yaml").read_text())
+    by_id = {t["id"]: t for t in gnc["thresholds"]}
+    for tid, path, factor in (
+        (
+            "alignment_error_high",
+            "domains/gnc/components.yaml:components.imu.alignment_budget_deg",
+            1,
+        ),
+        (
+            "gyro_bias_growing",
+            "domains/gnc/components.yaml:components.imu.drift_deg_per_h",
+            1 / 3600,
+        ),
+        (
+            "radar_out_of_range",
+            "domains/gnc/components.yaml:components.landing_radar.range_km",
+            1000,
+        ),
+    ):
+        threshold = by_id[tid]
+        assert threshold["derives_from"] == path, tid
+        assert abs(threshold.get("derives_factor", 1) - factor) < 1e-12, tid
+        assert threshold.get("derives_note"), tid
+        # And the source really is owed, which is the whole reason the pair was a double count.
+        document, dotted = path.split(":", 1)
+        node = yaml.safe_load((VEHICLE / document).read_text())
+        for step in dotted.split("."):
+            node = (
+                node[step]
+                if isinstance(node, dict)
+                else next(r for r in node if str(r.get("id")) == step)
+            )
+        assert node == "UNCONFIGURED", (tid, node)
+
+    # Supplying the source sets the limit, and a limit that disagrees with it is refused.
+    definition = copy_definition(tmp_path / "derived")
+    components = definition / "domains" / "gnc" / "components.yaml"
+    components.write_text(
+        components.read_text().replace(
+            "alignment_budget_deg: UNCONFIGURED", "alignment_budget_deg: 0.1", 1
+        )
+    )
+    profiles = definition / "domains" / "gnc" / "profiles.yaml"
+    text = profiles.read_text()
+    profiles.write_text(text.replace("assert: UNCONFIGURED", "assert: 0.2", 2))
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "`derives_from` resolves to" in result.stdout, result.stdout[-900:]
+
+    # A renamed source is refused rather than tolerated: it reads exactly like an unset one.
+    definition = copy_definition(tmp_path / "renamed")
+    profiles = definition / "domains" / "gnc" / "profiles.yaml"
+    text = profiles.read_text()
+    broken = text.replace(
+        "components.imu.alignment_budget_deg", "components.imu.alignment_budget", 1
+    )
+    assert broken != text
+    profiles.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "has no" in result.stdout, result.stdout[-900:]
+
+
 def test_a_profile_that_scales_nothing_says_what_it_changes(tmp_path):
     """Four alternatives declare the identity, and each is accurate rather than lazy.
 
@@ -5274,7 +5354,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 254 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 251 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -5414,7 +5494,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "254", "the view must agree with the headline count"
+    assert owed == "251", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
