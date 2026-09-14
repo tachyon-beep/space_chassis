@@ -2158,6 +2158,109 @@ def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
     assert len([line for line in out.splitlines() if "and no `pattern`" in line]) == 1, out[-900:]
 
 
+def test_an_edge_whose_value_is_another_declaration_s_function(tmp_path):
+    """`E-GEOM-LINK`'s slope was `-24 * 2 / 9.4^2`, and all three numbers belonged to other files.
+
+    `rederive` already checks a sensitivity that states its own arithmetic — `computation: "1 / 2.45e6"`
+    is re-evaluated against its `value` on every run, which is how `E-WATER-RAD`'s 7 % disagreement was
+    caught. That idiom has one weakness and it is this folder's oldest: **the numbers inside the
+    expression are copies.** They are read from nowhere, so they cannot be held to the declaration they
+    came from, and the check can only catch an edge that disagrees with itself.
+
+    9.4 is `vehicle.yaml#comms.antennas.high_gain`'s half-power beamwidth — which the previous round
+    tied to the gain through the ideal-aperture product — and 2 was the operating point, which existed
+    only inside a sentence. Re-rate the antenna from 26.7 dB to 28 dB **in both files and
+    consistently**, so that no join can complain and the product check cannot either: the beamwidth
+    becomes 8.1 degrees and the edge goes on scaling every pointing loss the fleet reads by the slope
+    of a beam that no longer exists. That is the first fixture, and before this round it composed.
+
+    So a sensitivity may declare a `derivation`: an arithmetic expression over named inputs, each
+    either a number or a `"<file>.yaml:<dotted.path>"` source. Every identifier must be bound and every
+    binding must be used, a source that stops resolving is refused rather than tolerated, a source that
+    is `UNCONFIGURED` checks nothing, and the expression is evaluated only after substitution and only
+    if what remains is arithmetic over numbers.
+
+    Four more edges came with it — the two crew metabolic rates and the two absorber conversions —
+    and they are why the mechanism is a mechanism rather than one edge's special case: the O2 rate is
+    bound by four of them, so moving one published figure refuses four edges by name. The absorber
+    counter's own rating is bound on the *node* instead, and the reason is worth the fixture: the
+    rating **cancels** out of the edge's man-hours-per-kg expression, so the edge cannot see a rating
+    change at all — the counter it feeds is the only place the number bites.
+    """
+
+    def broken(name: str, edits: list[tuple[str, str, str]], needles: list[str]) -> None:
+        definition = copy_definition(tmp_path / name)
+        for rel, old, new in edits:
+            path = definition / rel
+            text = path.read_text()
+            assert old in text, f"the fixture no longer matches {old!r}"
+            path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        for needle in needles:
+            assert needle in out, f"{needle!r} did not fire:\n{out[-2000:]}"
+
+    dom = "domains/comms/components.yaml"
+    broken(
+        "rerated",
+        [
+            ("vehicle.yaml", "      gain_db: 26.7\n", "      gain_db: 28\n"),
+            ("vehicle.yaml", "      beamwidth_deg: 9.4\n", "      beamwidth_deg: 8.1\n"),
+            (dom, "    gain_db: 26.7\n", "    gain_db: 28\n"),
+            (dom, "    beamwidth_deg: 9.4\n    steerable: true\n", "    beamwidth_deg: 8.1\n    steerable: true\n"),
+        ],
+        ["E-GEOM-LINK.sensitivity.derivation: derives -0.731596"],
+    )
+    # One published figure, four edges that bind it.
+    broken(
+        "metabolic",
+        [("vehicle.yaml", "  o2_kg_per_crew_day: 0.91\n", "  o2_kg_per_crew_day: 0.95\n")],
+        [
+            "E-CREW-ATM.sensitivity.derivation",
+            "E-LM-CREW-ATM.sensitivity.derivation",
+            "E-ATM-ABSORB.sensitivity.derivation",
+            "E-LM-ATM-ABSORB.sensitivity.derivation",
+        ],
+    )
+    # The counter's rating, which the edge above it cannot see because the rating cancels.
+    broken(
+        "counter",
+        [
+            ("coupling.yaml", "    exhausted_at: 72\n", "    exhausted_at: 80\n"),
+            (
+                "coupling.yaml",
+                "vehicle.yaml:consumables.co2_removal.lm_primary_man_hours",
+                "vehicle.yaml:consumables.co2_removal.lm_primary_man_hour",
+            ),
+        ],
+        [
+            "declares 80 and `exhausted_at_source: vehicle.yaml:consumables.co2_removal."
+            "csm_element_man_hours` resolves to 72",
+            "A link that has stopped linking reads exactly like a link that works",
+        ],
+    )
+    # The names, in both directions, and a counter that names no source at all.
+    broken(
+        "names",
+        [
+            ("coupling.yaml", "          theta: 2\n", "          theta: 2\n          angle: 3\n"),
+            (
+                "coupling.yaml",
+                "    exhausted_at_source: \"vehicle.yaml:consumables.co2_removal.lm_primary_man_hours\"\n",
+                "",
+            ),
+        ],
+        [
+            "binds 'angle', which the expression does not use, so nothing reads it",
+            "is a numeric rating and names no source",
+        ],
+    )
+    broken(
+        "expression",
+        [("coupling.yaml", "        expression: \"-24 * theta / (theta_3db * theta_3db)\"\n", "        expression: \"-24 * theta / (theta_3db * theta_3db\"\n")],
+        ["cannot be evaluated"],
+    )
+
+
 def test_the_cabin_volume_is_one_number_in_three_files(tmp_path):
     """The denominator of every partial pressure the crew read, declared seven times.
 
