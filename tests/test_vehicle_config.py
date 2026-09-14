@@ -443,6 +443,21 @@ def test_an_unset_domain_value_is_a_debt_named_by_its_path(tmp_path):
     # doing exactly what it was written for.
     text = text.replace("total_rejection_capacity_w: 4933", "total_rejection_capacity_w: 6433", 1)
     path.write_text(text)
+    # **And the vehicle-level copy has to move with it too**, which this fixture learned from the
+    # join that closed the rejection components: `lm_sublimator.rejection_w` is declared in
+    # `vehicle.yaml` as well, and `check_thermal_bindings` holds the two equal. Filling in the
+    # domain's figure alone is now refused by name — a debt answered in one file and left standing
+    # in the other is the same lie as one counted twice — so the fixture supplies both, which is
+    # what "supplying the value must retire the debt" was always claiming.
+    vehicle_path = definition / "vehicle.yaml"
+    vehicle_text = vehicle_path.read_text()
+    vehicle_unset = "      - id: lm_sublimator\n        rejection_w: UNCONFIGURED\n"
+    assert vehicle_unset in vehicle_text, "the fixture no longer matches vehicle.yaml#lm_sublimator"
+    vehicle_path.write_text(
+        vehicle_text.replace(
+            vehicle_unset, "      - id: lm_sublimator\n        rejection_w: 1500\n", 1
+        )
+    )
 
     result = run_linter(definition, strict=True)
     assert "sublimator_lm" not in result.stdout, "supplying the value must retire the debt"
@@ -3434,28 +3449,88 @@ def test_the_two_views_of_the_cooling_machine_agree(tmp_path):
     a `loop_secondary` that is the CSM's second loop with different, chosen numbers. The
     vehicle-level file named the LM's loop "secondary" and did not mention the CSM's second loop at
     all, so a reader sizing a loop from it would have sized the wrong vehicle.
+
+    The join's second half is the heat-rejection articles, and it arrived a round later because the
+    first version read the wrong copy on the domain's side. It held the vehicle's `csm_radiator`
+    against the domain's `radiator_model` block — where the entry's arithmetic is *derived into* —
+    and never against `radiator_csm`, `evaporator_csm` and `sublimator_lm`, which are the
+    components a fault happens to. So `panels` and `area_m2` were declared on both sides and read
+    by nothing, TCS-03 argued its solar load against the model's 2,588 W while the component's own
+    figures went unread, and `csm_evaporator`'s 2,345 W was compared in neither place. The link is
+    `vehicle_keys`, the comparison is the intersection of the keys the two share, and the loop list
+    that this check opened with is gone with it: it was the last hand-written field list in the
+    linter, and the four fields in it were exactly the four the two files share.
     """
-    definition = copy_definition(tmp_path / "loops")
-    path = definition / "vehicle.yaml"
-    text = path.read_text()
-    anchor = "      - id: loop_lm\n"
-    assert anchor in text, "the fixture no longer matches vehicle.yaml#thermal.loops"
-    path.write_text(text.replace(anchor, "      - id: loop_lmX\n", 1))
 
-    result = run_linter(definition)
-    assert result.returncode == 1
-    assert "omits 'loop_lm'" in result.stdout
+    def broken(name: str, edits: list[tuple[str, str, str]], needles: list[str]) -> None:
+        """Break several independent declarations and demand every refusal by name.
 
-    definition = copy_definition(tmp_path / "fluid")
-    path = definition / "vehicle.yaml"
-    text = path.read_text()
-    anchor = 'fluid: "65 % water / 35 % inhibited ethylene glycol"\n'
-    assert anchor in text, "the fixture no longer matches the LM loop's fluid"
-    path.write_text(text.replace(anchor, 'fluid: "62.5 % ethylene glycol / 37.5 % water"\n', 1))
+        The linter reports the whole pass rather than the first fault, so one broken copy answers
+        for every break in it — which is also what keeps this test from costing four linter runs.
+        None of these can mask another: they are different entries, and one of them is in the other
+        file.
+        """
+        definition = copy_definition(tmp_path / name)
+        for rel, old, new in edits:
+            path = definition / rel
+            text = path.read_text()
+            assert old in text, f"the fixture no longer matches {old!r}"
+            path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        for needle in needles:
+            assert needle in out, f"{needle!r} did not fire:\n{out[-1500:]}"
 
-    result = run_linter(definition)
-    assert result.returncode == 1
-    assert "the thermal domain gives" in result.stdout
+    broken(
+        "loops",
+        [
+            # The vehicle file renames the LM's loop, so the two loop *lists* disagree.
+            ("vehicle.yaml", "      - id: loop_lm\n", "      - id: loop_lmX\n"),
+            # And, in the same copy, moves the panel area under the domain's copy. Two refusals
+            # fire for one edit — the entry against the component and against the model — which is
+            # the point of the second half of the join existing at all.
+            (
+                "vehicle.yaml",
+                "      - id: csm_radiator\n        panels: 2\n        area_m2: 9.1\n",
+                "      - id: csm_radiator\n        panels: 2\n        area_m2: 12.0\n",
+            ),
+        ],
+        [
+            "omits 'loop_lm'",
+            "declares area_m2 9.1 and vehicle.yaml#thermal.radiators.csm_radiator declares 12.0",
+            "gives 12.0 m2 of panel area and the thermal domain gives 9.1 m2 geometric",
+        ],
+    )
+    broken(
+        "rejection",
+        [
+            # The loop's fluid, from the joint that existed first.
+            (
+                "vehicle.yaml",
+                'fluid: "65 % water / 35 % inhibited ethylene glycol"\n',
+                'fluid: "62.5 % ethylene glycol / 37.5 % water"\n',
+            ),
+            # The two domain-side figures, neither of which any tool read before the link existed:
+            # a panel count on the component TCS-03 names, and the rejection capacity of the
+            # evaporator TCS-04 names — which `vehicle.yaml` states as well and neither copy of
+            # which was compared.
+            (
+                "domains/thermal/components.yaml",
+                "    vehicle_keys: [csm_radiator]\n    panels: 2\n",
+                "    vehicle_keys: [csm_radiator]\n    panels: 3\n",
+            ),
+            (
+                "domains/thermal/components.yaml",
+                "    vehicle_keys: [csm_evaporator]\n    rejection_w: 2345\n",
+                "    vehicle_keys: [csm_evaporator]\n    rejection_w: 2000\n",
+            ),
+        ],
+        [
+            "the thermal domain gives",
+            "declares panels 3 and vehicle.yaml#thermal.radiators.csm_radiator declares 2",
+            "declares rejection_w 2000 and vehicle.yaml#thermal.radiators.csm_evaporator "
+            "declares 2345",
+        ],
+    )
 
 
 def test_the_linter_refuses_an_orphaned_section(tmp_path):
