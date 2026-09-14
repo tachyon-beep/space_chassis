@@ -4441,6 +4441,36 @@ def test_the_bay_conductances_owe_one_scalar_each_not_two(tmp_path):
     assert "360,000 J/K" in cabin["provenance"]["relation"]
 
 
+def test_a_threshold_with_no_limit_is_one_debt_not_two():
+    """`assert` and `clear` are one missing limit, and the walk reported them as two.
+
+    A comparator with no value has neither term: **twenty-six thresholds declared both
+    `UNCONFIGURED`**, so the vehicle's headline count carried 26 obligations that were 13... rather,
+    26 fields that were 26 halves of 26 limits — one number closes each pair. The count went from 249
+    to 223 the moment the walk reported the pair once at the threshold.
+
+    The number is the folder's headline claim, which is why a double-count in it matters more than a
+    double-count anywhere else: it is the figure a reader uses to judge how much is left.
+    """
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-900:]
+    owed = [
+        line
+        for line in result.stdout.splitlines()
+        if line.strip().startswith("- domains/") and "UNCONFIGURED" in line
+    ]
+    paired = [line for line in owed if "one missing limit" in line]
+    assert paired, "no threshold pair is reported — is the fixture still unconfigured?"
+    # Every collapsed pair is reported once, at the `assert`, and never also at the `clear`.
+    assert all(".assert" in line for line in paired), paired[:2]
+    assert not any(line.rstrip().endswith(".clear: is UNCONFIGURED") for line in owed), (
+        "a `clear` is still reported separately from its `assert`"
+    )
+
+    # And the count is the honest one, not the inflated one.
+    assert "with 223 declared debt(s)" in result.stdout, result.stdout[-400:]
+
+
 def test_every_vehicle_yaml_parses():
     """A file that does not parse is not a definition, and the linter's report is too late.
 
