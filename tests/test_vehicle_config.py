@@ -1904,6 +1904,89 @@ def test_the_engines_the_mission_is_flown_on_are_one_set_of_figures(tmp_path):
     )
 
 
+def test_the_cabin_volume_is_one_number_in_three_files(tmp_path):
+    """The denominator of every partial pressure the crew read, declared seven times.
+
+    `atmosphere_model` states the law the whole life-support model rests on —
+    `P = (sum_i n_i) R T / V` — and `V` is the cabin volume. It is also what turns a gas *mass*
+    into the partial pressure a crew member reads and an agent decides on, so it sits underneath
+    `eclss.pp_o2_mmhg` on one side and every thermal time constant in the zone on the other.
+
+    It is declared seven times in three files: twice in `vehicle.yaml#thermal.zones`, twice in
+    `domains/thermal/components.yaml#zones`, twice as `class: volume` components in
+    `domains/eclss/components.yaml`, and once more as `atmosphere_model.volume_m3`. Until this
+    check, **no tool read any of them** — `check_thermal_bindings` holds the two zone *id sets*
+    equal and compares no field, and `csm_cabin_volume` is a component of a class no check looks at.
+
+    The corpus knows it is duplicated and undercounts itself doing it: the LM oxygen initial's own
+    relation says "The corpus states the relation once and the volume twice." It is seven times,
+    which is the same shape this folder keeps finding — a copy nobody reads is a copy nobody counts.
+
+    The authority is the one place the physics law itself reads. The link needs no new field:
+    `check_thermal_bindings` already holds the zone ids equal between the two files carrying zones,
+    and the thermal domain's zones carry the `vehicle` each one is.
+    """
+
+    def refusal(rel: str, old: str, new: str, needle: str) -> str:
+        definition = copy_definition(tmp_path / f"vol{abs(hash((old, new))) % 10000}")
+        path = definition / rel
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-900:]
+        return out
+
+    # Every declaration site, moved one at a time against the authority.
+    refusal(
+        "domains/eclss/components.yaml",
+        "  volume_m3:\n    csm: 5.9",
+        "  volume_m3:\n    csm: 6.0",
+        "two atmospheres",
+    )
+    refusal(
+        "domains/eclss/components.yaml",
+        "    class: volume\n    vehicle: csm\n    volume_m3: 5.9",
+        "    class: volume\n    vehicle: csm\n    volume_m3: 6.0",
+        "two atmospheres",
+    )
+    refusal(
+        "domains/thermal/components.yaml",
+        "    volume_m3: 5.9",
+        "    volume_m3: 6.0",
+        "must be one number",
+    )
+    refusal(
+        "vehicle.yaml", "        volume_m3: 5.9", "        volume_m3: 6.0", "must be one number"
+    )
+    # A cabin zone carrying no volume at all leaves the law with no denominator.
+    refusal("domains/thermal/components.yaml", "    volume_m3: 5.9\n", "", "no denominator")
+    # And the correction this check's own first version needed: `atmosphere_model.volume_m3` is
+    # keyed by *vehicle*, so a check that compared every zone of that vehicle against the cabin
+    # would refuse the avionics bay's perfectly good volume for disagreeing with a cabin it is not.
+    # The volume the law divides by belongs to `<vehicle>_cabin` and to nothing else.
+    definition = copy_definition(tmp_path / "volservicebay")
+    path = definition / "domains" / "thermal" / "components.yaml"
+    text = path.read_text()
+    assert "  - id: csm_service_bay\n" in text
+    path.write_text(
+        text.replace(
+            "  - id: csm_service_bay\n", "  - id: csm_service_bay\n    volume_m3: 3.0\n", 1
+        )
+    )
+    out = run_linter(definition).stdout
+    assert "must be one number" not in out, out[-600:]
+    assert "no denominator" not in out, out[-600:]
+
+    # And the other direction: a compartment no component carries.
+    refusal(
+        "domains/eclss/components.yaml",
+        "  - id: csm_cabin_volume\n    kind: state\n    class: volume\n",
+        "  - id: csm_cabin_volume\n    kind: state\n    class: not_a_volume\n",
+        "no component of class `volume` carries it",
+    )
+
+
 def test_the_linter_rederives_the_lunar_blackout(tmp_path):
     """The vehicle's one derived figure, and nothing was re-doing its arithmetic.
 
