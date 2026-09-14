@@ -577,6 +577,10 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     calls a missing edge. No edge can reach the sentinel, so its driver is domain code, and `rule`
     is the file an implementer should open.
 
+    **And one runs the other way**, which round 100 added: a state with no input at all is reported
+    as owing an *edge* — no rule can be written without one — where `advance` says its rule is
+    domain code. `bus_b_v` is the case, and the worklist is the one an implementer should read.
+
     This test is the pin: any disagreement that is **not** one of those two fails, so a third kind
     cannot appear unnoticed. And the property the docstring should have claimed — that the
     classification never sends a reader somewhere the answer is not — is the one round 95 fixed for
@@ -589,7 +593,7 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     claimed = {state.id: name for name, rows in buckets.items() for state in rows}
 
     unexplained = []
-    counted_more = sentinel = 0
+    counted_more = sentinel = no_input = 0
     for state in world.states:
         try:
             plant.advance(world, state, permissive, 1.0)
@@ -608,11 +612,23 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
             counted_more += 1
         elif claimed[state.id] == "rule" and actual == "edge" and state.node == "internal":
             sentinel += 1
+        elif claimed[state.id] == "edge" and actual == "rule":
+            # **A third kind, added deliberately.** The worklist reports a state with no input at
+            # all as owing an *edge* — because no rule can be written without one — where `advance`
+            # reports that its rule is domain code. `bus_b_v` is the case: `bus_b` has no inbound
+            # edge anywhere in the graph, so the worklist says "find it a source" and `advance` says
+            # "write its rule", and the worklist is the one an implementer should read.
+            inbound = [
+                e for e in world.edges if e.target == state.node and e.id not in world.back_edges
+            ]
+            siblings = [o for o in world.states_on(state.node) if o.id != state.id]
+            assert not inbound and not siblings, (state.id, [e.id for e in inbound], siblings)
+            no_input += 1
         else:
             unexplained.append((state.id, claimed[state.id], actual, state.node))
 
     assert not unexplained, f"a new kind of disagreement: {unexplained}"
-    assert (counted_more, sentinel) == (23, 13), (counted_more, sentinel)
+    assert (counted_more, sentinel, no_input) == (23, 13, 1), (counted_more, sentinel, no_input)
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -3723,11 +3739,11 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # the plant wants, so they left this bucket without the code they need going away. The second
     # was the classifier being fixed to agree with `advance()`, which moved thirteen `internal`
     # states *in* here — no edge can reach the sentinel, so their driver is domain code.
-    assert len(buckets["rule"]) == 82, "half the vehicle is domain code"
+    assert len(buckets["rule"]) == 81, "half the vehicle is domain code"
     assert len(buckets["value"]) == 26
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code.
-    assert len(buckets["edge"]) == 11
+    assert len(buckets["edge"]) == 12
     assert len(buckets["ready"]) == 15
 
 
