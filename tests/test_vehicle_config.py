@@ -3551,7 +3551,13 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # round found — the build order was reporting a state as advanceable that could only have
     # produced a wrong number.
     assert len(buckets["ready"]) == 11
-    assert len(buckets["rule"]) == 71, "half the vehicle is domain code"
+    # 71 -> 69 when forty-three discrete states gained a `moved_by`. The two still owed put an
+    # `UNCONFIGURED` in their spec, and `walk_unset` counts any unset scalar as a value the plant
+    # wants — so they moved out of this bucket without the domain code they need going away. The
+    # field is a *configuration* obligation and the classifier asks only whether a scalar is set;
+    # that mismatch is recorded in the README rather than papered over here.
+    assert len(buckets["rule"]) == 69, "half the vehicle is domain code"
+    assert len(buckets["value"]) == 26
 
 
 def test_the_plant_reports_the_build_order():
@@ -4238,6 +4244,99 @@ def test_every_stock_declares_where_it_starts():
             assert abs(float(node) - float(state["initial"])) < 1e-9, (
                 f"{state['id']} says {state['initial']} and {source} says {node}"
             )
+
+
+def test_every_discrete_state_says_what_moves_it(tmp_path):
+    """Forty-three states declared their vocabulary and their guard and not what changes them.
+
+    The gap is not academic and the corpus says so in as many words — `domains/crew/` carries a debt
+    reading *"Nothing declares what moves the crew. `crew_location` can take `surface_eva` and
+    `crew_availability` can take `suit`, and no verb writes either"* — and that debt was the only
+    place the question was asked, for forty-three states.
+
+    **It is also not derivable, which is worth recording because I tried.** A verb's `gate` or
+    `conflict_domain` names the state in **three** cases out of forty-three. And overlapping enum
+    *values* are actively misleading: `bus_tie_closed` shares `open`/`closed` with
+    `set_hatch_valve`, so the rule would have the hatch moving the bus tie. The declaration is an
+    author's judgement and the linter's job is to check it rather than to invent it.
+
+    Three movers, and the third is most of them. `command:<verb>` is a verb — **possibly of another
+    domain**, since three of the movers cross: the crew's breaker panel is written by `power`'s
+    `set_breaker`. `event:<id>` is a declared `one_way_event`. And `logic:<reason>` is the vehicle's
+    own machinery — FDIR conclusions, the undervoltage ladder, a geometric occultation.
+
+    The rule that draws the line between the first and the third is that **a `command:` mover has to
+    be able to say the value it is said to set**. `request_imu_alignment` takes reference frames and
+    `imu_alignment` takes `unaligned/aligning/aligned/drifted`: the verb starts an alignment the
+    vehicle then drives, so it is a trigger and the mover is `logic` with the verb named in the
+    reason. Three of my own classifications failed that rule and had to be rewritten.
+    """
+    verbs = {}
+    for path in sorted((VEHICLE / "domains").glob("*/commands.yaml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        for verb in doc.get("commands") or []:
+            verbs[str(verb["verb"])] = verb
+
+    states = 0
+    commands = events = logic = 0
+    for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        events_here = {str(e["id"]) for e in doc.get("one_way_events") or []}
+        for state in doc.get("state") or []:
+            if state.get("method") != "discrete":
+                continue
+            states += 1
+            movers = state.get("moved_by")
+            assert movers is not None, f"{state['id']} declares no mover"
+            if movers == "UNCONFIGURED":
+                assert state.get("moved_by_note"), state["id"]
+                continue
+            assert isinstance(movers, list) and movers, state["id"]
+            for mover in movers:
+                kind, _, name = str(mover).partition(":")
+                if kind == "command":
+                    commands += 1
+                    assert name in verbs, (state["id"], name)
+                    offered = set()
+                    for argument in (verbs[name].get("argument_schema") or {}).values():
+                        if isinstance(argument, dict) and argument.get("type") == "enum":
+                            offered.update(str(v) for v in argument.get("values") or [])
+                    values = set()
+                    for match in re.findall(r"enum\[([^\]]*)\]", str(state.get("unit") or "")):
+                        values.update(v.strip() for v in match.split(","))
+                    # A state with no vocabulary — `telemetry_rate` is `bit/s` — has nothing to
+                    # overlap with, so the verb only has to be the plausible writer. That is the
+                    # linter's rule too: the overlap is required *where there are values*.
+                    if values:
+                        assert values & offered, (state["id"], name)
+                elif kind == "event":
+                    events += 1
+                    assert name in events_here, (state["id"], name)
+                elif kind == "logic":
+                    logic += 1
+                    assert len(name.strip()) >= 12, (state["id"], mover)
+                else:
+                    raise AssertionError((state["id"], mover))
+    assert states == 43, states
+    assert (commands, events, logic) == (15, 6, 22), (commands, events, logic)
+    # Two states still owe it, and they are the two the crew debt names.
+    owed = {
+        state["id"]
+        for path in sorted((VEHICLE / "domains").glob("*/components.yaml"))
+        for state in (yaml.safe_load(path.read_text()) or {}).get("state") or []
+        if state.get("moved_by") == "UNCONFIGURED"
+    }
+    assert owed == {"crew_location", "crew_availability"}, owed
+
+    definition = copy_definition(tmp_path / "movers")
+    path = definition / "domains" / "rcs" / "components.yaml"
+    text = path.read_text()
+    broken = text.replace("command:set_rcs_mode", "command:set_rcs_quad", 1)
+    assert broken != text, "the fixture no longer matches rcs/components.yaml"
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "cannot express the value" in result.stdout, result.stdout[-900:]
 
 
 def test_the_adversarys_ids_and_rates_are_validated(tmp_path):
@@ -5758,7 +5857,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 246 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 248 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -5898,7 +5997,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "246", "the view must agree with the headline count"
+    assert owed == "248", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
