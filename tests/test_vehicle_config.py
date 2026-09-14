@@ -1775,6 +1775,15 @@ def test_the_linter_refuses_an_electrical_inventory_that_drifted(tmp_path):
     )
     # The range/nominal claim: a nominal outside the loaded range is not inside it.
     refusal("vehicle.yaml", "min_loaded_v: 27", "min_loaded_v: 30", "not inside it")
+    # And the shared field that was outside the comparison: `chemistry` is the discharge curve and
+    # the usable-energy derating, not a label, so a group and its units disagreeing about it is a
+    # battery sized against one electrochemistry and flown on another.
+    refusal(
+        "domains/power/components.yaml",
+        'chemistry: "silver-oxide/zinc"',
+        'chemistry: "nickel-cadmium"',
+        "is built as",
+    )
     # And a link that names nothing.
     refusal(
         "vehicle.yaml",
@@ -6119,7 +6128,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 250 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 252 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -6259,7 +6268,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "250", "the view must agree with the headline count"
+    assert owed == "252", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
