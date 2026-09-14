@@ -1772,6 +1772,65 @@ def test_the_linter_holds_the_power_inventory_to_its_own_arithmetic(tmp_path):
     )
 
 
+def test_the_linter_holds_a_domain_s_declared_reads(tmp_path):
+    """`reads` is the domain-level half of the coupling graph, and only `writes` was held.
+
+    Every domain file says what the declaration is for — power's header is the shortest: *"Reads and
+    writes are node ids from coupling.yaml. Domains do not call each other (plant.md §2); these
+    declarations are what the scheduler orders."* `writes` has been refused in both directions since
+    the domain check was written (a state advancing a node its domain does not claim, and a declared
+    write no state advances). `reads` had exactly one rule: every entry must resolve to a coupling
+    node. So the eleven declarations could omit the node an edge actually carries, and the only thing
+    that would notice was a reader — and one of them had already written the omission down as a
+    completeness claim: rcs's header said *"the four are exactly the ones that do"* while
+    `E-GNC-RCS` carried a fifth.
+
+    The other direction is counted rather than refused, because the corpus contains both of the
+    things a reading without an edge can mean and nothing tells them apart: `eclss` reading
+    `absorber_capacity_csm` is the return half of a loop the edge list does not close (the schedule
+    sees a DAG and whichever domain runs second is reading a stale value), and `consumables` reading
+    `battery_energy` is a ledger observation that needs no edge at all.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    # The corpus half, run through the tool's own function rather than a second copy of the rule.
+    documents = linter.load_documents(
+        VEHICLE,
+        yaml.safe_load((VEHICLE / "vehicle.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "coupling.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "mission.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "channels.yaml").read_text()),
+    )
+    report = linter.Report()
+    linter.check_domain_reads(documents, report)
+    assert report.refusals == [], report.refusals
+    assert len(report.debts) == 1, report.debts
+    owed = report.debts[0]
+    assert "23 cross-domain reads that no edge carries" in owed, owed
+    assert "8 of them return into a node the reading domain writes" in owed, owed
+    # The one read that is the delayed half of a declared cycle, named so it is not counted.
+    assert "thermal->link" in owed, owed
+
+    # And the refusal fires when a declaration loses a node an edge carries.
+    definition = copy_definition(tmp_path / "domainreads")
+    path = definition / "domains" / "power" / "components.yaml"
+    text = path.read_text()
+    old = "reads: [o2_csm, h2_csm, coldplate_t, link, command_executive]"
+    assert old in text, "the fixture no longer matches the power domain's reads"
+    path.write_text(text.replace(old, "reads: [o2_csm, h2_csm, link, command_executive]", 1))
+    out = run_linter(definition).stdout
+    assert "does not declare 'coldplate_t'" in out, out[-1200:]
+
+    # A node the reading domain writes itself is not a cross-domain read: `E-O2-FC` carries
+    # `fc_o2_draw` back into `fuel_cell` and both are power's, so the unbroken corpus above is the
+    # evidence that this case is silent rather than a fixture that would pass either way.
+    assert "fc_o2_draw" not in report.debts[0], "an internal read was counted as cross-domain"
+
+
 def test_the_linter_refuses_an_electrical_inventory_that_drifted(tmp_path):
     """One machine in two files, and no sentence saying so.
 
@@ -7605,7 +7664,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 252 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 253 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -7745,7 +7804,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "252", "the view must agree with the headline count"
+    assert owed == "253", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
