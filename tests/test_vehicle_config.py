@@ -4240,6 +4240,73 @@ def test_every_stock_declares_where_it_starts():
             )
 
 
+def test_the_postures_transitions_and_objectives_are_validated(tmp_path):
+    """The blocks that decide what the strike is — swept the way the command registry's were.
+
+    Mutating each field in turn left six that composed, and they are the fields a *challenge* turns
+    on: a posture is what a fleet is authorized to do, a transition is the guard that moves it, and
+    an objective is the score. A hole in these is a hole in the experiment rather than in a
+    subsystem.
+
+    The transition strings are parsed rather than matched, because two of the five are not a plain
+    `A -> B`: `execute -> hold on stale evidence` appends the *reason* to the target and
+    `any -> aborting` has no source posture. So the source must be `any` or a declared posture, and
+    the target's **first word** must be one — which accepts both forms and still refuses
+    `safe -> standbye`.
+
+    `requires` must be *present* and may be empty. `any -> aborting` declares `{}` with the best
+    sentence in the block: *"Abort requires no fresh evidence because requiring it would make the
+    abort conditional on the very instrumentation whose failure is a reason to abort."* A
+    present-but-empty list is that decision; an absent one is indistinguishable from an oversight —
+    the same distinction `interlocks: none` draws for a command.
+
+    And `channels` may be empty **only** when `evaluated_by` is `external`, which is the case the
+    check found live: `coordination` is "twenty metrics, computed externally and never shown to the
+    fleet" and declares no channels at all. `far_side` is not an exemption — the corpus says what
+    the vehicle owes the operator's verdict is *the record*.
+    """
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    postures = [p["id"] for p in mission["postures"]]
+    assert len(postures) == len(set(postures)) == 10, postures
+    assert all(isinstance(p["terminal"], bool) for p in mission["postures"])
+
+    for row in mission["transition_evidence"]:
+        source, _, target = row["transition"].partition("->")
+        assert source.strip() == "any" or source.strip() in postures, row["transition"]
+        assert target.strip().split()[0] in postures, row["transition"]
+        assert "requires" in row, row["transition"]
+
+    objectives = mission["objectives"]
+    ids = [o["id"] for o in objectives]
+    assert len(ids) == len(set(ids)) == 9, ids
+    for objective in objectives:
+        assert objective["kind"] in {"outcome", "margin", "research"}, objective["id"]
+        if objective["kind"] == "margin":
+            assert objective["sense"] in {"higher_is_better", "closest_to_limit"}, objective["id"]
+        if not objective.get("channels"):
+            assert objective["evaluated_by"] == "external", objective["id"]
+
+    for old, new, expect in (
+        ('"safe -> standby"', '"safe -> standbye"', "arrives at"),
+        (
+            "    requires:\n      mission.abort_latched",
+            "    requires_off:\n      mission.abort_latched",
+            ".requires",
+        ),
+        ("channels: [crew.available]", "channels: []", "is empty and"),
+        ("kind: outcome", "kind: outcomee", "crew_survive.kind"),
+    ):
+        definition = copy_definition(tmp_path / expect.replace(" ", "_").replace(".", "_"))
+        path = definition / "mission.yaml"
+        text = path.read_text()
+        broken = text.replace(old, new, 1)
+        assert broken != text, f"the fixture no longer matches {old!r}"
+        path.write_text(broken)
+        result = run_linter(definition)
+        assert result.returncode == 1, (expect, result.stdout[-700:])
+        assert expect in result.stdout, (expect, result.stdout[-700:])
+
+
 def test_every_field_a_command_declares_is_validated(tmp_path):
     """Found by mutating each field in turn and watching which mutations composed.
 
