@@ -4240,6 +4240,59 @@ def test_every_stock_declares_where_it_starts():
             )
 
 
+def test_a_limit_that_is_a_property_of_the_registry_is_re_derived(tmp_path):
+    """`sensor_stale`'s limit is twice the slowest publish period, and the registry says which.
+
+    The threshold's own reason says the value "cannot be a constant and is therefore a function of
+    the active profile", and that each *point* has its own limit of one publish period while this
+    is the aggregate's at twice the slowest. So the number was derivable all along from
+    `channels.yaml` — 0.05 Hz is the slowest publishing channel, one per 20 s, and twice that is
+    40,000 ms. Channels at `rate_hz: 0` are published on change and have no period to be stale
+    against, which is why the source is the slowest *positive* rate.
+
+    `channels.yaml` is not a document with that key in it, so the linter **computes** it and hands
+    it to the same resolver every other `derives_from` uses. That is what makes the limit
+    re-derived on every run rather than a figure somebody typed once: change a channel's rate and
+    the threshold is refused until it moves with it.
+
+    What the value cannot carry is the profile dependence, and the provenance says so rather than
+    leaving it implied. It is the default profile's limit, and the `avionics` alternatives scale
+    `above` thresholds by their own factor — which would *tighten* this one where `minimal`'s own
+    note says dropping channels must loosen it. Nothing applies the factors yet.
+    """
+    avionics = yaml.safe_load((VEHICLE / "domains" / "avionics" / "profiles.yaml").read_text())
+    stale = next(t for t in avionics["thresholds"] if t["id"] == "sensor_stale")
+    assert stale["assert"] == 40000, stale["assert"]
+    assert stale["clear"] == 20000, stale["clear"]
+    assert stale["derives_from"] == "channels.yaml:slowest_publish_period_ms"
+    assert stale["derives_factor"] == 2
+    assert "profile" in stale["derives_note"], "the profile caveat must be stated"
+
+    # The arithmetic, against the registry rather than against a copy of the number.
+    channels = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    rates = [
+        row["rate_hz"]
+        for rows in channels.values()
+        if isinstance(rows, list)
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("rate_hz"), (int, float)) and row["rate_hz"]
+    ]
+    assert rates, "no channel declares a publishing rate"
+    assert stale["assert"] == 2 * 1000 / min(rates)
+
+    # A channel slowed down leaves the limit stale, and the linter refuses it.
+    definition = copy_definition(tmp_path / "rates")
+    path = definition / "channels.yaml"
+    text = path.read_text()
+    broken = text.replace("rate_hz: 0.05", "rate_hz: 0.02", 1)
+    assert broken != text, "the fixture no longer matches channels.yaml"
+    path.write_text(broken)
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "sensor_stale" in result.stdout, result.stdout[-900:]
+    assert "derives_from` resolves to" in result.stdout, result.stdout[-900:]
+
+
 def test_a_threshold_that_derives_its_limit_is_not_a_second_debt(tmp_path):
     """Three `gnc` thresholds take their limit from a component field the domain also owes.
 
@@ -5354,7 +5407,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 251 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 248 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -5494,7 +5547,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "251", "the view must agree with the headline count"
+    assert owed == "248", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
