@@ -448,6 +448,46 @@ def test_an_unset_domain_value_is_a_debt_named_by_its_path(tmp_path):
     assert "sublimator_lm" not in result.stdout, "supplying the value must retire the debt"
 
 
+def test_a_transport_delay_carries_its_temperature_rather_than_transforming_it():
+    """The weakest-documented edge in the file: `UNCONFIGURED`, with no relation and no note.
+
+    `E-TRANSPORT-PLATE` carries the coolant loop's temperature to the avionics coldplate, unit
+    `K per K`, and it declared nothing else. **A transport delay delivers what it received** —
+    `loop_transport_t` is a `delay` of 1,042 s implemented as a tick-indexed ring buffer, and a ring
+    buffer's output is its input one residence time later — so the ratio is 1.0 and the edge carries
+    the temperature rather than transforming it.
+
+    It survived for a reason worth recording. `E-DYN-GEOM`'s note says a `UNCONFIGURED` value beside
+    an identity relation *"is a contradiction rather than an omission"*, and that contradiction is
+    what got it fixed. **This one had no relation to contradict**, so it was not obviously wrong —
+    only unread. A ratio other than one would claim the loop changes the temperature it transports,
+    and the mechanism that does that is the conductance into the plate, not this edge.
+    """
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    edge = next(e for e in coupling["edges"] if e["id"] == "E-TRANSPORT-PLATE")
+    assert edge["sensitivity"]["value"] == 1.0, edge["sensitivity"]
+    assert edge["sensitivity"]["basis"] == "derived"
+    assert "delivers what it received" in edge["sensitivity"]["relation"]
+
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    delay = next(s for s in thermal["state"] if s["id"] == "loop_transport_t")
+    assert delay["method"] == "delay", delay["method"]
+    assert delay["delay_s"] == 1042
+
+    # And the fuel cell's waste heat is the *same* unknown as its oxygen draw, not a second one.
+    heat = next(e for e in coupling["edges"] if e["id"] == "E-FC-HEAT")
+    assert "per_joule_kg" in heat["sensitivity"]["note"], heat["sensitivity"]["note"]
+    power = yaml.safe_load((VEHICLE / "domains" / "power" / "components.yaml").read_text())
+    draw = next(s for s in power["state"] if s["id"] == "fc_o2_draw_kg_s")
+    assert draw["per_joule_kg"] == "UNCONFIGURED"
+
+    # And the corpus composes with the edge valued — the id still appears in `open_debts` prose
+    # about the *loop transit* itself, which is a different obligation (the volume and the flow).
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-900:]
+    assert "E-TRANSPORT-PLATE.sensitivity" not in result.stdout
+
+
 def test_every_state_in_a_declared_order_is_actually_advanced():
     """A `state_order` is a claim about a sequence, and nothing checked that it can run.
 
@@ -5988,7 +6028,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 249 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 248 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -6128,7 +6168,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "249", "the view must agree with the headline count"
+    assert owed == "248", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
