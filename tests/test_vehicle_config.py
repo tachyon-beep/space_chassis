@@ -3831,6 +3831,152 @@ def test_the_readme_status_matches_the_tools():
     ):
         assert needle in readme, f"{what} is stale: expected {needle!r} in the README"
 
+    # Every occurrence, not just the first. The loop above pins the *presence* of the right figure,
+    # and that is what let the same paragraph keep a second, stale one for eleven rounds: line 59
+    # carried "223 declared debts" and line 177 carried "252", so a test satisfied by either was
+    # satisfied by a file that contradicted itself. It is this folder's own finding arriving at the
+    # test that exists to catch it — a check that reads the declaration it is looking for cannot see
+    # the one beside it.
+    #
+    # A figure the README *asserts* is unquoted; a figure it *quotes* is history. The section that
+    # records this very drift says *it said "… with 254 declared debts …" while the tools said 124,
+    # 45 and 252* — and those are the evidence, not a claim, so the quoted spans come out first and
+    # what remains is what the file is currently telling a reader.
+    asserted = re.sub(r'"[^"]*"', "", readme)
+    written = re.findall(r"(\d+) declared debts?", asserted)
+    assert written, "the README states no debt count at all"
+    assert set(written) == {debts}, (
+        f"the README states the debt count as {sorted(set(written))}; the linter says {debts}"
+    )
+
+    # And the reconciliation README's prose count of *these* tests, which is the one figure a
+    # reader uses to judge how much of the definition is held in place. It said one hundred
+    # twenty-six while this file held one hundred thirty-four — the same unread-prose failure one
+    # directory over, and it had been wrong for eight rounds. The number is derived from this
+    # module's own globals, so adding a test and forgetting the sentence fails here rather than
+    # in a reader's estimate of the folder.
+    reconciliation = (
+        REPO / "docs" / "deep_research" / "integration" / "reconciliation" / "README.md"
+    ).read_text()
+    mine = len([name for name in globals() if name.startswith("test_")])
+    assert mine > 100, f"the self-count found {mine} tests, which is not this file's shape"
+    needle = f"One {_in_words(mine)} tests"
+    assert needle in reconciliation, (
+        f"the reconciliation README does not say {needle!r} about this file, which holds {mine}"
+    )
+
+
+def _in_words(n: int) -> str:
+    """Enough of a number-to-words conversion for a count in the low hundreds.
+
+    Written rather than imported because the alternative is a dependency the operator-side services
+    are not allowed to have, and because the range is small and known: this file's test count, in
+    the hundreds, spelled the way the reconciliation README spells it.
+    """
+    units = (
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+    )
+    tens = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+    if n < 20:
+        return units[n]
+    if n < 100:
+        return tens[n // 10] + (f"-{units[n % 10]}" if n % 10 else "")
+    if n % 100 == 0:
+        return "hundred"
+    return f"hundred {_in_words(n % 100)}"
+
+
+def test_the_registry_coverage_claim_is_data_rather_than_a_sentence(tmp_path):
+    """The last vehicle-wide count in prose, and two of its three numbers were wrong.
+
+    Each domain has made a `coverage` claim since round 42 and each is checked against its own
+    faults. The *registry's* own claim was a sentence in `channels.yaml:open_debts`, and nothing
+    read it: it said twelve of the twenty-two unperturbed channels are `layer: service` where the
+    policy gives fifteen of twenty, and it said faults perturb **117** `service` channels where
+    they perturb 42.
+
+    That second number is the one that matters, because it was never arithmetically possible. The
+    `service` layer is 57 of the registry's 148 channels, so no split of it can reach 117 — and the
+    sentence sat there through several rounds of channel additions. **A number in prose has no
+    reader, and a number with no reader does not have to be plausible.** The two domain-level
+    claims beside it were caught the moment they became fields; this one stayed prose for thirty
+    rounds longer.
+
+    So the numbers are data now, and this test does two things the linter's own check cannot do for
+    itself: it re-derives all three from the YAML rather than trusting the report, and it proves
+    the check refuses the historical value by putting it back.
+    """
+    channels = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    coverage = channels["coverage"]
+
+    def flatten(name: object) -> str:
+        return re.sub(r"\[[^\]]*\]", "[]", str(name))
+
+    registry, layers = set(), {}
+    for section, rows in channels.items():
+        if section in {"coverage", "crew_positions", "open_debts", "defaults"}:
+            continue
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if isinstance(row, dict) and row.get("id"):
+                registry.add(flatten(row["id"]))
+                layers[flatten(row["id"])] = row.get("layer")
+    assert len(registry) == 148, f"the registry is {len(registry)} channels, not 148"
+
+    perturbed = set()
+    for policy_path in sorted((VEHICLE / "domains").glob("*/fault_policy.yaml")):
+        policy = yaml.safe_load(policy_path.read_text())
+        for fault in policy.get("faults") or []:
+            perturbed.update(flatten(c) for c in fault.get("perturbs") or [])
+    unperturbed = registry - perturbed
+
+    assert coverage["unperturbed"] == len(unperturbed)
+    assert coverage["unperturbed_service_layer"] == sum(
+        1 for c in unperturbed if layers.get(c) == "service"
+    )
+    assert coverage["perturbed_service_layer"] == sum(
+        1 for c in perturbed if layers.get(c) == "service"
+    )
+    assert coverage["provenance"]["basis"] == "derived"
+
+    # The sentence no longer restates them, which is the half that makes the block the only source.
+    prose = " ".join(str(d) for d in channels["open_debts"])
+    assert "Twelve of the 22" not in prose, "the stale count is back in the prose"
+    assert "117 of the channels" not in prose, "the impossible count is back in the prose"
+
+    # And the check refuses the historical value, at the field that carried it.
+    definition = copy_definition(tmp_path / "coverage")
+    path = definition / "channels.yaml"
+    text = path.read_text()
+    broken = text.replace("perturbed_service_layer: 42", "perturbed_service_layer: 117", 1)
+    assert broken != text, "the fixture no longer matches channels.yaml"
+    path.write_text(broken)
+
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "channels.yaml:coverage.perturbed_service_layer" in result.stdout, result.stdout[-900:]
+    assert "claims 117 and the policies give 42" in result.stdout, result.stdout[-900:]
+
 
 def test_the_fuel_cell_reactant_chain_is_grounded_but_for_one_figure():
     """The cell's draws are nodes now, and everything downstream of them is derivable.
@@ -4471,6 +4617,114 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     assert "with 223 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
+def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
+    """A bare `note: "as above"` is a claim whose content lives somewhere else.
+
+    This folder's recurring finding is that **a declaration no tool reads has already drifted**, and
+    a note is the one field nothing read at all — every other check looks at values. Two entries had
+    drifted into a bare pointer: `recon_mismatch_o2` said only "as above" while its sibling carried
+    the whole argument, and `release_allocation` said the same while `release_reservation` one entry
+    above it had a sentence of its own. Neither is *wrong*, which is exactly why nothing caught them.
+
+    The failure a bare pointer produces is positional. "Above" means whatever happens to precede it,
+    so reordering a file silently repoints the note: the entry goes on looking sourced while its
+    justification has moved to a different claim. It also costs the reader the sentence that says why
+    this entry exists separately at all — and here `consumables_diode.md:852` refuses a universal
+    tolerance *per resource*, so the two reconciliation limits are separate numbers even where the
+    argument they rest on is shared.
+
+    Four pointer notes survive in the live definition and every one of them keeps a clause, so the
+    check refuses a pointer with nothing behind it rather than the pattern of its opening words.
+    """
+    # The clause is the whole reason the second entry exists rather than being merged into the first.
+    for filename, snippet in (
+        ("domains/consumables/components.yaml", "as above; the 8:1 O2:H2 mass ratio"),
+        ("domains/consumables/profiles.yaml", "as above, at apollo's second propellant level"),
+        ("domains/thermal/components.yaml", "as above, for the LM"),
+        ("domains/thermal/profiles.yaml", "as above; 2 K wider than the CSM's upper limit"),
+    ):
+        assert snippet in (VEHICLE / filename).read_text(), f"{filename} lost its clause"
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-900:]
+    assert "pointer with nothing behind it" not in result.stdout
+
+    # Break one, with a *different* pointer phrase than the two the corpus had drifted into.
+    definition = copy_definition(tmp_path / "bare")
+    path = definition / "domains" / "consumables" / "commands.yaml"
+    text = path.read_text()
+    broken = text.replace(
+        'why: "the inverse of a declined verb is a declined verb"', 'why: "see above"', 1
+    )
+    assert broken != text, "the fixture no longer matches consumables/commands.yaml"
+    path.write_text(broken)
+
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "pointer with nothing behind it" in result.stdout, result.stdout[-900:]
+    assert "commands.yaml:declined" in result.stdout, result.stdout[-900:]
+
+
+def test_a_word_that_only_starts_like_a_pointer_is_not_one(tmp_path):
+    """`as aboveboard` is one word, and the check has to know that before it may refuse anything.
+
+    The first cut of the pattern had no word boundary, so it refused `as aboved` and `as aboveboard`
+    — notes that never point anywhere. A check that refuses correct prose is worse than no check,
+    because the only way to satisfy it is to rewrite a sentence that was already right.
+    """
+    definition = copy_definition(tmp_path / "prefix")
+    path = definition / "domains" / "consumables" / "commands.yaml"
+    text = path.read_text()
+    broken = text.replace(
+        'why: "the inverse of a declined verb is a declined verb"',
+        'why: "as aboveboard, which is a single word, points at nothing and is not a pointer phrase"',
+        1,
+    )
+    assert broken != text, "the fixture no longer matches consumables/commands.yaml"
+    path.write_text(broken)
+
+    result = run_linter(definition)
+    assert result.returncode == 0, result.stdout[-900:]
+    assert "pointer with nothing behind it" not in result.stdout
+
+
+def test_the_two_reconciliation_tolerances_are_declared_alike():
+    """Two thresholds on one channel template, and only one of them said what it measures.
+
+    `res.recon_[resource]_kg` is a template, so `res.recon_main_propellant_kg` and `res.recon_o2_kg`
+    resolve to the same registered channel with the same `unit: kg`. Both thresholds are `above` on
+    `|observed - ledger|`, both are owed, both carry the same dwell — and one declared
+    `point_units: "kg of |observed - ledger|"` while the other declared nothing.
+
+    Nothing was broken by the omission: `point_units` is read as an *exemption* from the linter's
+    unit-agreement check, and the O2 point agrees with its channel, so no exemption was needed. That
+    is what made it invisible — the field is only ever read when it is already there, so its absence
+    on one half of a matched pair cannot be detected by the check that reads it. The two entries are
+    now declared alike, because a reader comparing them should not have to work out whether the
+    difference is meaningful.
+    """
+    profiles = yaml.safe_load((VEHICLE / "domains" / "consumables" / "profiles.yaml").read_text())
+    by_id = {str(t["id"]): t for t in profiles["thresholds"]}
+
+    propellant = by_id["recon_mismatch_main_propellant"]
+    oxygen = by_id["recon_mismatch_o2"]
+
+    # The same point shape and the same comparison, which is what makes them a pair at all.
+    assert propellant["point"].replace("main_propellant", "[resource]") == "res.recon_[resource]_kg"
+    assert oxygen["point"].replace("o2", "[resource]") == "res.recon_[resource]_kg"
+    for field in ("comparator", "assert", "clear", "dwell_assert_ms", "dwell_clear_s", "severity"):
+        assert propellant[field] == oxygen[field], field
+
+    # And the same statement of what the number is, which is the half that was missing.
+    assert propellant["point_units"] == oxygen["point_units"] == "kg of |observed - ledger|"
+    # Neither is a pointer at the other any more: both say why this resource is its own entry.
+    for threshold in (propellant, oxygen):
+        note = threshold["provenance"]["note"]
+        assert "consumables_diode.md:852" in note
+        assert "as above" not in note
+    assert "separate entry" in propellant["provenance"]["note"]
+    assert "separate entry" in oxygen["provenance"]["note"]
+
+
 def test_the_debts_view_groups_by_what_each_one_wants():
     """The view that looks for round 74's class of inflation, and the answer for the prose half.
 
@@ -4532,7 +4786,10 @@ def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
     assert p_states["pressurant_pressure_psi"]["provenance"]["basis"] == "UNCONFIGURED"
     assert "placeholder" in p_states["pressurant_pressure_psi"]["tau_s_placeholder"]
     assert c_states["pressurant_he_kg"]["provenance"]["basis"] == "UNCONFIGURED"
-    assert "picked because the helium feed is slow" in c_states["pressurant_he_kg"]["quantum_placeholder"]
+    assert (
+        "picked because the helium feed is slow"
+        in c_states["pressurant_he_kg"]["quantum_placeholder"]
+    )
 
     definition = copy_definition(tmp_path / "unmarked")
     path = definition / "domains" / "propulsion" / "components.yaml"
