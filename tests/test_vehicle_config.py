@@ -5471,6 +5471,67 @@ def test_a_declared_internal_order_is_the_order_the_plant_advances_them(tmp_path
     assert f"domains/{domain}/components.yaml:internal_order" not in result.stdout
 
 
+def test_one_component_id_in_two_domains_must_be_one_object(tmp_path):
+    """The IMU was the vehicle's only component declared twice, and the copies disagreed.
+
+    `domains/avionics/components.yaml` declared `imu` as `class: inertial_reference` with
+    `alignment_error_deg: UNCONFIGURED`; `domains/gnc/components.yaml` declared the same id as
+    `class: inertial_platform` with `drift_deg_per_h` and `alignment_budget_deg`. Three things were
+    wrong at once and each hid the others. One box had two class names, and nothing reads `class`
+    against a vocabulary, so neither name could be wrong. The instrument's unknowns were counted
+    three ways across two domains, so the vehicle reported one IMU's missing figures as three
+    separate obligations. And the avionics figure was read by **nothing at all** — no threshold, no
+    derivation, no fault — while that file's own `open_debts` entry, three lines below the field,
+    said the two constants are *"recorded once — in the domain that owns the instrument"*. The
+    sentence and the field contradicted each other and no tool read either.
+
+    The rule is the intersection, as in the four joins before it: everything two entries for one id
+    both state must agree. `class` is compared here where those joins exclude it, and the difference
+    is real rather than an inconsistency — they compare a domain against a *vehicle-level* bill of
+    materials that has no class to state, while two domains describing one box are each saying what
+    it is. A refusal rather than a debt, because both readings have a fix: either they are one
+    object and must agree, or the id is doing two jobs and one needs a new name.
+    """
+    # The corpus is one object declared once, and the figures live where they are read.
+    avionics = yaml.safe_load(
+        (VEHICLE / "domains" / "avionics" / "components.yaml").read_text()
+    )
+    gnc = yaml.safe_load((VEHICLE / "domains" / "gnc" / "components.yaml").read_text())
+    mine = {str(c["id"]): c for c in avionics["components"]}
+    theirs = {str(c["id"]): c for c in gnc["components"]}
+    assert "imu" in mine and "imu" in theirs, "the two views of the IMU are the case under test"
+    assert mine["imu"]["class"] == theirs["imu"]["class"], (
+        "one box, two class names — which is the defect, not the shape"
+    )
+    # The instrument's two constants are declared where something reads them, and nowhere else.
+    assert "alignment_budget_deg" in theirs["imu"] and "drift_deg_per_h" in theirs["imu"]
+    assert "alignment_error_deg" not in mine["imu"], (
+        "the alignment *error* is a state the plant integrates, not a component constant"
+    )
+    derived = (VEHICLE / "domains" / "gnc" / "profiles.yaml").read_text()
+    assert "components.imu.alignment_budget_deg" in derived
+    assert "components.imu.drift_deg_per_h" in derived
+
+    # Break a copy: put the second class name back. The refusal fires and names both files.
+    fixture = copy_definition(fixture_dir(tmp_path, "component_identity_"))
+    path = fixture / "domains" / "avionics" / "components.yaml"
+    text = path.read_text()
+    assert "class: inertial_platform" in text
+    path.write_text(text.replace("class: inertial_platform", "class: inertial_reference", 1))
+
+    result = run_linter(fixture)
+    assert result.returncode == 1, result.stdout[-1200:]
+    assert "components.imu.class" in result.stdout
+    assert "inertial_reference" in result.stdout and "inertial_platform" in result.stdout
+    assert "they disagree about what it is" in result.stdout
+
+    # A *figure* on one side only is invisible to the intersection by construction — the same
+    # limitation `ZONE_STRUCTURAL` records for a thermal zone's one-sided fields — so the second
+    # half of the fix is held by the corpus assertions above rather than by this refusal.
+    path.write_text(text)
+    assert run_linter(fixture).returncode == 0
+
+
 def test_the_sentinel_cannot_be_declared_as_a_coupling_node(tmp_path):
     """`internal` is where a state goes when no node advances it. It cannot also be a node.
 
@@ -9105,7 +9166,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 289 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 288 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -9245,7 +9306,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "289", "the view must agree with the headline count"
+    assert owed == "288", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
