@@ -1805,7 +1805,12 @@ def test_the_linter_holds_every_frame_name_to_the_frame_registry(tmp_path):
         yaml.safe_load((VEHICLE / "channels.yaml").read_text()),
     )
     report = linter.Report()
-    linter.check_argument_vocabularies(documents, report)
+    # The registry is passed because the fourth vocabulary — the crew stations — is declared there
+    # rather than in a document with a filename in this map. A caller that omits it gets a debt
+    # rather than twelve refusals about a test that could not run.
+    linter.check_argument_vocabularies(
+        documents, report, yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    )
     assert report.refusals == [], report.refusals
     frames = {str(f["id"]) for f in documents["vehicle.yaml"]["frames"]}
     assert frames == {"EARTH_J2000", "MOON_J2000", "LVLH", "BODY", "HGA_BORESIGHT"}, frames
@@ -5469,6 +5474,125 @@ def test_a_declared_internal_order_is_the_order_the_plant_advances_them(tmp_path
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-1500:]
     assert f"domains/{domain}/components.yaml:internal_order" not in result.stdout
+
+
+def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
+    """The join that holds an argument to what it names is triggered by the argument's *name*.
+
+    `check_argument_vocabularies` binds an enum argument's values to the objects it names, and the
+    trigger is the argument's own name: an argument called `frame` names a frame, one called `pump`
+    names pumps. That reaches every argument whose name happens to say what it names, and is silent
+    on every other one. The check's own docstring named four it left unchecked for exactly that
+    reason — `set_heater.bank`, `set_battery_contactor.battery`, `set_breaker.breaker` and
+    `set_bus_tie.tie`, "because nothing about the word `bank` says it means a `heater`" — and
+    declared that putting `names: component` on them is what fixes it.
+
+    **The paragraph was the only thing that knew.** Measuring it instead of describing it found
+    seven, not four. The other three were not in any list:
+
+      - `ask_crew.position` and `set_display_mode.position` offer crew stations, which
+        `channels.yaml#crew_positions` declares. The second offers five of the seven — a tunnel and a
+        suit have no panel to set the mode of — so the test is membership and an equality test would
+        refuse a correct declaration;
+      - `request_imu_alignment.target` offers three of `vehicle.yaml#frames`' five, and it sits in
+        the same domain as `load_state_vector.frame`, which *is* checked. The same vocabulary, held
+        to the same authority one verb over and free in this one, because one argument is called
+        `frame` and the other is called `target`. That is the mis-citation the `frame` rule was
+        written for — `rcs` offering `inertial_earth` beside `EARTH_J2000` — arriving again one
+        argument name away.
+
+    So the rule gains a fourth vocabulary and a way to find the next one: an argument that declares
+    nothing, whose name matches no class in its domain, and whose values are *all* drawn from a
+    vocabulary the vehicle declares is reported as a **debt**. Not a refusal, because an argument
+    whose values happen to look like a vocabulary is a question to answer — and the report is silent
+    the moment the seven are declared, which is what makes it a rule rather than a paragraph.
+    """
+    bound = (
+        ("domains/thermal/commands.yaml", "set_heater", "bank", "component"),
+        ("domains/power/commands.yaml", "set_battery_contactor", "battery", "component"),
+        ("domains/power/commands.yaml", "set_breaker", "breaker", "component"),
+        ("domains/power/commands.yaml", "set_bus_tie", "tie", "component"),
+        ("domains/crew/commands.yaml", "ask_crew", "position", "crew_station"),
+        ("domains/crew/commands.yaml", "set_display_mode", "position", "crew_station"),
+        ("domains/gnc/commands.yaml", "request_imu_alignment", "target", "frame"),
+    )
+    for path, verb, argument, vocabulary in bound:
+        doc = yaml.safe_load((VEHICLE / path).read_text())
+        command = next(c for c in doc["commands"] if c["verb"] == verb)
+        spec = command["argument_schema"][argument]
+        assert spec.get("names") == vocabulary, (
+            f"{verb}.{argument} names no vocabulary; it should be `{vocabulary}`"
+        )
+
+    # The subsets, which are the declarations an equality rule would refuse.
+    frames = {str(f["id"]) for f in yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())["frames"]}
+    stations = {
+        str(p["id"]) for p in yaml.safe_load((VEHICLE / "channels.yaml").read_text())["crew_positions"]
+    }
+
+    def values(path: str, verb: str, argument: str) -> set[str]:
+        doc = yaml.safe_load((VEHICLE / path).read_text())
+        command = next(c for c in doc["commands"] if c["verb"] == verb)
+        return {str(v) for v in command["argument_schema"][argument]["values"]}
+
+    assert values("domains/gnc/commands.yaml", "request_imu_alignment", "target") < frames
+    assert values("domains/crew/commands.yaml", "set_display_mode", "position") < stations
+    assert values("domains/crew/commands.yaml", "ask_crew", "position") == stations
+
+    fixture = copy_definition(fixture_dir(tmp_path, "argument_names_"))
+    path = fixture / "domains" / "crew" / "commands.yaml"
+
+    def rewrite(verb: str, mutate) -> None:
+        doc = yaml.safe_load(path.read_text())
+        command = next(c for c in doc["commands"] if c["verb"] == verb)
+        mutate(command["argument_schema"]["position"])
+        path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
+
+    # A station the registry does not declare: the console validates a command against this enum,
+    # so a name in it is a name the record will accept and no answer can come back from.
+    rewrite("ask_crew", lambda s: s["values"].append("cockpit"))
+    result = run_linter(fixture)
+    assert result.returncode == 1, result.stdout[-1200:]
+    assert "'cockpit'" in result.stdout and "crew_positions" in result.stdout
+
+    # A *declared* station on the argument that offers five of the seven is legal: membership is the
+    # rule, and which stations have panels is the corpus's curation rather than the vocabulary's.
+    rewrite("set_display_mode", lambda s: s.update(values=stations | {"tunnel"}))
+    rewrite("ask_crew", lambda s: s.update(values=sorted(stations)))
+    assert run_linter(fixture).returncode == 0, "a declared station was refused"
+
+    # A vocabulary the rule cannot resolve is a refusal, not a silent skip.
+    rewrite("ask_crew", lambda s: s.update(names="station"))
+    result = run_linter(fixture)
+    assert result.returncode == 1, result.stdout[-800:]
+    assert "vocabularies this rule knows" in result.stdout
+    rewrite("ask_crew", lambda s: s.update(names="crew_station"))
+    assert run_linter(fixture).returncode == 0, "the fixture did not come back"
+
+    # And the half that finds the next one: drop a declaration, and the argument is reported as a
+    # debt naming the vocabulary it looks like. A debt rather than a refusal, because an argument
+    # whose values happen to look like a vocabulary is a question to answer.
+    path = fixture / "domains" / "gnc" / "commands.yaml"
+    doc = yaml.safe_load(path.read_text())
+    command = next(c for c in doc["commands"] if c["verb"] == "request_imu_alignment")
+    command["argument_schema"]["target"].pop("names")
+    path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
+    result = run_linter(fixture)
+    assert result.returncode == 0, result.stdout[-800:]
+    assert "with 289 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "every one of which is a declared `frame`" in result.stdout
+    assert "declare `names: frame`" in result.stdout
+
+    # Which is also why the *declaration* is the fix and the inference cannot be: an argument with
+    # one value outside the vocabulary stops looking like that vocabulary at all, so an inferred
+    # rule would go quiet exactly when the argument became wrong.
+    doc = yaml.safe_load(path.read_text())
+    command = next(c for c in doc["commands"] if c["verb"] == "request_imu_alignment")
+    command["argument_schema"]["target"]["values"].append("EARTH_FIXED")
+    path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
+    result = run_linter(fixture)
+    assert result.returncode == 0, result.stdout[-800:]
+    assert "EARTH_FIXED" not in result.stdout, "an unbound argument should not be checked at all"
 
 
 def test_the_crews_error_model_is_a_distribution(tmp_path):
