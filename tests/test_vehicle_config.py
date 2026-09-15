@@ -9413,3 +9413,152 @@ def test_a_verb_that_starts_a_state_is_declared_rather_than_described(tmp_path):
         '      - "logic:the protection trips it and `set_breaker` is the only thing that clears it"\n',
         "names verb 'set_breaker' inside a `logic:` reason",
     )
+
+
+def test_interlocks_is_a_list_or_the_sentinel_and_nothing_else(tmp_path):
+    """A field with two forms, of which the check read one.
+
+    Every rule about `interlocks` was written `if isinstance(interlocks, list)`, so the sentinel was
+    skipped — and so was *anything else written as a string*. A verb declaring its real guards as
+    `"pressurant_low, feed_pressure_low"` composed with the guards silently gone, and so did
+    `"nothing to see here"`; two of those are broken copies in `.scratch/r29/`. Meanwhile the rule's
+    own message named the sentinel `none` while the corpus wrote `none - reviewed` in **twenty-three
+    of the fifty-eight verbs**, which is what a field nothing validates accumulates: a sentence
+    fragment in a value position, and no way to tell a deliberate "there are none" from a typo.
+
+    The sentinel is `none` and it is exact. What the old spelling recorded — that somebody looked —
+    is a `provenance` note like every other basis here, and a second wording for one value is a second
+    name for it.
+    """
+    verbs: dict[str, dict[str, object]] = {}
+    for path in sorted((VEHICLE / "domains").glob("*/commands.yaml")):
+        for verb in (yaml.safe_load(path.read_text()) or {}).get("commands") or []:
+            verbs[str(verb["verb"])] = verb
+
+    assert len(verbs) == 58, len(verbs)
+    sentinel = sorted(v for v, s in verbs.items() if s.get("interlocks") == "none")
+    guarded = sorted(v for v, s in verbs.items() if isinstance(s.get("interlocks"), list))
+    assert len(sentinel) == 23, sentinel
+    assert len(guarded) == 35, guarded
+    assert not [v for v, s in verbs.items() if isinstance(s.get("interlocks"), str) and v not in sentinel]
+    for name in guarded:
+        assert verbs[name]["interlocks"], f"{name} declares an empty guard list; write `none`"
+    # No verb declares a guard list *and* the sentinel's spelling, which is the shape a migration
+    # that missed a file leaves behind.
+    assert not [v for v in verbs if verbs[v].get("interlocks") == "none - reviewed"]
+
+    def refusal(name: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / "domains" / "propulsion" / "commands.yaml"
+        text = path.read_text()
+        assert text.count(old) == 1, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    guards = "    interlocks: [pressurant_low, feed_pressure_low, prop_cutoff_guard_5]\n"
+    # The three real guards, written as a string, composed before this round.
+    refusal(
+        "guards-as-string",
+        guards,
+        '    interlocks: "pressurant_low, feed_pressure_low, prop_cutoff_guard_5"\n',
+        "A string is not a guard list",
+    )
+    refusal(
+        "nothing-as-string",
+        guards,
+        '    interlocks: "nothing to see here"\n',
+        "A string is not a guard list",
+    )
+    refusal(
+        "sentinel-reworded",
+        "    interlocks: none\n",
+        "    interlocks: none whatsoever\n",
+        "A string is not a guard list",
+    )
+
+
+def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
+    """A guard is per-verb and a verb's arguments are not, so the conditional case was inexpressible.
+
+    Two verbs state one anyway, and they fail in opposite directions:
+
+    `propulsion.arm_engine` declares `pressurant_low`, `feed_pressure_low` and `prop_cutoff_guard_5`
+    for the whole verb, and its help says *"`safe` is always available and never refused"*. The
+    `not_implemented` entry that merged apollo's `arm_engine` and `safe_engine` says the same — the
+    asymmetry "is preserved in the single verb's semantics instead". It was not: the merged verb
+    refused `safe` exactly when the feed was failing, which is the one moment safing matters, and
+    refusing to de-energise an engine because its feed is low is backwards.
+
+    `rcs.set_rcs_quad` is the mirror. Its help said a latched group "cannot be re-enabled until those
+    are cleared", its provenance said the asymmetry "survives from the spec ... in `help`", and the
+    verb declared `interlocks: none` — so `HELP.md`, the whole of what a fleet is told before it
+    calls a verb, promised a refusal nothing produced. The fix there is the opposite one: the
+    declaration is the decision (the vehicle shows the authority cost rather than preventing the
+    decision, which the same file argues at length), so the prose moved.
+
+    `interlocks_when` is the condition, and it is refused wherever it would say nothing — on `none`,
+    on a non-enum argument, on a value the argument cannot take, on *every* value it can take, or
+    without a reason.
+    """
+    arm = yaml.safe_load((VEHICLE / "domains" / "propulsion" / "commands.yaml").read_text())
+    verb = next(v for v in arm["commands"] if v["verb"] == "arm_engine")
+    assert verb["interlocks"] == ["pressurant_low", "feed_pressure_low", "prop_cutoff_guard_5"]
+    assert verb["interlocks_when"]["argument"] == "state"
+    assert verb["interlocks_when"]["values"] == ["armed"]
+    assert verb["interlocks_when"]["why"].strip()
+    # `safe` is the value the guards do not apply to, and it is the one the help promises for.
+    assert "never refused" in verb["help"]
+
+    rcs = yaml.safe_load((VEHICLE / "domains" / "rcs" / "commands.yaml").read_text())
+    quad = next(v for v in rcs["commands"] if v["verb"] == "set_rcs_quad")
+    assert quad["interlocks"] == "none"
+    assert "interlocks_when" not in quad
+    assert "cannot be re-enabled" not in quad["help"], "the help promises a refusal nothing produces"
+    assert "permitted rather than refused" in quad["help"]
+
+    # The condition reaches the fleet: `HELP.md` is generated from the registry and is where a
+    # fleet reads what will refuse it.
+    generated = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "generate_help.py"), "--dir", str(VEHICLE)],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    assert "only when `state` is `armed`" in generated, generated[-800:]
+
+    block = (
+        "    interlocks_when:\n"
+        "      argument: state\n"
+        "      values: [armed]\n"
+        "      why: >-\n"
+        "        the three guards are about *arming*, and safing is not refused by any of them. `apollo_diode.md:241`\n"
+        "        lists arm and safe as two verbs and this vehicle merged them into one binary argument, so the\n"
+        "        asymmetry the merge was made to preserve has to be sayable here or it is lost: an armed engine\n"
+        "        on a failing feed is the hazard F-01 is about, and a *safe* command is how a crew ends that\n"
+        "        hazard. Declaring the three guards for the whole verb refused `safe` exactly when the feed was\n"
+        "        failing — the one moment it matters — and refusing to de-energise an engine because its feed is\n"
+        "        low is backwards\n"
+    )
+
+    def refusal(name: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / "domains" / "propulsion" / "commands.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    refusal("no-argument", block, block.replace("argument: state", "argument: throttle"),
+            "which is not an enum argument of this verb")
+    refusal("bad-value", block, block.replace("values: [armed]", "values: [disarmed]"),
+            "cannot take")
+    refusal("every-value", block, block.replace("values: [armed]", "values: [armed, safe]"),
+            "names every value 'state' takes")
+    refusal(
+        "no-why",
+        block,
+        block[: block.index("why: >-")] + 'why: ""\n',
+        "which is a claim about the vehicle",
+    )
