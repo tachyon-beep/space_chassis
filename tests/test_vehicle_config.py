@@ -5476,6 +5476,102 @@ def test_a_declared_internal_order_is_the_order_the_plant_advances_them(tmp_path
     assert f"domains/{domain}/components.yaml:internal_order" not in result.stdout
 
 
+def test_a_withheld_truth_named_as_an_instance_is_still_registered(tmp_path):
+    """The §7 check compared exact keys, so a published instance hid behind its own template.
+
+    `points.yaml#not_published` is where the vehicle says by name which truths it withholds, and
+    the rule is that a withheld truth which is *also* a registered channel is truth on the wire —
+    the §7 boundary. The check compared the withheld name to the registry's own keys, and the
+    registry declares **templates**: `res.recon_[resource]_kg` is a key, `res.recon_o2_kg` is not.
+    So a domain could withhold an instance of a published family and nothing said so.
+
+    It used exact keys for a reason, and the reason is the other half of this test. The index
+    compiles `[id]` to `.+?`, so `thermal.zone_[id]_true_t_c` — the hidden truth this corpus
+    really does withhold, one placeholder away from the published `thermal.zone_[id]_t_c` —
+    resolves against the *published* template. That is a false positive, and comparing exact keys
+    avoids it. Fixing the leak by resolving everything would have refused the corpus's own correct
+    declaration, which is why the two cases needed two instruments rather than one.
+
+    A withheld *template* is a declaration of a family, and a family one placeholder from a
+    published one is a second family rather than a collision, so it is compared to the registry's
+    own keys. A withheld *instance* is a name, and a name is on the wire if any registered entry
+    answers for it — templates included. The wildcard is not a weakness in the second case; it is
+    the resolution `row()` exists to perform, and this test holds both directions at once.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    registry = linter.check_channels(
+        yaml.safe_load((VEHICLE / "channels.yaml").read_text()), linter.Report()
+    )
+    index = linter.ChannelIndex(registry)
+
+    # The two facts that made the old rule leak, and the two that keep the new one honest.
+    assert "res.recon_o2_kg" not in index.rows, "an instance is not a registry key"
+    assert index.row("res.recon_o2_kg")["id"] == "res.recon_[resource]_kg"
+    assert "thermal.zone_[id]_true_t_c" not in index.rows
+    assert index.row("thermal.zone_[id]_true_t_c")["id"] == "thermal.zone_[id]_t_c", (
+        "the wildcard answers for a sibling template, which is the false positive"
+    )
+    # And the corpus really does withhold that sibling, so the false positive is live rather than
+    # hypothetical: a rule that resolved templates too would refuse the vehicle as it stands.
+    thermal_points = yaml.safe_load((VEHICLE / "domains" / "thermal" / "points.yaml").read_text())
+    withheld = [
+        str(e.get("channel")) if isinstance(e, dict) else str(e)
+        for e in thermal_points["not_published"]
+    ]
+    assert "thermal.zone_[id]_true_t_c" in withheld
+
+    fixture = copy_definition(fixture_dir(tmp_path, "withheld_"))
+
+    def withhold(channel: str, domain: str) -> None:
+        path = fixture / "domains" / domain / "points.yaml"
+        doc = yaml.safe_load(path.read_text())
+        doc.setdefault("not_published", []).append(
+            {"channel": channel, "why": "a fixture written by this test"}
+        )
+        path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
+
+    # The leak: an instance of a published family, withheld.
+    withhold("res.recon_o2_kg", "consumables")
+    result = run_linter(fixture)
+    assert result.returncode == 1, result.stdout[-1200:]
+    assert "'res.recon_o2_kg'" in result.stdout
+    assert "`res.recon_[resource]_kg` answers for it" in result.stdout
+    assert "§7 boundary" in result.stdout
+
+    # A withheld template that *is* a registry key is refused by the exact test, as before.
+    path = fixture / "domains" / "consumables" / "points.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["not_published"] = [e for e in doc["not_published"] if e.get("channel") != "res.recon_o2_kg"]
+    path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
+    withhold("power.lcl_[n]_state", "power")
+    result = run_linter(fixture)
+    assert result.returncode == 1, result.stdout[-800:]
+    assert "answers for it" not in result.stdout, "a template is the entry, not an instance of it"
+
+    # And the two silences: the sibling template, and a concrete name nothing answers for.
+    path = fixture / "domains" / "power" / "points.yaml"
+    doc = yaml.safe_load(path.read_text())
+    doc["not_published"] = [e for e in doc["not_published"] if e.get("channel") != "power.lcl_[n]_state"]
+    path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
+    withhold("thermal.zone_[id]_true_t_c", "thermal")
+    withhold("consumables.nothing_publishes_this", "consumables")
+    result = run_linter(fixture)
+    assert result.returncode == 0, result.stdout[-800:]
+
+    # The phantom direction is still open and this test says so rather than implying otherwise: a
+    # concrete name that is not an instance of anything resolves anyway, because the registry's
+    # templates are patterns. Closing it needs the instantiations declared, which is the registry's
+    # own recorded debt and the next round's work.
+    assert index.row("thermal.zone_1_true_t_c") is not None, (
+        "the phantom resolution is the recorded weakness; if it is gone, delete this assertion"
+    )
+
+
 def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     """The linter printed the right apogee beside a declaration that disagreed with it.
 
