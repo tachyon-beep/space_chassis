@@ -1105,6 +1105,96 @@ def test_the_linter_holds_the_posture_that_permits_action(tmp_path):
     assert "mission.yaml:posture recovery: is the source of no transition" in out, out[-1200:]
 
 
+def test_the_linter_holds_what_each_posture_seeds(tmp_path):
+    """The three seeding pools were three hard-coded filters in a tool, beside two copied rates.
+
+    `scenario_postures[].seeded_faults` is prose — "none", "one latent or noncritical primary",
+    "one guaranteed major primary plus an optional latent sensor defect" — and `tools/faults.py`
+    read it as `f.hazard == 2.0e-5`, as `kind == "latent_then_acute" or hazard == 2.0e-4`, and as
+    `kind == "instrument"`, with `2.0e-5`/`2.0e-4` copied into the file as constants. The postures
+    declare their pools now, the class names are defined by the *nominal* posture's own baselines,
+    and `tools/faults.py` evaluates the declaration through `check_vehicle.in_seeding_pool` — the
+    linter is the bottom of the tool graph, so a rule written in `faults` could not be held by the
+    check that is supposed to hold it.
+
+    Four rules: the selector names only `kinds` and `hazards`; every kind and class is one the
+    corpus declares; a posture that promises a seed declares a pool; and **every pool matches at
+    least one fault** — a selector that matches nothing can never place the seed the posture says it
+    will. The refactor is behaviour-preserving, which the round verified by running the scheduler
+    before and after against all four schedules.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    report = linter.Report()
+    linter.check_seeding_pools(mission, VEHICLE, report)
+    assert report.refusals == [], report.refusals
+    postures = {p["id"]: p for p in mission["scenario_postures"]}
+    assert postures["nominal"]["seeds"] == {"guaranteed": {}, "optional": {}}
+    assert postures["degraded"]["seeds"] == {
+        "guaranteed": {"hazards": ["noncritical"], "kinds": ["latent_then_acute"]}
+    }
+    assert postures["crisis"]["seeds"] == {
+        "guaranteed": {"hazards": ["critical"]},
+        "optional": {"kinds": ["instrument"]},
+    }
+    # The class names are the nominal posture's rates, and the pools select real faults with them.
+    baselines = {
+        "critical": postures["nominal"]["critical_hazard_per_h"],
+        "noncritical": postures["nominal"]["noncritical_hazard_per_h"],
+    }
+    assert baselines == {"critical": 2.0e-5, "noncritical": 2.0e-4}, baselines
+
+    def refusal(name: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        path = definition / "mission.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    # A promise with no pool.
+    refusal(
+        "no-pool",
+        "    seeds:\n      guaranteed:\n        hazards: [critical]\n",
+        "    seeds:\n",
+        "is not declared, and this posture promises",
+    )
+    # A selector nobody reads.
+    refusal(
+        "unknown-selector",
+        "      guaranteed:\n        hazards: [critical]\n",
+        "      guaranteed:\n        classes: [critical]\n",
+        "selects by ['classes'], and the only selectors are `kinds` and `hazards`",
+    )
+    # A pool that matches nothing.
+    refusal(
+        "empty-pool",
+        "      guaranteed:\n        hazards: [critical]\n",
+        "      guaranteed:\n        kinds: [no_such_kind]\n",
+        "which is not a fault kind any policy declares",
+    )
+    # A class name the nominal posture does not define.
+    refusal(
+        "unknown-class",
+        "      guaranteed:\n        hazards: [critical]\n",
+        "      guaranteed:\n        hazards: [catastrophic]\n",
+        "and the classes are ['critical', 'noncritical']",
+    )
+    # And the nominal posture itself, which defines the classes: remove it and nothing can.
+    refusal(
+        "no-nominal",
+        "  - id: nominal\n",
+        "  - id: nominal_renamed\n",
+        "declares no `nominal` posture",
+    )
+
+
 def test_the_linter_links_every_failure_chain_to_a_fault(tmp_path):
     """The experiment's fifteen stories named their causes in prose, and a tool said so.
 
