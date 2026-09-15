@@ -742,7 +742,7 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # gave `bus_b` a source, so it owes a rule like every other `algebraic` state without one. The
     # assertion below is what keeps the class *declared* rather than deleted — if a state falls
     # into it again, `no_input` moves and this fails.
-    assert (counted_more, sentinel, no_input) == (25, 13, 0), (counted_more, sentinel, no_input)
+    assert (counted_more, sentinel, no_input) == (26, 13, 0), (counted_more, sentinel, no_input)
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -4712,7 +4712,9 @@ def test_the_linter_refuses_a_gate_template_that_cannot_expand(tmp_path):
     path = definition / "domains" / "power" / "commands.yaml"
     text = path.read_text()
     start = text.index("      load:\n        type: enum")
-    end = text.index("      state: {type: enum, values: [on, off]}", start)
+    # The vocabulary is quoted because YAML 1.1 reads an unquoted `on`/`off` as a boolean; this
+    # fixture only needs to find where the `load` schema ends.
+    end = text.index('      state: {type: enum, values: ["on", "off"]}', start)
     path.write_text(
         text[:start]
         + "      load: {type: enum, values: [any id in components.yaml#loads]}\n"
@@ -6356,13 +6358,15 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
-    assert len(buckets["value"]) == 28
+    # One more moved in with the pump: its `on` mapping is an owed rated speed, so what blocks
+    # `pump_1_speed_rpm` is named to a field rather than to the code that would drive it.
+    assert len(buckets["value"]) == 29
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
     # coupling, and `instrumentation_power`, `bus_tie_closed` and `thruster_valve` each have every
     # input declared. `load_shed_class` followed its own edge into the table form.
-    assert len(buckets["edge"]) == 8
+    assert len(buckets["edge"]) == 7
     assert len(buckets["ready"]) == 15
 
 
@@ -8883,7 +8887,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 277 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 281 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -9023,7 +9027,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "277", "the view must agree with the headline count"
+    assert owed == "281", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -9652,6 +9656,14 @@ def test_a_command_value_says_which_argument_carries_the_value():
             if entry.get("constant") is not None:
                 constants.append(f"{where}.{entry['verb']}")
                 continue
+            if entry.get("computed") is not None or entry.get("constant") is not None:
+                # A state the command changes rather than assigns, and a value the same every
+                # time: neither has a mapping to check.
+                continue
+            if "maps" not in entry:
+                # An entry that declares only a key: the values are the state's own.
+                assert entry.get("key"), (where, entry)
+                continue
             values = set()
             for match in re.findall(r"enum\[([^\]]*)\]", str(state.get("unit") or "")):
                 values.update(v.strip() for v in match.split(","))
@@ -9676,7 +9688,9 @@ def test_a_command_value_says_which_argument_carries_the_value():
                     "cannot tell two modes apart cannot report either"
                 )
                 targets[key] = str(source)
-    assert declared == 9, declared  # eight states, one of them with two commands
+    # Five quantity states joined the eight mode ones this round, and one keyed state declares
+    # nothing but its key.
+    assert declared == 17, declared
     assert sorted(constants) == [
         "rcs.thruster_valve.isolate_rcs_manifold",
         "structure.pyro_fired.execute_event",
@@ -9774,4 +9788,107 @@ def test_the_linter_refuses_a_command_whose_effect_is_not_declared(tmp_path):
         '      - "logic:the crew throw them, and no verb writes a switch — which is what `controls.switches` being a crew-only surface means"\n',
         '      - "command:set_display_mode"\n',
         "declares none, and 'set_display_mode' is a `command:` mover",
+    )
+
+
+def test_no_vocabulary_is_written_in_a_word_yaml_reads_as_a_boolean(tmp_path):
+    """`values: [on, off]` is the list `[True, False]`, and the fleet is what reads it.
+
+    **YAML 1.1 counts `on`, `off`, `no` and `yes` as booleans.** Eleven arguments across nine verbs
+    declared a two-valued vocabulary that way, and every consequence was at the fleet-facing
+    surface: `state.json`'s capability snapshot publishes the schema so a machine can build a call
+    and it published `true`/`false`; `HELP.md` — the whole of what a fleet is told before it calls —
+    rendered ``- `state`: one of: True, False`` beside prose saying "Switch the power amplifier on or
+    off"; and `set_o2_flow` and `set_o2_source` were worse, because their `flow` vocabulary is
+    `off, low, nominal, high` and `off` became `False` *in the middle of a list* beside three
+    strings.
+
+    The trap was met twice before it was understood. Round 30 found it in a mapping *target* —
+    `safe: off` against an engine vocabulary that contains `off`, where `str(False)` is not `'off'`
+    — and fixed the line. This round met it in the pump's own `maps` keys, and the crash that
+    followed (`'bool' object has no attribute 'endswith'`, from a convention walk that expected a
+    string key) is what showed it is a property of the format rather than of a line: two positions
+    are vocabularies the corpus reads and prints as text — a `values` member and a mapping key — and
+    a boolean *value* is neither, which is why this is not "no booleans".
+
+    The linter also had to stop crashing on it. A refusal that never gets printed because a later
+    walk raised is the failure `test_an_unloadable_vehicle_refuses_instead_of_crashing` exists for,
+    so the walk is guarded and the refusal is reported before any of them run.
+    """
+    words: list[str] = []
+    for path in sorted(VEHICLE.rglob("*.yaml")):
+        document = yaml.safe_load(path.read_text())
+
+        def walk(node: object, where: str, named: str) -> None:
+            # `named` is passed rather than closed over: a closure that reads the loop variable is
+            # the binding ruff's B023 flags, and here it would also be a claim about *when* `walk`
+            # runs rather than about what it reads.
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if isinstance(key, bool):
+                        words.append(f"{named}:{where}: key {key!r}")
+                    walk(value, f"{where}.{key}", named)
+            elif isinstance(node, list):
+                for value in node:
+                    if where.endswith("values") and isinstance(value, bool):
+                        words.append(f"{named}:{where}: {value!r}")
+                    walk(value, f"{where}", named)
+
+        walk(document, "", path.name)
+    assert not words, "a word YAML read as a boolean:\n" + "\n".join(words)
+
+    # The nine verbs the round fixed, read back through the registry rather than listed: every
+    # two-valued `state` vocabulary must be words.
+    two_valued = []
+    for path in sorted((VEHICLE / "domains").glob("*/commands.yaml")):
+        for verb in (yaml.safe_load(path.read_text()) or {}).get("commands") or []:
+            for name, spec in (verb.get("argument_schema") or {}).items():
+                if isinstance(spec, dict) and name == "state" and spec.get("type") == "enum":
+                    values = [str(v) for v in spec.get("values") or []]
+                    if set(values) == {"on", "off"} or set(values) == {"on", "off", "standby"}:
+                        two_valued.append(f"{verb['verb']}.{name}")
+    assert len(two_valued) == 9, two_valued
+    # And what HELP.md renders is those words rather than Python's repr of a boolean.
+    generated = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "generate_help.py"), "--dir", str(VEHICLE)],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    assert "one of: on, off" in generated
+    assert "one of: True, False" not in generated
+    assert "one of: off, low, nominal, high" in generated
+
+    def refusal(name: str, rel: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / rel
+        text = path.read_text()
+        assert text.count(old) == 1, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    refusal(
+        "vocabulary",
+        "domains/thermal/commands.yaml",
+        '      pump: {type: enum, values: [pump_1, pump_2, pump_lm]}\n'
+        '      state: {type: enum, values: ["on", "off"]}',
+        "      pump: {type: enum, values: [pump_1, pump_2, pump_lm]}\n"
+        "      state: {type: enum, values: [on, off]}",
+        "the vocabulary this argument publishes to the fleet is a boolean",
+    )
+    refusal(
+        "mixed-list",
+        "domains/eclss/commands.yaml",
+        'values: ["off", "low", "nominal", "high"]',
+        "values: [off, low, nominal, high]",
+        "the vocabulary this argument publishes to the fleet is a boolean",
+    )
+    # A mapping key, which the linter crashed on before this round.
+    refusal(
+        "key",
+        "domains/thermal/components.yaml",
+        '          "on": UNCONFIGURED\n          "off": 0\n',
+        "          on: UNCONFIGURED\n          off: 0\n",
+        "as a key. YAML 1.1 reads",
     )
