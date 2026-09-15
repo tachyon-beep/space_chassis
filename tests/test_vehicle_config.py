@@ -631,17 +631,23 @@ def test_every_state_in_a_declared_order_is_actually_advanced():
         for line in result.stdout.splitlines()
         if "declares a state_order over" in line
     )
-    # One, after the narrowing. `radiator_reject` is fixed — both heat inputs now advance
-    # `zone_radiator_t`, which is what the node's own order says comes first — and the other three
-    # have an advanced head: `body_rate` is driven by `E-RCS-DYN` and `fuel_cell_power_w` by the
-    # cell's own edges, with `attitude` and `source_converter_v` derived from them.
-    assert reported == ["coolant_flow"], reported
+    # **None, and the last one is worth recording.** `radiator_reject` was fixed when both heat
+    # inputs came to advance `zone_radiator_t`, which is what the node's own order says comes first;
+    # three others have an advanced head (`body_rate` is driven by `E-RCS-DYN`, `fuel_cell_power_w`
+    # by the cell's own edges, and `attitude` and `source_converter_v` are derived from them); and
+    # `coolant_flow` — whose `state_order` names `pump_1_speed_rpm` and whose only advancing edge
+    # was the bus — was closed by `E-CMD-PUMP`, the command edge that gives the pump a driver. That
+    # edge owes a figure rather than carrying one, so the *state* still owes an edge in the plant's
+    # build order, but the node's declared order is now advanced as declared.
+    assert reported == [], reported
 
-    # And the one that is left is not an edge problem: `E-BUS-PUMP`'s own relation says "a DC
-    # motor's speed follows its terminal voltage, and a centrifugal pump's flow follows its speed,
-    # so the flow tracks the bus linearly" — the edge gives a *flow*, correctly, and the pump's
-    # speed is commanded by `set_coolant_pump`, which no edge carries.
-    assert "no inbound edge advances 'pump_1_speed_rpm'" in result.stdout
+    # And the pump's own notice is gone with it, which is the closure this round made: the node
+    # reported "no inbound edge advances 'pump_1_speed_rpm'" because `E-BUS-PUMP`'s relation gives a
+    # *flow* ("a DC motor's speed follows its terminal voltage, and a centrifugal pump's flow
+    # follows its speed") while the speed itself is commanded by `set_coolant_pump` — and no edge
+    # carried that. `E-CMD-PUMP` does, and it carries no figure: the notice is gone and the figure
+    # is owed instead, which is what the plant's own build order still reports.
+    assert "no inbound edge advances 'pump_1_speed_rpm'" not in result.stdout
 
 
 def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
@@ -1103,6 +1109,104 @@ def test_the_linter_holds_the_posture_that_permits_action(tmp_path):
     path.write_text(text[:start] + text[end:])
     out = run_linter(definition).stdout
     assert "mission.yaml:posture recovery: is the source of no transition" in out, out[-1200:]
+
+
+def test_the_linter_reaches_every_node_a_command_moves(tmp_path):
+    """The command surface is declared in two halves, and nothing joined them.
+
+    A state says a verb writes it — `moved_by: command:<verb>`, eleven declarations — and the graph
+    says where the executive's signal arrives: the `E-CMD-*` family, nine edges from
+    `command_executive` into the nodes those states live on. The two sides were compared to nothing,
+    and `power`'s `bus_tie_closed` is what the join found: it declares `command:set_bus_tie` and
+    **no edge landed on `bus_tie` from the executive at all**, so the state a fleet commands had no
+    path from the command surface into the graph.
+
+    The same round closed a debt the corpus had already written about the *other* half of the
+    problem: a node-level check reported that `coolant_flow`'s `state_order` names
+    `pump_1_speed_rpm` and "no inbound edge advances" it — the pump's driver is a command, and the
+    debt this folder has carried since the thermal domain landed said so. `E-CMD-PUMP` closes it,
+    and it costs one owed figure rather than none: `set_coolant_pump` carries on/off, and the speed
+    a commanded-on pump runs at is published nowhere, so the edge's sensitivity is `UNCONFIGURED`
+    and the plant still classes the state as owing an edge — the path exists and the number does
+    not. Two things about that edge are load-bearing and were learned by getting them wrong:
+    `advances` names the one state it drives (an edge without it counts as an input for *every*
+    state on the node, and `advance()` refuses a state when any of its inputs is unusable, which
+    took `coolant_flow_kg_s` out of the ready class on the first attempt), and adding it does **not**
+    change the derived schedule, because `command_executive` is not a scheduled node at all.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    report = linter.Report()
+    linter.check_command_reach(VEHICLE, coupling, report)
+    assert report.refusals == [], report.refusals
+    commanded = {
+        str(e["to"]) for e in coupling["edges"]
+        if str(e.get("from")) == "command_executive" and e.get("kind") == "discrete"
+    }
+    assert commanded == {
+        "load_shed_state", "bus_tie", "cabin_regulator", "engine_main", "rcs_valves", "link",
+        "nav_state", "guidance", "coolant_flow", "instrumentation", "structure_config",
+    }, sorted(commanded)
+    # Every state that says a command moves it lives on one of those nodes.
+    for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        for state in (yaml.safe_load(path.read_text()) or {}).get("state") or []:
+            movers = [m for m in (state.get("moved_by") or []) if str(m).startswith("command:")]
+            if movers and state.get("node") != "internal":
+                assert state["node"] in commanded, (state["id"], state["node"])
+    # And the pump's driver is the one edge that advances a named state.
+    pump = [
+        e for e in coupling["edges"]
+        if str(e.get("advances")) == "pump_1_speed_rpm"
+    ]
+    assert len(pump) == 1 and pump[0]["id"] == "E-CMD-PUMP", pump
+    assert pump[0]["sensitivity"]["value"] == "UNCONFIGURED"
+
+    def refusal(name: str, rel: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        path = definition / rel
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {rel}: {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    # The tie edge removed, so the state is commanded into a node nothing reaches.
+    refusal(
+        "tie-unreached",
+        "coupling.yaml",
+        "  - id: E-CMD-TIE\n    from: command_executive\n    to: bus_tie\n",
+        "  - id: E-CMD-TIE\n    from: command_executive\n    to: bus_tie_x\n",
+        "which no `E-CMD-*` edge reaches",
+    )
+    # The edge degraded from a signal to something the check does not count.
+    refusal(
+        "tie-not-discrete",
+        "coupling.yaml",
+        "  - id: E-CMD-TIE\n    from: command_executive\n    to: bus_tie\n    kind: discrete\n",
+        "  - id: E-CMD-TIE\n    from: command_executive\n    to: bus_tie\n    kind: rate\n",
+        "which no `E-CMD-*` edge reaches",
+    )
+    # A verb moved off the executive and onto another node.
+    refusal(
+        "wrong-source",
+        "coupling.yaml",
+        "  - id: E-CMD-ATM\n    from: command_executive\n",
+        "  - id: E-CMD-ATM\n    from: cmd_executive\n",
+        "which no `E-CMD-*` edge reaches",
+    )
+    # And the transfer: a commanded state moved to a node the executive does not reach.
+    refusal(
+        "state-moved",
+        "domains/power/components.yaml",
+        "    node: bus_tie\n",
+        "    node: bus_b\n",
+        "which no `E-CMD-*` edge reaches",
+    )
 
 
 def test_the_linter_holds_what_each_posture_seeds(tmp_path):
