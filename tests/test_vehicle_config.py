@@ -5267,6 +5267,15 @@ def test_the_reference_plant_stops_at_a_named_debt(tmp_path):
     states, so the first one printed is the first thing to supply. A loader that tolerated a
     missing field would be a loader that had decided a default, which is the one thing this folder
     exists to prevent.
+
+    **The refusals are not supposed to be fatal, and this test used to pin the fatal shape.** It
+    asserted that the first tick "stops at the first thing it cannot compute" and that the stop named
+    a state and a reason — so it was a test of a report about a tick that had computed nothing.
+    `plant.md` §9's step 4 is a loop over every node with no `break` in it, and "writes are staged,
+    then committed": a producer that cannot produce stages nothing and the tick reaches everything
+    after it. Fixing that turned one named stop into forty-four named debts, and this now holds the
+    stronger property from both ends — the tick reaches the last state in its order, and every gap it
+    records names a place in the corpus and a reason with words in it.
     """
     result = subprocess.run(
         [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--readiness"],
@@ -5309,17 +5318,195 @@ def test_the_reference_plant_stops_at_a_named_debt(tmp_path):
         "a state the schedule reaches is listed after one advanced with its domain"
     )
 
-    # The first tick stops at a named thing in a named file, and says why. That *shape* is the
-    # property under test — which thing it stops at is a fact about the configuration and moves
-    # every time a value lands. A stop that named nothing would be a loader that gave up silently;
-    # one that named a file that does not exist would be a stop nobody could act on.
-    stopped = result.stdout.split("stops at the first thing it cannot compute:")[1]
-    named = re.search(r"domains/[\w/.-]+\.yaml:state \w+", stopped)
-    assert named, f"the stop names no state: {stopped[:400]!r}"
-    where = named.group(0).split(":state")[0]
-    assert (VEHICLE / where).exists(), f"the stop names {where}, which is not a file it read"
-    why = stopped.split(named.group(0), 1)[1]
-    assert len(why.split()) > 5, f"the stop names a place but not a reason: {why[:200]!r}"
+    # The first tick, run. Every gap names the state it stopped, what kind of thing the debt is, and
+    # the node or edge the debt is *on* — because nine of the forty-four are an edge's missing
+    # sensitivity rather than the state's own definition, and naming the state's node for those sends
+    # the reader to the wrong file. Both names are checked against the corpus rather than against a
+    # list here: the state must be declared by the domain that owns it, and an edge must be in
+    # `coupling.yaml`. Which states those are moves as values land, so the rest is shape.
+    tick = result.stdout.split("First tick, in §9's order")[1]
+    scheduled, sentinel_count = re.search(
+        r"(\d+) states over (\d+) nodes, then the (\d+) on", tick
+    ).group(1, 3)
+    advanced, reached, could_not = re.search(
+        r"(\d+) of (\d+) states advanced, (\d+) could not", tick
+    ).group(1, 2, 3)
+    assert int(reached) == int(scheduled) + int(sentinel_count), (
+        "the tick's own two figures for how many states it walks disagree"
+    )
+    assert int(advanced) + int(could_not) == int(reached), "advanced + could not is not the whole"
+    assert int(could_not) > 0, "a tick that cannot advance anything is not the case under test"
+    coupling_edges = {
+        str(e["id"]) for e in (yaml.safe_load((VEHICLE / "coupling.yaml").read_text()) or {})["edges"]
+    }
+    states_by_domain = {
+        path.parent.name: {
+            str(s["id"]): str(s.get("node"))
+            for s in (yaml.safe_load(path.read_text()) or {}).get("state") or []
+        }
+        for path in sorted((VEHICLE / "domains").glob("*/components.yaml"))
+    }
+    gap_rows = [
+        line.split()
+        for line in tick.splitlines()
+        if re.search(r"(?:node|coupling\.yaml:edge|edge) ", line) and len(line.split()) > 4
+    ]
+    assert gap_rows, f"no gap names a place: {tick[:400]!r}"
+    for domain, state_id, kind, name, *reason in gap_rows:
+        assert reason, f"a gap names a place but not a reason: {domain} {state_id}"
+        if kind == "edge":
+            assert name in coupling_edges, f"the gap names edge {name}, not in coupling.yaml"
+        else:
+            assert kind == "node", f"{state_id} names {kind!r}, neither a node nor an edge"
+            declared = states_by_domain.get(domain, {})
+            assert state_id in declared, f"{state_id} is listed under {domain}, which does not declare it"
+            assert declared[state_id] == name, (
+                f"{state_id} is reported on {name}, and {domain} declares it on {declared[state_id]}"
+            )
+    # And the two figures answer different questions: a state's own declaration can be complete
+    # while the driver's is not, so the split has to partition the gaps rather than double-count.
+    own, reads_one = re.search(r"(\d+) are the debt and (\d+) are states that read one", tick).group(
+        1, 2
+    )
+    assert int(own) + int(reads_one) == int(could_not), "the split does not partition the gaps"
+    assert int(reads_one) > 0, "every gap its own root is not the case under test"
+
+
+def test_a_tick_accounts_for_every_state_in_the_order(tmp_path):
+    """§9's step 4 walks the schedule and stops for nothing, and the sentinel is in the walk.
+
+    `step()` raised out of the loop instead. The first `algebraic` state in the order ended the tick,
+    so a first tick advanced **nothing at all** — and the fifty-five states on the `internal`
+    sentinel were not merely behind that stop, they were unreachable by construction: `internal` is
+    not a node in `coupling.yaml#nodes`, so no entry in `world.schedule` carries them and the loop
+    could not see one of them however far it got. Every mode, latch and accumulator the command
+    surface writes was advanced by nothing, while `components.yaml#internal_order` declared the
+    order to advance them in — a field the linter requires, validates, and reports nine domains
+    owing, with no reader that advanced anything.
+
+    The property is that a tick *accounts for* every state: each one either advanced or is in the
+    gap list, and the two together are the whole order. A state in neither is a state nothing
+    looked at, which is the failure this round is about and the one a report cannot show by listing
+    what it did find.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    sequence = [s for node in world.schedule for s in world.states_on(node)]
+    sequence += world.sentinel_states()[0]
+    assert len(sequence) == len(world.states), (
+        "the order step 4 walks is not every state in the configuration"
+    )
+
+    gaps: list = []
+    values = plant.initial_values(world)
+    committed = plant.step(world, values, 1.0 / 50.0, gaps)
+    gapped = {g.state.id for g in gaps}
+
+    # The sentinel is reached, and this is not a formality: before the second pass existed, none of
+    # these states was in `sequence` at all.
+    sentinel = world.sentinel_states()[0]
+    assert sentinel, "no state is on the sentinel, so this test proves nothing about it"
+    assert any(s.id in gapped or s.id in committed.get("internal", {}) for s in sentinel), (
+        "the tick did not reach the sentinel"
+    )
+
+    unaccounted = [
+        s.id
+        for s in sequence
+        if s.id not in gapped
+        and s.node not in committed
+        and s.id not in committed.get("internal", {})
+    ]
+    assert not unaccounted, f"the tick recorded no outcome for {unaccounted[:6]}"
+
+    # And the tick ran to the end: the last state in the frozen order reached one of the two
+    # outcomes, rather than being something the loop never arrived at.
+    last = sequence[-1]
+    assert (
+        last.id in gapped or last.id in committed.get("internal", {}) or last.node in committed
+    ), f"the tick stopped before the last state in §9's order, {last.id}"
+
+
+def test_a_declared_internal_order_is_the_order_the_plant_advances_them(tmp_path):
+    """The declaration has to decide the order, and where there is none the plant must say so.
+
+    Nine domains put more than one state on the sentinel and all nine owe an `internal_order`, which
+    is why the linter reports it as a debt rather than refusing it — nothing in the corpus says what
+    the order is. So the interesting half of this is the other one: where the declaration is absent
+    the frozen lexicographic tiebreak decides, and `sentinel_states()` returns the domains it did
+    that for, so the report can name them. A silent alphabetical decision is exactly what the
+    `state_order` rule exists to prevent on a node, and the sentinel has no edges to second-guess it.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    ordered, alphabetised = world.sentinel_states()
+    assert len(ordered) == len([s for s in world.states if s.node == "internal"])
+    assert alphabetised, "every domain declares an order, so the tiebreak path is untested here"
+
+    # Break a copy: give one of those domains the reverse of the order the tiebreak chose. The
+    # declaration must win, or the field is decoration.
+    fixture = copy_definition(fixture_dir(tmp_path, "sentinel_order_"))
+    domain = alphabetised[0]
+    path = fixture / "domains" / domain / "components.yaml"
+    components = yaml.safe_load(path.read_text())
+    mine = sorted(
+        (str(s["id"]) for s in components["state"] if str(s.get("node")) == "internal"), reverse=True
+    )
+    assert len(mine) > 1, f"{domain} has one sentinel state, so reversing it proves nothing"
+    components["internal_order"] = mine
+    path.write_text(yaml.safe_dump(components, sort_keys=False))
+
+    broken = plant.load_world(fixture)
+    got, still_alphabetised = broken.sentinel_states()
+    assert [s.id for s in got if s.domain == domain] == mine, (
+        "the declared `internal_order` did not decide the order the plant advances them in"
+    )
+    assert domain not in still_alphabetised, (
+        "a domain that declares its order is still listed as decided by the alphabet"
+    )
+    # And the linter is satisfied by the declaration it asked for, which is what makes the two tools
+    # readers of one field rather than two fields with one name.
+    result = run_linter(fixture)
+    assert result.returncode == 0, result.stdout[-1500:]
+    assert f"domains/{domain}/components.yaml:internal_order" not in result.stdout
+
+
+def test_the_sentinel_cannot_be_declared_as_a_coupling_node(tmp_path):
+    """`internal` is where a state goes when no node advances it. It cannot also be a node.
+
+    This is the refusal the fix owes rather than the one the defect owed, and it exists because the
+    fix is what makes the mistake available: `step()` now walks the schedule and *then* advances the
+    sentinel's states, so declaring `internal` in `coupling.yaml#nodes` would put those states in
+    both passes and advance each of them twice per tick — once at the node's position in the order
+    and once in the second pass. Nothing refused it before because there was no second pass to
+    double.
+
+    The general form is the one worth holding: a state is advanced exactly once per tick, and the
+    sentinel is the only node name that is not a node.
+    """
+    fixture = copy_definition(fixture_dir(tmp_path, "sentinel_node_"))
+    coupling = yaml.safe_load((fixture / "coupling.yaml").read_text())
+    coupling["nodes"]["internal"] = {
+        "kind": "state",
+        "domain": "avionics",
+        "note": "declared as a node, which is what the plant must refuse",
+    }
+    (fixture / "coupling.yaml").write_text(yaml.safe_dump(coupling, sort_keys=False))
+
+    result = run_linter(fixture)
+    assert result.returncode == 1, result.stdout[-1500:]
+    assert "coupling.yaml:node internal" in result.stdout
+    assert "advance twice per tick" in result.stdout
+
+    # And the plant really would, which is why the refusal is not a style rule: the same states are
+    # in the schedule and on the sentinel at once.
+    plant = _plant()
+    world = plant.load_world(fixture)
+    assert "internal" in world.schedule
+    assert any(s.node == "internal" for s in world.states_on("internal"))
+    assert world.sentinel_states()[0], (
+        "the sentinel pass would be empty, so the re-advance is not real"
+    )
 
 
 def test_the_reference_plant_emits_a_frame_in_the_declared_shape():
@@ -5941,8 +6128,8 @@ def _linter():
 def test_the_stock_integrator_reads_its_driver():
     """The vehicle's most load-bearing piece of simulation code had never executed, and was wrong.
 
-    The schedule stops at the first `algebraic` state — long before it reaches any of the 24 stock
-    states — so the integrator every consumable in the mission depends on was written, reviewed and
+    The schedule stopped at the first `algebraic` state, long before it reached any of the 24 stock
+    states, so the integrator every consumable in the mission depends on was written, reviewed and
     never run. Handed `lm_cabin_o2_kg` it returned the same 117.89792 kg whether one crew member was
     aboard or three, because it summed `sensitivity * dt` over every incoming edge and never read a
     driver. The three edges it summed were `116.86 Pa per K` (a lag relation between zone temperature
@@ -5951,8 +6138,12 @@ def test_the_stock_integrator_reads_its_driver():
     pascals-per-kelvin to kilograms-per-hour and calling the result a mass is not an approximation;
     it is a dimension error wearing a number.
 
-    The three computable edges are exercised here by direct call, because that is the only way to
-    reach them: nothing in the schedule does.
+    That stop is gone: a tick now walks all 134 states and records what it cannot advance, so the
+    integrator is reached by the order rather than only by a hand-written call. It still cannot be
+    *exercised* from the live corpus, because every stock's driver is itself gapped — the tick
+    reaches `lm_cabin_o2_kg` and gives up on it for a reason that belongs to the other state. The
+    direct call is therefore still how these three edges are run, and the reason is now a named gap
+    rather than a schedule that never arrived.
     """
     plant = _plant()
     world = plant.load_world(VEHICLE)
@@ -6009,7 +6200,7 @@ def test_the_stock_integrator_refuses_a_missing_driver():
 def test_the_linter_and_the_plant_share_one_stock_flux_rule():
     """The plant's refusals were unreachable, so eight structural defects were invisible.
 
-    The schedule stops at the first `algebraic` state, long before it reaches a stock, so no tool
+    The schedule stopped at the first `algebraic` state, long before it reached a stock, so no tool
     ever got to the integrator that refuses these edges. Eight of the vehicle's fourteen stock edges
     cannot be integrated as written and **the linter, `--strict` and the debt count all said nothing
     about them.** A defect that only a code path nobody reaches can see is a defect nobody has.
@@ -6017,7 +6208,8 @@ def test_the_linter_and_the_plant_share_one_stock_flux_rule():
     Both tools now call `stock_flux_basis`, in the pattern `derive_schedule` already set, so a rule
     about what a stock edge means cannot come apart from the rule that checks it. This test holds
     that in place from both ends: the linter reports each edge as a debt *and* the plant refuses the
-    same edge, from the same function.
+    same edge, from the same function — which the tick now reaches on its own, since a tick that
+    carries on gets to every edge's state instead of ending at the first one it cannot compute.
     """
     plant = _plant()
     from check_vehicle import stock_flux_basis
