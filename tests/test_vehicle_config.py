@@ -8808,7 +8808,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 269 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 271 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -8948,7 +8948,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "269", "the view must agree with the headline count"
+    assert owed == "271", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -9013,3 +9013,130 @@ def test_every_vehicle_yaml_parses():
         except yaml.YAMLError as exc:  # noqa: PERF203 - one bad file should not hide the rest
             broken.append(f"{path.relative_to(VEHICLE)}: {str(exc).splitlines()[0]}")
     assert not broken, "unparseable vehicle files:\n" + "\n".join(broken)
+
+
+def test_every_reserve_floor_is_a_level_the_command_can_set():
+    """Fifteen floors, nine-then-eleven resources, and nothing that had ever joined them.
+
+    `reserve_floor` is the whole of this vehicle's reserve policy and it was read by no tool: the
+    level lives on a threshold in a domain's `profiles.yaml`, the resource lives in
+    `set_reserve_policy`'s `resource` enum, and the gate variable above the two —
+    `reserve_floor_<resource>_enable` — is what a fleet opens and closes. The join is
+    `floor_resource`, and this holds it from the corpus's side the way
+    `test_every_stock_initial_is_grounded` holds `initial_source`: every floor names a resource the
+    command offers, the resource's declared unit is the unit of the channel the threshold monitors,
+    and every resource the command offers has a floor behind it.
+
+    The unit is the half that is easy to lose. Eight of the fifteen floors are on a percent
+    channel and five on a kg channel, so `floor_kg` — the argument's name before this round — asked
+    four of the resources for a number in a unit they are not measured in. The registry comes from
+    the command file and the units come from `channels.yaml` through the linter's own
+    `ChannelIndex`, so neither side of this assertion is a copy of the check.
+    """
+    linter = _linter()
+    commands = yaml.safe_load((VEHICLE / "domains" / "consumables" / "commands.yaml").read_text())
+    verb = next(v for v in commands["commands"] if v.get("verb") == "set_reserve_policy")
+    spec = verb["argument_schema"]["resource"]
+    resources = [str(v) for v in spec["values"]]
+    units = {str(k): str(v) for k, v in spec["floor_units"].items()}
+    assert sorted(units) == sorted(resources), (
+        "the units and the resources are two lists of the same thing and they disagree"
+    )
+
+    channels = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    registry = linter.check_channels(channels, linter.Report())
+    index = linter.ChannelIndex(registry)
+
+    floors: dict[str, list[str]] = {}
+    for path in sorted((VEHICLE / "domains").glob("*/profiles.yaml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        for threshold in doc.get("thresholds") or []:
+            if "reserve_floor" not in threshold:
+                continue
+            tid = threshold["id"]
+            where = f"{path.parent.name}/{tid}"
+            resource = threshold.get("floor_resource")
+            assert resource, f"{where} floors a resource it does not name"
+            assert resource in resources, f"{where} names {resource!r}, which the command does not offer"
+            row = index.row(str(threshold["point"]))
+            assert row is not None, f"{where} monitors an unregistered channel"
+            assert row["unit"] == units[resource], (
+                f"{where} floors {threshold['point']} in {row['unit']!r} while the command "
+                f"declares {resource!r} in {units[resource]!r}"
+            )
+            assert isinstance(threshold["reserve_floor"], (int, float)), where
+            floors.setdefault(resource, []).append(where)
+
+    # The forwarding direction. A resource the verb offers and no threshold floors is a gate
+    # variable over a level that does not exist — `o2_lm` and `pressurant_he` were exactly that
+    # until this round, and they are two debts now rather than two silences.
+    unfloored = sorted(set(resources) - set(floors))
+    assert unfloored == ["o2_lm", "pressurant_he"], (
+        f"the resources with no floor changed: {unfloored}. Each one is a debt in the linter's "
+        "report, and this assertion is what stops the list drifting into a silence"
+    )
+    # And the link is two-way rather than a name that happens to appear: two domains floor the
+    # absorbers, and both of them name the same resource.
+    assert floors["absorber_capacity_csm"] == [
+        "consumables/absorber_reserve_20",
+        "eclss/co2_absorber_low",
+    ]
+    assert len(floors["prop_main"]) == 3, "apollo's 20/10/5 ladder is three floors, not one"
+
+
+def test_the_linter_refuses_a_floor_whose_resource_half_disagrees(tmp_path):
+    """The check held, from three directions, because the join has three ways to be wrong.
+
+    A floor that names no resource is a level no verb can reach; a floor naming a resource the
+    command does not offer is a level nothing can set; and a floor whose unit is not the unit of
+    the channel it monitors is a number whose meaning depends on which file the reader opened.
+    The third is the one with a defect behind it — the argument was named `floor_kg` while four of
+    its resources are measured in percent — and it is refused at the *threshold* rather than at the
+    argument, because the argument can only be judged against the channels.
+    """
+
+    def refusal(name: str, relative: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        path = definition / relative
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        result = run_linter(definition)
+        assert result.returncode == 1, f"{name}: the linter composed on a broken corpus"
+        assert needle in result.stdout, f"{needle!r} did not fire:\n{result.stdout[-1500:]}"
+
+    commands = "domains/consumables/commands.yaml"
+    profiles = "domains/consumables/profiles.yaml"
+    # The link is absent.
+    refusal(
+        "unlinked",
+        profiles,
+        "    reserve_floor: 20\n    floor_resource: prop_main\n",
+        "    reserve_floor: 20\n",
+        "declares a `reserve_floor` and no `floor_resource`",
+    )
+    # The link names a resource the verb does not offer.
+    refusal(
+        "unknown-resource",
+        profiles,
+        "    floor_resource: prop_main\n",
+        "    floor_resource: propellant\n",
+        "names resource 'propellant', which the registry does not declare",
+    )
+    # The two halves disagree about the unit. Three thresholds floor `prop_main`, so the refusal
+    # is three refusals — one per threshold, which is where the unit can be read.
+    refusal(
+        "unit",
+        commands,
+        '          prop_main: "%"\n',
+        "          prop_main: kg\n",
+        "while `set_reserve_policy` declares 'prop_main' to be floored in 'kg'",
+    )
+    # And the argument may not be named for one of the units its resources are not all in.
+    refusal(
+        "argument-name",
+        commands,
+        "      floor: {type: number, minimum: 0}\n",
+        "      floor_kg: {type: number, minimum: 0}\n",
+        "is named for the unit 'kg'",
+    )
