@@ -5476,6 +5476,101 @@ def test_a_declared_internal_order_is_the_order_the_plant_advances_them(tmp_path
     assert f"domains/{domain}/components.yaml:internal_order" not in result.stdout
 
 
+def test_an_engine_cannot_run_where_it_says_it_cannot(tmp_path):
+    """Two adjacent fields contradicted each other, and the source quoted between them settled it.
+
+    `domains/propulsion/components.yaml#components.dps` carried both halves:
+
+    ```yaml
+        operating_band_pct: [10.5, 92.5]
+        non_operating_band_pct: [65, 92.5]
+    ```
+
+    The operating band **contains** the non-operating one. A fleet asking whether 75 % is
+    commandable got `yes` from the first field and `no` from the second, and neither field was read
+    by any tool. Three lines below them, the same entry's `source` says what the answer is — *"the
+    DPS experience report: 9,710 lbf operating maximum and 1,050 lbf minimum, 10:1 range, with
+    65-92.5 % a NON-OPERATING region"* — so the corpus quoted the sentence and contradicted it in
+    the same breath.
+
+    `thrust_curve` states the truth as three segments ([10.5, 65], [65, 92.5], [92.5, 100]) and was
+    the last block in the corpus that no tool named. So the fix is not only to split the band: each
+    segment declares `operating:` so the curve and the bands can be held against each other, which
+    is what gives the block a reader.
+
+    The `operating:` flag is a declaration rather than an inference from the `model` prose for the
+    reason `names:` and `vehicle_keys` are — the prose says "non-operating" in one segment and
+    "operating maximum" in another, and a rule that pattern-matched those words would be reading
+    English rather than the corpus.
+    """
+    propulsion = yaml.safe_load((VEHICLE / "domains" / "propulsion" / "components.yaml").read_text())
+    engine = next(c for c in propulsion["components"] if c.get("id") == "dps")
+
+    assert engine["operating_band_pct"] == [[10.5, 65], [92.5, 100]], engine["operating_band_pct"]
+    assert engine["non_operating_band_pct"] == [[65, 92.5]]
+    (stopped,) = engine["non_operating_band_pct"]
+    for low, high in engine["operating_band_pct"]:
+        assert not (low < stopped[1] and stopped[0] < high), (
+            f"the operating band [{low}, {high}] still contains the non-operating one"
+        )
+    assert "65-92.5 % a NON-OPERATING region" in engine["provenance"]["source"]
+
+    segments = propulsion["thrust_curve"]["segments"]
+    assert [s["band_pct"] for s in segments] == [[10.5, 65], [65, 92.5], [92.5, 100]]
+    assert [s["operating"] for s in segments] == [True, False, True]
+    assert [s["coefficients"] for s in segments] == ["UNCONFIGURED", None, "UNCONFIGURED"], (
+        "a non-operating segment has no law to owe and says so with null; the others owe one"
+    )
+
+    def broken(mutate) -> subprocess.CompletedProcess[str]:
+        """A fresh copy with one break applied, so the cases cannot refuse each other's messages."""
+        fixture = copy_definition(fixture_dir(tmp_path, "throttle_"))
+        path = fixture / "domains" / "propulsion" / "components.yaml"
+        doc = yaml.safe_load(path.read_text())
+        mutate(doc)
+        path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
+        return run_linter(fixture)
+
+    def dps_of(doc: dict) -> dict:
+        return next(c for c in doc["components"] if c.get("id") == "dps")
+
+    def segment(doc: dict, band: list) -> dict:
+        return next(s for s in doc["thrust_curve"]["segments"] if s["band_pct"] == band)
+
+    # The defect exactly as it stood, and the curve caught one level down for saying the same thing.
+    result = broken(lambda d: dps_of(d).update(operating_band_pct=[[10.5, 92.5]]))
+    assert result.returncode == 1, result.stdout[-1200:]
+    assert "able to run in a band it is declared unable to run in" in result.stdout
+    assert "the same contradiction as the fields above, one level down" in result.stdout
+
+    # The middle segment claiming the engine runs there, and the two coefficient spellings.
+    result = broken(lambda d: segment(d, [65, 92.5]).update(operating=True, coefficients="UNCONFIGURED"))
+    assert "which no operating band covers" in result.stdout
+    assert "a hole wearing the same spelling as an answer" in broken(
+        lambda d: segment(d, [10.5, 65]).update(coefficients=None)
+    ).stdout
+    assert "a claim about combustion in a region the design excludes" in broken(
+        lambda d: segment(d, [65, 92.5]).update(coefficients=[0.0, 1.0])
+    ).stdout
+
+    # The segments have to tile: a gap leaves a commanded throttle undeclared, an overlap gives one
+    # two behaviours.
+    assert "a gap is a commanded throttle with no declared behaviour" in broken(
+        lambda d: segment(d, [65, 92.5]).update(band_pct=[66, 92.5])
+    ).stdout
+    assert "begins at 90" in broken(lambda d: segment(d, [92.5, 100]).update(band_pct=[90, 100])).stdout
+
+    # A segment that does not say whether the engine runs there, and the flat shape that made the
+    # contradiction invisible in the first place.
+    assert "nothing to be joined to" in broken(lambda d: segment(d, [10.5, 65]).pop("operating")).stdout
+    assert "the shape that let an operating band contain a non-operating one" in broken(
+        lambda d: dps_of(d).update(operating_band_pct=[10.5, 92.5])
+    ).stdout
+    assert "nothing says where this engine may be commanded" in broken(
+        lambda d: dps_of(d).pop("operating_band_pct")
+    ).stdout
+
+
 def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     """The resource taxonomy is the most-read block in the corpus that no tool had read.
 
