@@ -14,6 +14,7 @@ this must not become a reason the suite cannot run.
 from __future__ import annotations
 
 import contextlib
+import itertools
 import json
 import re
 import shutil
@@ -44,6 +45,23 @@ def run_linter(vehicle_dir: Path, strict: bool = False) -> subprocess.CompletedP
     if strict:
         argv.append("--strict")
     return subprocess.run(argv, capture_output=True, text=True, check=False)
+
+
+_FIXTURE_COUNTER = itertools.count()
+
+
+def fixture_dir(tmp_path: Path, prefix: str) -> Path:
+    """A directory for one broken-copy fixture, unique within the run.
+
+    Nine helpers in this file named their fixture `abs(hash((old, new))) % 10000`, and that is a
+    directory named by a *randomised* function: `hash` of a string is salted per process unless
+    `PYTHONHASHSEED` is set, and ten thousand buckets for fourteen fixtures collide about once in a
+    hundred runs. Two that collide share a destination and the second `shutil.copytree` raises
+    `FileExistsError` — which is not a wrong answer about the vehicle, it is a test that cannot
+    run, and it was recorded twice as an unreproduced flake before the traceback was caught. A
+    counter has no buckets and no salt, and it keeps the prefix a reader greps for.
+    """
+    return tmp_path / f"{prefix}{next(_FIXTURE_COUNTER)}"
 
 
 def copy_definition(destination: Path) -> Path:
@@ -2691,7 +2709,7 @@ def test_the_linter_refuses_an_alarm_inside_its_channel_s_band(tmp_path):
     """
 
     def refusal(old: str, new: str, needle: str) -> str:
-        definition = copy_definition(tmp_path / f"band{abs(hash((old, new))) % 10000}")
+        definition = copy_definition(fixture_dir(tmp_path, "band"))
         path = definition / "domains" / "power" / "profiles.yaml"
         text = path.read_text()
         assert old in text, f"the fixture no longer matches {old!r}"
@@ -2728,7 +2746,7 @@ def test_the_linter_refuses_a_range_it_cannot_read(tmp_path):
     """
 
     def refusal(old: str, new: str, needle: str) -> None:
-        definition = copy_definition(tmp_path / f"rk{abs(hash((old, new))) % 10000}")
+        definition = copy_definition(fixture_dir(tmp_path, "rk"))
         path = definition / "channels.yaml"
         text = path.read_text()
         assert old in text, f"the fixture no longer matches {old!r}"
@@ -2779,7 +2797,7 @@ def test_the_linter_holds_the_power_inventory_to_its_own_arithmetic(tmp_path):
     """
 
     def refusal(old: str, new: str, needle: str) -> str:
-        definition = copy_definition(tmp_path / f"power{abs(hash((old, new))) % 10000}")
+        definition = copy_definition(fixture_dir(tmp_path, "power"))
         path = definition / "domains" / "power" / "components.yaml"
         text = path.read_text()
         assert old in text, f"the fixture no longer matches {old!r}"
@@ -2996,7 +3014,7 @@ def test_the_linter_refuses_an_electrical_inventory_that_drifted(tmp_path):
     """
 
     def refusal(rel: str, old: str, new: str, needle: str) -> str:
-        definition = copy_definition(tmp_path / f"elec{abs(hash((old, new))) % 10000}")
+        definition = copy_definition(fixture_dir(tmp_path, "elec"))
         path = definition / rel
         text = path.read_text()
         assert old in text, f"the fixture no longer matches {old!r}"
@@ -3068,7 +3086,7 @@ def test_the_engines_the_mission_is_flown_on_are_one_set_of_figures(tmp_path):
     """
 
     def refusal(rel: str, old: str, new: str, needle: str) -> str:
-        definition = copy_definition(tmp_path / f"prop{abs(hash((old, new))) % 10000}")
+        definition = copy_definition(fixture_dir(tmp_path, "prop"))
         path = definition / rel
         text = path.read_text()
         assert old in text, f"the fixture no longer matches {old!r}"
@@ -3181,7 +3199,7 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
     """
 
     def refusal(rel: str, old: str, new: str, needle: str) -> str:
-        definition = copy_definition(tmp_path / f"comm{abs(hash((rel, old, new))) % 10000}")
+        definition = copy_definition(fixture_dir(tmp_path, "comm"))
         path = definition / rel
         text = path.read_text()
         assert old in text, f"the fixture no longer matches {old!r}"
@@ -3198,7 +3216,7 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
         component stripped of its `vehicle_keys` is not compared at all, which is why that break
         has a copy to itself rather than sharing one with the figures it would hide.
         """
-        definition = copy_definition(tmp_path / f"comm{abs(hash(tuple(edits))) % 10000}")
+        definition = copy_definition(fixture_dir(tmp_path, "comm"))
         path = definition / rel
         text = path.read_text()
         for old, new in edits:
@@ -4118,7 +4136,7 @@ def test_the_cabin_volume_is_one_number_in_three_files(tmp_path):
     """
 
     def refusal(rel: str, old: str, new: str, needle: str) -> str:
-        definition = copy_definition(tmp_path / f"vol{abs(hash((old, new))) % 10000}")
+        definition = copy_definition(fixture_dir(tmp_path, "vol"))
         path = definition / rel
         text = path.read_text()
         assert old in text, f"the fixture no longer matches {old!r}"
@@ -4228,7 +4246,7 @@ def test_the_linter_rederives_where_the_earth_is_from_the_landing_site(tmp_path)
     """
 
     def refusal(old: str, new: str, needle: str) -> str:
-        definition = copy_definition(tmp_path / f"site{abs(hash((old, new))) % 1000}")
+        definition = copy_definition(fixture_dir(tmp_path, "site"))
         path = definition / "mission.yaml"
         text = path.read_text()
         assert old in text, f"the fixture no longer matches {old!r}"
@@ -7235,7 +7253,7 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
             verbs[str(verb["verb"])] = verb
 
     states = 0
-    commands = events = logic = 0
+    commands = events = logic = triggers = 0
     for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
         doc = yaml.safe_load(path.read_text()) or {}
         events_here = {str(e["id"]) for e in doc.get("one_way_events") or []}
@@ -7266,16 +7284,38 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
                     # linter's rule too: the overlap is required *where there are values*.
                     if values:
                         assert values & offered, (state["id"], name)
+                elif kind == "trigger":
+                    # A verb that *starts* the state without being able to set it, which is the
+                    # whole of the kind — so the vocabulary test is required to **fail**, and a
+                    # trigger whose arguments reach the state's values would be a `command:` that
+                    # had opted out of the rule holding it to what it claims to write.
+                    triggers += 1
+                    assert name in verbs, (state["id"], name)
+                    offered = set()
+                    for argument in (verbs[name].get("argument_schema") or {}).values():
+                        if isinstance(argument, dict) and argument.get("type") == "enum":
+                            offered.update(str(v) for v in argument.get("values") or [])
+                    values = set()
+                    for match in re.findall(r"enum\[([^\]]*)\]", str(state.get("unit") or "")):
+                        values.update(v.strip() for v in match.split(","))
+                    if values:
+                        assert not (values & offered), (state["id"], name, sorted(values & offered))
                 elif kind == "event":
                     events += 1
                     assert name in events_here, (state["id"], name)
                 elif kind == "logic":
                     logic += 1
                     assert len(name.strip()) >= 12, (state["id"], mover)
+                    # A verb named in the reason is a declaration in a sentence, and five of these
+                    # were exactly that until `trigger:` gave them a form the linter resolves.
+                    named = [t for t in re.findall(r"`([^`]+)`", name) if t in verbs]
+                    assert not named, (state["id"], named)
                 else:
                     raise AssertionError((state["id"], mover))
     assert states == 43, states
-    assert (commands, events, logic) == (18, 6, 22), (commands, events, logic)
+    assert (commands, triggers, events, logic) == (18, 5, 6, 22), (
+        commands, triggers, events, logic,
+    )
     # Two states still owe it, and they are the two the crew debt names.
     owed = {
         state["id"]
@@ -9288,3 +9328,88 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     assert ready.returncode == 0, ready.stderr
     found = re.search(r"edges with a sensitivity\s+(\d+) / (\d+)", ready.stdout)
     assert (int(found.group(1)), int(found.group(2))) == (65, len(edges)), found.group(0)
+
+
+def test_a_verb_that_starts_a_state_is_declared_rather_than_described(tmp_path):
+    """`logic:<reason>` was where the corpus put a verb, and a sentence is read by nothing.
+
+    `moved_by`'s rule draws a line between a `command:` mover, which must be able to express the
+    value it sets, and a verb that only *starts* the state — its own comment names
+    `request_imu_alignment` and `arm_event` as the class. The corpus wrote those as prose, and five
+    of the twenty-two reasons named a verb in backticks. **`trigger:<verb>` is the declaration**:
+    resolved against the registry exactly as `command:` is, and skipped from the vocabulary test
+    because that test is the one a trigger cannot pass.
+
+    Two properties make the kind honest rather than a loophole, and both are asserted here. A
+    `trigger:` whose vocabulary *does* reach the state's values is a `command:` wearing a weaker
+    kind — the weaker kind has no obligation, so without the guard the field would be a way to opt
+    out of the rule instead of a statement about the verb. And a `logic:` reason may no longer name
+    a registered verb at all, because naming one is what `trigger:` is for.
+
+    The state this found is the reason it matters. `power.lcl_tripped`'s reason read *"the
+    protection trips it and `reset_latched_fault` is the only thing that clears it"* — and
+    `reset_latched_fault`'s `fault_id` takes `thruster_health`, `allocation_status` and
+    `safety_state`, three RCS conclusions with no LCL among them. The verb that clears an LCL is
+    `set_breaker`, whose own help says "`reset` clears a latched LCL". A prose mover is checked by
+    nothing, so a wrong one read exactly like a right one.
+    """
+    verbs: dict[str, dict[str, object]] = {}
+    for path in sorted((VEHICLE / "domains").glob("*/commands.yaml")):
+        for verb in (yaml.safe_load(path.read_text()) or {}).get("commands") or []:
+            verbs[str(verb["verb"])] = verb
+
+    found: dict[str, list[str]] = {}
+    for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        for state in (yaml.safe_load(path.read_text()) or {}).get("state") or []:
+            for mover in state.get("moved_by") or []:
+                kind, _, name = str(mover).partition(":")
+                if kind == "trigger":
+                    assert name in verbs, (state["id"], name)
+                    found.setdefault(str(state["id"]), []).append(name)
+
+    assert found == {
+        "maneuver_state": ["load_burn"],
+        "imu_alignment": ["request_imu_alignment"],
+        "lcl_tripped": ["set_breaker"],
+        "arm_state": ["arm_event"],
+        "docking_latch_state": ["set_docking_latch"],
+    }, found
+    # The verb that clears an LCL is the one whose help says so, and the one the reason used to
+    # name cannot — which is the whole of what the prose form cost.
+    assert "reset" in verbs["set_breaker"]["argument_schema"]["state"]["values"]
+    assert "clears a latched LCL" in verbs["set_breaker"]["help"]
+    assert "lcl" not in verbs["reset_latched_fault"]["argument_schema"]["fault_id"]["values"]
+
+    def refusal(name: str, rel: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        path = definition / rel
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {rel}: {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    # A trigger that could set the value is a command wearing a weaker kind.
+    refusal(
+        "trigger-dodges",
+        "domains/power/components.yaml",
+        '      - "command:set_bus_tie"\n',
+        '      - "command:set_bus_tie"\n      - "trigger:set_bus_tie"\n',
+        "as a `trigger:`, and its arguments can take",
+    )
+    # A trigger naming a verb nobody registers, which is what the prose form could always be.
+    refusal(
+        "trigger-unknown",
+        "domains/power/components.yaml",
+        '      - "trigger:set_breaker"\n',
+        '      - "trigger:reset_the_lcl"\n',
+        "which no domain registers",
+    )
+    # And the prose form itself, closed.
+    refusal(
+        "prose-verb",
+        "domains/power/components.yaml",
+        '      - "logic:the protection trips it and reports it on power.lcl_[n]_state; one controlled reclose, then latch"\n',
+        '      - "logic:the protection trips it and `set_breaker` is the only thing that clears it"\n',
+        "names verb 'set_breaker' inside a `logic:` reason",
+    )
