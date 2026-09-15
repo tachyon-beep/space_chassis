@@ -7107,12 +7107,18 @@ def test_every_stock_declares_where_it_starts():
     assert len(stocks) == 25, f"{len(stocks)} stocks"
 
     seeded = plant.initial_values(world)
-    # Sixteen stocks declare a value; six of them are the accumulators on the `internal`
-    # sentinel — `bias_accumulator`, `sensor_bus_errors`, `frame_loss`, `recorder`,
-    # `pulse_residual`, `impulse_total` — which are one shared key and are not seeded.
+    # Sixteen stocks declare a value. **All sixteen now reach the map**, and the six that did not
+    # until round 32 are the accumulators on the `internal` sentinel — `bias_accumulator`,
+    # `sensor_bus_errors`, `frame_loss`, `recorder`, `pulse_residual`, `impulse_total`. They are six
+    # *keys of the sentinel* rather than one shared key, which is what the sentinel means and what
+    # the map could not say: it held `values["internal"]` as a single slot, so `initial_values` and
+    # `step` both dropped it and six declared starting values were read by nothing.
     declared = [s for s in stocks if isinstance(s.spec.get("initial"), (int, float))]
     assert len(declared) == 16, f"{len(declared)} stocks declare a numeric initial"
-    assert len(seeded) == 10, f"{len(seeded)} stocks carry a value the plant can start from"
+    on_nodes = {k: v for k, v in seeded.items() if k != "internal"}
+    assert len(on_nodes) == 10, f"{len(on_nodes)} node stocks carry a value"
+    assert len(seeded["internal"]) == 6, sorted(seeded["internal"])
+    assert len(on_nodes) + len(seeded["internal"]) == len(declared)
     # The ones the corpus can supply, and the numbers it supplies them with. The last is the
     # battery's charge, which stopped being owed in this round: 3,360 Wh of entry cells times
     # 3,600, which is the same energy `check_power_inventory` holds against the cells' own
@@ -7128,8 +7134,18 @@ def test_every_stock_declares_where_it_starts():
         ("battery_energy", 12096000.0),
     ):
         assert seeded[node] == expected, node
-    # `internal` is one key shared by every state on the sentinel, so it is not seeded.
-    assert "internal" not in seeded
+    # The sentinel IS seeded, as a map keyed by state id — the six accumulators, each at zero, and
+    # nothing else. The key existing at all is the point: a command that writes one of them needs a
+    # place to put the value, and before this round there was none.
+    assert set(seeded["internal"]) == {
+        "bias_accumulator",
+        "sensor_bus_errors",
+        "frame_loss",
+        "recorder",
+        "pulse_residual",
+        "impulse_total",
+    }, sorted(seeded["internal"])
+    assert set(seeded["internal"].values()) == {0.0}
 
     # Every numeric initial is grounded, and every `initial_source` resolves and agrees — through
     # `initial_factor` where the source is published in other units than the state integrates.
@@ -9892,3 +9908,135 @@ def test_no_vocabulary_is_written_in_a_word_yaml_reads_as_a_boolean(tmp_path):
         "          on: UNCONFIGURED\n          off: 0\n",
         "as a key. YAML 1.1 reads",
     )
+
+
+def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
+    """The effect, implemented — and the remainder refusing rather than doing nothing.
+
+    Until this round the plant could *describe* a command and not perform one: `capability_snapshot`
+    reported whether one was available, `command_value` said what each of its values becomes, and
+    `console.py` said so in every success it wrote — *"this reference implementation resolves,
+    refuses and settles; it does not simulate the effect."*
+
+    Two things had to be true first. The **declaration** took rounds 27 to 31: which state a verb
+    writes, which argument carries the value, what each value becomes, which element of a keyed
+    state is set, and what the value is where the state's own rule computes it. And the **storage**
+    took one more: eight of the twenty-four command→state links land on the `internal` sentinel,
+    where `initial_values` and `step` both used to *drop* the key, because one key shared by
+    forty-eight states is a slot that means nothing. So a command like `set_rcs_mode` or
+    `set_computer_mode` was accepted, acknowledged, and changed nothing at all — the one outcome a
+    fleet cannot tell from success.
+
+    `internal` is a key space now. What this asserts is the whole surface: every verb that declares
+    a `command:` mover either changes a value or refuses with a sentence naming the field it is
+    owed, and no verb does neither.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    world = plant.load_world(VEHICLE)
+    values = plant.initial_values(world)
+    assert isinstance(values.get("internal"), dict), (
+        "the sentinel is one key rather than a key space, so a commanded state on it has nowhere "
+        "to go"
+    )
+
+    applied: list[str] = []
+    owed: dict[str, str] = {}
+    for verb in sorted(world.verbs):
+        targets = plant.command_targets(world, verb)
+        if not targets:
+            continue
+        schema = world.verbs[verb].get("argument_schema") or {}
+        arguments = {
+            name: str(spec["values"][0])
+            for name, spec in schema.items()
+            if isinstance(spec, dict) and spec.get("type") == "enum" and spec.get("values")
+        }
+        try:
+            staged = plant.apply_command(world, values, verb, arguments)
+        except plant.Unconfigured as exc:
+            owed[verb] = str(exc)
+            continue
+        applied.append(verb)
+        # A verb that writes a state must put it somewhere the map can hold.
+        assert staged, f"{verb} writes {[s.id for s in targets]} and staged nothing"
+        for node in staged:
+            # The key is a node the world declares, or the sentinel. It is not necessarily a key
+            # `initial_values` seeded: only *stocks* have declared starting amounts, so a mode node
+            # like `engine_main` is absent from the seed and appears the first time a command
+            # writes it.
+            assert node == "internal" or node in world.nodes, node
+    assert len(applied) == 13, applied
+    assert len(owed) == 8, sorted(owed)
+    # Every refusal names the field it is owed and says what would close it, which is the plant's
+    # contract for a value it does not have.
+    for verb, sentence in sorted(owed.items()):
+        assert "is owed" in sentence or "is `computed`" in sentence, (verb, sentence)
+    # The eight are the five rule-computed quantities and the three values no source gives.
+    assert sorted(owed) == [
+        "load_state_vector",
+        "point_hga",
+        "select_antenna",
+        "select_nav_source",
+        "set_coolant_pump",
+        "set_instrumentation_mode",
+        "set_power_amplifier",
+        "set_telemetry_profile",
+    ], sorted(owed)
+
+    # And the mapping itself, on the two links that prove the key space and the key argument.
+    staged = plant.apply_command(world, values, "set_rcs_mode", {"mode": "manual"})
+    assert staged == {"internal": {**values["internal"], "mode": "manual"}}, staged
+    staged = plant.apply_command(world, values, "set_hatch_valve",
+                                 {"vehicle": "csm", "hatch": "hatch_crew_lm", "state": "open"})
+    assert staged["internal"]["hatch_state"] == {"hatch_crew_lm": "open"}, staged
+
+
+def test_the_console_applies_the_effect_and_says_what_changed(tmp_path):
+    """`console.py`'s own words, which were the honest admission and are now a report.
+
+    Every success it wrote ended *"it does not simulate the effect"*. Two commands prove the
+    replacement: `set_bus_tie` writes a node the map holds, `set_rcs_mode` writes a state on the
+    sentinel, and `set_coolant_pump` is a valid command the corpus cannot yet apply — which must
+    arrive as a refusal naming the owed field rather than as a success that changed nothing.
+    """
+    diode = tmp_path / "diode"
+    window = diode / "applied"
+    console = [
+        sys.executable,
+        str(VEHICLE / "tools" / "console.py"),
+        "--diode-dir",
+        str(diode),
+        "--slug",
+        "applied",
+        "--phase",
+        "translunar_coast",
+    ]
+    subprocess.run([*console, "--init"], capture_output=True, check=False)
+
+    def run(command: str) -> str:
+        for existing in (window / "output").glob("*.txt"):
+            existing.unlink()
+        (window / "console.json").write_text(
+            json.dumps({"commands": [command], "variables": {}}), encoding="utf-8"
+        )
+        subprocess.run([*console, "--cycles", "1", "--poll", "0"], capture_output=True, check=False)
+        bodies = [p.read_text() for p in (window / "output").glob("*.txt")]
+        assert len(bodies) == 1, bodies
+        return bodies[0]
+
+    # A node the value map holds.
+    tied = run("set_bus_tie tie=csm_tie_ab state=closed")
+    assert "succeeded" in tied and "bus_tie=closed" in tied, tied
+    # A state on the sentinel, which had no storage before this round.
+    mode = run("set_rcs_mode mode=manual")
+    assert "succeeded" in mode and "internal:mode=manual" in mode, mode
+    # A valid command the corpus cannot apply: refused by name, with the reason.
+    pump = run("set_coolant_pump loop=loop_primary pump=pump_1 state=on")
+    assert "refused: NOT IMPLEMENTED" in pump, pump
+    assert "rated speed" in pump, pump
+    assert "does not simulate the effect" not in pump, pump
