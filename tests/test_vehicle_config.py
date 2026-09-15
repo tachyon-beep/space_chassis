@@ -1105,6 +1105,139 @@ def test_the_linter_holds_the_posture_that_permits_action(tmp_path):
     assert "mission.yaml:posture recovery: is the source of no transition" in out, out[-1200:]
 
 
+def test_the_linter_holds_the_conventions_the_corpus_declares_once(tmp_path):
+    """`vehicle.yaml#conventions`, which four comments call the important block, read by nothing.
+
+    `gnc_diode.md`:382-409 fixes four things that are *conventions* rather than quantities, and the
+    block's own comment states the stakes: two agents can disagree about a quaternion's component
+    order while both being right about the physics, "and nothing downstream would report the
+    disagreement: the attitude would simply be wrong, in a way that looks like a control problem."
+    It says they are "declared once, here" and that `domains/gnc/` "is what enforces them" — and the
+    enforcement was prose: a header comment, a point's note, an argument's note. **The word
+    `quaternion` appeared zero times in the linter.**
+
+    Two of the six conventions are holdable, and both were wrong or unheld when the check was
+    written. `quaternion_order` is a component order, so it must be one: a bracketed list of `w`,
+    `x`, `y` and `z`, each exactly once — and a site that states it names the authority in
+    `quaternion_order_source`, which is `initial_source`'s idiom for a string instead of a number.
+    `units: SI` is the other, and it was **false**: the registry publishes `psia`, `mmHg`,
+    `ft3/min`, `degC` and seven more, deliberately, because `channels.yaml` keeps apollo's
+    catalogue "verbatim — identifiers, units, ranges, precisions and rates included". The claim now
+    carries its exceptions, and the check holds them in all three directions: every channel unit is
+    SI, dimensionless or declared; every declared exception is used by a channel; and no SI unit may
+    be declared an exception.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    documents = linter.load_documents(
+        VEHICLE,
+        yaml.safe_load((VEHICLE / "vehicle.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "coupling.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "mission.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "channels.yaml").read_text()),
+    )
+    registry = linter.check_channels(
+        yaml.safe_load((VEHICLE / "channels.yaml").read_text()), linter.Report()
+    )
+    report = linter.Report()
+    linter.check_conventions(documents["vehicle.yaml"], registry, documents, report)
+    assert report.refusals == [], report.refusals
+    exceptions = documents["vehicle.yaml"]["conventions"]["units_exceptions"]
+    assert len(exceptions) == 11, sorted(exceptions)
+    # Every channel unit is SI, dimensionless, discrete, or one of the declared exceptions.
+    for row in registry.values():
+        unit = str(row.get("unit") or "")
+        assert (
+            unit in linter.SI_UNITS
+            or unit in linter.DIMENSIONLESS_UNITS
+            or unit.startswith(linter.DISCRETE_UNIT_PREFIXES)
+            or unit in exceptions
+        ), unit
+    # And two sites state the order, both citing the authority.
+    sites = [
+        (documents["domains/rcs/commands.yaml"]["commands"], "set_attitude_target"),
+    ]
+    schema = next(v for v in sites[0][0] if v.get("verb") == sites[0][1])["argument_schema"]
+    assert schema["quaternion"]["quaternion_order_source"] == (
+        "vehicle.yaml:conventions.quaternion_order"
+    )
+    gnc_points = documents["domains/gnc/points.yaml"]["points"]
+    attitude = next(p for p in gnc_points if p.get("channel") == "gnc.attitude_q[0..3]")
+    assert attitude["quaternion_order"] == documents["vehicle.yaml"]["conventions"][
+        "quaternion_order"
+    ]
+
+    def refusal(name: str, rel: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        path = definition / rel
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {rel}: {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    # An order that is not an ordering of four components.
+    refusal(
+        "short-order",
+        "vehicle.yaml",
+        '  quaternion_order: "[w,x,y,z]"\n',
+        '  quaternion_order: "[w,x,y]"\n',
+        "which is not a bracketed ordering of the four components",
+    )
+    # A copy that has drifted from the declaration it cites.
+    refusal(
+        "drifted-copy",
+        "domains/gnc/points.yaml",
+        '    quaternion_order: "[w,x,y,z]"\n',
+        '    quaternion_order: "[x,y,z,w]"\n',
+        "and `vehicle.yaml:conventions.quaternion_order` declares",
+    )
+    # A statement of the convention with nothing resolving it.
+    refusal(
+        "no-citation",
+        "domains/gnc/points.yaml",
+        '    quaternion_order_source: "vehicle.yaml:conventions.quaternion_order"\n',
+        "",
+        "states a convention and names no `quaternion_order_source`",
+    )
+    # A citation of something that is not the authority.
+    refusal(
+        "wrong-authority",
+        "domains/gnc/points.yaml",
+        'vehicle.yaml:conventions.quaternion_order"\n',
+        'vehicle.yaml:conventions.mission_time"\n',
+        "A convention has one declaration",
+    )
+    # The units claim, in all three directions.
+    refusal(
+        "si-exception",
+        "vehicle.yaml",
+        '    rpm: "pump speed is published in revolutions per minute and no source gives rad/s"\n',
+        '    rpm: "pump speed is published in revolutions per minute and no source gives rad/s"\n'
+        '    kg: "declared an exception although it is the SI unit of mass"\n',
+        "and it is an SI unit or",
+    )
+    refusal(
+        "unused-exception",
+        "vehicle.yaml",
+        '    rpm: "pump speed is published in revolutions per minute and no source gives rad/s"\n',
+        '    rpm: "pump speed is published in revolutions per minute and no source gives rad/s"\n'
+        '    furlong: "declared and used by no channel"\n',
+        "declares 'furlong' as an exception and no channel publishes it",
+    )
+    refusal(
+        "undeclared-unit",
+        "channels.yaml",
+        "  - id: rcs.deadband_deg\n    unit: deg\n",
+        "  - id: rcs.deadband_deg\n    unit: furlong\n",
+        "does not declare 'furlong', which the registry publishes",
+    )
+
+
 def test_the_linter_holds_every_frame_name_to_the_frame_registry(tmp_path):
     """One vehicle, five frames — and a fleet told two different names for the same one.
 
@@ -1165,10 +1298,12 @@ def test_the_linter_holds_every_frame_name_to_the_frame_registry(tmp_path):
     refusal(
         "old-frame-names",
         "domains/rcs/commands.yaml",
+        # The quaternion argument's anchor, which is now the citation comment the flow mapping
+        # became when the order gained a field of its own.
         "      frame: {type: enum, values: [BODY, LVLH, EARTH_J2000, MOON_J2000]}\n"
-        "      quaternion:",
+        "      # The order is `vehicle.yaml#conventions`'",
         "      frame: {type: enum, values: [body, lvlh, inertial_earth, inertial_moon]}\n"
-        "      quaternion:",
+        "      # The order is `vehicle.yaml#conventions`'",
         "which `vehicle.yaml#frames` does not declare",
     )
     # A frame invented for one verb, which is how a second vocabulary starts.
