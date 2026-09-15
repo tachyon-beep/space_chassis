@@ -5476,6 +5476,140 @@ def test_a_declared_internal_order_is_the_order_the_plant_advances_them(tmp_path
     assert f"domains/{domain}/components.yaml:internal_order" not in result.stdout
 
 
+def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
+    """The linter printed the right apogee beside a declaration that disagreed with it.
+
+    `check_vehicle.py` re-derives the translunar trajectory on every run and compares four of the
+    elements it needs: `e` against `1 - r_p/a`, the cutoff speed against vis-viva, `a` against
+    Kepler's equation, and the arrival time against the phase ladder. **Four more elements are
+    production of the same arithmetic and were read by nothing at all** — `radius_at_cutoff_km`,
+    `apogee_km`, `transfer_period_h` and `inclination_deg`.
+
+    So the note it printed every run said *"apogee 502,527 km"* while the file declared
+    `apogee_km: 502526`. `a(1+e)` is 502,526.81172; every other element in the block is a rounding
+    of its own relation, and this one was a **truncation**, one kilometre low. A number a tool
+    computes and prints, without comparing it to the declaration it was computed to check, is a
+    declaration that has already drifted — and this is the folder's oldest finding arriving in the
+    one direction it had not been looked for: not a declaration no tool reads, but a declaration a
+    tool *computes* and does not read.
+
+    The comparison is `agrees_with_derivation`, the corpus's own precision rule, so each element is
+    held at the precision it is written to. That is why the apogee is now written to two places
+    rather than as a whole number, and the reason is worth recording: `significant_figures` reads
+    precision off a float's `repr`, so `502526.0` counts as *seven* digits, and at seven places the
+    relation's own value (502,526.8) is out of reach of both 502526 and the correct 502527 — the
+    element written without a decimal point was the one the precision rule could not express. The
+    naive fix, dropping the phantom `.0`, is wrong and the corpus disproves it: `structure` declares
+    `below: 2.0000`, which is five digits written and is a float indistinguishable from `2.0`.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    elements = mission["initial_state"]["osculating_elements"]
+    orbit = mission["initial_state"]["earth_parking_orbit"]
+    mu, radius_earth = 398600.4418, 6378.137
+    r_p = radius_earth + (float(orbit["perigee_altitude_km"]) + float(orbit["apogee_altitude_km"])) / 2
+    a, e = float(elements["semi_major_axis_km"]), float(elements["eccentricity"])
+
+    # Each of the four is the rounding of its own relation, at the precision it is written to.
+    for field, derived, relation in (
+        ("radius_at_cutoff_km", r_p, "the parking orbit's mean radius"),
+        ("apogee_km", a * (1 + e), "a(1+e)"),
+        ("transfer_period_h", 2 * 3.141592653589793 * (a**3 / mu) ** 0.5 / 3600.0, "Kepler's third law"),
+    ):
+        declared = float(elements[field])
+        assert linter.agrees_with_derivation(declared, derived), (
+            f"{field} declares {declared} and {relation} gives {derived}"
+        )
+    assert float(elements["inclination_deg"]) == float(orbit["inclination_deg"])
+
+    # The precision rule's own blind spot, held here because the fix rests on it. A whole number
+    # acquires a phantom digit from `repr`, so the apogee is written to two places; and the naive
+    # fix for that — drop the trailing `.0` — is disproved by the corpus, which writes `2.0000`
+    # somewhere and cannot be told from `2.0` by any rule that reads the parsed value.
+    assert linter.significant_figures(502526) == 7, "the phantom digit is what the round is about"
+    assert not linter.agrees_with_derivation(502527.0, a * (1 + e)), (
+        "a whole-number apogee cannot satisfy the relation at the precision repr reports"
+    )
+    assert linter.agrees_with_derivation(502526.81, a * (1 + e)), "the written form can"
+    assert linter.significant_figures(2.0) == linter.significant_figures(2.0000), (
+        "a float cannot tell 2.0 from 2.0000, and `structure` declares the latter"
+    )
+    assert (VEHICLE / "domains" / "structure" / "profiles.yaml").read_text().count("2.0000") == 1, (
+        "the counter-example this assertion rests on is gone"
+    )
+
+    fixture = copy_definition(fixture_dir(tmp_path, "elements_"))
+    path = fixture / "mission.yaml"
+
+    def set_element(field: str, text: str) -> None:
+        """Rewrite one *osculating* element, scoped to the block.
+
+        `inclination_deg` is declared twice in this file — the parking orbit has one, and it is the
+        authority the element is checked against — so a file-wide substitution would rewrite the
+        authority too and the case would pass for the wrong reason.
+        """
+        lines = path.read_text().splitlines(keepends=True)
+        start = next(i for i, line in enumerate(lines) if line.strip() == "osculating_elements:")
+        indent = len(lines[start]) - len(lines[start].lstrip())
+        end = len(lines)
+        for i in range(start + 1, len(lines)):
+            if lines[i].strip() and (len(lines[i]) - len(lines[i].lstrip())) <= indent:
+                end = i
+                break
+        body = "".join(lines[start:end])
+        pattern = re.compile(rf"^(\s*{field}:\s*)\S+$", re.M)
+        assert len(pattern.findall(body)) == 1, f"{field} is not declared once in the block"
+        path.write_text(
+            "".join(lines[:start]) + pattern.sub(lambda m: m.group(1) + text, body, count=1) + "".join(lines[end:])
+        )
+
+    # The defect exactly as it stood.
+    set_element("apogee_km", "502526")
+    result = run_linter(fixture)
+    assert result.returncode == 1, result.stdout[-1200:]
+    assert "osculating_elements.apogee_km" in result.stdout
+    assert "a(1 + e)" in result.stdout and "502527" in result.stdout
+    # The note still prints the derived value, which is the contradiction: the tool was right and
+    # the file was wrong for as long as nothing compared them.
+    assert "apogee 502,526.81 km" in result.stdout
+
+    # The other three, one at a time.
+    for field, value, needle in (
+        ("radius_at_cutoff_km", "6563.3", "6378.137"),
+        ("transfer_period_h", "355.04", "Kepler's third law"),
+        ("inclination_deg", "28.5", "determination.inclination"),
+    ):
+        set_element("apogee_km", "502526.81")
+        set_element(field, value)
+        result = run_linter(fixture)
+        assert result.returncode == 1, result.stdout[-800:]
+        assert field in result.stdout and needle in result.stdout, result.stdout[-800:]
+
+    # A *coarser* rounding is still the rounding of the relation, so the rule must not be a
+    # closeness test — and one whole unit out at the element's own precision must still be caught.
+    set_element("inclination_deg", "32.521")
+    set_element("radius_at_cutoff_km", "6563.24")
+    set_element("transfer_period_h", "355.022")
+    set_element("apogee_km", "502526.8")
+    assert run_linter(fixture).returncode == 0, "a coarsely rounded element was refused"
+    set_element("apogee_km", "502525.0")
+    result = run_linter(fixture)
+    assert result.returncode == 1, result.stdout[-800:]
+    assert "apogee_km" in result.stdout
+
+    # And absence stays the walk's: one unset element is one debt, not two.
+    set_element("apogee_km", "502526.81")
+    set_element("transfer_period_h", "UNCONFIGURED")
+    result = run_linter(fixture)
+    assert result.returncode == 0, result.stdout[-800:]
+    assert "with 289 declared debt(s)" in result.stdout, result.stdout[-400:]
+
+
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     """The join that holds an argument to what it names is triggered by the argument's *name*.
 
