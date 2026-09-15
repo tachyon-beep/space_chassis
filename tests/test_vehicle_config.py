@@ -742,7 +742,7 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # gave `bus_b` a source, so it owes a rule like every other `algebraic` state without one. The
     # assertion below is what keeps the class *declared* rather than deleted — if a state falls
     # into it again, `no_input` moves and this fails.
-    assert (counted_more, sentinel, no_input) == (26, 13, 0), (counted_more, sentinel, no_input)
+    assert (counted_more, sentinel, no_input) == (30, 13, 0), (counted_more, sentinel, no_input)
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -6354,13 +6354,16 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # the plant wants, so they left this bucket without the code they need going away. The second
     # was the classifier being fixed to agree with `advance()`, which moved thirteen `internal`
     # states *in* here — no edge can reach the sentinel, so their driver is domain code.
-    assert len(buckets["rule"]) == 83, "half the vehicle is domain code"
+    assert len(buckets["rule"]) == 79, "half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
     # One more moved in with the pump: its `on` mapping is an owed rated speed, so what blocks
     # `pump_1_speed_rpm` is named to a field rather than to the code that would drive it.
-    assert len(buckets["value"]) == 29
+    # Four more moved in when a `computed` effect began naming its input: `link_snr`, `tx_power`,
+    # `instrumentation_power` and `nav_solution` are blocked by a field now rather than by the
+    # rule that would compute them.
+    assert len(buckets["value"]) == 33
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
@@ -8903,7 +8906,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 281 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 286 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -9043,7 +9046,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "281", "the view must agree with the headline count"
+    assert owed == "286", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -9970,17 +9973,21 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
             # like `engine_main` is absent from the seed and appears the first time a command
             # writes it.
             assert node == "internal" or node in world.nodes, node
-    assert len(applied) == 13, applied
-    assert len(owed) == 8, sorted(owed)
+    # **Fourteen apply and seven are owed**, and the eighth moved across in round 33: a
+    # rule-computed state is changed through an *input*, and `select_antenna`'s input
+    # (`comms.antenna_selection`) is a state that exists and declares the same verb — so the command
+    # stages it and leaves `link_snr` to the rule. The other five `computed` effects name
+    # `UNCONFIGURED`, which is the honest answer for an input nobody has declared.
+    assert len(applied) == 14, applied
+    assert "select_antenna" in applied
+    assert len(owed) == 7, sorted(owed)
     # Every refusal names the field it is owed and says what would close it, which is the plant's
     # contract for a value it does not have.
     for verb, sentence in sorted(owed.items()):
-        assert "is owed" in sentence or "is `computed`" in sentence, (verb, sentence)
-    # The eight are the five rule-computed quantities and the three values no source gives.
+        assert "is owed" in sentence, (verb, sentence)
     assert sorted(owed) == [
         "load_state_vector",
         "point_hga",
-        "select_antenna",
         "select_nav_source",
         "set_coolant_pump",
         "set_instrumentation_mode",
@@ -9994,6 +10001,11 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     staged = plant.apply_command(world, values, "set_hatch_valve",
                                  {"vehicle": "csm", "hatch": "hatch_crew_lm", "state": "open"})
     assert staged["internal"]["hatch_state"] == {"hatch_crew_lm": "open"}, staged
+    # And the rule-computed half: the command writes its *input*, and the state the rule owns is
+    # left alone rather than guessed at.
+    staged = plant.apply_command(world, values, "select_antenna", {"antenna": "high_gain"})
+    assert staged["internal"]["antenna_selection"] == "high_gain", staged
+    assert "link" not in staged, "the computed state was assigned a value the plant invented"
 
 
 def test_the_console_applies_the_effect_and_says_what_changed(tmp_path):
@@ -10040,3 +10052,114 @@ def test_the_console_applies_the_effect_and_says_what_changed(tmp_path):
     assert "refused: NOT IMPLEMENTED" in pump, pump
     assert "rated speed" in pump, pump
     assert "does not simulate the effect" not in pump, pump
+
+
+def test_a_computed_effect_names_the_input_the_command_changes(tmp_path):
+    """`computed` said why a state follows from a rule and not what the command changes.
+
+    That made it a place a missing state could hide, and one of them hid with a *claim* attached.
+    Six entries declare a `computed` effect across five verbs — `select_antenna` and `point_hga` on
+    `link_snr`, `set_power_amplifier` on `tx_power`, `set_instrumentation_mode` on
+    `instrumentation_power`, and `load_state_vector` and `select_nav_source` on `nav_solution` — and
+    the input each command writes has a state for exactly one of them. For the other five the
+    command's real effect is a state the corpus does not declare, which is a debt.
+
+    `select_nav_source`'s reason claimed otherwise: that its missing state "is published as
+    `gnc.nav_source`" and that the gap was "recorded in this domain's `open_debts`". Neither is
+    true — `gnc.nav_source` is not a registered channel, and no such debt was ever written. A
+    `computed` effect is prose, and prose is where a claim like that survives.
+
+    So `selects` is required: a state id that exists and declares the same verb — the two halves of
+    the command surface agreeing about which state the command actually writes — or `UNCONFIGURED`
+    with a note. One of the six resolves, and it is what moved an eighth verb into the plant's
+    applied set.
+    """
+    states: dict[str, dict[str, object]] = {}
+    for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        for state in (yaml.safe_load(path.read_text()) or {}).get("state") or []:
+            states[f"{path.parent.name}.{state['id']}"] = state
+
+    computed: dict[str, tuple[str, object]] = {}
+    for where, state in sorted(states.items()):
+        for entry in state.get("command_value") or []:
+            if entry.get("computed") is not None:
+                computed[f"{where} <- {entry['verb']}"] = (
+                    str(entry["verb"]),
+                    entry.get("selects"),
+                )
+    assert len(computed) == 6, sorted(computed)
+    resolved = {k: v for k, v in computed.items() if v[1] != "UNCONFIGURED"}
+    assert sorted(resolved) == ["comms.link_snr <- select_antenna"], resolved
+    assert resolved["comms.link_snr <- select_antenna"][1] == "antenna_selection"
+    # The two halves agree, which is what the check enforces and what makes the effect performable.
+    assert "command:select_antenna" in [
+        str(m) for m in states["comms.antenna_selection"]["moved_by"]
+    ]
+    # The five that owe name no state, and the thing the false claim named is not a channel.
+    assert {k for k, v in computed.items() if v[1] == "UNCONFIGURED"} == {
+        "comms.link_snr <- point_hga",
+        "comms.tx_power <- set_power_amplifier",
+        "avionics.instrumentation_power <- set_instrumentation_mode",
+        "gnc.nav_solution <- load_state_vector",
+        "gnc.nav_solution <- select_nav_source",
+    }, sorted(computed)
+    registered = set()
+    for path in [VEHICLE / "channels.yaml", *sorted((VEHICLE / "domains").glob("*/points.yaml"))]:
+        document = yaml.safe_load(path.read_text()) or {}
+
+        def collect(node: object) -> None:
+            if isinstance(node, dict):
+                for key in ("id", "channel"):
+                    if isinstance(node.get(key), str):
+                        registered.add(node[key])
+                for value in node.values():
+                    collect(value)
+            elif isinstance(node, list):
+                for value in node:
+                    collect(value)
+
+        collect(document)
+    assert "gnc.nav_source" not in registered, "the claim the round removed is true after all"
+
+    def refusal(name: str, rel: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / rel
+        text = path.read_text()
+        assert text.count(old) == 1, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    # The resolved half, in both directions.
+    refusal(
+        "disagrees",
+        "domains/comms/components.yaml",
+        '    unit: "enum[high_gain,omni_a,omni_b,sband_steerable]"\n'
+        "    moved_by:\n"
+        '      - "command:select_antenna"\n',
+        '    unit: "enum[high_gain,omni_a,omni_b,sband_steerable]"\n'
+        "    moved_by:\n"
+        '      - "logic:the crew throw it"\n',
+        "which does not declare 'select_antenna' as a `command:` mover",
+    )
+    refusal(
+        "ghost",
+        "domains/comms/components.yaml",
+        "        selects: antenna_selection\n",
+        "        selects: antenna_pick\n",
+        "which is not a state of this domain",
+    )
+    # And the owed half must say what is missing.
+    refusal(
+        "bare-owe",
+        "domains/avionics/components.yaml",
+        "        selects: UNCONFIGURED\n"
+        "        note: >-\n"
+        "          the active instrumentation profile has no state. The verb's gate is\n"
+        "          `instrumentation_profile_<profile>_enable`, which is a *preference* the fleet opens and\n"
+        "          not a record of what the vehicle is running, and `groups` narrows it further — so the\n"
+        "          vehicle can be told which instruments are active and cannot report which set that is,\n"
+        "          while `instrumentation_power` and the fresh-evidence limit are both computed from it\n",
+        "        selects: UNCONFIGURED\n",
+        "is UNCONFIGURED with no `note`",
+    )
