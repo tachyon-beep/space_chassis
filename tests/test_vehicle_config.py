@@ -1111,6 +1111,100 @@ def test_the_linter_holds_the_posture_that_permits_action(tmp_path):
     assert "mission.yaml:posture recovery: is the source of no transition" in out, out[-1200:]
 
 
+def test_the_linter_derives_the_phase_ladder_from_its_durations(tmp_path):
+    """The ladder is declared twice, and only the durations were held.
+
+    `mission.yaml` fixes the timeline as eight `duration_h` values and as eight `starts_at_h`
+    values, and the totals are checked three ways — the phases against `phase_total_check.sums_to_h`,
+    against `meta.total_duration_h`, and the tick count against the arithmetic. **The absolute
+    starts were checked none**, and two edits compose that should not:
+
+      - move `surface`'s start from 100.0 to 110.0, touching no duration: every total still holds,
+        and the mission now has two phases overlapping and a gap where none is declared;
+      - move a *compensating pair* of durations — descent 2.5 to 3.5 with surface 21.5 to 20.5 —
+        which leaves the total at 192.0 and every figure derived from it intact, and shifts every
+        phase boundary after them.
+
+    Both were run against copies before the check existed. The ladder is what a fleet plans against
+    — "PDI at MET 97.5 h", "the final 7.5 hours of the lunar-orbit phase" — so the check re-derives
+    the starts as the cumulative sum of the durations, and `tools/generate_help.py` renders each
+    phase's window into `HELP.md`, where the fleet can subtract against the published `mission.met_s`.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    report = linter.Report()
+    linter.check_met_clock(mission, report)
+    assert report.refusals == [], report.refusals
+    assert report.debts == [], report.debts
+    ladder = [(p["id"], p["starts_at_h"], p["duration_h"]) for p in mission["phases"]]
+    assert ladder == [
+        ("translunar_coast", 0.0, 73.0),
+        ("lunar_orbit", 73.0, 24.5),
+        ("descent", 97.5, 2.5),
+        ("surface", 100.0, 21.5),
+        ("ascent_rendezvous", 121.5, 3.5),
+        ("lunar_orbit_docked", 125.0, 7.5),
+        ("transearth_coast", 132.5, 58.5),
+        ("entry", 191.0, 1.0),
+    ], ladder
+    # The whole ladder is contiguous: each start is the previous end, and the last end is the total.
+    for (_, _start, duration), (_, next_start, _d) in zip(ladder, ladder[1:], strict=False):
+        assert next_start == pytest.approx(_start + duration), next_start
+    assert ladder[-1][1] + ladder[-1][2] == mission["met_epoch_provenance"]["total_duration_h"]
+
+    def refusal(name: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        path = definition / "mission.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    # The lone absolute edit.
+    refusal(
+        "start-moved",
+        "    starts_at_h: 100.0\n",
+        "    starts_at_h: 110.0\n",
+        "and the durations before it sum to 100 h",
+    )
+    # The compensating pair, which leaves every total intact: descent takes 1.0 h and the surface
+    # gives it back, so the ladder still sums to 192.0 and nothing about the totals complains.
+    definition = copy_definition(tmp_path / "compensating")
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    assert text.count("    duration_h: 2.5\n") == 1, "the descent duration moved"
+    assert text.count("    duration_h: 21.5\n") == 1, "the surface duration moved"
+    text = text.replace("    duration_h: 2.5\n", "    duration_h: 3.5\n", 1)
+    text = text.replace("    duration_h: 21.5\n", "    duration_h: 20.5\n", 1)
+    path.write_text(text)
+    out = run_linter(definition).stdout
+    assert "phase_total_check" not in out, out[-1200:]
+    assert "mission.yaml:phase surface.starts_at_h: is 100.0 and the durations before it sum to 101 h" in out, out[-1200:]
+    # A phase with no start at all is owed rather than refused: the fix is to say when it starts.
+    definition = copy_definition(tmp_path / "no-start")
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    assert "    starts_at_h: 100.0\n" in text
+    path.write_text(text.replace("    starts_at_h: 100.0\n", "", 1))
+    out = run_linter(definition).stdout
+    assert "mission.yaml:phase surface.starts_at_h: is None" in out, out[-1200:]
+
+    # And the fleet reads the window: the generator renders it from the declaration.
+    help_text = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "generate_help.py"), "--out", "-"],
+        capture_output=True, text=True, check=False,
+    ).stdout
+    assert "4. `surface` — lunar surface, LM alone, EVA (MET 100-121.5 h)" in help_text, help_text[
+        :600
+    ]
+
+
 def test_the_linter_reaches_every_node_a_command_moves(tmp_path):
     """The command surface is declared in two halves, and nothing joined them.
 
