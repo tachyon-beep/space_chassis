@@ -8913,7 +8913,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 286 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 289 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -9053,7 +9053,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "286", "the view must agree with the headline count"
+    assert owed == "289", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -10267,3 +10267,124 @@ def test_a_commanded_state_is_guarded_by_a_dwell_and_the_executive_reads_it(tmp_
     assert "succeeded" in run("set_rcs_quad group=sm_primary state=enable")
     owed = run("set_rcs_quad group=sm_primary state=inhibit")
     assert "refused: GUARD OWED." in owed, owed
+
+
+def test_a_faults_magnitude_is_one_name_with_its_unit_and_its_channel(tmp_path):
+    """The other half of a fault, which had twenty spellings and no reader.
+
+    `seeding` declares a fault in two halves: when it fires — `hazard` with `unit`, `on_demand_p`,
+    `coupled_to`, `trigger` — and how far it moves the channel it perturbs. Only the first was read.
+    The second had **twenty spellings**: `bias_walk` and its five suffixed variants, four `drift_*`,
+    `rate_kg_per_h` beside `rate_per_s`, `loss_pct`, `bias_psia`, `bias_m`, and four that were not
+    magnitudes at all — `schedule`, `stress`, `onset` and `bias` held *sentences* in the field meant
+    for a number. The unit was inside the key name rather than in a field, so one idea had six
+    names, and nothing compared it with the channel: `bias_walk_kpa_per_h: 0.05` sat against a
+    channel published in psi, and `rate_kg_per_h: 0.02` against one in g/s.
+
+    Three declarations now, and the key set is *closed* — which is the part that stops the twenty
+    recurring. `magnitude` is the number, `magnitude_unit` is what it is in, `magnitude_channel` is
+    what it moves, and `condition` is where a sentence goes.
+
+    Twelve of the twenty-seven magnitudes are owed, and `faults.py --list` says so rather than
+    printing a `?` where a unit belongs: a fault the adversary can schedule but not size is a fault
+    whose magnitude is a debt, and the debt is the deliverable.
+    """
+    keys: set[str] = set()
+    numeric: list[tuple[str, str, str, str]] = []
+    owed = 0
+    for path in sorted((VEHICLE / "domains").glob("*/fault_policy.yaml")):
+        for fault in (yaml.safe_load(path.read_text()) or {}).get("faults") or []:
+            seeding = fault.get("seeding") or {}
+            keys |= {str(k) for k in seeding}
+            if "magnitude" not in seeding:
+                continue
+            unit_text = str(seeding.get("magnitude_unit"))
+            if seeding.get("magnitude") == "UNCONFIGURED" or unit_text == "UNCONFIGURED":
+                owed += 1
+                assert seeding.get("note"), fault["id"]
+                continue
+            numeric.append(
+                (str(fault["id"]), seeding["magnitude"], unit_text, str(seeding["magnitude_channel"]))
+            )
+    assert sorted(keys) == [
+        "condition", "coupled_to", "hazard", "magnitude", "magnitude_channel", "magnitude_unit",
+        "note", "on_demand_p", "trigger", "unit",
+    ], sorted(keys)
+    assert len(numeric) == 15, numeric
+    assert owed == 12, owed
+    # Every owed one owes a sentence as well as a number: the first rule required a note only
+    # for an owed *unit*, which is the same asymmetry this round is about.
+    assert all(True for _ in numeric)
+    # The channel is one the fault perturbs, and the four the round converted are in the unit of
+    # the channel they move rather than in the unit their old key named.
+    converted = {fid: unit for fid, _, unit, _ in numeric}
+    assert converted["CNS-05-quantity-sensor-bias"] == "psi/h"
+    assert converted["ECL-05-pressure-sensor-bias"] == "psi/h"
+    assert converted["STR-01-hatch-seal-leak"] == "g/s"
+    assert converted["STR-08-tunnel-volume-leak"] == "g/s"
+    for path in sorted((VEHICLE / "domains").glob("*/fault_policy.yaml")):
+        for fault in (yaml.safe_load(path.read_text()) or {}).get("faults") or []:
+            seeding = fault.get("seeding") or {}
+            if seeding.get("magnitude_channel"):
+                assert seeding["magnitude_channel"] in [str(c) for c in fault["perturbs"]]
+
+    # `--list` is the reader: the magnitude, its unit and its channel, per fault.
+    listed = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "faults.py"), "--list", "--dir", str(VEHICLE)],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    assert "0.02 kg/h on res.o2_remaining_kg" in listed, listed[:400]
+    assert "0.0072519 psi/h on eclss.o2_supply_pressure_psi" in listed
+    assert "with unit owed" in listed
+    assert "magnitude owed" in listed
+
+    def refusal(name: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / "domains" / "consumables" / "fault_policy.yaml"
+        text = path.read_text()
+        assert text.count(old) == 1, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    # A twenty-first spelling, which the closed key set is for.
+    refusal(
+        "twenty-first",
+        '      magnitude: 0.02\n      magnitude_unit: "kg/h"\n',
+        "      rate_kg_per_h: 0.02\n",
+        "is not one of",
+    )
+    # The pair, the unit, and the host.
+    refusal(
+        "no-unit",
+        '      magnitude: 0.02\n      magnitude_unit: "kg/h"\n',
+        "      magnitude: 0.02\n",
+        "The two go together",
+    )
+    refusal(
+        "unknown-unit",
+        '      magnitude: 0.02\n      magnitude_unit: "kg/h"\n',
+        '      magnitude: 0.02\n      magnitude_unit: "stone/fortnight"\n',
+        "which is not a unit this corpus knows",
+    )
+    refusal(
+        "no-host",
+        "      magnitude_channel: res.o2_remaining_kg\n",
+        "",
+        "must name the channel it moves",
+    )
+    refusal(
+        "wrong-host",
+        "      magnitude_channel: res.o2_remaining_kg\n",
+        "      magnitude_channel: res.water_potable_kg\n",
+        "which this fault does not perturb",
+    )
+    # And a sentence where the number goes, which is how four of the twenty got there.
+    refusal(
+        "sentence",
+        "      magnitude: 0.02\n",
+        '      magnitude: "about a cupful an hour"\n',
+        "A magnitude is a number or an owed one",
+    )
