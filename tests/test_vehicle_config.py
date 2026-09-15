@@ -1242,8 +1242,12 @@ def test_the_linter_reaches_every_node_a_command_moves(tmp_path):
         str(e["to"]) for e in coupling["edges"]
         if str(e.get("from")) == "command_executive" and e.get("kind") == "discrete"
     }
+    # `load_shed_state` left this set when `E-CMD-BUS` was retargeted: the ladder is a threshold
+    # response to bus voltage and no command sets a tier, so the node is reached by `E-BUS-SHED`
+    # and not by the executive. The assertion is on the whole set either way, because a node
+    # silently dropping out of it is the same defect as one silently joining.
     assert commanded == {
-        "load_shed_state", "bus_tie", "cabin_regulator", "engine_main", "rcs_valves", "link",
+        "bus_tie", "cabin_regulator", "engine_main", "rcs_valves", "link",
         "nav_state", "guidance", "coolant_flow", "instrumentation", "structure_config",
     }, sorted(commanded)
     # Every state that says a command moves it lives on one of those nodes.
@@ -6305,11 +6309,14 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # the plant wants, so they left this bucket without the code they need going away. The second
     # was the classifier being fixed to agree with `advance()`, which moved thirteen `internal`
     # states *in* here — no edge can reach the sentinel, so their driver is domain code.
-    assert len(buckets["rule"]) == 82, "half the vehicle is domain code"
+    assert len(buckets["rule"]) == 85, "half the vehicle is domain code"
     assert len(buckets["value"]) == 26
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
-    # are advanceable, and the thirteen `internal` states need code.
-    assert len(buckets["edge"]) == 11
+    # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
+    # when it stopped asking the integrator's question — a `regimes` table is a *declared*
+    # coupling, and `instrumentation_power`, `bus_tie_closed` and `thruster_valve` each have every
+    # input declared. `load_shed_class` followed its own edge into the table form.
+    assert len(buckets["edge"]) == 8
     assert len(buckets["ready"]) == 15
 
 
@@ -7268,7 +7275,7 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
                 else:
                     raise AssertionError((state["id"], mover))
     assert states == 43, states
-    assert (commands, events, logic) == (15, 6, 22), (commands, events, logic)
+    assert (commands, events, logic) == (18, 6, 22), (commands, events, logic)
     # Two states still owe it, and they are the two the crew debt names.
     owed = {
         state["id"]
@@ -8808,7 +8815,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 271 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 272 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -8948,7 +8955,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "271", "the view must agree with the headline count"
+    assert owed == "272", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -9140,3 +9147,144 @@ def test_the_linter_refuses_a_floor_whose_resource_half_disagrees(tmp_path):
         "      floor_kg: {type: number, minimum: 0}\n",
         "is named for the unit 'kg'",
     )
+
+
+def test_every_command_edge_lands_where_a_state_says_a_command_writes():
+    """The command surface's two halves, held in *both* directions.
+
+    Round 23 joined the state's side to the graph's: a state declaring `command:<verb>` must live on
+    a node an `E-CMD-*` edge reaches. The other direction was never walked, and six of the eleven
+    edges landed on a node where no state declares a command mover — including four states that
+    declared nothing at all about what moves them, each of which is the whole of what its verb
+    changes. `E-CMD-*`'s own sensitivity says what the edge means — *"the coupling is the signal
+    itself; one unit in, one unit out"* — so the family asserts that a command **sets a state** on
+    the node it lands on, and that assertion had no reader.
+
+    This derives both sides from the corpus rather than restating a count: the edges from the graph,
+    the writers from the domain components. The symmetry is the property — ten and ten with nothing
+    on either side is what "the two halves agree" looks like, and an assertion on one direction
+    alone would pass on a graph that had grown an edge to nowhere.
+    """
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    commanded = {
+        str(edge["to"]): str(edge["id"])
+        for edge in coupling["edges"]
+        if str(edge.get("from")) == "command_executive" and edge.get("kind") == "discrete"
+    }
+    written: dict[str, list[str]] = {}
+    for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        for state in doc.get("state") or []:
+            verbs = [
+                str(m).split(":", 1)[1]
+                for m in state.get("moved_by") or []
+                if str(m).startswith("command:")
+            ]
+            if verbs and state.get("node") != "internal":
+                written.setdefault(str(state["node"]), []).append(f"{path.parent.name}.{state['id']}")
+
+    assert len(commanded) == 10, f"the E-CMD family changed size: {sorted(commanded.values())}"
+    assert sorted(commanded) == sorted(written), (
+        "a node the executive reaches with no state declaring a command mover is the signal "
+        "arriving where nothing is commanded, and a state declaring one on a node no edge reaches "
+        f"is a command with no path in. Edges: {sorted(commanded)}; writers: {sorted(written)}"
+    )
+    # The four that were silent, named, because a future round that adds a fifth mover here should
+    # have to say which state it is moving.
+    assert written["instrumentation"] == ["avionics.instrumentation_power"]
+    assert written["link"] == ["comms.link_snr", "comms.tx_power"]
+    assert written["nav_state"] == ["gnc.nav_solution"]
+    assert written["structure_config"] == ["structure.pyro_fired"]
+
+    # And the one edge that turned out to be a false claim rather than a missing declaration. The
+    # ladder is a threshold response to bus voltage — its own `logic:` reason says the bus
+    # thresholds drive it — so `E-CMD-BUS` was retargeted, and the id went with it.
+    ids = {str(edge["id"]) for edge in coupling["edges"]}
+    assert "E-CMD-BUS" not in ids, "the ladder edge is back on the executive and no command sets a tier"
+    shed = next(edge for edge in coupling["edges"] if edge["id"] == "E-BUS-SHED")
+    assert shed["from"] == "bus_a" and shed["to"] == "load_shed_state"
+    assert shed["sensitivity"]["regimes"], "a discrete edge out of the bus is a table, not a gain"
+    # Its rungs are the profile's thresholds reused by id rather than restated, which is the
+    # construction `E-BUS-RCS` uses and the reason a change to the ladder moves this edge with it.
+    rungs = [r["when"] for r in shed["sensitivity"]["regimes"]]
+    assert rungs == [
+        "nominal",
+        "bus_a_undervoltage",
+        "bus_a_shed_p3",
+        "bus_a_shed_p2",
+        "bus_a_survival",
+        "otherwise",
+    ], rungs
+    profiles = yaml.safe_load((VEHICLE / "domains" / "power" / "profiles.yaml").read_text())
+    declared = {str(t["id"]) for t in profiles["thresholds"]}
+    for rung in rungs[1:-1]:
+        assert rung in declared, f"the rung {rung!r} names no threshold in the power profile"
+    # The ladder has no rung that selects P1, and that is a debt rather than a silence.
+    class_state = next(
+        state
+        for state in yaml.safe_load(
+            (VEHICLE / "domains" / "power" / "components.yaml").read_text()
+        )["state"]
+        if state["id"] == "load_shed_class"
+    )
+    assert "P1" in class_state["unit"], class_state["unit"]
+    assert not [t for t in profiles["thresholds"] if "shed_p1" in str(t["id"])]
+
+
+def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
+    """Two questions about one field, and the readiness figure was answering the wrong one.
+
+    The integrator asks *can I multiply by this?* — and a `regimes` table cannot be multiplied by,
+    so `usable` is right to say no. A reader asking whether a sensitivity has been *declared* has a
+    different question: the corpus has two complete forms, and the linter *requires* the table form
+    of a discrete edge out of physical equipment, because *"a mode selection is a table rather than
+    a sensitivity, and a scalar here would be a proportional law the vehicle does not have."*
+
+    `--readiness` used `usable` for both, so every regime edge read as undeclared — **eight** of
+    them, including the three bus edges the flagship thermal cycle turns on. The figure said the
+    vehicle owed a number where it had correctly declared a table. It surfaced when `E-CMD-BUS`'s
+    retarget moved a ninth edge from one form to the other and the headline fell, which is a
+    question about the vehicle having no answer in the vehicle at all.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    edges = [
+        plant.Edge(
+            id=str(edge["id"]),
+            source=str(edge["from"]),
+            target=str(edge["to"]),
+            kind=str(edge["kind"]),
+            sensitivity=edge.get("sensitivity") or {},
+        )
+        for edge in coupling["edges"]
+    ]
+    by_id = {edge.id: edge for edge in edges}
+    table = by_id["E-BUS-COMM"]
+    assert table.sensitivity.get("value") is None and table.sensitivity["regimes"]
+    assert table.declared, "a regime table is the complete answer and must read as declared"
+    assert not table.usable, (
+        "the integrator multiplies by a value and a table is not one; if this ever becomes True the "
+        "stock integrator will start applying a mode selection as a gain"
+    )
+    assert by_id["E-CMD-PUMP"].usable is False, "the pump edge owes its rated speed"
+    assert by_id["E-GEOM-LINK"].usable is True
+
+    # And the headline is the count of *declared* edges, which is the two forms together.
+    scalar = [e for e in edges if e.sensitivity.get("value") not in (None, "UNCONFIGURED")]
+    tables = [e for e in edges if e.sensitivity.get("regimes")]
+    assert len(tables) == 8, f"the regime edges changed: {[e.id for e in tables]}"
+    assert len(scalar) + len(tables) == 65
+    ready = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--readiness"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert ready.returncode == 0, ready.stderr
+    found = re.search(r"edges with a sensitivity\s+(\d+) / (\d+)", ready.stdout)
+    assert (int(found.group(1)), int(found.group(2))) == (65, len(edges)), found.group(0)
