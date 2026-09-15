@@ -5471,6 +5471,97 @@ def test_a_declared_internal_order_is_the_order_the_plant_advances_them(tmp_path
     assert f"domains/{domain}/components.yaml:internal_order" not in result.stdout
 
 
+def test_the_crews_error_model_is_a_distribution(tmp_path):
+    """The crew can be wrong, and the model of how was read by nothing — including by arithmetic.
+
+    `display_contract.wrongness` is the vehicle's statement of how a crew report can be wrong: the
+    mode the whole crew-as-an-instrument design turns on, since a person who says "it's cold in
+    here" when the coldplate is fine is the one sensor that can be wrong without being broken. It
+    declares four kinds with a weight each and a note saying one of the four cannot happen here.
+
+    **Nothing read it, and the arithmetic did not survive being read.** 0.4 + 0.3 + 0.2 + 0.1 is
+    0.9999999999999999 in binary floating point, and the only reason it is anywhere near one is the
+    0.1 attached to `wrong_module` — the kind the note says this vehicle cannot produce. The three
+    that can fire summed to 0.9, so the model was not a distribution over anything: a sampler either
+    drew the forbidden mode one time in ten, which is the leak the note forbids, or drew the other
+    three and left a tenth of the mass unallocated. Which of those the corpus meant was nowhere
+    written, because nothing had ever read the numbers.
+
+    The citation was wrong too, and that is the one claim here a test can settle outright by reading
+    the document: the four modes are `simulator-design.md`:362-371's crew-as-instrument table, and
+    the `source` field named `crew_diode.md`, which carries none of the four names. A linter cannot
+    look up whether a source says a thing; a test can, for the citations it knows.
+
+    The rule is three clauses: every kind says whether this vehicle can produce it; the seedable
+    weights sum to one; and a kind that cannot happen carries no weight, because a share of the
+    distribution spent on an outcome nothing can draw is a share subtracted from the ones that can.
+    """
+    crew = yaml.safe_load((VEHICLE / "domains" / "crew" / "components.yaml").read_text())
+    model = crew["display_contract"]["wrongness"]
+    kinds = {str(k["id"]): k for k in model["kinds"]}
+    assert len(kinds) == 4, sorted(kinds)
+    seedable = {i: k for i, k in kinds.items() if k.get("seedable")}
+    assert sorted(seedable) == ["forgot", "misattributed", "misheard"], sorted(seedable)
+    total = sum(float(k["weight"]) for k in seedable.values())
+    assert total == 1.0, f"the seedable weights sum to {total!r}, not one"
+    assert kinds["wrong_module"]["seedable"] is False
+    assert "weight" not in kinds["wrong_module"], (
+        "the unreachable mode carries a share, which is mass no sampler can spend"
+    )
+
+    # The citation, read against the document it names. The frozen specs are inputs: this asserts
+    # the corpus points at the right one, not that the spec is right.
+    source = str(model["provenance"]["source"])
+    assert "simulator-design.md:" in source, source[:120]
+    assert "crew_diode.md" not in source, "the source field should name one document, not two"
+    design = (REPO / "docs" / "deep_research" / "integration" / "simulator-design.md").read_text()
+    assert "forgot, misheard, misattributed, wrong module" in design
+    assert "misheard" not in (REPO / "docs" / "deep_research" / "crew_diode.md").read_text()
+
+    # Break a copy: put the forbidden mode's share back into the three that can fire, which is the
+    # defect exactly as it stood.
+    fixture = copy_definition(fixture_dir(tmp_path, "wrongness_"))
+    path = fixture / "domains" / "crew" / "components.yaml"
+    doc = yaml.safe_load(path.read_text())
+    weights = {"misheard": 0.4, "misattributed": 0.3, "forgot": 0.2}
+    for kind in doc["display_contract"]["wrongness"]["kinds"]:
+        if kind["id"] in weights:
+            kind["weight"] = weights[kind["id"]]
+    path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
+
+    result = run_linter(fixture)
+    assert result.returncode == 1, result.stdout[-1200:]
+    assert "summing to 0.9" in result.stdout
+    assert "display_contract.wrongness.kinds" in result.stdout
+
+    def rewrite(weights: dict[str, float], forbidden_weight: float | None = None) -> None:
+        """Set the model's weights and write the fixture back, for the cases below."""
+        doc = yaml.safe_load(path.read_text())
+        for kind in doc["display_contract"]["wrongness"]["kinds"]:
+            kind.pop("weight", None)
+            if kind["id"] in weights:
+                kind["weight"] = weights[kind["id"]]
+            elif forbidden_weight is not None:
+                kind["weight"] = forbidden_weight
+        path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
+
+    # The other two ways a declared distribution stops being one: a total above one, and a share
+    # given back to the mode nothing can draw.
+    for weights, forbidden, needle in (
+        ({"misheard": 0.5, "misattributed": 0.4, "forgot": 0.3}, None, "summing to 1.2"),
+        ({"misheard": 0.4445, "misattributed": 0.3333, "forgot": 0.2222}, 0.1, "cannot produce"),
+    ):
+        rewrite(weights, forbidden)
+        result = run_linter(fixture)
+        assert result.returncode == 1, result.stdout[-800:]
+        assert needle in result.stdout, result.stdout[-800:]
+
+    # A rounded set is not a structural gap: 0.9999 is what four-place renormalisation gives, and
+    # the tolerance exists so the rule catches 0.9 rather than arithmetic the corpus already did.
+    rewrite({"misheard": 0.4444, "misattributed": 0.3333, "forgot": 0.2222})
+    assert run_linter(fixture).returncode == 0, "a rounded set of weights was refused"
+
+
 def test_one_component_id_in_two_domains_must_be_one_object(tmp_path):
     """The IMU was the vehicle's only component declared twice, and the copies disagreed.
 
