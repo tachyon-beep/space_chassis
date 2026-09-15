@@ -1105,6 +1105,123 @@ def test_the_linter_holds_the_posture_that_permits_action(tmp_path):
     assert "mission.yaml:posture recovery: is the source of no transition" in out, out[-1200:]
 
 
+def test_the_linter_holds_every_convention_to_a_site(tmp_path):
+    """All six conventions in the block now have a reader, and the covariance has three copies.
+
+    The previous round wired two of them — the quaternion order and the unit system — and left four
+    with nothing: `quaternion_direction`, `angular_velocity`, `covariance_units` and `mission_time`.
+    Each turned out to have a site that states it, and each site is now a citation the linter
+    resolves, so a rename of any convention is a refusal rather than a silent orphaning.
+
+    `covariance_units` is the one with substance, because the corpus declares it **three times**: as
+    the convention's blocks, as `domains/gnc/components.yaml#estimator`'s copy of them, and as
+    `nav_covariance`'s own `unit` — `matrix[m^2, (m/s)^2, rad^2, (m/s^2)^2, (rad/s)^2]` — which is
+    the copy a reader of the state actually sees. The matrix's blocks are the error vector's blocks
+    **in the error vector's order**, so the check re-derives that string from `error_vector` and the
+    declared units: reorder the vector, rename a block, or change a unit, and the state's own unit
+    refuses instead of going on describing a filter that no longer exists.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    documents = linter.load_documents(
+        VEHICLE,
+        yaml.safe_load((VEHICLE / "vehicle.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "coupling.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "mission.yaml").read_text()),
+        yaml.safe_load((VEHICLE / "channels.yaml").read_text()),
+    )
+    registry = linter.check_channels(
+        yaml.safe_load((VEHICLE / "channels.yaml").read_text()), linter.Report()
+    )
+    report = linter.Report()
+    linter.check_conventions(documents["vehicle.yaml"], registry, documents, report)
+    assert report.refusals == [], report.refusals
+
+    conventions = documents["vehicle.yaml"]["conventions"]
+    assert sorted(conventions) == [
+        "angular_velocity",
+        "covariance_units",
+        "mission_time",
+        "provenance",
+        "quaternion_direction",
+        "quaternion_order",
+        "units",
+        "units_exceptions",
+    ], sorted(conventions)
+    # Every convention except the units system — held against the registry — has at least one site
+    # citing it, and every citation resolves.
+    cited = set()
+    for filename in sorted(documents):
+        if filename == "vehicle.yaml":
+            continue
+        for _path, holder in linter._walk_mappings(documents[filename]):
+            for key, value in holder.items():
+                if key.endswith("_source") and str(value).startswith("vehicle.yaml:conventions."):
+                    cited.add(str(value).split(":", 1)[1].removeprefix("conventions."))
+    assert cited == {
+        "quaternion_order",
+        "quaternion_direction",
+        "angular_velocity",
+        "covariance_units.blocks",
+        "mission_time",
+    }, sorted(cited)
+
+    def refusal(name: str, rel: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        path = definition / rel
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {rel}: {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    gnc_components = "domains/gnc/components.yaml"
+    # The estimator's copy of the units drifting from the convention.
+    refusal(
+        "estimator-drift",
+        gnc_components,
+        "    delta_theta: rad^2\n",
+        "    delta_theta: deg^2\n",
+        "which declares",
+    )
+    # The state's matrix unit, re-derived from the error vector's order.
+    refusal(
+        "vector-reordered",
+        gnc_components,
+        "  error_vector: [delta_position, delta_velocity, delta_theta, accel_bias, gyro_bias]\n",
+        "  error_vector: [delta_position, delta_theta, delta_velocity, accel_bias, gyro_bias]\n",
+        "and the covariance's blocks in `error_vector`'s order are",
+    )
+    refusal(
+        "matrix-unit-changed",
+        gnc_components,
+        '    unit: "matrix[m^2, (m/s)^2, rad^2, (m/s^2)^2, (rad/s)^2]"\n',
+        '    unit: "matrix[m^2, (m/s)^2, rad^2, (m/s^2)^2, (rad/s)]"\n',
+        "and the covariance's blocks in `error_vector`'s order are",
+    )
+    # A block renamed in the convention and not in the vector.
+    refusal(
+        "block-renamed",
+        "vehicle.yaml",
+        "      delta_theta: rad^2\n",
+        "      delta_attitude: rad^2\n",
+        "and the covariance's blocks in `error_vector`'s order are",
+    )
+    # And each citation this round added, orphaned by renaming what it cites.
+    for key in ("quaternion_direction", "angular_velocity", "covariance_units", "mission_time"):
+        refusal(
+            f"orphan-{key}",
+            "vehicle.yaml",
+            f"  {key}:",
+            f"  {key}_renamed:",
+            "A citation of a declaration that has been renamed",
+        )
+
+
 def test_the_linter_holds_the_conventions_the_corpus_declares_once(tmp_path):
     """`vehicle.yaml#conventions`, which four comments call the important block, read by nothing.
 
@@ -1194,7 +1311,9 @@ def test_the_linter_holds_the_conventions_the_corpus_declares_once(tmp_path):
         "domains/gnc/points.yaml",
         '    quaternion_order: "[w,x,y,z]"\n',
         '    quaternion_order: "[x,y,z,w]"\n',
-        "and `vehicle.yaml:conventions.quaternion_order` declares",
+        # The citation walk owns the comparison now, so the message names the two values rather
+        # than the declaration: the site's copy is compared against the path it cites.
+        "states '[x,y,z,w]' and cites",
     )
     # A statement of the convention with nothing resolving it.
     refusal(
@@ -7440,7 +7559,8 @@ def test_the_guidance_model_is_re_derived_rather_than_trusted(tmp_path):
     gnc = yaml.safe_load((VEHICLE / "domains" / "gnc" / "components.yaml").read_text())
     estimator = gnc["estimator"]
     vector = estimator["error_vector"]
-    assert set(estimator["covariance_units_per_block"]) == set(vector)
+    # The field is named after the convention it copies, so that its citation pairs with it.
+    assert set(estimator["covariance_units"]) == set(vector)
     assert estimator["dimension"] == 3 * len(vector) == 15
     assert estimator["sub_stepping"]["plant_tick_hz"] == 50
     mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
