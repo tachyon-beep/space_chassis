@@ -1105,6 +1105,112 @@ def test_the_linter_holds_the_posture_that_permits_action(tmp_path):
     assert "mission.yaml:posture recovery: is the source of no transition" in out, out[-1200:]
 
 
+def test_the_linter_links_every_failure_chain_to_a_fault(tmp_path):
+    """The experiment's fifteen stories named their causes in prose, and a tool said so.
+
+    `coupling.yaml#failure_chains` gives each chain a primary, secondary and third-order cause in
+    prose and the channels a fleet would see as ids. `tools/faults.py` recorded the gap in its own
+    docstring — *"the chains are not linked to faults by anything but prose (see `open_debts`)"* —
+    **and no `open_debts` list in the corpus recorded it**, so the one artefact that could have
+    closed the gap pointed at a debt nobody had written.
+
+    Every chain now declares `realised_by`, a list of fault ids, and the check holds three things:
+    the ids are declared by some domain's `fault_policy.yaml`; **every named fault perturbs at least
+    one of the chain's own clues** (a fault that cannot move a channel the chain says a fleet would
+    see is not the cause of that chain, and both sides of that join were declared all along —
+    `perturbs` on the fault, `observable_clues` on the chain — with nothing between them); and the
+    chain's `scenario_use` names a declared `scenario_postures` id, because fifteen chains pointing
+    at a renamed scenario read exactly like fifteen that work.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    registry = linter.check_channels(
+        yaml.safe_load((VEHICLE / "channels.yaml").read_text()), linter.Report()
+    )
+    report = linter.Report()
+    linter.check_chain_faults(coupling, mission, VEHICLE, registry, report)
+    assert report.refusals == [], report.refusals
+    chains = coupling["failure_chains"]
+    assert len(chains) == 15, len(chains)
+    faults = {}
+    for path in sorted((VEHICLE / "domains").glob("*/fault_policy.yaml")):
+        for fault in (yaml.safe_load(path.read_text()) or {}).get("faults") or []:
+            faults[str(fault["id"])] = [str(p) for p in fault.get("perturbs") or []]
+    assert len(faults) == 128, len(faults)
+    for chain in chains:
+        realised = chain["realised_by"]
+        assert realised, chain["id"]
+        assert set(realised) <= set(faults), (chain["id"], realised)
+        clues = {str(chain["first_published_clue"])} | {
+            str(c) for c in chain.get("observable_clues") or []
+        }
+        for fid in realised:
+            assert any(
+                perturbed in clues
+                or ("[" in perturbed and perturbed.split("[")[0] in {c.split("[")[0] for c in clues})
+                for perturbed in faults[fid]
+            ), (chain["id"], fid)
+
+    def refusal(name: str, rel: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        path = definition / rel
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {rel}: {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    # A fault renamed in the policy that declares it.
+    refusal(
+        "fault-renamed",
+        "domains/rcs/fault_policy.yaml",
+        "  - id: RCS-01-stuck-on\n",
+        "  - id: RCS-01-stuck-on-valve\n",
+        "which no domain's `fault_policy.yaml` declares",
+    )
+    # A chain realised by a fault that cannot move any of its clues: `TCS-03` isolates the radiator
+    # and F-04 is about a stuck RCS thruster.
+    refusal(
+        "wrong-fault",
+        "coupling.yaml",
+        "    realised_by: [RCS-01-stuck-on]\n",
+        "    realised_by: [TCS-03-radiator-isolation]\n",
+        "perturbs none of this chain's clues",
+    )
+    # A fault dropped from the chain's realisation list.
+    refusal(
+        "no-fault",
+        "coupling.yaml",
+        "    realised_by: [RCS-01-stuck-on]\n",
+        "",
+        "is not declared, so this chain names its cause in prose",
+    )
+    # And the other side of the join: the fault stops perturbing the chain's clues entirely.
+    refusal(
+        "fault-no-longer-touches",
+        "domains/rcs/fault_policy.yaml",
+        '    perturbs: ["rcs.thruster_[n]_valve", "rcs.thruster_[n]_pressure_switch",\n'
+        '               "rcs.thruster_[n]_health", rcs.total_impulse_ns, rcs.propellant_remaining_pct,\n'
+        '               "rcs.control_authority_margin", gnc.body_rate_xyz_deg_s]\n',
+        '    perturbs: ["eclss.cabin_pressure_psia"]\n',
+        "perturbs none of this chain's clues",
+    )
+    # The scenario vocabulary, which is what the sweep found first.
+    refusal(
+        "scenario-renamed",
+        "coupling.yaml",
+        "    scenario_use: crisis\n",
+        "    scenario_use: emergency\n",
+        "which `mission.yaml#scenario_postures` does not declare",
+    )
+
+
 def test_the_linter_holds_every_convention_to_a_site(tmp_path):
     """All six conventions in the block now have a reader, and the covariance has three copies.
 
@@ -8414,7 +8520,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 268 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 269 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -8554,7 +8660,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "268", "the view must agree with the headline count"
+    assert owed == "269", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
