@@ -5476,6 +5476,104 @@ def test_a_declared_internal_order_is_the_order_the_plant_advances_them(tmp_path
     assert f"domains/{domain}/components.yaml:internal_order" not in result.stdout
 
 
+def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
+    """The resource taxonomy is the most-read block in the corpus that no tool had read.
+
+    `domains/consumables/components.yaml#ontology` is seven behaviours the corpus's catalog names —
+    Stock, Rate/capacity, Buffer, Inventory, Entitlement, Margin, Opportunity — each with the model
+    it means and a sentence saying where it is modelled on this vehicle. It is the block a reader
+    reaches for to answer "what kind of resource is this".
+
+    Nothing read it, and the consequence was not the seven sentences, which are true. It was the one
+    **key nobody had declared**: the Buffer entry — the recorder's data storage, which
+    `apollo_diode.md:898-903` makes operational rather than incidental, because behind the Moon
+    telemetry is stored and replayed — carried its obligation in a field named `debt`, and that key
+    appears exactly once in the corpus. `--debts` reported the entry as *"is UNCONFIGURED"* with no
+    reason, and the sentence naming what would close it — a node in `coupling.yaml`, a producer in
+    the comms domain — was a paragraph in a file no tool opens.
+
+    Which is what `check_vehicle.py`'s own comment about the domain `open_debts` calls "a comment
+    with better manners", found for the fourth time and in the same file as the third. The fix is
+    the counted idiom plus a reader for the block, and the reader is the closed key set rather than
+    the prose: adding `debt` to the set instead would have been a second name for the thing the
+    corpus's vocabulary file exists to keep single.
+    """
+    consumables = yaml.safe_load(
+        (VEHICLE / "domains" / "consumables" / "components.yaml").read_text()
+    )
+    ontology = consumables["ontology"]
+    assert len(ontology) == 7, [e.get("behaviour") for e in ontology]
+    assert sorted(e["behaviour"] for e in ontology) == [
+        "Buffer",
+        "Entitlement",
+        "Inventory",
+        "Margin",
+        "Opportunity",
+        "Rate/capacity",
+        "Stock",
+    ]
+    for entry in ontology:
+        assert set(entry) <= {"behaviour", "model", "on_this_vehicle", "provenance"}, sorted(entry)
+        assert entry.get("behaviour") and entry.get("model") and entry.get("on_this_vehicle")
+
+    # The obligation is where the corpus counts obligations, and no file declares the private key.
+    assert any("recorder" in str(d) for d in consumables.get("open_debts") or []), (
+        "the Buffer obligation is not in `open_debts`"
+    )
+    for path in sorted((VEHICLE / "domains").rglob("*.yaml")):
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            assert not re.match(r"^\s*debt:\s", line), f"{path}:{number} declares a `debt` key"
+
+    result = subprocess.run(
+        [sys.executable, str(LINTER), "--dir", str(VEHICLE), "--debts"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert "recorder" in result.stdout, "the obligation is not in `--debts`"
+
+    def broken(mutate) -> subprocess.CompletedProcess[str]:
+        """A fresh copy with one break applied, linted.
+
+        Each case gets its own copy: the mutations below are not independent — a duplicate entry and
+        a removed `Stock` in one file refuse each other's messages, and an earlier version of this
+        test applied them in sequence and read four refusals at the end.
+        """
+        fixture = copy_definition(fixture_dir(tmp_path, "ontology_"))
+        path = fixture / "domains" / "consumables" / "components.yaml"
+        doc = yaml.safe_load(path.read_text())
+        mutate(doc)
+        path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
+        return run_linter(fixture)
+
+    # The defect exactly as it stood.
+    result = broken(
+        lambda d: next(e for e in d["ontology"] if e["behaviour"] == "Buffer").update(
+            debt="the recorder's storage is a Buffer and it is not modelled"
+        )
+    )
+    assert result.returncode == 1, result.stdout[-1200:]
+    assert ".debt" in result.stdout and "Buffer" in result.stdout
+    assert "open_debts" in result.stdout and "paragraph rather than a debt" in result.stdout
+
+    # The rule is a closed set rather than one name.
+    result = broken(lambda d: d["ontology"][0].update(owed="the stocks are not modelled"))
+    assert result.returncode == 1 and ".owed" in result.stdout, result.stdout[-800:]
+
+    # A taxonomy has one of each, still has the stocks, and every entry states three things.
+    assert "twice" in broken(lambda d: d["ontology"].append(dict(d["ontology"][0]))).stdout
+    assert "apollo's catalog is about" in broken(
+        lambda d: d.__setitem__("ontology", [e for e in d["ontology"] if e["behaviour"] != "Stock"])
+    ).stdout
+    assert ".model" in broken(lambda d: d["ontology"][0].pop("model")).stdout
+    assert broken(lambda d: d["ontology"][0].update(provenance={"basis": "probably"})).returncode == 1
+
+    # And the obligation is what the count is counting: remove it and the headline falls back.
+    result = broken(lambda d: d.__setitem__("open_debts", []))
+    assert result.returncode == 0, result.stdout[-800:]
+    assert "with 288 declared debt(s)" in result.stdout
+
+
 def test_a_computation_says_which_field_it_produces(tmp_path):
     """The rule that re-derives a value's arithmetic named the fields, and the list was two long.
 
@@ -5809,7 +5907,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 289 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 290 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -5915,7 +6013,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 289 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 290 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -9717,7 +9815,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 288 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 289 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -9857,7 +9955,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "288", "the view must agree with the headline count"
+    assert owed == "289", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
