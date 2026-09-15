@@ -5476,6 +5476,112 @@ def test_a_declared_internal_order_is_the_order_the_plant_advances_them(tmp_path
     assert f"domains/{domain}/components.yaml:internal_order" not in result.stdout
 
 
+def test_a_computation_says_which_field_it_produces(tmp_path):
+    """The rule that re-derives a value's arithmetic named the fields, and the list was two long.
+
+    `check_vehicle.py` re-derives a state's declared arithmetic on every run: a state that says
+    `computation: "1 / 8"` and a value must agree. The loop that found the states to check named
+    the fields it looked for — `for field in ("nominal_kg_s", "total_w")` — and the comment beside
+    it said the point was that "a derived value states its arithmetic" stays *one rule*. A list of
+    two field names is not a rule, it is a list, and it is the defect this folder has removed from
+    four joins.
+
+    Two more names had appeared and the list had not. `total_k` was covered by a second
+    hand-written call in the thermal check, `total_w` by a third — the same rule applied three
+    times, which is why one wrong computation was refused **twice** — and
+    `power.fc_h2_draw_kg_s.ratio_of_o2_draw` was covered by nothing at all: its
+    `computation: "1 / 8"` could be changed to `1 + 1` and the vehicle composed, at 288 debts,
+    with the arithmetic and the value disagreeing in silence.
+
+    `provenance.computes` names the field now, so the association is a declaration rather than a
+    guess and the three sites are one. A computation with no subject is refused, because an
+    arithmetic that derives nothing is prose wearing an operator; and the refusal carries the
+    field, because the rule knows it and a state may carry four numeric fields.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+
+    declared = []
+    for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        for state in doc.get("state") or []:
+            prov = state.get("provenance") or {}
+            if prov.get("computation"):
+                declared.append((path.parent.name, str(state["id"]), state, prov))
+    assert len(declared) == 12, f"{len(declared)} computations declared"
+    assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
+    subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
+    assert subjects == ["nominal_kg_s", "ratio_of_o2_draw", "total_k", "total_w"], subjects
+    # Each subject is a numeric field on its own state, or the comparison has nothing to make.
+    for _, _, state, prov in declared:
+        assert isinstance(state.get(str(prov["computes"])), (int, float)), (
+            f"{state['id']} computes {prov['computes']}, which is not a number it declares"
+        )
+
+    fixture = copy_definition(fixture_dir(tmp_path, "computes_"))
+
+    def break_a_computation(domain: str, sid: str, expression: str) -> None:
+        path = fixture / "domains" / domain / "components.yaml"
+        lines = path.read_text().splitlines(keepends=True)
+        start = next(i for i, line in enumerate(lines) if line.strip() == f"- id: {sid}")
+        end = next(
+            (i for i in range(start + 1, len(lines)) if re.match(r"^  - id: ", lines[i])),
+            len(lines),
+        )
+        for i in range(start, end):
+            if lines[i].strip().startswith("computation: "):
+                indent = len(lines[i]) - len(lines[i].lstrip())
+                lines[i] = " " * indent + f"computation: {expression!r}\n"
+                path.write_text("".join(lines))
+                return
+        raise AssertionError(f"{sid} declares no computation")
+
+    # The one the list never reached. It composed before the round.
+    break_a_computation("power", "fc_h2_draw_kg_s", "1 + 1")
+    result = run_linter(fixture)
+    assert result.returncode == 1, result.stdout[-1200:]
+    assert "fc_h2_draw_kg_s.ratio_of_o2_draw" in result.stdout, (
+        "the refusal names the field the computation produces"
+    )
+    assert "does not re-derive" in result.stdout
+    break_a_computation("power", "fc_h2_draw_kg_s", "1 / 8")
+
+    # And one the list did hold, refused once rather than twice.
+    break_a_computation("thermal", "cabin_heat_csm_w", "1 + 1")
+    result = run_linter(fixture)
+    assert result.returncode == 1, result.stdout[-800:]
+    assert result.stdout.count("nobody has checked") == 1, (
+        "one wrong computation is one refusal; three hand-written sites made it two"
+    )
+    break_a_computation("thermal", "cabin_heat_csm_w", "60 + 85 + 80 + 100 + 36 + 72 + 300")
+    assert run_linter(fixture).returncode == 0, "the fixture did not come back"
+
+    # The rest of the coverage claim: every one of the twelve is reached.
+    for domain, sid, _state, prov in declared:
+        if (domain, sid) in (("power", "fc_h2_draw_kg_s"), ("thermal", "cabin_heat_csm_w")):
+            continue
+        break_a_computation(domain, sid, "1 + 1")
+        assert run_linter(fixture).returncode == 1, f"{domain}.{sid} is not re-derived"
+        # `break_a_computation` quotes the expression itself, so the parsed string goes back as-is.
+        break_a_computation(domain, sid, str(prov["computation"]))
+
+    # A computation that names no subject, and one that names a field it does not have.
+    path = fixture / "domains" / "power" / "components.yaml"
+    body = path.read_text()
+    path.write_text(body.replace("      computes: ratio_of_o2_draw\n", "", 1))
+    result = run_linter(fixture)
+    assert result.returncode == 1, result.stdout[-800:]
+    assert "provenance.computes" in result.stdout
+    path.write_text(body.replace("computes: ratio_of_o2_draw", "computes: unit", 1))
+    result = run_linter(fixture)
+    assert result.returncode == 1, result.stdout[-800:]
+    assert "does not declare as a number" in result.stdout
+    path.write_text(body)
+    assert run_linter(fixture).returncode == 0, "the fixture did not come back"
+
+
 def test_a_withheld_truth_named_as_an_instance_is_still_registered(tmp_path):
     """The §7 check compared exact keys, so a published instance hid behind its own template.
 
