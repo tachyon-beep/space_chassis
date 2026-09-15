@@ -742,7 +742,7 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # gave `bus_b` a source, so it owes a rule like every other `algebraic` state without one. The
     # assertion below is what keeps the class *declared* rather than deleted — if a state falls
     # into it again, `no_input` moves and this fails.
-    assert (counted_more, sentinel, no_input) == (23, 13, 0), (counted_more, sentinel, no_input)
+    assert (counted_more, sentinel, no_input) == (25, 13, 0), (counted_more, sentinel, no_input)
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -5276,11 +5276,36 @@ def test_the_reference_plant_stops_at_a_named_debt(tmp_path):
     assert "states fully configured" in result.stdout
 
     # The build order is in schedule order, and the first blocked state is the first the schedule
-    # reaches rather than the first in the file. Which states are blocked moves as values land; the
-    # order is the property, so the assertion is on `gnc` sitting before the first `needs`.
+    # reaches rather than the first in the file. Which states are blocked moves as values land, so
+    # the assertion is on the *shape* rather than on a name.
+    #
+    # **It used to assert that `gnc` came first, and that was the bug rather than the property.**
+    # `internal` is not a node in `coupling.yaml`, so no schedule entry carries those states and
+    # `order.get(node, -1)` answered "not in the schedule" with a value that sorts *before* every
+    # node in it — while the header promised the order the schedule reaches them. Nothing was owed
+    # on the sentinel at the value level until three profiles and a tie mode landed as
+    # `UNCONFIGURED` map targets in round 30, so the fallback had been exercised only by states that
+    # happened to sort late anyway. The property is that a state the schedule never reaches is
+    # listed after every state it does.
     blocked = result.stdout.split("blocked states, in the order")[1]
     assert "needs" in blocked, blocked[:400]
-    assert "gnc" in blocked.split("needs")[0], blocked[:400]
+    rows = [
+        line.split()
+        for line in blocked.splitlines()
+        if re.match(r"^  \w+ +\w+ +\w+ +needs ", line)
+    ]
+    assert rows, blocked[:400]
+    sentinel = {
+        state["id"]
+        for path in sorted((VEHICLE / "domains").glob("*/components.yaml"))
+        for state in (yaml.safe_load(path.read_text()) or {}).get("state") or []
+        if state.get("node") == "internal"
+    }
+    first_sentinel = next((i for i, row in enumerate(rows) if row[1] in sentinel), len(rows))
+    assert first_sentinel > 0, "every blocked state is on the sentinel, so this order proves nothing"
+    assert not [r for r in rows[first_sentinel:] if r[1] not in sentinel], (
+        "a state the schedule reaches is listed after one advanced with its domain"
+    )
 
     # The first tick stops at a named thing in a named file, and says why. That *shape* is the
     # property under test — which thing it stops at is a fact about the configuration and moves
@@ -6327,8 +6352,11 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # the plant wants, so they left this bucket without the code they need going away. The second
     # was the classifier being fixed to agree with `advance()`, which moved thirteen `internal`
     # states *in* here — no edge can reach the sentinel, so their driver is domain code.
-    assert len(buckets["rule"]) == 85, "half the vehicle is domain code"
-    assert len(buckets["value"]) == 26
+    assert len(buckets["rule"]) == 83, "half the vehicle is domain code"
+    # Two more moved *in* when a discrete state began owing a value by field name rather than
+    # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
+    # `command_value` mappings name profiles and a mode no source prices.
+    assert len(buckets["value"]) == 28
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
@@ -7313,7 +7341,7 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
                 else:
                     raise AssertionError((state["id"], mover))
     assert states == 43, states
-    assert (commands, triggers, events, logic) == (18, 5, 6, 22), (
+    assert (commands, triggers, events, logic) == (17, 5, 6, 23), (
         commands, triggers, events, logic,
     )
     # Two states still owe it, and they are the two the crew debt names.
@@ -8855,7 +8883,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 272 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 277 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -8995,7 +9023,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "272", "the view must agree with the headline count"
+    assert owed == "277", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -9561,4 +9589,189 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
         block,
         block[: block.index("why: >-")] + 'why: ""\n',
         "which is a claim about the vehicle",
+    )
+
+
+def test_a_command_value_says_which_argument_carries_the_value():
+    """The rule proved the verb could say *a* value, and nothing said what each value becomes.
+
+    `check_domain` requires `values & offered` non-empty for a `command:` mover — and that was the
+    whole of it. Which argument carries the value, and what each of its values becomes, was prose;
+    and for three states there was not even a vocabulary to compare against, so the rule was silent
+    exactly where the state could not hold what its command sets.
+
+    `structure.relief_valve_state` was a `bool` and `set_relief_valve`'s `state` takes `auto`,
+    `open` and `isolated`: two of the three had to collapse onto one boolean, so the vehicle could
+    be told to isolate its last line of defence against F-09's trapped-line overpressure and could
+    not report that it was isolated. The corpus had already written that diagnosis, on
+    `power.bus_tie_closed` — *"a boolean has no third value to latch into … the same fault as a
+    regulator position it cannot report, arriving through a type rather than a vocabulary."*
+
+    `crew.switch_panel` was the second and the link was simply wrong: its own note and its channel's
+    both say agents observe it and cannot move it, and `set_display_mode`'s gate, conflict domain
+    and provenance are all about displays. That is this test's other half — a state may not be moved
+    by a verb its own record says cannot move it.
+    """
+    states: dict[str, dict[str, object]] = {}
+    for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        for state in doc.get("state") or []:
+            states[f"{path.parent.name}.{state['id']}"] = state
+    verbs = {}
+    for path in sorted((VEHICLE / "domains").glob("*/commands.yaml")):
+        for verb in (yaml.safe_load(path.read_text()) or {}).get("commands") or []:
+            verbs[str(verb["verb"])] = verb
+
+    # The two type fixes, and the mis-link.
+    assert states["structure.relief_valve_state"]["unit"] == "enum[auto,open,isolated]"
+    panel = states["crew.switch_panel"]
+    assert panel["unit"] == "map[switch_id,bool]"
+    assert not [m for m in panel["moved_by"] if str(m).startswith("command:")], panel["moved_by"]
+    assert "cannot move them" in " ".join(str(panel["provenance"]["note"]).split())
+    channels = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    switches = next(
+        row for row in channels["crew"] if isinstance(row, dict) and row.get("id") == "controls.switches"
+    )
+    assert switches["unit"] == panel["unit"], "the channel and the state are one declaration"
+
+    # Every declared effect: the verb is a mover, the argument is an enum argument, the targets are
+    # values the state can hold, and no two argument values become one state value.
+    declared = 0
+    constants: list[str] = []
+    for where, state in sorted(states.items()):
+        movers = [
+            str(m).split(":", 1)[1] for m in state.get("moved_by") or [] if str(m).startswith("command:")
+        ]
+        entries = state.get("command_value") or []
+        for entry in entries:
+            declared += 1
+            assert entry["verb"] in movers, (where, entry["verb"])
+            spec = verbs[str(entry["verb"])]["argument_schema"][str(entry["argument"])]
+            assert spec["type"] == "enum", (where, entry["argument"])
+            assert str(entry.get("why") or "").strip(), where
+            if entry.get("constant") is not None:
+                constants.append(f"{where}.{entry['verb']}")
+                continue
+            values = set()
+            for match in re.findall(r"enum\[([^\]]*)\]", str(state.get("unit") or "")):
+                values.update(v.strip() for v in match.split(","))
+            targets: dict[str, str] = {}
+            for source, target in entry["maps"].items():
+                assert str(source) in [str(v) for v in spec["values"]], (where, source)
+                if target == "UNCONFIGURED":
+                    assert entry.get("note"), (where, source)
+                    continue
+                if values:
+                    # A state with a vocabulary holds values *from* it. `str(False)` is not `'off'`:
+                    # YAML 1.1 reads an unquoted `off` as a boolean, so a value spelled that way has
+                    # to be quoted and this is what says so.
+                    assert str(target) in values, (where, source, target)
+                else:
+                    # A state with none — a per-element boolean, or a rate — holds whatever its
+                    # type holds, and the mapping is the only place that says so.
+                    assert isinstance(target, (bool, int, float)), (where, source, target)
+                key = repr(target)
+                assert key not in targets, (
+                    f"{where} sends both {targets[key]!r} and {source!r} to {target!r}: a state that "
+                    "cannot tell two modes apart cannot report either"
+                )
+                targets[key] = str(source)
+    assert declared == 9, declared  # eight states, one of them with two commands
+    assert sorted(constants) == [
+        "rcs.thruster_valve.isolate_rcs_manifold",
+        "structure.pyro_fired.execute_event",
+    ], constants
+    # The two grounded mappings, and the one that is honestly owed.
+    tie = states["power.bus_tie_closed"]["command_value"][0]
+    assert tie["maps"] == {"auto": "UNCONFIGURED"} and tie["note"].strip()
+    assert states["propulsion.sps_state"]["command_value"][0]["maps"] == {"safe": "standby"}
+    assert states["propulsion.aps_state"]["command_value"][0]["maps"] == {"safe": "off"}
+    rate = states["comms.telemetry_rate"]["command_value"][0]
+    assert rate["maps"]["low"] == 1600 and rate["maps"]["high"] == 51200
+    published = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())["comms"]["rates"]
+    assert {r["id"]: r["bps"] for r in published} == {"low": 1600, "high": 51200}
+
+
+def test_the_linter_refuses_a_command_whose_effect_is_not_declared(tmp_path):
+    """The check held, in the five ways the declaration can be wrong.
+
+    The type defect and its cover-up: a `bool` state for a three-valued command, and a mapping that
+    sends two of the three modes to one boolean. The gap: a value the verb offers that no mapping
+    answers. The shape: an effect for a verb the state does not claim, an argument the verb does not
+    have, a target the state cannot hold, an empty reason, and an `UNCONFIGURED` with no note saying
+    what would close it. And the mis-link: the display mode wired back to the crew's switch panel.
+    """
+
+    def refusal(name: str, rel: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / rel
+        text = path.read_text()
+        assert text.count(old) == 1, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    # A `bool` cannot hold three modes, and no mapping may pretend otherwise.
+    refusal(
+        "bool-again",
+        "domains/structure/components.yaml",
+        '    unit: "enum[auto,open,isolated]"\n',
+        '    unit: "bool"\n',
+        "declares none, and 'set_relief_valve' is a `command:` mover",
+    )
+    refusal(
+        "collapse",
+        "domains/structure/components.yaml",
+        '    unit: "enum[auto,open,isolated]"\n',
+        '    unit: "bool"\n'
+        "    command_value:\n"
+        "      - verb: set_relief_valve\n"
+        "        argument: state\n"
+        "        maps:\n"
+        "          auto: false\n"
+        "          open: true\n"
+        "          isolated: false\n"
+        '        why: "a mapping that throws away two of the three modes"\n',
+        "sends both",
+    )
+    # A value the command takes that the state has no answer for.
+    refusal(
+        "gap",
+        "domains/crew/components.yaml",
+        "          reset: in\n",
+        "",
+        "declares no mapping for ['reset']",
+    )
+    # The shape rules.
+    refusal(
+        "target",
+        "domains/crew/components.yaml",
+        "          reset: in\n",
+        "          reset: closed\n",
+        "which breaker_panel cannot hold",
+    )
+    refusal(
+        "not-a-mover",
+        "domains/power/components.yaml",
+        "      - verb: set_bus_tie\n",
+        "      - verb: set_load\n",
+        "which is not a `command:` mover of this state",
+    )
+    refusal(
+        "no-why",
+        "domains/power/components.yaml",
+        "        why: >-\n"
+        "          `open` and `closed` are the identity. `auto` is not a position at all: it hands the\n"
+        "          decision to the service, \"which closes only when the two buses are within 1 V and no\n"
+        "          ground fault is active\" (`set_bus_tie`'s help), so it names no value this state can hold\n",
+        '        why: ""\n',
+        "is empty. What a command value becomes in a state is a claim",
+    )
+    # And the mis-link this round removed.
+    refusal(
+        "display-on-switches",
+        "domains/crew/components.yaml",
+        '      - "logic:the crew throw them, and no verb writes a switch — which is what `controls.switches` being a crew-only surface means"\n',
+        '      - "command:set_display_mode"\n',
+        "declares none, and 'set_display_mode' is a `command:` mover",
     )
