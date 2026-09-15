@@ -6814,7 +6814,9 @@ def test_the_readme_status_matches_the_tools():
     ).read_text()
     mine = len([name for name in globals() if name.startswith("test_")])
     assert mine > 100, f"the self-count found {mine} tests, which is not this file's shape"
-    needle = f"One {_in_words(mine)} tests"
+    # Sentence-initial in the README, so the first letter is capitalised here rather than the
+    # helper returning a capital it would have to un-capitalise everywhere else.
+    needle = f"{_in_words(mine).capitalize()} tests"
     assert needle in reconciliation, (
         f"the reconciliation README does not say {needle!r} about this file, which holds {mine}"
     )
@@ -6854,9 +6856,14 @@ def _in_words(n: int) -> str:
         return units[n]
     if n < 100:
         return tens[n // 10] + (f"-{units[n % 10]}" if n % 10 else "")
+    # **The hundreds digit, which this dropped.** The first version returned a bare "hundred" for a
+    # round hundred and the caller prefixed a hard-coded "One", so 200 and 100 spelled the same —
+    # and this file reached exactly 200 tests, which is when an ambiguity stops being theoretical.
+    # The caller no longer prefixes anything and the digit is spelled here.
+    head = f"{units[n // 100]} hundred"
     if n % 100 == 0:
-        return "hundred"
-    return f"hundred {_in_words(n % 100)}"
+        return head
+    return f"{head} {_in_words(n % 100)}"
 
 
 def test_the_registry_coverage_claim_is_data_rather_than_a_sentence(tmp_path):
@@ -10163,3 +10170,100 @@ def test_a_computed_effect_names_the_input_the_command_changes(tmp_path):
         "        selects: UNCONFIGURED\n",
         "is UNCONFIGURED with no `note`",
     )
+
+
+def test_a_commanded_state_is_guarded_by_a_dwell_and_the_executive_reads_it(tmp_path):
+    """The rule's comment stated the distinction; the code did not, and nothing read the field.
+
+    `check_domain`'s own comment says a commanded state machine "has no comparator to band — what it
+    needs is minimum on and off times, because a machine that can be re-commanded every tick is a
+    machine that chatters on command instead of on noise". Then the three branches below it accept
+    `hysteresis`, `dwell` or `one_way` from any state at all — so `bus_tie_closed`, moved by
+    `set_bus_tie`, composes with a comparator band in place of its dwell, which leaves a commanded
+    mode guarded by `assert: 1.25` volts against values of `open`, `closed` and `tripped`.
+
+    And **no tool read a dwell at all**: thirty-three discrete states declare one, fifteen of them
+    commanded, and the guard is evaluated at the moment of effect — the executive's own step
+    (`plant.md` step 2). So a fleet could re-command `set_rcs_mode` every tick, or move the bus tie
+    twice inside its 0.2 s, while every declaration said it could not. `rcs.thruster_valve`'s two
+    values are `UNCONFIGURED`: an obligation owed to a field nothing consumed.
+
+    Two halves are asserted here. The linter refuses a band on a commanded state, with `one_way` as
+    the exemption the existing rule already reasons about. And the guard reaches the executive:
+    `command_dwell` reports it, and the console refuses a command inside its dwell by name.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    world = plant.load_world(VEHICLE)
+    commanded = [
+        state
+        for state in world.states
+        if state.method == "discrete"
+        and any(str(m).startswith("command:") for m in state.spec.get("moved_by") or [])
+    ]
+    assert len(commanded) == 16, [s.id for s in commanded]
+    guarded = [s for s in commanded if s.spec.get("dwell")]
+    assert len(guarded) == 15, [s.id for s in commanded if not s.spec.get("dwell")]
+    # The one that is not is one-way, and that is the exemption rather than a gap.
+    assert [s.id for s in commanded if not s.spec.get("dwell")] == ["pyro_fired"]
+    assert all(s.spec.get("one_way") for s in commanded if not s.spec.get("dwell"))
+    # The owed guard is reported as owed rather than as zero, because a dwell of zero is exactly
+    # the chattering the field exists to prevent.
+    assert [(s.id, on, off) for s, on, off in plant.command_dwell(world, "set_rcs_quad")] == [
+        ("thruster_valve", None, None)
+    ]
+    assert [(s.id, on, off) for s, on, off in plant.command_dwell(world, "set_bus_tie")] == [
+        ("bus_tie_closed", 0.2, 0.2)
+    ]
+
+    # A band on a commanded state is refused; a band on an uncommanded one is not.
+    definition = copy_definition(fixture_dir(tmp_path, "band"))
+    path = definition / "domains" / "power" / "components.yaml"
+    text = path.read_text()
+    old = "    dwell: {min_on_s: 0.2, min_off_s: 0.2}\n"
+    assert text.count(old) == 1, "the fixture no longer matches bus_tie_closed's dwell"
+    path.write_text(text.replace(old, "    hysteresis: {assert: 1.25, clear: 1.05, dwell_ms: 500}\n"))
+    out = run_linter(definition).stdout
+    assert "guards itself with a hysteresis band" in out, out[-1400:]
+
+    # And the guard end to end, one command per console invocation — the way a fleet's commands
+    # arrive, and the reason the first version's in-memory clock fired never.
+    diode = tmp_path / "diode"
+    window = diode / "dwell"
+    console = [
+        sys.executable,
+        str(VEHICLE / "tools" / "console.py"),
+        "--diode-dir",
+        str(diode),
+        "--slug",
+        "dwell",
+        "--phase",
+        "translunar_coast",
+    ]
+    subprocess.run([*console, "--init"], capture_output=True, check=False)
+
+    def run(command: str) -> str:
+        for existing in (window / "output").glob("*.txt"):
+            existing.unlink()
+        (window / "console.json").write_text(
+            json.dumps({"commands": [command], "variables": {}}), encoding="utf-8"
+        )
+        subprocess.run([*console, "--cycles", "1", "--poll", "0"], capture_output=True, check=False)
+        bodies = [p.read_text() for p in (window / "output").glob("*.txt")]
+        assert len(bodies) == 1, bodies
+        return bodies[0]
+
+    first = run("select_antenna antenna=high_gain")
+    assert "succeeded" in first and "antenna_selection=high_gain" in first, first
+    # `antenna_selection` holds for ten seconds, so the second command is inside its dwell.
+    second = run("select_antenna antenna=omni_a")
+    assert "refused: DWELL." in second, second
+    assert "must hold a value for 10 s" in second, second
+    # And an owed guard refuses rather than being read as zero.
+    assert "succeeded" in run("set_rcs_quad group=sm_primary state=enable")
+    owed = run("set_rcs_quad group=sm_primary state=inhibit")
+    assert "refused: GUARD OWED." in owed, owed
