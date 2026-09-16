@@ -303,6 +303,56 @@ need a **lunar ephemeris at the arrival epoch**, which no document in the corpus
 debt is smaller and it is now precise: not "a patched-conic design", which is a task, but one
 datum.
 
+### C-25 · The cabin's water vapour share
+
+The vehicle models a crewed cabin as four conserved gases — oxygen, water vapour, carbon dioxide and
+nitrogen — and the water share sets the oxygen's own partial pressure band. Two documents give it,
+and they do not agree.
+
+| Source | Says |
+|---|---|
+| `csm_ecs_study_guide.pdf` **PDF p. 31**, §III Pressure Suit Subsystem | the cooling process removes "the water content of the gas in excess of a **50 F dew point**" — 10 C, and water's saturation vapour pressure there is 1.228 kPa = **9.209 mmHg** |
+| `lunar_module_environmental_control_subsystem.pdf` **PDF p. 44**, component 101 Heat Exchanger, performance Condition I ("two cabin fans, condensing") | "Absolute Humidity — lb H2O/lb O2 **0.0276**", at "Pressure O2 in — psia 5.0" — a mole ratio of 0.0490, i.e. **12.09–12.68 mmHg** depending on whether the quoted 5.0 psia is the oxygen's own pressure or the stream total |
+
+**The ECS document, with the disagreement stated.** The corpus carries 9.209 mmHg, and the round that
+landed it recorded the reason in the field itself: the 50 F sentence is about the **suit circuit**,
+the same ECS runs the same condensing heat exchanger and water separator on the cabin, and applying
+the figure to the cabin is an inference rather than a quotation. The Hamilton Standard figure is
+measured *at the cabin heat exchanger*, which makes it the better source for the cabin and the worse
+one for a vehicle whose two compartments share a single humidity declaration — it is an LM table, and
+the CSM's cabin share would still be owed its own.
+
+**Why it was not substituted quietly.** The band `eclss.pp_o2_mmhg` carries — 236.02 to 256.71 mmHg
+of oxygen at 4.8–5.2 psia of total pressure — is the total band **less this share**, and so are the
+LM's two ppO2 thresholds, the four-gas closure and both channels' ranges. Moving the share moves all
+of them: 12.68 mmHg gives a band of roughly 233–253 mmHg and a nominal ppO2 near 243. A change of
+that reach belongs to a round that re-derives the closure and the alarms together, and the conflict
+is recorded in `domains/eclss/components.yaml:atmosphere_model.check.partial_pressure_provenance`
+so that a reader of the number finds the disagreement rather than a page that does not say it.
+
+**Open.** Which of the two the cabin is flown at, and whether the two compartments get separate
+shares.
+
+### C-26 · The RCS engine's specific impulse
+
+| Source | Says |
+|---|---|
+| `lm_propulsion_rcs_study_guide.pdf` **PDF p. 90**, RCS engine specification table | "Specific impulse **275 seconds (approx)**"; "Flow rate — oxidizer **0.24** pounds/sec", "Flow rate — fuel **0.12** pounds/sec" |
+| the same table, read as a flow rate | 0.36 lb/s = **0.1633 kg/s** at 100 lbf, which is an Isp of **277.9 s** — the guide corroborates itself against the corpus |
+| `domains/rcs/components.yaml:thruster` | `thrust_n: 445`, `isp_s: **290**` |
+| the same declaration's own relation | `mass_flow_per_thruster` = 445 / (290 x 9.80665) = **0.15647 kg/s**, which is 4.3 % below the guide's flow rate |
+
+**Open, and recorded rather than resolved.** The two published numbers on p. 90 agree with each other
+and disagree with the declared pair, which is self-consistent and 15 s high; a 445 N thruster at
+0.1633 kg/s also spends the mission's RCS propellant 4.3 % faster, and the load is already one of the
+tighter ones. The corpus's 290 s is not sourced to any page in the manifest, and the round that read
+p. 90 landed its minimum-impulse-bit and transient figures without touching the Isp because the
+decision is a vehicle-level one — it moves `E-RCSP-RCS`, `capability.mass_flow_per_thruster` and the
+RCS propellant budget together.
+
+**Open.** Whether the vehicle flies at the guide's 275–278 s or keeps the 290 s the corpus declares,
+and if the latter, which document that figure comes from.
+
 ---
 
 ## D — decisions

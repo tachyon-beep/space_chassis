@@ -682,11 +682,11 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
 
     Running `advance` over every state with a permissive value map — every node supplied a number,
     so a refusal is about *structure* rather than about a value missing somewhere else — lands
-    thirty-six states in a different bucket from the one `build_order` gives them. The correction is
+    thirty-one states in a different bucket from the one `build_order` gives them. The correction is
     not to the classifier, which is sound, but to the sentence: the two answer different questions
     on purpose.
 
-    **Twenty-three are the worklist counting more.** `advance` refuses on the parameter its *method*
+    **Eighteen are the worklist counting more.** `advance` refuses on the parameter its *method*
     needs and nothing else; `build_order` walks the whole spec, so a state whose `initial` or
     `moved_by` or `basis` is unset is reported as owing a value even where the plant would advance
     it from a number it was handed. That is the honest direction for a worklist — the spec *is*
@@ -696,12 +696,14 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     calls a missing edge. No edge can reach the sentinel, so its driver is domain code, and `rule`
     is the file an implementer should open.
 
-    **And one runs the other way**, which round 100 added: a state with no input at all is reported
-    as owing an *edge* — no rule can be written without one — where `advance` says its rule is
-    domain code. `bus_b_v` is the case, and the worklist is the one an implementer should read.
+    **And a third kind ran the other way for one round**, which round 100 added and round 101 closed:
+    a state with no input at all is reported as owing an *edge* — no rule can be written without one
+    — where `advance` says its rule is domain code. `bus_b_v` was the case, and giving `bus_b` a
+    source retired it, which is why the assertion below pins that class at zero rather than deleting
+    it.
 
-    This test is the pin: any disagreement that is **not** one of those two fails, so a third kind
-    cannot appear unnoticed. And the property the docstring should have claimed — that the
+    This test is the pin: any disagreement that is **not** one of the declared kinds fails, so a new
+    kind cannot appear unnoticed. And the property the docstring should have claimed — that the
     classification never sends a reader somewhere the answer is not — is the one round 95 fixed for
     sixteen states.
     """
@@ -752,13 +754,14 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # assertion below is what keeps the class *declared* rather than deleted — if a state falls
     # into it again, `no_input` moves and this fails.
     #
-    # `counted_more` went 30 -> 27 when the RCS cluster's three fields were landed, and 27 -> 26 when
-    # the fuel cell's reactant chain closed: in both cases the worklist said a state owed a *value*
-    # because its spec held an `UNCONFIGURED`, and `advance` said it was ready because the
-    # integrator never read the field. That is this counter's whole purpose, and it is the reason
-    # the build order was reporting states as blocked by numbers that were published all along —
-    # page 89 of the RCS study guide, and page 14 of the EPS study guide.
-    assert (counted_more, sentinel, no_input) == (24, 13, 0), (counted_more, sentinel, no_input)
+    # `counted_more` went 30 -> 27 when the RCS cluster's three fields were landed, 27 -> 26 when
+    # the fuel cell's reactant chain closed, and 26 -> 18 when the two cabins' six gas stocks took
+    # their initials: in every case the worklist said a state owed a *value* because its spec held an
+    # `UNCONFIGURED`, and `advance` said it was ready because the integrator never read the field.
+    # That is this counter's whole purpose, and it is the reason the build order was reporting states
+    # as blocked by numbers that were published all along — page 89 of the RCS study guide, page 14 of
+    # the EPS study guide, and the four-gas model's own partial pressures.
+    assert (counted_more, sentinel, no_input) == (18, 13, 0), (counted_more, sentinel, no_input)
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -2011,6 +2014,13 @@ def test_the_linter_holds_a_derived_initial_against_the_law_it_cites(tmp_path):
     disagreed: `csm_cabin_o2_kg` at 2.653760 implied 6,894.8 Pa per psi while `lm_cabin_o2_kg` at
     3.013592 implied slightly less, so one law applied to two cabins had been rounded two ways.
 
+    **And the relation itself was wrong in the same way as the ppO2 band beside it.** Both initials
+    claimed the whole of the 5 psia, which they could only do if the cabin held no water, no carbon
+    dioxide and no nitrogen at all. Round 8 gave the other three gases their stocks, made the oxygen
+    the *remainder* — 2.528302 and 2.87112285 kg — and put the subtraction into the
+    `initial_derivation` expression, so the two figures the law determines are determined by the law
+    rather than by a hand sum that agreed with itself.
+
     A derived initial now binds the figures its relation names, exactly as an edge's sensitivity
     does, and the two states are held against the *same* constants and each other's arithmetic: the
     cabin's nominal pressure and temperature (from the zone that declares them, and the vehicle-level
@@ -2046,7 +2056,7 @@ def test_the_linter_holds_a_derived_initial_against_the_law_it_cites(tmp_path):
         if s.get("id", "").endswith("cabin_o2_kg")
     }
     assert sorted(states) == ["csm_cabin_o2_kg", "lm_cabin_o2_kg"], sorted(states)
-    for sid, value in (("csm_cabin_o2_kg", 2.653596), ("lm_cabin_o2_kg", 3.013405)):
+    for sid, value in (("csm_cabin_o2_kg", 2.528302), ("lm_cabin_o2_kg", 2.87112285)):
         state = states[sid]
         assert state["initial"] == value, (sid, state["initial"])
         assert state.get("initial_derivation"), f"{sid} derives nothing"
@@ -2065,14 +2075,14 @@ def test_the_linter_holds_a_derived_initial_against_the_law_it_cites(tmp_path):
     # The derivation removed: the relation is prose again, and prose cannot be evaluated.
     refusal(
         "no-derivation",
-        [(eclss, "    initial_derivation:\n      expression: \"psi_to_pa * pressure_psia",
-          "    unused_derivation:\n      expression: \"psi_to_pa * pressure_psia")],
+        [(eclss, '    initial_derivation:\n      expression: "(psi_to_pa * pressure_psia',
+          '    unused_derivation:\n      expression: "(psi_to_pa * pressure_psia')],
         "declares this initial as `derived` and binds nothing",
     )
     # The value put back to the literal nothing could re-derive.
     refusal(
         "old-literal",
-        [(eclss, "    initial: 2.653596\n", "    initial: 2.653760\n")],
+        [(eclss, "    initial: 2.528302\n", "    initial: 2.653760\n")],
         "and `initial` declares 2.65376",
     )
     # The cabin re-rated in *both* files, so no join can complain — and the initial refuses anyway,
@@ -2084,7 +2094,7 @@ def test_the_linter_holds_a_derived_initial_against_the_law_it_cites(tmp_path):
         assert "nominal_temperature_k: 295" in text, rel
         path.write_text(text.replace("nominal_temperature_k: 295", "nominal_temperature_k: 300"))
     out = run_linter(definition).stdout
-    assert "and `initial` declares 2.653596" in out, out[-1200:]
+    assert "and `initial` declares 2.528302" in out, out[-1200:]
     # And a renamed source reads exactly like one that is unset.
     refusal(
         "renamed-source",
@@ -2791,7 +2801,9 @@ def test_the_linter_refuses_a_range_it_cannot_read(tmp_path):
     out = run_linter(definition).stdout
     assert "range_kind None" in out, out[-800:]
     # A band with no width is not a band.
-    refusal("    range: [248, 269]", "    range: [248, 248]", "no width")
+    # The ppO2 band, which is this round's finding: a band with no width is not a band, and this
+    # one is the only numeric band whose two ends the domain derives rather than chooses.
+    refusal("    range: [236.02, 256.71]", "    range: [236.02, 236.02]", "no width")
 
 
 def test_the_linter_holds_the_power_inventory_to_its_own_arithmetic(tmp_path):
@@ -5974,7 +5986,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 258 declared debt(s)" in result.stdout
+    assert "with 252 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6342,7 +6354,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 260 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 254 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6448,7 +6460,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 260 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 254 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -7685,7 +7697,10 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # been counted as ready because the integrator never read a level, which is the defect the
     # round found — the build order was reporting a state as advanceable that could only have
     # produced a wrong number.
-    assert len(buckets["ready"]) == 16
+    # And `ready` went 16 -> 18 when the two cabins' six gas stocks took their initials: those six
+    # were `stock` states whose level was owed, so they were blocked by a value the round found, and
+    # four of the twenty-four states that closed a value debt are now blocked by an edge instead.
+    assert len(buckets["ready"]) == 18
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -7706,14 +7721,21 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # Four more moved in when a `computed` effect began naming its input: `link_snr`, `tx_power`,
     # `instrumentation_power` and `nav_solution` are blocked by a field now rather than by the
     # rule that would compute them.
-    assert len(buckets["value"]) == 27
+    # Six left `value` in round 8 — the two cabins' gas stocks, which took the initials the four-gas
+    # model derived for them — and four of the twenty-four states that *were* blocked by an edge
+    # rather than by code came in behind them, because a stock with no level had been reporting the
+    # value debt first. The net move is 27 -> 21 while the debt count fell by six.
+    assert len(buckets["value"]) == 21
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
     # coupling, and `instrumentation_power`, `bus_tie_closed` and `thruster_valve` each have every
     # input declared. `load_shed_class` followed its own edge into the table form.
-    assert len(buckets["edge"]) == 7
-    assert len(buckets["ready"]) == 16
+    # 7 -> 11 in round 8, which is the other half of the value move above: four of the six states
+    # that stopped owing a value owe an edge, and those edges were already counted as debts — the
+    # worklist simply could not see them behind the earlier refusal.
+    assert len(buckets["edge"]) == 11
+    assert len(buckets["ready"]) == 18
 
 
 def test_the_plant_reports_the_build_order():
@@ -8472,14 +8494,34 @@ def test_every_stock_declares_where_it_starts():
     # `step` both dropped it and six declared starting values were read by nothing.
     declared = [s for s in stocks if isinstance(s.spec.get("initial"), (int, float))]
     # 16 -> 18 when the two propellant stocks stopped owing their `initial`: `prop_main_kg` is
-    # the SPS's load and `prop_rcs_kg` the three RCS loads summed, both `derived` now.
-    assert len(declared) == 18, f"{len(declared)} stocks declare a numeric initial"
+    # the SPS's load and `prop_rcs_kg` the three RCS loads summed, both `derived` now. 18 -> 24
+    # when the two cabins' six gas stocks landed behind them: four `derived` from a declared partial
+    # pressure and two `derived` as exactly zero, which is what `atmosphere_model.check` says the
+    # nitrogen is. The two oxygens were already declared and *moved* rather than closed — they are
+    # the remainder of the cabin's total now — so they are not part of the six.
+    assert len(declared) == 24, f"{len(declared)} stocks declare a numeric initial"
     on_nodes = {k: v for k, v in seeded.items() if k != "internal"}
     # 10 -> 12 with `prop_main` and `prop_rcs`: the two stocks whose `initial` was owed because
-    # nothing said which tanks the nodes were. Both carry their loads now.
+    # nothing said which tanks the nodes were. Both carry their loads now. **The six cabin gases
+    # round 8 landed do not move this count**, which is the map's own shape showing: `cabin_atm` and
+    # `lm_cabin_atm` were already keys because each node's *oxygen* was declared, and four stocks
+    # share each of those keys, so the map holds the last of them and six new values are invisible
+    # here. The per-stock figures are the round-8 closure test's business rather than this count's.
     assert len(on_nodes) == 12, f"{len(on_nodes)} node stocks carry a value"
     assert len(seeded["internal"]) == 6, sorted(seeded["internal"])
-    assert len(on_nodes) + len(seeded["internal"]) == len(declared)
+    # The map is keyed by node and holds one value per key, so this is **not** a stock count and
+    # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
+    # six of the twenty-four declared values are the last of their key rather than a key of their
+    # own. The invariant that survives is that every declared stock's *node* is a key — nothing a
+    # stock declares is dropped by the map's shape — and that the sentinel is keyed by state id.
+    declared_nodes = {
+        str(s.node) for s in stocks if isinstance(s.spec.get("initial"), (int, float))
+    }
+    assert declared_nodes <= set(seeded), sorted(declared_nodes - set(seeded))
+    assert len(declared) > len(seeded), (
+        "if the counts ever match again, the map has stopped sharing keys and this test's comment "
+        "is the thing to re-read"
+    )
     # The ones the corpus can supply, and the numbers it supplies them with. The last is the
     # battery's charge, which stopped being owed in this round: 3,360 Wh of entry cells times
     # 3,600, which is the same energy `check_power_inventory` holds against the cells' own
@@ -10297,7 +10339,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 259 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 253 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10440,7 +10482,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "259", "the view must agree with the headline count"
+    assert owed == "253", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -12022,7 +12064,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 259 declared debt(s)",
+        "COMPOSES, with 253 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12030,7 +12072,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 259 declared debt(s)",
+        "COMPOSES, with 253 declared debt(s)",
         composes=True,
     )
 
@@ -12045,7 +12087,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 260 declared debt(s)" in out, out[-300:]
+    assert "with 254 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12204,7 +12246,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 260 declared debt(s)" in out, out[-400:]
+    assert "with 254 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12351,7 +12393,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 260 declared debt(s)" in out, out[-400:]
+    assert "with 254 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12361,7 +12403,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 259 declared debt(s)",
+        "COMPOSES, with 253 declared debt(s)",
         composes=True,
     )
 
@@ -12503,7 +12545,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 259 declared debt(s)",
+        "COMPOSES, with 253 declared debt(s)",
         composes=True,
     )
 
@@ -13386,3 +13428,142 @@ def test_a_stocks_level_is_the_tanks_it_says_it_holds(tmp_path):
     result = run_linter(definition)
     assert result.returncode == 1
     assert "derives 1008 from 'sm + cm + lm'" in result.stdout, result.stdout[-900:]
+
+
+def test_the_ppO2_band_is_the_cabin_mixture_s_band_and_not_its_total_pressure():
+    """The one band the domain derives was derived from the wrong pressure, in four declarations.
+
+    `eclss.pp_o2_mmhg` derives from `csm_cabin_o2_kg`, and the four gas stocks of a compartment are
+    one mixture at one pressure. The band read **248-269 mmHg** because "the cabin sits at 4.8-5.2
+    psia of essentially pure oxygen, and 5 psia is 258.6 mmHg" — which is the *total* pressure
+    band. The cabin is not essentially pure: it is 9.209 mmHg of water vapour (`csm_ecs_study_guide.pdf`
+    PDF p. 16 runs the cooling process to a 50 F dew point, and that is water's saturation pressure
+    at 10 C) and 3.0 mmHg of carbon dioxide (this domain's own one-hour-average limit) away from it,
+    and the regulator holds *total* pressure, so those 12.209 mmHg are oxygen the cabin never has.
+
+    The wrong band stood in four declarations — both channel ranges and this compartment's two
+    thresholds — and in two `points.yaml` entries and the domain's own header comment. Nothing could
+    see it because nothing added the four masses up; `check_cabin_pressure_closure` now does, and
+    this recomputes the mixture from the stocks so the test is a second reader of the derivation
+    rather than a copy of the band it is checking.
+    """
+    eclss = yaml.safe_load((VEHICLE / "domains" / "eclss" / "components.yaml").read_text())
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    channels = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    profiles = yaml.safe_load((VEHICLE / "domains" / "eclss" / "profiles.yaml").read_text())
+
+    model = eclss["atmosphere_model"]
+    shares = model["check"]["partial_pressures_mmhg"]
+    assert shares == {"h2o": 9.209, "co2": 3.0, "n2": 0.0}, shares
+    assert sum(shares.values()) == 12.209
+
+    gases = {gas["id"]: gas["molar_mass_kg_per_mol"] for gas in model["gases"]}
+    stocks = {state["id"]: state for state in eclss["state"]}
+    zones = {zone["id"]: zone for zone in thermal["zones"]}
+    psi_to_pa, mmhg_to_pa, r_gas = 6894.757293168361, 133.322387415, 8.314462618153
+
+    for prefix, zone_id in (("csm_cabin", "csm_cabin"), ("lm_cabin", "lm_cabin")):
+        zone = zones[zone_id]
+        cabin = zone_id.split("_")[0]
+        moles = {
+            gas: stocks[f"{prefix}_{gas}_kg"]["initial"] / gases[gas]
+            for gas in ("o2", "h2o", "co2", "n2")
+        }
+        volume = model["volume_m3"][cabin]
+        pressure_pa = sum(moles.values()) * r_gas * zone["nominal_temperature_k"] / volume
+        # The four are one mixture, so their sum is the pressure the zone is held at.
+        assert pressure_pa == pytest.approx(zone["nominal_pressure_psia"] * psi_to_pa, abs=0.1), cabin
+        pp_o2 = pressure_pa * moles["o2"] / sum(moles.values()) / mmhg_to_pa
+        assert pp_o2 == pytest.approx(246.37, abs=0.01), (cabin, pp_o2)
+        # 248 mmHg is 4.8 psia of *total* pressure. Oxygen in a cabin with water in it cannot
+        # reach it — which is the finding, stated as an inequality rather than as a band.
+        assert pp_o2 < 248.0, cabin
+
+    band = [236.02, 256.71]
+    registry = {row["id"]: row for row in channels["eclss"]}
+    for channel_id in ("eclss.pp_o2_mmhg", "eclss.lm_pp_o2_mmhg"):
+        assert registry[channel_id]["range"] == band, channel_id
+        assert registry[channel_id]["range_kind"] == "band", channel_id
+    thresholds = {row["id"]: row for row in profiles["thresholds"]}
+    assert thresholds["lm_ppo2_hypoxia"]["assert"] == band[0]
+    assert thresholds["lm_ppo2_fire_risk"]["assert"] == band[1]
+    # And the band is the total band less the shares, at the declared significant figures.
+    assert round(4.8 * psi_to_pa / mmhg_to_pa - sum(shares.values()), 2) == band[0]
+    assert round(5.2 * psi_to_pa / mmhg_to_pa - sum(shares.values()), 2) == band[1]
+
+    # The oxygen initial is the remainder rather than a declared mass, and the subtraction is by
+    # partial pressure: subtracting carbon dioxide's *mass* from an oxygen-mass total would
+    # over-subtract it by a quarter, because it is 44 g/mol against oxygen's 32.
+    derivation = stocks["csm_cabin_o2_kg"]["initial_derivation"]
+    assert derivation["expression"].startswith("(psi_to_pa * pressure_psia - mmhg_to_pa * (")
+    assert derivation["inputs"]["pp_co2"].endswith("partial_pressures_mmhg.co2")
+
+
+def test_the_linter_refuses_a_cabin_whose_four_gases_do_not_make_its_pressure(tmp_path):
+    """A mixture that does not reach the pressure it is held at is a cabin flown at two pressures.
+
+    The check is one that could not exist before the four stocks did: the oxygen initial alone
+    claimed the whole 5 psia, which is only consistent with the other three being nothing. With a
+    carbon dioxide stock that holds a real share, inflating it must make the sum miss the zone's
+    pressure *and say so with both numbers*, because a closure that fails silently is the state the
+    folder was in for eight rounds.
+    """
+    definition = copy_definition(fixture_dir(tmp_path, "mixture"))
+    path = definition / "domains" / "eclss" / "components.yaml"
+    text = path.read_text()
+    old = "    initial: 0.04233239\n"
+    assert old in text, "the fixture no longer matches the CSM carbon dioxide stock's initial"
+    path.write_text(text.replace(old, "    initial: 0.9\n", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "the csm cabin's four gas initials come to" in result.stdout, result.stdout[-900:]
+    assert "the zone is held at 5 psia" in result.stdout, result.stdout[-900:]
+    assert "is a cabin that cannot be at the pressure it is flown at" in result.stdout, (
+        result.stdout[-900:]
+    )
+
+
+def test_the_linter_refuses_a_ppO2_that_its_own_two_alarms_do_not_bracket(tmp_path):
+    """The composition and the alarms describe one cabin, so the linter holds them against each other.
+
+    Two ways for that to fail, and the second is the one the closure check has to refuse rather than
+    skip: an alarm whose band no longer contains the mixture, and a compartment with no ppO2 pair at
+    all — a mixture nothing calls habitable or not. The pair is *per compartment*, so a fixture that
+    repoints the LM's two thresholds must leave the CSM's own pair where it is.
+    """
+    # An LM fire-risk alarm moved down onto the mixture: it now fires while the cabin is nominal.
+    definition = copy_definition(fixture_dir(tmp_path, "narrow-band"))
+    path = definition / "domains" / "eclss" / "profiles.yaml"
+    text = path.read_text()
+    old = (
+        "  - id: lm_ppo2_fire_risk\n"
+        "    point: eclss.lm_pp_o2_mmhg\n"
+        "    comparator: above\n"
+        "    assert: 256.71\n"
+    )
+    assert old in text, "the fixture no longer matches the LM fire-risk threshold"
+    path.write_text(text.replace(old, old.replace("assert: 256.71", "assert: 240.0"), 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert (
+        "the lm cabin's four gases give a ppO2 of 246.37 mmHg against a habitable band of "
+        "236.02 to 240 mmHg" in result.stdout
+    ), result.stdout[-900:]
+    # And the older reader catches the same fixture from the registry's side, which is why the
+    # two checks are not one: a band is a declaration, and an alarm inside it is a contradiction
+    # whoever reads it.
+    assert "the region its own registry calls acceptable" in result.stdout, result.stdout[-900:]
+
+    # A compartment whose ppO2 nothing watches.
+    definition = copy_definition(fixture_dir(tmp_path, "unwatched"))
+    path = definition / "domains" / "eclss" / "profiles.yaml"
+    text = path.read_text()
+    assert text.count("    point: eclss.lm_pp_o2_mmhg\n") == 2, "the LM pair has moved"
+    path.write_text(text.replace("    point: eclss.lm_pp_o2_mmhg\n", "    point: eclss.pp_o2_mmhg\n"))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "the lm cabin's mixture gives a ppO2 of 246.37 mmHg" in result.stdout, result.stdout[-900:]
+    assert "declares no pair of ppO2 thresholds to hold it between" in result.stdout, (
+        result.stdout[-900:]
+    )
+    assert "the csm cabin's mixture" not in result.stdout, result.stdout[-900:]
