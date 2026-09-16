@@ -5919,7 +5919,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 292 declared debt(s)" in result.stdout
+    assert "with 293 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6278,7 +6278,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 294 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 295 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6384,7 +6384,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 294 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 295 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -10200,7 +10200,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 293 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 294 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10340,7 +10340,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "293", "the view must agree with the headline count"
+    assert owed == "294", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -11892,7 +11892,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 293 declared debt(s)",
+        "COMPOSES, with 294 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -11900,7 +11900,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 293 declared debt(s)",
+        "COMPOSES, with 294 declared debt(s)",
         composes=True,
     )
 
@@ -11915,7 +11915,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 294 declared debt(s)" in out, out[-300:]
+    assert "with 295 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12074,7 +12074,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 294 declared debt(s)" in out, out[-400:]
+    assert "with 295 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12093,4 +12093,144 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         SECONDARY,
         SECONDARY.replace("node: UNCONFIGURED", "node: absorber_capacity_lm"),
         "the article disagreeing with the counter it feeds",
+    )
+
+
+def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
+    """The link between a thermal pump and its power load, which existed only in a sentence.
+
+    `domains/thermal/components.yaml` declares the coolant pumps with their electrical figures, and
+    `pump_1`'s own `reason` says where they come from: *"its electrical figures are the power
+    domain's csm_coolant_pump_1; the mechanical side is what this domain owns"*. That is a claim
+    that two objects in two files are one article, and **no tool read it**. The power domain
+    publishes the same article as a load — `csm_coolant_pump_1`, `demand_w: 250`, `inrush_w: 420` —
+    so the same two numbers sat in both files under different names at *both* levels: `pump_1`
+    against `csm_coolant_pump_1`, and `rated_w` against `demand_w`. Nothing could have joined them
+    even by accident.
+
+    And `pump_2` did not state the link at all: only its twin's sentence mentioned the power domain,
+    and it named only `csm_coolant_pump_1`. Two figures agreeing in two files because somebody wrote
+    them twice is the state this folder treats as a defect even when the numbers are right — the
+    corpus says so about the same pair of files a few hundred lines away, where the thermal
+    domain's own debt note insists "the numbers are not duplicated here" while the pumps carry the
+    loads' own watts under another name.
+
+    `power_load` is the link, the shape `vehicle_keys` and `domain_group` already have: a field
+    naming the other file's object. Three rules follow, and the third is what the round found by
+    writing them — `pump_lm` names no load, because `domains/power/components.yaml#loads` has no LM
+    pump at all, so 200 W steady and 340 W at start are on no bus and in no per-vehicle total. The
+    LM's declared 1,007 W does not contain them. What is owed there is a decision (which bus, which
+    shed class), not a figure, which is why it is a debt rather than a value filled in.
+
+    The reverse direction is silent on purpose: a load need not be a pump, and the 22 loads that are
+    not are the inventory's business rather than this join's.
+    """
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    power = yaml.safe_load((VEHICLE / "domains" / "power" / "components.yaml").read_text())
+    loads = {str(row["id"]): row for row in power["loads"]}
+
+    pumps = [c for c in thermal["components"] if c.get("class") == "pump"]
+    assert sorted(p["id"] for p in pumps) == ["pump_1", "pump_2", "pump_lm"], pumps
+    for pump in pumps:
+        assert isinstance(pump.get("rated_w"), int) and isinstance(pump.get("inrush_w"), int), pump
+
+    # The link, and the agreement it buys: the same two numbers in two files, held together rather
+    # than written twice.
+    for pump_id, load_id in (("pump_1", "csm_coolant_pump_1"), ("pump_2", "csm_coolant_pump_2")):
+        pump = next(p for p in pumps if p["id"] == pump_id)
+        load = loads[load_id]
+        assert pump["power_load"] == load_id, pump
+        assert pump["rated_w"] == load["demand_w"], pump_id
+        assert pump["inrush_w"] == load["inrush_w"], pump_id
+    # The LM's pump is the one the inventory does not carry, and that is a debt naming the watts.
+    lm_pump = next(p for p in pumps if p["id"] == "pump_lm")
+    assert "power_load" not in lm_pump
+    assert not [i for i in loads if "pump" in i and loads[i].get("vehicle") == "lm"], sorted(loads)
+    owed = subprocess.run(
+        [sys.executable, str(LINTER), "--dir", str(VEHICLE), "--debts"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    assert "components.pump_lm: declares 200 W steady and 340 W at start" in owed, owed[-800:]
+    # The reverse direction is silent: a load that is not a pump needs no link back.
+    assert "power_load" not in yaml.safe_dump(loads["csm_heaters"])
+
+    def refusal(name: str, where: str, old: str, new: str, needle: str, *, composes: bool = False):
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / where
+        text = path.read_text()
+        assert text.count(old) == 1, f"the fixture no longer matches {old[:60]!r} exactly once"
+        path.write_text(text.replace(old, new, 1))
+        result = run_linter(definition)
+        assert needle in result.stdout, result.stdout[:1200]
+        if composes:
+            assert result.returncode == 0, result.stdout[:600]
+        else:
+            assert result.returncode == 1, result.stdout[:600]
+        return result.stdout
+
+    PUMP = (
+        "  - id: pump_1\n"
+        "    kind: flow\n"
+        "    class: pump\n"
+        "    loop: loop_primary\n"
+        "    power_load: csm_coolant_pump_1\n"
+        "    rated_w: 250\n"
+        "    inrush_w: 420\n"
+    )
+    LM_PUMP = (
+        "  - id: pump_lm\n"
+        "    kind: flow\n"
+        "    class: pump\n"
+        "    loop: loop_lm\n"
+        "    rated_w: 200\n"
+        "    inrush_w: 340\n"
+    )
+
+    # The steady draw drifting apart: the electrical side moves, the mechanical side keeps the old
+    # number, and the figure the bus-sag chain is scaled by becomes one with two values.
+    refusal(
+        "rated-drift",
+        "domains/thermal/components.yaml",
+        PUMP,
+        PUMP.replace("    rated_w: 250\n", "    rated_w: 300\n"),
+        "this is the figure the bus-sag chain is scaled by",
+    )
+    refusal(
+        "inrush-drift",
+        "domains/thermal/components.yaml",
+        PUMP,
+        PUMP.replace("    inrush_w: 420\n", "    inrush_w: 500\n"),
+        "the two files state it twice",
+    )
+    refusal(
+        "no-such-load",
+        "domains/thermal/components.yaml",
+        PUMP,
+        PUMP.replace("power_load: csm_coolant_pump_1", "power_load: csm_coolant_pump_3"),
+        "which `domains/power/components.yaml#loads` does not declare",
+    )
+    # Without the link the copy is free again, which is a debt naming the watts rather than a
+    # refusal — a pump is allowed to have electrical figures the inventory has not caught up with.
+    out = refusal(
+        "no-link",
+        "domains/thermal/components.yaml",
+        PUMP,
+        PUMP.replace("    power_load: csm_coolant_pump_1\n", ""),
+        "names no `power_load`",
+        composes=True,
+    )
+    assert "with 295 declared debt(s)" in out, out[-400:]
+    # And the LM pump's figures are unchecked by this join *because* it names no load — the case
+    # documents the gap the debt reports rather than a property worth having. Moving its rating
+    # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
+    # That is exactly why the debt exists, and why the case asserts silence instead of a refusal.
+    refusal(
+        "lm-silent",
+        "domains/thermal/components.yaml",
+        LM_PUMP,
+        LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
+        "COMPOSES, with 294 declared debt(s)",
+        composes=True,
     )
