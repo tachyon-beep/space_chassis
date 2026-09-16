@@ -5476,6 +5476,148 @@ def test_a_declared_internal_order_is_the_order_the_plant_advances_them(tmp_path
     assert f"domains/{domain}/components.yaml:internal_order" not in result.stdout
 
 
+def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
+    """A `computation` restates its inputs, so it cannot disagree with them.
+
+    `state.environment_heat_w` declared `total_w: 2477.0` with `computation: '1361 * 0.2 * 9.1'`,
+    and the three figures it multiplies are declared beside it in
+    `domains/thermal/components.yaml#radiator_model.environment` — a block that exists so the flux,
+    the absorptivity and the area have one home. **No tool named any of the four**, and the
+    computation did not read them either: moving `solar_flux_w_m2` from 1361 to 1400 composed,
+    because the expression multiplies its own copy. The block was decorative and the figure had two
+    homes.
+
+    The corpus already had the stronger form and used it elsewhere: a `derivation` of an
+    `expression` over named `inputs`, each a number or a `"<file>.yaml:<dotted.path>"` source,
+    evaluated by `check_declared_derivation` — the function an edge's `sensitivity` and a consumer's
+    `rate_kg_s` are held by. All twelve provenance computations were converted to it, and the weak
+    form is now refused by name on a provenance, so the duplication cannot come back.
+
+    The twelve are also the reader for three clusters of declarations that had none: the
+    environment figures, the metabolic rates and the loop conductance.
+    """
+    converted = {
+        "cabin_heat_csm_w": "csm_cabin_fan",
+        "cabin_heat_lm_w": "lm_cabin_fan",
+        "service_bay_heat_w": "csm_coolant_pump_1",
+        "descent_bay_heat_w": "lm_landing_radar",
+        "environment_heat_w": "solar_flux_w_m2",
+        "cabin_eq_csm_k": "conductance_w_per_k",
+        "cabin_eq_lm_k": "conductance_w_per_k",
+        "cabin_o2_supply_csm_kg_s": "leak_kg_per_h",
+        "cabin_o2_supply_lm_kg_s": "leak_kg_per_h",
+        "co2_removal_csm_kg_s": "co2_kg_per_crew_day",
+        "co2_removal_lm_kg_s": "co2_kg_per_crew_day",
+        "fc_h2_draw_kg_s": "h2_per_o2",
+    }
+    seen = {}
+    for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        for state in doc.get("state") or []:
+            provenance = state.get("provenance") or {}
+            if provenance.get("derivation"):
+                seen[str(state["id"])] = provenance
+    assert sorted(seen) == sorted(converted), sorted(set(seen) ^ set(converted))
+    for sid, provenance in seen.items():
+        derivation = provenance["derivation"]
+        assert set(derivation) == {"expression", "inputs"}, (sid, sorted(derivation))
+        assert provenance.get("computes"), f"{sid} derives without naming its subject"
+        assert any(
+            isinstance(v, str) and ".yaml:" in v for v in derivation["inputs"].values()
+        ), f"{sid}'s derivation reads no declaration at all"
+
+    def broken(mutate, domain: str = "thermal") -> subprocess.CompletedProcess[str]:
+        fixture = copy_definition(fixture_dir(tmp_path, "derivation_"))
+        path = fixture / "domains" / domain / "components.yaml"
+        doc = yaml.safe_load(path.read_text())
+        mutate(doc)
+        path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
+        return run_linter(fixture)
+
+    def state_of(doc: dict, sid: str) -> dict:
+        return next(s for s in doc["state"] if s.get("id") == sid)
+
+    # The whole point: a declaration the derived value names, moved.
+    result = broken(
+        lambda d: d["radiator_model"]["environment"].update(solar_flux_w_m2=1400)
+    )
+    assert result.returncode == 1, result.stdout[-1200:]
+    assert "environment_heat_w.provenance.derivation" in result.stdout
+    assert "solar_flux_w_m2=1400" in result.stdout
+    assert "A derived value that no longer re-derives" in result.stdout
+
+    # And the weak form is refused where the strong one belongs.
+    def to_computation(doc: dict) -> None:
+        provenance = state_of(doc, "fc_h2_draw_kg_s")["provenance"]
+        del provenance["derivation"]
+        provenance["computation"] = "1 / 8"
+
+    result = broken(to_computation, domain="power")
+    assert result.returncode == 1, result.stdout[-1200:]
+    assert "restates its inputs rather than naming them" in result.stdout
+
+    # An input that no longer resolves reads exactly like an input that is unset, so it is refused.
+    def rename_source(doc: dict) -> None:
+        state_of(doc, "environment_heat_w")["provenance"]["derivation"]["inputs"][
+            "solar_flux_w_m2"
+        ] = "domains/thermal/components.yaml:radiator_model.environment.solar_flux"
+
+    result = broken(rename_source)
+    assert result.returncode == 1, result.stdout[-800:]
+    assert "has no" in result.stdout and "solar_flux" in result.stdout
+
+
+def test_a_structural_refusal_names_the_file_it_means(tmp_path):
+    """`components.yaml` is eleven files, and a parse error named all of them at once.
+
+    `load()`'s four structural refusals — absent, unparseable, a duplicate key, a key absorbed into
+    the block scalar above it — reported `path.name`. For the corpus's *domain* files that is eleven
+    names for eleven files, and the same for `profiles.yaml`. So a parse error in
+    `domains/power/components.yaml` was reported as **"components.yaml: does not parse"**: a reader
+    told to go and fix one of eleven files, with nothing saying which.
+
+    **And it said it five times.** `load` is called once per pass and the pass that owns the real
+    report sees the same broken file more than once, so one unparseable file produced five
+    identical lines. That is the inflation round 74 removed from `assert`/`clear` and round 43 from
+    a missing value, arriving through the loader — where the message *is* the location, so a
+    duplicate is pure noise.
+
+    The label is spelled the way every other message in the linter spells a domain file, and
+    `Report.refuse` drops an exact duplicate. Debts are deliberately not deduped: the count is the
+    headline, and a debt repeated is a question about the walk rather than an error to swallow.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+
+    assert linter.label(VEHICLE / "domains" / "power" / "components.yaml") == (
+        "domains/power/components.yaml"
+    )
+    assert linter.label(VEHICLE / "vehicle.yaml") == "vehicle.yaml"
+    labels = {linter.label(p) for p in (VEHICLE / "domains").glob("*/components.yaml")}
+    assert len(labels) == 11, sorted(labels)
+
+    # `Report.refuse` ignores an exact repeat and keeps everything else.
+    report = linter.Report()
+    report.refuse("a.yaml", "is broken")
+    report.refuse("a.yaml", "is broken")
+    report.refuse("a.yaml", "is broken differently")
+    report.refuse("b.yaml", "is broken")
+    assert len(report.refusals) == 3, report.refusals
+
+    fixture = copy_definition(fixture_dir(tmp_path, "label_"))
+    path = fixture / "domains" / "power" / "components.yaml"
+    path.write_text(path.read_text().replace("    provenance:\n", "    provenance:\n      bad: [x\n", 1))
+
+    result = run_linter(fixture)
+    lines = [line for line in result.stdout.splitlines() if "does not parse" in line]
+    assert len(lines) == 1, lines
+    assert "domains/power/components.yaml" in lines[0], lines[0]
+    assert "  - components.yaml:" not in result.stdout
+
+
 def test_an_engine_cannot_run_where_it_says_it_cannot(tmp_path):
     """Two adjacent fields contradicted each other, and the source quoted between them settled it.
 
@@ -5669,27 +5811,43 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     assert "with 288 declared debt(s)" in result.stdout
 
 
+THERMAL_CABIN_LOADS = (
+    "csm_cabin_fan",
+    "csm_suit_fan",
+    "csm_co2_scrubber",
+    "csm_lighting",
+    "csm_sband_transceiver",
+    "csm_sband_power_amplifier",
+    "csm_heaters",
+)
+"""The seven loads `heat_inputs.csm_cabin` assigns, which `cabin_heat_csm_w` sums by dotted path."""
+
+
 def test_a_computation_says_which_field_it_produces(tmp_path):
     """The rule that re-derives a value's arithmetic named the fields, and the list was two long.
 
-    `check_vehicle.py` re-derives a state's declared arithmetic on every run: a state that says
-    `computation: "1 / 8"` and a value must agree. The loop that found the states to check named
-    the fields it looked for — `for field in ("nominal_kg_s", "total_w")` — and the comment beside
-    it said the point was that "a derived value states its arithmetic" stays *one rule*. A list of
-    two field names is not a rule, it is a list, and it is the defect this folder has removed from
-    four joins.
+    `check_vehicle.py` re-derives a state's declared arithmetic on every run. The loop that found
+    the states to check named the fields it looked for — `for field in ("nominal_kg_s", "total_w")`
+    — and the comment beside it said the point was that "a derived value states its arithmetic"
+    stays *one rule*. A list of two field names is not a rule, it is a list, and it is the defect
+    this folder has removed from four joins.
 
-    Two more names had appeared and the list had not. `total_k` was covered by a second
-    hand-written call in the thermal check, `total_w` by a third — the same rule applied three
-    times, which is why one wrong computation was refused **twice** — and
-    `power.fc_h2_draw_kg_s.ratio_of_o2_draw` was covered by nothing at all: its
-    `computation: "1 / 8"` could be changed to `1 + 1` and the vehicle composed, at 288 debts,
-    with the arithmetic and the value disagreeing in silence.
+    Two more names had appeared and the list had not. `total_k` was covered by a second hand-written
+    call in the thermal check, `total_w` by a third — the same rule applied three times, which is
+    why one wrong computation was refused **twice** — and
+    `power.fc_h2_draw_kg_s.ratio_of_o2_draw` was covered by nothing at all: its arithmetic could be
+    changed to `1 + 1` and the vehicle composed, with the arithmetic and the value disagreeing in
+    silence.
 
-    `provenance.computes` names the field now, so the association is a declaration rather than a
-    guess and the three sites are one. A computation with no subject is refused, because an
-    arithmetic that derives nothing is prose wearing an operator; and the refusal carries the
-    field, because the rule knows it and a state may carry four numeric fields.
+    `provenance.computes` names the field, so the association is a declaration rather than a guess
+    and the three sites are one. A value with no subject is refused, because an arithmetic that
+    derives nothing is prose wearing an operator; and the refusal carries the field, because the
+    rule knows it and a state may carry four numeric fields.
+
+    **The arithmetic itself is a `derivation` rather than a `computation` as of the round that
+    converted all twelve** — a literal `computation` restates its inputs, so it cannot disagree with
+    the declarations it copies. `computes` is the same declaration under either spelling and this
+    test is about the subject rather than the form.
     """
     import sys as _sys
 
@@ -5701,9 +5859,9 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
         doc = yaml.safe_load(path.read_text()) or {}
         for state in doc.get("state") or []:
             prov = state.get("provenance") or {}
-            if prov.get("computation"):
+            if prov.get("derivation") or prov.get("computation"):
                 declared.append((path.parent.name, str(state["id"]), state, prov))
-    assert len(declared) == 12, f"{len(declared)} computations declared"
+    assert len(declared) == 12, f"{len(declared)} declared arithmetics"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
     assert subjects == ["nominal_kg_s", "ratio_of_o2_draw", "total_k", "total_w"], subjects
@@ -5715,7 +5873,8 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
 
     fixture = copy_definition(fixture_dir(tmp_path, "computes_"))
 
-    def break_a_computation(domain: str, sid: str, expression: str) -> None:
+    def break_an_expression(domain: str, sid: str, expression: str) -> None:
+        """Rewrite one state's `derivation.expression`, keeping the file's own formatting."""
         path = fixture / "domains" / domain / "components.yaml"
         lines = path.read_text().splitlines(keepends=True)
         start = next(i for i, line in enumerate(lines) if line.strip() == f"- id: {sid}")
@@ -5724,43 +5883,49 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
             len(lines),
         )
         for i in range(start, end):
-            if lines[i].strip().startswith("computation: "):
+            if lines[i].strip().startswith("expression: "):
                 indent = len(lines[i]) - len(lines[i].lstrip())
-                lines[i] = " " * indent + f"computation: {expression!r}\n"
+                lines[i] = " " * indent + f"expression: {expression!r}\n"
                 path.write_text("".join(lines))
                 return
-        raise AssertionError(f"{sid} declares no computation")
+        raise AssertionError(f"{sid} declares no expression")
 
-    # The one the list never reached. It composed before the round.
-    break_a_computation("power", "fc_h2_draw_kg_s", "1 + 1")
+    # The one the list never reached. It composed before that round. The break adds one to the
+    # expression rather than replacing it: a break that dropped the identifier would leave
+    # `h2_per_o2` bound and unused, which the derivation rule refuses first and for a different
+    # reason — so the case would pass while testing the wrong rule.
+    break_an_expression("power", "fc_h2_draw_kg_s", "h2_per_o2 + 1")
     result = run_linter(fixture)
     assert result.returncode == 1, result.stdout[-1200:]
     assert "fc_h2_draw_kg_s.ratio_of_o2_draw" in result.stdout, (
-        "the refusal names the field the computation produces"
+        "the refusal names the field the arithmetic produces"
     )
-    assert "does not re-derive" in result.stdout
-    break_a_computation("power", "fc_h2_draw_kg_s", "1 / 8")
+    assert "no longer re-derives" in result.stdout
+    break_an_expression("power", "fc_h2_draw_kg_s", "h2_per_o2")
 
     # And one the list did hold, refused once rather than twice.
-    break_a_computation("thermal", "cabin_heat_csm_w", "1 + 1")
+    break_an_expression(
+        "thermal", "cabin_heat_csm_w", " + ".join(THERMAL_CABIN_LOADS) + " + 1"
+    )
     result = run_linter(fixture)
     assert result.returncode == 1, result.stdout[-800:]
-    assert result.stdout.count("nobody has checked") == 1, (
-        "one wrong computation is one refusal; three hand-written sites made it two"
+    assert result.stdout.count("no longer re-derives") == 1, (
+        "one wrong arithmetic is one refusal; three hand-written sites made it two"
     )
-    break_a_computation("thermal", "cabin_heat_csm_w", "60 + 85 + 80 + 100 + 36 + 72 + 300")
+    break_an_expression("thermal", "cabin_heat_csm_w", " + ".join(THERMAL_CABIN_LOADS))
     assert run_linter(fixture).returncode == 0, "the fixture did not come back"
 
     # The rest of the coverage claim: every one of the twelve is reached.
     for domain, sid, _state, prov in declared:
         if (domain, sid) in (("power", "fc_h2_draw_kg_s"), ("thermal", "cabin_heat_csm_w")):
             continue
-        break_a_computation(domain, sid, "1 + 1")
+        original = str(prov["derivation"]["expression"])
+        break_an_expression(domain, sid, f"({original}) + 1")
         assert run_linter(fixture).returncode == 1, f"{domain}.{sid} is not re-derived"
-        # `break_a_computation` quotes the expression itself, so the parsed string goes back as-is.
-        break_a_computation(domain, sid, str(prov["computation"]))
+        # `break_an_expression` quotes the expression itself, so the parsed string goes back as-is.
+        break_an_expression(domain, sid, original)
 
-    # A computation that names no subject, and one that names a field it does not have.
+    # A value that names no subject, and one that names a field it does not have.
     path = fixture / "domains" / "power" / "components.yaml"
     body = path.read_text()
     path.write_text(body.replace("      computes: ratio_of_o2_draw\n", "", 1))
@@ -9359,13 +9524,27 @@ def test_the_cabin_oxygen_supplies_are_derived_from_the_losses(tmp_path):
     definition = copy_definition(tmp_path / "derivation")
     path = definition / "domains" / "eclss" / "components.yaml"
     text = path.read_text()
-    anchor = 'computation: "(0.023 + 3 * 0.91 / 24) / 3600"'
+    # The rule is a `derivation` now, whose inputs are the leak, the crew size and the metabolic
+    # rate by dotted path rather than three numbers restated in an expression. The needle moves
+    # with the spelling and the break is the same break: drop the per-hour-to-per-second step.
+    anchor = (
+        'expression: "(leak_kg_per_h + crew * o2_kg_per_crew_day / hours_per_day) '
+        '/ seconds_per_hour"'
+    )
     assert anchor in text, "the fixture no longer matches the CSM supply rule"
-    path.write_text(text.replace(anchor, 'computation: "(0.023 + 3 * 0.91 / 24)"', 1))
+    # The break multiplies by the seconds instead of dividing by them — a wrong *value* rather
+    # than a wrong shape. Dropping the term entirely leaves `seconds_per_hour` bound and unused,
+    # which the derivation rule refuses first and for a different reason.
+    path.write_text(
+        text.replace(anchor, anchor.replace("/ seconds_per_hour", "* seconds_per_hour"), 1)
+    )
 
     result = run_linter(definition)
     assert result.returncode == 1
-    assert "does not re-derive" in result.stdout
+    # `check_declared_derivation`'s wording, which is the rule a `derivation` is held by. The
+    # message says "no longer re-derives" where `rederive` — still used by an edge's `sums_to_h`
+    # and the tick arithmetic — says "does not re-derive".
+    assert "no longer re-derives" in result.stdout
 
 
 def test_the_water_cycle_edges_have_the_right_way_round(tmp_path):
