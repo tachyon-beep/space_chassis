@@ -591,12 +591,21 @@ def test_a_transport_delay_carries_its_temperature_rather_than_transforming_it()
     assert delay["method"] == "delay", delay["method"]
     assert delay["delay_s"] == 1042
 
-    # And the fuel cell's waste heat is the *same* unknown as its oxygen draw, not a second one.
+    # And the fuel cell's waste heat was the *same* unknown as its oxygen draw, not a second one.
+    # Both are `derived` now, and both read the same operating point out of
+    # `vehicle.yaml#electrical.fuel_cells` — which is what "one unknown" turned out to mean: one
+    # division, three published numbers, and the two consumers the corpus had counted separately.
     heat = next(e for e in coupling["edges"] if e["id"] == "E-FC-HEAT")
-    assert "per_joule_kg" in heat["sensitivity"]["note"], heat["sensitivity"]["note"]
+    assert heat["sensitivity"]["basis"] == "derived"
+    assert heat["sensitivity"]["derivation"]["inputs"]["output_v"] == (
+        "vehicle.yaml:electrical.fuel_cells.output_v"
+    )
     power = yaml.safe_load((VEHICLE / "domains" / "power" / "components.yaml").read_text())
     draw = next(s for s in power["state"] if s["id"] == "fc_o2_draw_kg_s")
-    assert draw["per_joule_kg"] == "UNCONFIGURED"
+    assert draw["provenance"]["basis"] == "derived"
+    assert draw["provenance"]["derivation"]["inputs"]["output_v"] == (
+        "vehicle.yaml:electrical.fuel_cells.output_v"
+    )
 
     # And the corpus composes with the edge valued — the id still appears in `open_debts` prose
     # about the *loop transit* itself, which is a different obligation (the volume and the flow).
@@ -756,12 +765,13 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # assertion below is what keeps the class *declared* rather than deleted — if a state falls
     # into it again, `no_input` moves and this fails.
     #
-    # `counted_more` went 30 -> 27 when the RCS cluster's three fields were landed: all three were
-    # counted here — the worklist said they owed a *value* because their spec held an
-    # `UNCONFIGURED`, and `advance` said they were ready because the integrator never read the
-    # field. That is this counter's whole purpose, and it is the reason the build order was
-    # reporting three states as blocked by a number that was published on page 89.
-    assert (counted_more, sentinel, no_input) == (27, 13, 0), (counted_more, sentinel, no_input)
+    # `counted_more` went 30 -> 27 when the RCS cluster's three fields were landed, and 27 -> 26 when
+    # the fuel cell's reactant chain closed: in both cases the worklist said a state owed a *value*
+    # because its spec held an `UNCONFIGURED`, and `advance` said it was ready because the
+    # integrator never read the field. That is this counter's whole purpose, and it is the reason
+    # the build order was reporting states as blocked by numbers that were published all along —
+    # page 89 of the RCS study guide, and page 14 of the EPS study guide.
+    assert (counted_more, sentinel, no_input) == (26, 13, 0), (counted_more, sentinel, no_input)
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -2954,23 +2964,24 @@ def test_the_linter_holds_every_draw_on_a_stock(tmp_path):
     assert report.refusals == [], report.refusals
     consumers = documents["domains/consumables/components.yaml"]["consumers"]
     assert len(consumers) == 12, f"{len(consumers)} consumers"
-    # Ten name an edge and two do not; the two with none say where the draw is carried, and the
-    # four whose rate is an unpublished figure are owed rather than guessed — three of them the same
-    # unknown, because the product water's rate is the cell's oxygen draw times 1.126.
+    # Ten name an edge and two do not; the two with none say where the draw is carried. **One** rate
+    # is still owed — `pressurant_blowdown`, which needs the helium charge — where four were until
+    # the fuel cell's operating point landed: the three cell entries were one unknown under three
+    # names and they are now one division under three derivations.
     named = [c for c in consumers if c.get("edge")]
     assert len(named) == 10, f"{len(named)} consumers name an edge"
     reasoned = [c for c in consumers if not c.get("edge") and (c.get("provenance") or {}).get("note")]
     assert len(reasoned) == 2, f"{len(reasoned)} edge-less consumers carry a reason"
     owed = [c["id"] for c in consumers if c.get("rate_kg_s") == "UNCONFIGURED"]
     assert owed == [
-        "fuel_cell_o2",
-        "fuel_cell_h2",
-        "fuel_cell_product_water",
         "pressurant_blowdown",
     ], owed
-    # And six rates are held against their own arithmetic, including the two that were wrong.
+    # And nine rates are held against their own arithmetic: the six that were, plus the three fuel
+    # cell entries the round that landed the operating point converted from owed to derived. A rate
+    # that states its inputs cannot disagree with the declarations it reads, which is the property
+    # the six were joined for and the reason the three joined them rather than being quoted.
     derived = [c for c in consumers if c.get("derivation")]
-    assert len(derived) == 6, f"{len(derived)} consumers declare a derivation"
+    assert len(derived) == 9, f"{len(derived)} consumers declare a derivation"
     assert next(c for c in consumers if c["id"] == "evaporator_water")["rate_kg_s"] == 9.5714e-4
 
     def refusal(name: str, old: str, new: str, needle: str) -> None:
@@ -5639,6 +5650,7 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
         "co2_removal_csm_kg_s": "co2_kg_per_crew_day",
         "co2_removal_lm_kg_s": "co2_kg_per_crew_day",
         "fc_h2_draw_kg_s": "h2_per_o2",
+        "fc_o2_draw_kg_s": "per_joule_kg",
     }
     seen = {}
     for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
@@ -5938,7 +5950,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 282 declared debt(s)" in result.stdout
+    assert "with 270 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -5991,10 +6003,16 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
             prov = state.get("provenance") or {}
             if prov.get("derivation") or prov.get("computation"):
                 declared.append((path.parent.name, str(state["id"]), state, prov))
-    assert len(declared) == 12, f"{len(declared)} declared arithmetics"
+    assert len(declared) == 13, f"{len(declared)} declared arithmetics"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
-    assert subjects == ["nominal_kg_s", "ratio_of_o2_draw", "total_k", "total_w"], subjects
+    assert subjects == [
+        "nominal_kg_s",
+        "per_joule_kg",
+        "ratio_of_o2_draw",
+        "total_k",
+        "total_w",
+    ], subjects
     # Each subject is a numeric field on its own state, or the comparison has nothing to make.
     for _, _, state, prov in declared:
         assert isinstance(state.get(str(prov["computes"])), (int, float)), (
@@ -6297,7 +6315,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 284 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 272 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6403,7 +6421,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 284 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 272 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -7652,7 +7670,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # state has always needed is the code that drives it. The numbers were published, on
     # `lm_propulsion_rcs_study_guide.pdf` p. 89, and landing them put the three back in the bucket
     # they belong to. The same three left `value`.
-    assert len(buckets["rule"]) == 82, "half the vehicle is domain code"
+    assert len(buckets["rule"]) == 84, "half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -7661,13 +7679,13 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # Four more moved in when a `computed` effect began naming its input: `link_snr`, `tx_power`,
     # `instrumentation_power` and `nav_solution` are blocked by a field now rather than by the
     # rule that would compute them.
-    assert len(buckets["value"]) == 30
+    assert len(buckets["value"]) == 29
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
     # coupling, and `instrumentation_power`, `bus_tie_closed` and `thruster_valve` each have every
     # input declared. `load_shed_class` followed its own edge into the table form.
-    assert len(buckets["edge"]) == 7
+    assert len(buckets["edge"]) == 6
     assert len(buckets["ready"]) == 15
 
 
@@ -9556,7 +9574,10 @@ def test_vehicle_yaml_counts_its_own_open_debts():
     """
     vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
     entries = vehicle["open_debts"]
-    assert len(entries) >= 9, f"vehicle.yaml declares only {len(entries)} open debts"
+    # Nine until the round that closed the fuel cell's reactant chain: "Fuel-cell reactant
+    # consumption per kWh: not published" was one of them, and it was one division from three
+    # published numbers. The floor moves with the list because the list is the thing being counted.
+    assert len(entries) >= 8, f"vehicle.yaml declares only {len(entries)} open debts"
 
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
@@ -9580,13 +9601,16 @@ def test_the_fuel_cell_reactant_chain_is_grounded_but_for_one_figure():
 
     The tanks the cell drains had no computable outflow: the oxygen inventory is shared between
     ECLSS and the cells and nothing said at what rate. `fc_o2_draw` and `fc_h2_draw` are flow nodes
-    with the whole chain declared — and **exactly one figure in it is owed**, the cell's per-joule
-    oxygen consumption, which no source publishes (`vehicle.yaml#electrical` carries a standby
-    sustain flow and no operating point).
+    with the whole chain declared. **This docstring said "exactly one figure in it is owed, the
+    cell's per-joule oxygen consumption, which no source publishes" — and that figure is derived
+    now**, from the module's rated 29 V and the reactant rate per ampere; see
+    `test_the_fuel_cells_reactant_chain_re_derives_from_the_operating_point`. Nothing in this test
+    changed when it landed, which is the point: the chain was already the right shape and the last
+    number was the only thing missing from it.
 
-    Everything else is grounded: the hydrogen draw is the published 8:1 mass ratio, and the water is
+    The hydrogen draw is the reactant rate over the reaction's mass ratio, and the water is
     stoichiometry. The availability edges moved with the draws, which is what let the two
-    `C-REACTANT-DRAW` cycles close again — the path is now `fuel_cell -> fc_o2_draw -> fuel_cell`
+    `C-REACTANT-DRAW` cycles close again — the path is `fuel_cell -> fc_o2_draw -> fuel_cell`
     rather than through the tank, because what limits the cell is the *draw*, not the tank level.
     """
     plant = _plant()
@@ -10225,7 +10249,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 283 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 271 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10248,8 +10272,11 @@ def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
     check refuses a pointer with nothing behind it rather than the pattern of its opening words.
     """
     # The clause is the whole reason the second entry exists rather than being merged into the first.
+    # There were four of these and there are three: the fuel-cell hydrogen entry's note was a bare
+    # pointer ("as above; the 8:1 O2:H2 mass ratio fixes the relationship, not the magnitude") and
+    # the round that landed the operating point replaced it with the derivation it points at, so the
+    # clause it kept is now a relation rather than an anchor.
     for filename, snippet in (
-        ("domains/consumables/components.yaml", "as above; the 8:1 O2:H2 mass ratio"),
         ("domains/consumables/profiles.yaml", "as above, at apollo's second propellant level"),
         ("domains/thermal/components.yaml", "as above, for the LM"),
         ("domains/thermal/profiles.yaml", "as above; 2 K wider than the CSM's upper limit"),
@@ -10365,7 +10392,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "283", "the view must agree with the headline count"
+    assert owed == "271", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -10688,7 +10715,7 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     scalar = [e for e in edges if e.sensitivity.get("value") not in (None, "UNCONFIGURED")]
     tables = [e for e in edges if e.sensitivity.get("regimes")]
     assert len(tables) == 8, f"the regime edges changed: {[e.id for e in tables]}"
-    assert len(scalar) + len(tables) == 65
+    assert len(scalar) + len(tables) == 68
     ready = subprocess.run(
         [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--readiness"],
         capture_output=True,
@@ -10697,7 +10724,7 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     )
     assert ready.returncode == 0, ready.stderr
     found = re.search(r"edges with a sensitivity\s+(\d+) / (\d+)", ready.stdout)
-    assert (int(found.group(1)), int(found.group(2))) == (65, len(edges)), found.group(0)
+    assert (int(found.group(1)), int(found.group(2))) == (68, len(edges)), found.group(0)
 
 
 def test_a_verb_that_starts_a_state_is_declared_rather_than_described(tmp_path):
@@ -11947,7 +11974,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 283 declared debt(s)",
+        "COMPOSES, with 271 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -11955,7 +11982,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 283 declared debt(s)",
+        "COMPOSES, with 271 declared debt(s)",
         composes=True,
     )
 
@@ -11970,7 +11997,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 284 declared debt(s)" in out, out[-300:]
+    assert "with 272 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12129,7 +12156,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 284 declared debt(s)" in out, out[-400:]
+    assert "with 272 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12276,7 +12303,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 284 declared debt(s)" in out, out[-400:]
+    assert "with 272 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12286,7 +12313,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 283 declared debt(s)",
+        "COMPOSES, with 271 declared debt(s)",
         composes=True,
     )
 
@@ -12428,7 +12455,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 283 declared debt(s)",
+        "COMPOSES, with 271 declared debt(s)",
         composes=True,
     )
 
@@ -12885,3 +12912,109 @@ def test_the_thruster_s_minimum_firing_time_is_one_constant_in_three_places():
         10000,
     )
     assert life["provenance"]["basis"] == "historical"
+
+
+def test_the_fuel_cells_reactant_chain_re_derives_from_the_operating_point():
+    """The debt that said "the electrochemistry no source publishes" was one division from three numbers.
+
+    `fc_o2_draw_kg_s.per_joule_kg` was `UNCONFIGURED` with the note that the only missing scalar
+    was "the cell voltage under load". The module's rated output is 29 +- 2 VDC —
+    `ApolloTrainingElectricalPowerSystemStudyGuide.pdf` PDF p. 14, and
+    `vehicle.yaml#electrical.fuel_cells.bus_v` had been carrying it as a 27-31 V *band* since the
+    block was written. The reactant rate per ampere is on PDF p. 16 of the Mission E consumables
+    analysis, the cell count is on PDF p. 38 of the first, and the mass ratio is stoichiometry.
+
+    So the chain is asserted end to end here, in the direction the derivations run: the operating
+    point, then the per-joule figure, then the two draws and the heat. A test that only checked the
+    linter composed would not notice the whole chain being deleted.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    cells = vehicle["electrical"]["fuel_cells"]
+    assert cells["output_v"] == 29, "the module's rated output, and the division's denominator"
+    assert cells["cells_per_module"] == 31
+    assert cells["h2_lb_per_h_per_a"] == 0.00257
+    assert cells["bus_v"] == [27, 31], "the rated band the nominal sits inside"
+    assert cells["reactant_molar_mass_kg_per_mol"] == {"h2": 0.002016, "o2": 0.032}
+    assert cells["provenance"]["basis"] == "historical"
+    assert "1420 watts" in cells["provenance"]["source"], cells["provenance"]["source"][-200:]
+
+    power = yaml.safe_load((VEHICLE / "domains" / "power" / "components.yaml").read_text())
+    states = {state["id"]: state for state in power["state"]}
+    o2 = states["fc_o2_draw_kg_s"]
+    assert o2["provenance"]["basis"] == "derived"
+    assert o2["provenance"]["computes"] == "per_joule_kg"
+    assert o2["provenance"]["derivation"]["inputs"]["output_v"] == (
+        "vehicle.yaml:electrical.fuel_cells.output_v"
+    )
+
+    # The three consequences, each carrying the state's figure rather than restating it — which is
+    # what makes the chain one number in four places instead of four numbers that agree by hand.
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    edges = {edge["id"]: edge for edge in coupling["edges"]}
+    for edge_id, expression in (
+        ("E-FC-DRAW-O2", "per_joule_kg"),
+        ("E-FC-DRAW-H2", "per_joule_kg * h2_per_o2"),
+        (
+            "E-FC-HEAT",
+            "enthalpy_j_per_mol_o2 * cells_per_module / "
+            "(electrons * faraday_c_per_mol * output_v) - 1",
+        ),
+    ):
+        sensitivity = edges[edge_id]["sensitivity"]
+        assert sensitivity["basis"] == "derived", edge_id
+        assert sensitivity["derivation"]["expression"] == expression, edge_id
+
+    # And the ledger's three entries draw at the declared demand rather than quoting a rate.
+    consumables = yaml.safe_load(
+        (VEHICLE / "domains" / "consumables" / "components.yaml").read_text()
+    )
+    ledger = {entry["id"]: entry for entry in consumables["consumers"]}
+    for entry_id in ("fuel_cell_o2", "fuel_cell_h2", "fuel_cell_product_water"):
+        entry = ledger[entry_id]
+        assert entry["provenance"]["basis"] == "derived", entry_id
+        assert (
+            entry["derivation"]["inputs"]["demand_w"]
+            == "domains/power/components.yaml:load_budget.csm_total_demand_w"
+        ), entry_id
+
+
+def test_the_linter_refuses_a_per_joule_figure_that_no_longer_derives(tmp_path):
+    """The operating point is the division's denominator, so moving it must move the answer.
+
+    This is the property that makes `derived` stronger than `historical`: `bus_v` was declared as a
+    27-31 V band and the per-joule figure as "not published", and neither could disagree with the
+    other because nothing joined them. The fixture moves the module's rated output by one volt,
+    which is inside the declared band and would have been a silent change for the whole life of the
+    corpus.
+    """
+    definition = copy_definition(tmp_path / "operating-point")
+    path = definition / "vehicle.yaml"
+    text = path.read_text()
+    old = "    output_v: 29\n"
+    assert old in text, "the fixture no longer matches the fuel cell's output voltage"
+    path.write_text(text.replace(old, "    output_v: 28\n", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "A derived value that no longer re-derives is a value nobody has checked" in result.stdout
+
+
+def test_the_linter_refuses_a_reactant_ratio_that_disagrees_with_its_own_molar_masses(tmp_path):
+    """The corpus declared 8:1 as `0.125` while the relation beside it computed 0.126 from the masses.
+
+    `E-H2-FC` carried `value: 0.125` and a relation that said "a H2:O2 ratio of 0.1260 = 1/7.937",
+    and `fc_h2_draw_kg_s.ratio_of_o2_draw` derived *from* the 0.125 — so two declarations in two
+    files disagreed by 0.8 %, in the number that every oxygen budget in the mission is denominated
+    in. It is now derived from the two molar masses, and the Mission E analysis's own 7.936 is an
+    independent corroboration that the exact stoichiometry is 7.9365 rather than 8.
+    """
+    definition = copy_definition(tmp_path / "ratio")
+    path = definition / "vehicle.yaml"
+    text = path.read_text()
+    old = "    reactant_molar_mass_kg_per_mol: {h2: 0.002016, o2: 0.032}\n"
+    assert old in text, "the fixture no longer matches the reactant molar masses"
+    path.write_text(
+        text.replace(old, "    reactant_molar_mass_kg_per_mol: {h2: 0.002, o2: 0.032}\n", 1)
+    )
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "the sensitivity" in result.stdout or "ratio_of_o2_draw" in result.stdout, result.stdout[-900:]
