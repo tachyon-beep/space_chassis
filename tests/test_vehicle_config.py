@@ -5476,6 +5476,117 @@ def test_a_declared_internal_order_is_the_order_the_plant_advances_them(tmp_path
     assert f"domains/{domain}/components.yaml:internal_order" not in result.stdout
 
 
+def test_the_burn_budget_is_held_against_the_burns_that_spend_it(tmp_path):
+    """A budget, the figures that spend it, and nothing joining the two.
+
+    `domains/propulsion/components.yaml#capability` declared the SPS's 750 s of total burn time and
+    50 qualified restarts, and its own note says why the figure is there: *"that makes 'can we fix
+    this with a burn' a question with a number behind it rather than a question with an attitude
+    behind it"*. **No tool read it**, and the block's name is why that was hard to see: `capability`
+    appears eight times in the linter and in both other tools, every one of them the diode's
+    `capability.snapshot`. A sweep over the tools' own vocabulary reported the block as read.
+
+    What it had to be spent against was not a field either. The mission's burn **durations** were
+    clauses in `delta_v_budget`'s provenance — *"A11 Tbl 7-II: LOI-1 2,917.4 ft/s over 357.53 s"* —
+    so a budget existed, the figures that spend it existed, and nothing joined them. The durations
+    are `burn_s` fields now, and the three quoted SPS burns sum to 525.81 s of the 750.
+
+    The join reads `vehicle_keys` rather than guessing: the domain names its engines `sps`, `dps`
+    and `aps`, the mission names them `sps`, `lm_dps` and `lm_aps`, and the component's own
+    `vehicle_keys` is the declared link between the two spellings. That is also what tells the TLI
+    burn apart from the vehicle's own — it names `external_sivb`, the S-IVB stage that flew the
+    translunar injection and stayed behind, and no component claims it.
+    """
+    propulsion = yaml.safe_load((VEHICLE / "domains" / "propulsion" / "components.yaml").read_text())
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+
+    capability = propulsion["capability"]
+    assert [e["engine"] for e in capability] == ["sps", "dps"], [e["engine"] for e in capability]
+    sps = next(e for e in capability if e["engine"] == "sps")
+    assert sps["total_burn_s"] == 750 and sps["restarts_qualified"] == 50
+    assert next(e for e in capability if e["engine"] == "dps")["total_burn_s"] == "UNCONFIGURED"
+
+    burns = mission["delta_v_budget"]
+    spent = sum(
+        float(b["burn_s"]) for b in burns if b.get("engine") == "sps" and "burn_s" in b
+    )
+    assert abs(spent - 525.81) < 0.01, spent
+    assert spent < sps["total_burn_s"], "the mission's SPS burns no longer fit the budget"
+    assert sorted(b["id"] for b in burns if b.get("engine") == "sps" and "burn_s" not in b) == [
+        "transearth_midcourse",
+        "translunar_midcourse",
+    ]
+
+    # Every declared duration is the one the entry's own source quotes, so the field is a
+    # transcription rather than a second claim.
+    for bid, seconds in (
+        ("loi_1", 357.53),
+        ("loi_2", 16.88),
+        ("doi", 30.0),
+        ("powered_descent", 756.39),
+        ("ascent", 434.88),
+        ("tei", 151.4),
+    ):
+        entry = next(b for b in burns if b["id"] == bid)
+        assert entry["burn_s"] == seconds, bid
+        assert f"over {seconds:g} s" in str(entry["provenance"]["source"]), bid
+
+    def broken(mutate, domain: str | None = None) -> subprocess.CompletedProcess[str]:
+        """A fresh copy with one break applied to the mission or to the propulsion domain."""
+        fixture = copy_definition(fixture_dir(tmp_path, "burn_"))
+        if domain is None:
+            path = fixture / "mission.yaml"
+        else:
+            path = fixture / "domains" / domain / "components.yaml"
+        doc = yaml.safe_load(path.read_text())
+        mutate(doc)
+        path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
+        return run_linter(fixture)
+
+    def burn_of(doc: dict, bid: str) -> dict:
+        return next(e for e in doc["delta_v_budget"] if e["id"] == bid)
+
+    def budget_of(doc: dict, engine: str) -> dict:
+        return next(e for e in doc["capability"] if e["engine"] == engine)
+
+    # The overrun: one SPS burn stretched past the 750 s qualification.
+    result = broken(lambda d: burn_of(d, "loi_1").update(burn_s=700.0))
+    assert result.returncode == 1, result.stdout[-1200:]
+    assert "capability sps.total_burn_s" in result.stdout
+    assert "sum to 868.28 s" in result.stdout
+    assert "whose last burn is the one that runs out" in result.stdout
+
+    # A budget for the ascent engine, reached through `vehicle_keys`, smaller than its burn.
+    result = broken(
+        lambda d: budget_of(d, "dps").update(engine="aps", total_burn_s=100), domain="propulsion"
+    )
+    assert result.returncode == 1, result.stdout[-800:]
+    assert "burns on aps sum to 434.88 s" in result.stdout
+
+    # A rating for a stage that is not this vehicle.
+    result = broken(
+        lambda d: d["capability"].append({"engine": "external_sivb", "total_burn_s": 500}),
+        domain="propulsion",
+    )
+    assert result.returncode == 1, result.stdout[-800:]
+    assert "is not an engine of this domain" in result.stdout
+
+    # And the sum is what is compared, so a missing duration quiets the overrun and becomes a debt.
+    fixture = copy_definition(fixture_dir(tmp_path, "unmeasured_"))
+    path = fixture / "mission.yaml"
+    doc = yaml.safe_load(path.read_text())
+    burn_of(doc, "loi_1").pop("burn_s")
+    path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
+    assert run_linter(fixture).returncode == 0
+    owed = subprocess.run(
+        [sys.executable, str(LINTER), "--dir", str(fixture), "--debts"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    assert "records no `burn_s` for 3 burn(s)" in owed, owed[-600:]
+
+
 def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
     """A `computation` restates its inputs, so it cannot disagree with them.
 
@@ -5808,7 +5919,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 288 declared debt(s)" in result.stdout
+    assert "with 291 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6167,7 +6278,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 290 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 293 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6273,7 +6384,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 290 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 293 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -10089,7 +10200,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 289 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 292 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10229,7 +10340,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "289", "the view must agree with the headline count"
+    assert owed == "292", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
