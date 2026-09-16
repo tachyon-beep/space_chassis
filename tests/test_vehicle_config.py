@@ -12234,3 +12234,145 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "COMPOSES, with 294 declared debt(s)",
         composes=True,
     )
+
+
+def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
+    """Six zones, six temperature states, and a check that found them by matching words.
+
+    `check_zone_nodes` exists to refuse a zone whose temperature state sits on the `internal`
+    sentinel — which is not a node, so no edge can terminate on it and the zone can never be driven.
+    Until round 51 it found that state by matching the zone's own words against the state ids, with
+    a comment saying so: *"The ids are not mechanical (`zone_csm_service_t` against a zone called
+    `csm_service_bay`), so the match is by the zone's own words."*
+
+    The word it matched for both crewed cabins was `cabin`. So each cabin's verdict was computed
+    from a list holding **both** cabins' states, and `zone_csm_cabin_t` could be moved to the
+    `internal` sentinel — the exact defect the check exists to refuse — while the check stayed
+    silent on the strength of `zone_lm_cabin_t`, which is still on a node. The pair whose failure
+    modes are most alike is the pair whose ids are least distinguishable, and the two cabins are
+    that pair. The masking is asserted below rather than described: on the old rule, `csm_cabin` and
+    `lm_cabin` produce the same candidate list.
+
+    `temperature_state` is the link, and the two cabins had carried it all along — it is what
+    `check_cabin_equilibrium` resolves before it can compute a rise. The other four zones declared
+    nothing, so the word-match was the only mechanism they had, and it was also the only mechanism
+    the cabins had *for this check*. All six declare it now and the field is read.
+
+    A zone may legitimately have no node, so the exemption survives: `zones_not_on_nodes` with a
+    reason, checked in both directions — a zone on the list whose own declared state sits on a real
+    node is a stale exemption. That second direction read the same guess and reads the declaration
+    now.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    zones = {str(z["id"]): z for z in vehicle["thermal"]["zones"]}
+    states = {str(s["id"]): s for s in thermal["state"]}
+
+    assert sorted(zones) == [
+        "csm_avionics_bay",
+        "csm_cabin",
+        "csm_service_bay",
+        "lm_cabin",
+        "lm_descent_bay",
+        "radiator_loop",
+    ], sorted(zones)
+    for zone_id, zone in sorted(zones.items()):
+        state = states[str(zone["temperature_state"])]
+        assert str(state.get("node")) != "internal", zone_id
+    assert thermal.get("zones_not_on_nodes") in (None, {}), "no zone is exempt today"
+
+    # Why the link has to be declared: the state ids are not the zone ids plus a suffix, so a rule
+    # over the strings has to guess. Four of the six differ, and the two that do not are the cabins.
+    mismatched = [
+        (z, zones[z]["temperature_state"])
+        for z in zones
+        if str(zones[z]["temperature_state"]) != f"zone_{z}_t"
+    ]
+    assert len(mismatched) == 4, mismatched
+
+    # The masking, computed rather than asserted from memory: the old rule took the first word of
+    # the zone's stem and matched it against the state ids, and for both cabins that word is
+    # `cabin` — so each cabin's candidate list contains the other cabin's state.
+    def guessed(zone_id: str) -> list[str]:
+        stem = (
+            zone_id.replace("_bay", "").replace("_loop", "").replace("csm_", "").replace("lm_", "")
+        )
+        return sorted(s for s in states if stem.split("_")[0] in s and "_t" in s)
+
+    assert "csm_cabin".replace("csm_", "").split("_")[0] == "cabin"
+    assert guessed("csm_cabin") == guessed("lm_cabin") == ["zone_csm_cabin_t", "zone_lm_cabin_t"]
+    assert guessed("csm_service_bay") == ["zone_csm_service_t"]
+
+    def refusal(name: str, where: str, old: str, new: str, needle: str, *, composes: bool = False):
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / where
+        text = path.read_text()
+        assert text.count(old) == 1, f"the fixture no longer matches {old[:60]!r} exactly once"
+        path.write_text(text.replace(old, new, 1))
+        result = run_linter(definition)
+        assert needle in result.stdout, result.stdout[:1400]
+        if composes:
+            assert result.returncode == 0, result.stdout[:600]
+        else:
+            assert result.returncode == 1, result.stdout[:600]
+        return result.stdout
+
+    # A zone that names no state: the field is what the check reads, so its absence is refused
+    # rather than approximated.
+    refusal(
+        "no-link",
+        "vehicle.yaml",
+        "      - id: csm_service_bay\n"
+        "        limit_c: [-20, 60]\n"
+        "        regulated: false\n"
+        "        temperature_state: zone_csm_service_t\n",
+        "      - id: csm_service_bay\n        limit_c: [-20, 60]\n        regulated: false\n",
+        "is not declared. A zone's temperature is a state on a node",
+    )
+    refusal(
+        "bad-name",
+        "vehicle.yaml",
+        "        temperature_state: zone_csm_service_t\n",
+        "        temperature_state: zone_csm_service_tt\n",
+        "which is not a state in domains/thermal/components.yaml",
+    )
+    # `comm_amp_t` is a real state of this domain and it sits on the sentinel, which is exactly the
+    # shape the check is for: the link resolves, and the node it resolves to is not a node.
+    refusal(
+        "sentinel",
+        "vehicle.yaml",
+        "        temperature_state: zone_csm_avionics_t\n",
+        "        temperature_state: comm_amp_t\n",
+        "whose node is the `internal` sentinel",
+    )
+    # The round's proof, in one edit: moving the CSM cabin's state to the sentinel is refused
+    # *for that zone*, where the word-match answered it with the LM's state and stayed silent. The
+    # domain's `writes` list still claims the node, so a second rule fires beside this one; the case
+    # asserts the message rather than the count.
+    out = refusal(
+        "cabin-masked",
+        "domains/thermal/components.yaml",
+        "  - id: zone_csm_cabin_t\n    method: lag\n    node: cabin_zone_t\n",
+        "  - id: zone_csm_cabin_t\n    method: lag\n    node: internal\n",
+        "vehicle.yaml#thermal.zones.csm_cabin.temperature_state",
+    )
+    assert "whose node is the `internal` sentinel" in out, out[:1400]
+
+    # The exemption, both directions. A zone on the list that declares a state on a real node is a
+    # stale exemption, and that direction reads the declaration too.
+    refusal(
+        "stale-exemption",
+        "domains/thermal/components.yaml",
+        "\nopen_debts:\n",
+        '\nzones_not_on_nodes:\n  csm_service_bay: "declared exempt for this fixture"\n\nopen_debts:\n',
+        "A stale exemption is a reader told to expect a gap that has been closed",
+    )
+    # And the unbroken corpus is silent about all of it.
+    refusal(
+        "quiet",
+        "vehicle.yaml",
+        "        temperature_state: zone_radiator_t\n",
+        "        temperature_state: zone_radiator_t\n",
+        "COMPOSES, with 294 declared debt(s)",
+        composes=True,
+    )
