@@ -755,7 +755,13 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # gave `bus_b` a source, so it owes a rule like every other `algebraic` state without one. The
     # assertion below is what keeps the class *declared* rather than deleted — if a state falls
     # into it again, `no_input` moves and this fails.
-    assert (counted_more, sentinel, no_input) == (30, 13, 0), (counted_more, sentinel, no_input)
+    #
+    # `counted_more` went 30 -> 27 when the RCS cluster's three fields were landed: all three were
+    # counted here — the worklist said they owed a *value* because their spec held an
+    # `UNCONFIGURED`, and `advance` said they were ready because the integrator never read the
+    # field. That is this counter's whole purpose, and it is the reason the build order was
+    # reporting three states as blocked by a number that was published on page 89.
+    assert (counted_more, sentinel, no_input) == (27, 13, 0), (counted_more, sentinel, no_input)
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -5932,7 +5938,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 289 declared debt(s)" in result.stdout
+    assert "with 282 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6291,7 +6297,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 291 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 284 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6397,7 +6403,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 291 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 284 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -7640,7 +7646,13 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # the plant wants, so they left this bucket without the code they need going away. The second
     # was the classifier being fixed to agree with `advance()`, which moved thirteen `internal`
     # states *in* here — no edge can reach the sentinel, so their driver is domain code.
-    assert len(buckets["rule"]) == 79, "half the vehicle is domain code"
+    # `rule` went 71 -> 69 -> 79 -> 82. The last move is the RCS cluster: `thruster_valve`,
+    # `thruster_thrust` and `pulse_width` each named an `UNCONFIGURED` field — a dwell, two time
+    # constants, a pulse floor — so the classifier sent a reader after a *number* where what the
+    # state has always needed is the code that drives it. The numbers were published, on
+    # `lm_propulsion_rcs_study_guide.pdf` p. 89, and landing them put the three back in the bucket
+    # they belong to. The same three left `value`.
+    assert len(buckets["rule"]) == 82, "half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -7649,7 +7661,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # Four more moved in when a `computed` effect began naming its input: `link_snr`, `tx_power`,
     # `instrumentation_power` and `nav_solution` are blocked by a field now rather than by the
     # rule that would compute them.
-    assert len(buckets["value"]) == 33
+    assert len(buckets["value"]) == 30
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
@@ -10213,7 +10225,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 290 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 283 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10353,7 +10365,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "290", "the view must agree with the headline count"
+    assert owed == "283", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -11511,10 +11523,12 @@ def test_a_commanded_state_is_guarded_by_a_dwell_and_the_executive_reads_it(tmp_
     # The one that is not is one-way, and that is the exemption rather than a gap.
     assert [s.id for s in commanded if not s.spec.get("dwell")] == ["pyro_fired"]
     assert all(s.spec.get("one_way") for s in commanded if not s.spec.get("dwell"))
-    # The owed guard is reported as owed rather than as zero, because a dwell of zero is exactly
-    # the chattering the field exists to prevent.
+    # The guard `set_rcs_quad` reads, and it is the thruster's published 10 ms minimum on time and
+    # its 50 ms tailoff. This asserted `(None, None)` until round 2, when the constant the whole
+    # domain called unpublished turned out to be on page 77 of a document the manifest lists — see
+    # `test_the_thruster_s_minimum_firing_time_is_one_constant_in_three_places`.
     assert [(s.id, on, off) for s, on, off in plant.command_dwell(world, "set_rcs_quad")] == [
-        ("thruster_valve", None, None)
+        ("thruster_valve", 0.01, 0.05)
     ]
     assert [(s.id, on, off) for s, on, off in plant.command_dwell(world, "set_bus_tie")] == [
         ("bus_tie_closed", 0.2, 0.2)
@@ -11563,10 +11577,38 @@ def test_a_commanded_state_is_guarded_by_a_dwell_and_the_executive_reads_it(tmp_
     second = run("select_antenna antenna=omni_a")
     assert "refused: DWELL." in second, second
     assert "must hold a value for 10 s" in second, second
-    # And an owed guard refuses rather than being read as zero.
+    # **And an owed guard still refuses rather than being read as zero**, which needs a fixture
+    # now: the live vehicle has no commanded machine with an unset dwell any more, so asserting it
+    # against `set_rcs_quad` would be asserting a state the corpus has left. The property is the
+    # one the field exists for — a dwell of zero is the chattering — so it is proved against a copy
+    # with the guard removed rather than dropped with the case that used to carry it.
+    unguarded = copy_definition(fixture_dir(tmp_path, "owed_dwell"))
+    path = unguarded / "domains" / "rcs" / "components.yaml"
+    text = path.read_text()
+    old_dwell = "      min_on_s: 0.01\n      min_off_s: 0.05\n"
+    assert old_dwell in text, "the fixture no longer matches the valve's dwell"
+    path.write_text(
+        text.replace(
+            old_dwell,
+            "      min_on_s: UNCONFIGURED\n      min_off_s: UNCONFIGURED\n",
+            1,
+        ).replace(
+            "      same_as:\n"
+            "        min_on_s: domains/rcs/components.yaml:capability.minimum_firing_time.value\n"
+            "        min_off_s: domains/rcs/components.yaml:state.thruster_thrust.tau_fall_s\n",
+            "",
+            1,
+        )
+    )
+    assert [(s.id, on, off) for s, on, off in plant.command_dwell(plant.load_world(unguarded), "set_rcs_quad")] == [
+        ("thruster_valve", None, None)
+    ], "an owed guard must be reported as owed rather than as zero"
+
+    # The live vehicle's guard is a real duration and a short one, so a re-command after the
+    # console's 20 ms tick is permitted — which is the difference between a qualified minimum and
+    # no minimum at all.
     assert "succeeded" in run("set_rcs_quad group=sm_primary state=enable")
-    owed = run("set_rcs_quad group=sm_primary state=inhibit")
-    assert "refused: GUARD OWED." in owed, owed
+    assert "succeeded" in run("set_rcs_quad group=sm_primary state=inhibit")
 
 
 def test_a_faults_magnitude_is_one_name_with_its_unit_and_its_channel(tmp_path):
@@ -11905,7 +11947,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 290 declared debt(s)",
+        "COMPOSES, with 283 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -11913,7 +11955,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 290 declared debt(s)",
+        "COMPOSES, with 283 declared debt(s)",
         composes=True,
     )
 
@@ -11928,7 +11970,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 291 declared debt(s)" in out, out[-300:]
+    assert "with 284 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12087,7 +12129,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 291 declared debt(s)" in out, out[-400:]
+    assert "with 284 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12234,7 +12276,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 291 declared debt(s)" in out, out[-400:]
+    assert "with 284 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12244,7 +12286,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 290 declared debt(s)",
+        "COMPOSES, with 283 declared debt(s)",
         composes=True,
     )
 
@@ -12386,7 +12428,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 290 declared debt(s)",
+        "COMPOSES, with 283 declared debt(s)",
         composes=True,
     )
 
@@ -12728,3 +12770,118 @@ def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     assert "states 127 classified events while the corpus declares 128" in result.stdout, (
         result.stdout[-900:]
     )
+
+
+def test_the_linter_refuses_a_carried_value_that_disagrees_with_its_source(tmp_path):
+    """`same_as` is the general form of the join this folder has written four times by hand.
+
+    An absorber's rating on the article and on the counter; a pump's watts in `vehicle.yaml` and in
+    a domain's load entry; a valve count in two vehicle blocks; and now a thruster's minimum firing
+    time in three fields of one file. Each time the fix was a check written for that pair, and the
+    round that joined the absorber's three ratings wrote the lesson down: *a hand-written list of
+    what to compare is the bug* — the list had two entries and the corpus had three.
+
+    So a mapping that declares a value it knows is a copy carries `same_as` beside it, and the walk
+    holds every one of them against the declaration it names. This breaks the valve's minimum dwell
+    by ten milliseconds, which is the smallest edit that makes two declarations disagree.
+    """
+    definition = copy_definition(tmp_path / "same-as")
+    path = definition / "domains" / "rcs" / "components.yaml"
+    text = path.read_text()
+    old = "      min_on_s: 0.01\n"
+    assert old in text, "the fixture no longer matches the valve's dwell"
+    path.write_text(text.replace(old, "      min_on_s: 0.02\n", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "declares min_on_s as 0.02 while" in result.stdout, result.stdout[-900:]
+
+
+def test_the_linter_refuses_a_same_as_whose_source_does_not_resolve(tmp_path):
+    """A carried value whose source is gone is a value nothing can disagree with.
+
+    "The name is gone" and "the value is unset" are different answers and only the second is a
+    debt, which is why a path that resolves to nothing is a refusal while an `UNCONFIGURED` on
+    either side is left to the debt walk. The fixture renames the field the link points at, which
+    is what a later round moving a capability key would do without noticing.
+    """
+    definition = copy_definition(tmp_path / "same-as-gone")
+    path = definition / "domains" / "rcs" / "components.yaml"
+    text = path.read_text()
+    old = "      t_min_on_s: domains/rcs/components.yaml:capability.minimum_firing_time.value\n"
+    assert old in text, "the fixture no longer matches the pulse generator's link"
+    path.write_text(text.replace(old, "      t_min_on_s: domains/rcs/components.yaml:capability.t_min_on.value\n", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "which resolves to nothing" in result.stdout, result.stdout[-900:]
+
+
+def test_the_linter_refuses_a_same_as_naming_a_field_its_mapping_lacks(tmp_path):
+    """A link to a field that is not there holds nothing, and reads as a join that exists.
+
+    This is the failure the key is most likely to acquire: an author writes the `same_as` entry and
+    renames the field above it, or copies the link into the wrong mapping. Nothing else in the
+    corpus would notice — the mapping still composes, the link still points somewhere real, and the
+    value it was supposed to constrain is now unconstrained.
+    """
+    definition = copy_definition(tmp_path / "same-as-orphan")
+    path = definition / "domains" / "rcs" / "components.yaml"
+    text = path.read_text()
+    old = "        min_off_s: domains/rcs/components.yaml:state.thruster_thrust.tau_fall_s\n"
+    assert old in text, "the fixture no longer matches the valve's off-time link"
+    path.write_text(
+        text.replace(old, "        min_off_seconds: domains/rcs/components.yaml:state.thruster_thrust.tau_fall_s\n", 1)
+    )
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "which the mapping it sits in does not declare" in result.stdout, result.stdout[-900:]
+
+
+def test_the_thruster_s_minimum_firing_time_is_one_constant_in_three_places():
+    """The published limit and the two fields that carry it are the same number, and they say so.
+
+    `capability.minimum_firing_time` is the thruster's qualified 10 ms, from
+    `lm_propulsion_rcs_study_guide.pdf` PDF p. 89. `pulse_width.t_min_on_s` is the pulse
+    generator's floor and `thruster_valve.dwell.min_on_s` is the valve's minimum dwell; the corpus
+    has described them as the same constant in a *sentence* since the domain landed — "the two
+    dwell values are the pulse generator's `t_min_on` and `t_min_off`" — and nothing read the
+    sentence. The same page publishes the tailoff as 50 ms, which is what the valve's minimum off
+    time is, so there are two carried copies and one derived one.
+
+    This is the positive direction: the linter is silent, and every link resolves to the number it
+    claims. A test that only broke copies would not notice a `same_as` deleted from the corpus.
+    """
+    rcs = yaml.safe_load((VEHICLE / "domains" / "rcs" / "components.yaml").read_text())
+    capability = rcs["capability"]
+    states = {state["id"]: state for state in rcs["state"]}
+
+    t_min_on = capability["minimum_firing_time"]["value"]
+    assert t_min_on == 0.01, t_min_on
+    assert capability["minimum_firing_time"]["provenance"]["basis"] == "historical"
+
+    valve = states["thruster_valve"]["dwell"]
+    pulse = states["pulse_width"]
+    assert valve["same_as"]["min_on_s"] == (
+        "domains/rcs/components.yaml:capability.minimum_firing_time.value"
+    )
+    assert valve["same_as"]["min_off_s"] == (
+        "domains/rcs/components.yaml:state.thruster_thrust.tau_fall_s"
+    )
+    assert pulse["same_as"]["t_min_on_s"] == (
+        "domains/rcs/components.yaml:capability.minimum_firing_time.value"
+    )
+
+    # And the values agree, which is what the linter checks on every run.
+    assert valve["min_on_s"] == t_min_on == pulse["t_min_on_s"]
+    thrust = states["thruster_thrust"]
+    assert valve["min_off_s"] == thrust["tau_fall_s"] == 0.05
+    assert thrust["tau_rise_s"] == 0.04
+
+    # The life limits are the same page's, and they are the thruster's rather than the domain's.
+    life = capability["engine_life"]
+    assert (life["steady_s"], life["pulse_s"], life["total_s"], life["restarts"]) == (
+        500,
+        500,
+        1000,
+        10000,
+    )
+    assert life["provenance"]["basis"] == "historical"
