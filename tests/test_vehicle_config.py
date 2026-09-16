@@ -5986,7 +5986,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 252 declared debt(s)" in result.stdout
+    assert "with 255 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6354,7 +6354,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 254 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 257 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6460,7 +6460,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 254 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 257 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -9657,8 +9657,12 @@ def test_vehicle_yaml_counts_its_own_open_debts():
     entries = vehicle["open_debts"]
     # Nine until the round that closed the fuel cell's reactant chain: "Fuel-cell reactant
     # consumption per kWh: not published" was one of them, and it was one division from three
-    # published numbers. The floor moves with the list because the list is the thing being counted.
-    assert len(entries) >= 8, f"vehicle.yaml declares only {len(entries)} open debts"
+    # published numbers. Eight until round 9 retired the inertia entry — that one was *false* (the
+    # Operational Data Book is in the library) and its content became four walkable fields under
+    # `mass_properties`, so what left the list is now counted by the scalar walk instead. The floor
+    # moves with the list because the list is the thing being counted; the assertion below, which
+    # compares the count against the linter's own report, is the one that cannot move.
+    assert len(entries) >= 7, f"vehicle.yaml declares only {len(entries)} open debts"
 
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
@@ -10339,7 +10343,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 253 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 256 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10482,7 +10486,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "253", "the view must agree with the headline count"
+    assert owed == "256", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -12064,7 +12068,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 253 declared debt(s)",
+        "COMPOSES, with 256 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12072,7 +12076,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 253 declared debt(s)",
+        "COMPOSES, with 256 declared debt(s)",
         composes=True,
     )
 
@@ -12087,7 +12091,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 254 declared debt(s)" in out, out[-300:]
+    assert "with 257 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12246,7 +12250,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 254 declared debt(s)" in out, out[-400:]
+    assert "with 257 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12393,7 +12397,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 254 declared debt(s)" in out, out[-400:]
+    assert "with 257 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12403,7 +12407,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 253 declared debt(s)",
+        "COMPOSES, with 256 declared debt(s)",
         composes=True,
     )
 
@@ -12545,7 +12549,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 253 declared debt(s)",
+        "COMPOSES, with 256 declared debt(s)",
         composes=True,
     )
 
@@ -13567,3 +13571,140 @@ def test_the_linter_refuses_a_ppO2_that_its_own_two_alarms_do_not_bracket(tmp_pa
         result.stdout[-900:]
     )
     assert "the csm cabin's mixture" not in result.stdout, result.stdout[-900:]
+
+
+def test_the_docked_configuration_s_mass_properties_re_derive_from_the_data_book_s_rows():
+    """The folder's flagship unknown, "not reachable" for a hundred rounds, is in the library.
+
+    `vehicle.yaml#open_debts` said: *the axis datum lives in the CSM/LM Operational Data Book
+    (SNA-8-D-027), which is not reachable, so the tabulated values cannot be converted to physical
+    offsets.* The book is in the library, this folder already cites it for other tables, and it
+    carries both halves — section 2.0's frame definition and section 3.2's tables. This test is the
+    second reader: it recomputes the interpolation from the two rows the file carries rather than
+    trusting the derived values, and it holds the table's own `AVERAGE` column, which is the
+    identity that makes a hand-read rotated fold-out checkable.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    block = vehicle["mass_properties"]
+    frame = block["frame"]
+    assert frame["id"] == "APOLLO_XA"
+    # The datum itself: without this transformation a station is a number against nothing.
+    assert "SNA-8-D-027" in frame["provenance"]["source"], frame["provenance"]["source"]
+    assert "Figures 2-16 and 2-17" in frame["provenance"]["source"]
+    # The transformations themselves, which are what make a station a physical offset.
+    assert "4578.805" in frame["definition"] and "X_A = X_E + 399.5" in frame["definition"]
+    assert "1110.25" in frame["definition"] and "712.0" in frame["definition"]
+
+    table = {t["id"]: t for t in block["tables"]}["ODB_3_2_21"]
+    assert table["configuration"] == "csm_lm_docked"
+    assert "CSM-113/LM-11" in table["title"] and "as a function of spacecraft weight" in table["title"]
+    assert "p. 351" in table["pages"], table["pages"]
+    rows = {row["id"]: row for row in table["rows"]}
+    assert sorted(rows) == ["w96787_4", "w97787_4"], sorted(rows)
+
+    # The table's own arithmetic, in every row: AVERAGE = (IYY + IZZ) / 2 / 10.
+    for row in rows.values():
+        assert abs(row["average_moment"] - (row["iyy_slug_ft2"] + row["izz_slug_ft2"]) / 20) <= 1.0
+
+    # The interpolation, recomputed here from the rows rather than read back.
+    kg_per_lb, in_to_m = 0.45359237, 0.0254
+    slug_ft2_to_kg_m2 = 1.355817948330809
+    weight_lb = vehicle["configurations"][0]["mass_kg"] / kg_per_lb
+    assert vehicle["configurations"][0]["id"] == "csm_lm_docked"
+    lo, hi = rows["w96787_4"], rows["w97787_4"]
+    assert lo["weight_lb"] < weight_lb < hi["weight_lb"]
+    fraction = (weight_lb - lo["weight_lb"]) / (hi["weight_lb"] - lo["weight_lb"])
+
+    def interpolate(field: str) -> float:
+        return lo[field] + fraction * (hi[field] - lo[field])
+
+    entry = block["configurations"][0]
+    assert entry["id"] == "csm_lm_docked" and entry["table"] == "ODB_3_2_21"
+    assert entry["weight_lb"]["value"] == pytest.approx(weight_lb, abs=0.01)
+    assert entry["x_bar_m"]["value"] == pytest.approx(interpolate("x_bar_in") * in_to_m, abs=1e-4)
+    for axis, field in (("ixx", "ixx_slug_ft2"), ("iyy", "iyy_slug_ft2"), ("izz", "izz_slug_ft2")):
+        declared = entry["inertia_kg_m2"][axis]["value"]
+        # At the declared value's own precision: the moments carry seven figures and the products
+        # six, and a swapped row would move either by a part in three hundred.
+        assert declared == pytest.approx(interpolate(field) * slug_ft2_to_kg_m2, rel=1e-5), axis
+    for axis, field in (("pxy", "pxy_slug_ft2"), ("pxz", "pxz_slug_ft2"), ("pyz", "pyz_slug_ft2")):
+        declared = entry["inertia_kg_m2"][axis]["value"]
+        assert declared == pytest.approx(interpolate(field) * slug_ft2_to_kg_m2, rel=1e-5), axis
+
+    # A real tensor: the three moments satisfy the triangle inequalities, and the transverse pair
+    # is about ten times the roll moment, which is what a long slender stack looks like.
+    ixx = entry["inertia_kg_m2"]["ixx"]["value"]
+    iyy = entry["inertia_kg_m2"]["iyy"]["value"]
+    izz = entry["inertia_kg_m2"]["izz"]["value"]
+    assert ixx + iyy > izz and iyy + izz > ixx and izz + ixx > iyy
+    assert 7.0 < iyy / ixx < 12.0, iyy / ixx
+
+    # And the four configurations still owed say so with their own table named — the shape the
+    # single prose debt became, so that each one is walkable rather than described.
+    owed = {c["id"]: c for c in block["configurations"][1:]}
+    assert sorted(owed) == [
+        "csm_alone",
+        "csm_lm_ascent_docked",
+        "lm_alone_descent",
+        "lm_ascent_stage",
+    ]
+    for config_id, entry in owed.items():
+        assert entry["properties"] == "UNCONFIGURED", config_id
+        assert entry["table"].startswith("ODB_3_2_"), config_id
+        # Three name the book and the fourth names the two tables it is arithmetic over; all four
+        # name something a reader can go and read, which is the difference this round made.
+        assert "Table 3.2-" in entry["note"], config_id
+
+
+def test_the_linter_refuses_a_mass_property_table_that_disagrees_with_itself(tmp_path):
+    """Three ways a hand-read fold-out stops being trustworthy, each refused by name.
+
+    The table is a rotated scan whose text layer is garbage, so the transcription cannot be
+    verified by re-reading the same bytes — it is verified by **the table's own arithmetic**: the
+    Operational Data Book prints an `AVERAGE` column in every row and it is `(IYY + IZZ) / 2 / 10`.
+    A digit misread in either moment breaks that identity, which is the only reason the corpus can
+    carry an interpolated value at all. The other two are the interpolation's own preconditions: an
+    interpolation must be inside its interval, and the interval must be the pair the derivative
+    actually names.
+    """
+    vehicle_yaml = (VEHICLE / "vehicle.yaml").read_text()
+
+    # The table's own column, broken: one digit of IYY.
+    definition = copy_definition(fixture_dir(tmp_path, "average"))
+    path = definition / "vehicle.yaml"
+    assert "          average_moment: 56528\n" in vehicle_yaml
+    path.write_text(vehicle_yaml.replace("          average_moment: 56528\n", "          average_moment: 56928\n", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "the same row's (IYY + IZZ) / 2 / 10 is 56528.9" in result.stdout, result.stdout[-900:]
+
+    # The two rows the centre of mass interpolates between, swapped. The weight pair still
+    # brackets, so only the derivation's own evaluation catches it.
+    definition = copy_definition(fixture_dir(tmp_path, "swapped"))
+    path = definition / "vehicle.yaml"
+    old = (
+        "            x_low: vehicle.yaml:mass_properties.tables.ODB_3_2_21.rows.w96787_4.x_bar_in\n"
+        "            x_high: vehicle.yaml:mass_properties.tables.ODB_3_2_21.rows.w97787_4.x_bar_in\n"
+    )
+    new = (
+        "            x_low: vehicle.yaml:mass_properties.tables.ODB_3_2_21.rows.w97787_4.x_bar_in\n"
+        "            x_high: vehicle.yaml:mass_properties.tables.ODB_3_2_21.rows.w96787_4.x_bar_in\n"
+    )
+    assert old in vehicle_yaml
+    path.write_text(vehicle_yaml.replace(old, new, 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "and the centre of mass declares 26.5795" in result.stdout, result.stdout[-900:]
+
+    # And a tensor that describes no vehicle: a roll moment larger than the sum of the other two.
+    definition = copy_definition(fixture_dir(tmp_path, "not-a-tensor"))
+    path = definition / "vehicle.yaml"
+    assert "        ixx:\n          value: 80081.1\n" in vehicle_yaml
+    path.write_text(
+        vehicle_yaml.replace("        ixx:\n          value: 80081.1\n", "        ixx:\n          value: 2000000.0\n", 1)
+    )
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "No mass distribution has principal moments that violate the triangle inequality" in result.stdout, (
+        result.stdout[-900:]
+    )
