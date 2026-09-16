@@ -463,35 +463,22 @@ def test_an_unset_domain_value_is_a_debt_named_by_its_path(tmp_path):
     definition = copy_definition(tmp_path / "vehicle")
     path = definition / "domains" / "thermal" / "components.yaml"
     text = path.read_text()
-    # The sublimator's rejection is the domain's one genuinely unpublished figure.
-    unset = "    rejection_w: UNCONFIGURED"
+    # **The case moved, and the move is a round's finding.** This fixture supplied the LM
+    # sublimator's `rejection_w`, because that was "the domain's one genuinely unpublished figure"
+    # — and it is published, on PDF p. 88 of the LM's ECS subsystem specification, so there is
+    # nothing left to supply there. The property is "supplying the value must retire the debt", and
+    # it is proved against the figure this docstring already names as the shape of a usable debt:
+    # the lunar surface's infrared flux, which `thermal_diode.md:965` leaves UNSPECIFIED.
+    unset = "    lunar_ir_w_m2: UNCONFIGURED"
     assert unset in text, "the fixture no longer matches the thermal components"
-    text = text.replace(unset, "    rejection_w: 1500", 1)
-    # **And the total has to move with it.** `load_budget.total_rejection_capacity_w` is the sum of
-    # the parts that have values — it is 4,933 today because the sublimator's figure is the one
-    # missing — so supplying the figure and leaving the total is a capacity the vehicle does not
-    # have. `check_thermal_budget` refused this fixture the first time it ran, which is the closure
-    # doing exactly what it was written for.
-    text = text.replace("total_rejection_capacity_w: 4933", "total_rejection_capacity_w: 6433", 1)
-    path.write_text(text)
-    # **And the vehicle-level copy has to move with it too**, which this fixture learned from the
-    # join that closed the rejection components: `lm_sublimator.rejection_w` is declared in
-    # `vehicle.yaml` as well, and `check_thermal_bindings` holds the two equal. Filling in the
-    # domain's figure alone is now refused by name — a debt answered in one file and left standing
-    # in the other is the same lie as one counted twice — so the fixture supplies both, which is
-    # what "supplying the value must retire the debt" was always claiming.
-    vehicle_path = definition / "vehicle.yaml"
-    vehicle_text = vehicle_path.read_text()
-    vehicle_unset = "      - id: lm_sublimator\n        rejection_w: UNCONFIGURED\n"
-    assert vehicle_unset in vehicle_text, "the fixture no longer matches vehicle.yaml#lm_sublimator"
-    vehicle_path.write_text(
-        vehicle_text.replace(
-            vehicle_unset, "      - id: lm_sublimator\n        rejection_w: 1500\n", 1
-        )
-    )
+    path.write_text(text.replace(unset, "    lunar_ir_w_m2: 5.0", 1))
 
     result = run_linter(definition, strict=True)
-    assert "sublimator_lm" not in result.stdout, "supplying the value must retire the debt"
+    assert "radiator_model.environment.lunar_ir_w_m2" not in result.stdout, (
+        "supplying the value must retire the debt"
+    )
+    # And the fixture's old case is a debt no more, which is the half a retirement cannot show.
+    assert "sublimator_lm" not in result.stdout
 
 
 def test_a_cabin_pair_is_paired_in_fact_and_not_only_in_name(tmp_path):
@@ -5950,7 +5937,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 270 declared debt(s)" in result.stdout
+    assert "with 267 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6315,7 +6302,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 272 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 269 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6421,7 +6408,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 272 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 269 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -6903,8 +6890,8 @@ def test_the_two_views_of_the_cooling_machine_agree(tmp_path):
             # the point of the second half of the join existing at all.
             (
                 "vehicle.yaml",
-                "      - id: csm_radiator\n        panels: 2\n        area_m2: 9.1\n",
-                "      - id: csm_radiator\n        panels: 2\n        area_m2: 12.0\n",
+                "      - id: csm_radiator\n        vehicle: csm\n        panels: 2\n        area_m2: 9.1\n",
+                "      - id: csm_radiator\n        vehicle: csm\n        panels: 2\n        area_m2: 12.0\n",
             ),
         ],
         [
@@ -9458,15 +9445,19 @@ def test_the_blocks_no_tool_read_name_things_that_resolve(tmp_path):
     report = run_linter(VEHICLE)
     assert report.returncode == 0, report.stdout[-900:]
 
-    # The thermal total is a closure over its own file's parts.
+    # The thermal totals are closures over their **own vehicle's** parts. This summed every
+    # component in the file into one number until the LM sublimator's capacity was published and
+    # the two vehicles arrived in the same total; the demands had been split all along.
     thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
-    parts = [thermal["radiator_model"]["csm"]["rejection_w"]]
-    parts += [
-        c["rejection_w"]
-        for c in thermal["components"]
-        if isinstance(c.get("rejection_w"), (int, float))
-    ]
-    assert sum(parts) == thermal["load_budget"]["total_rejection_capacity_w"], parts
+    budget = thermal["load_budget"]
+    parts: dict[str, list[float]] = {"csm": [thermal["radiator_model"]["csm"]["rejection_w"]]}
+    for component in thermal["components"]:
+        if isinstance(component.get("rejection_w"), (int, float)):
+            parts.setdefault(str(component["vehicle"]), []).append(component["rejection_w"])
+    assert {v: sum(rows) for v, rows in parts.items()} == {
+        "csm": budget["csm_rejection_capacity_w"],
+        "lm": budget["lm_rejection_capacity_w"],
+    }, parts
 
     # Every ledger channel resolves, and the resource is a coupling node.
     coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
@@ -9499,12 +9490,12 @@ def test_the_blocks_no_tool_read_name_things_that_resolve(tmp_path):
     definition = copy_definition(tmp_path / "budget")
     path = definition / "domains" / "thermal" / "components.yaml"
     text = path.read_text()
-    broken = text.replace("total_rejection_capacity_w: 4933", "total_rejection_capacity_w: 5933", 1)
+    broken = text.replace("csm_rejection_capacity_w: 4933", "csm_rejection_capacity_w: 5933", 1)
     assert broken != text, "the fixture no longer matches thermal/components.yaml"
     path.write_text(broken)
     result = run_linter(definition)
     assert result.returncode == 1, result.stdout[-900:]
-    assert "load_budget.total_rejection_capacity_w" in result.stdout, result.stdout[-900:]
+    assert "load_budget.csm_rejection_capacity_w" in result.stdout, result.stdout[-900:]
 
 
 def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
@@ -10249,7 +10240,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 271 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 268 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10392,7 +10383,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "271", "the view must agree with the headline count"
+    assert owed == "268", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -11974,7 +11965,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 271 declared debt(s)",
+        "COMPOSES, with 268 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -11982,7 +11973,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 271 declared debt(s)",
+        "COMPOSES, with 268 declared debt(s)",
         composes=True,
     )
 
@@ -11997,7 +11988,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 272 declared debt(s)" in out, out[-300:]
+    assert "with 269 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12156,7 +12147,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 272 declared debt(s)" in out, out[-400:]
+    assert "with 269 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12303,7 +12294,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 272 declared debt(s)" in out, out[-400:]
+    assert "with 269 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12313,7 +12304,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 271 declared debt(s)",
+        "COMPOSES, with 268 declared debt(s)",
         composes=True,
     )
 
@@ -12455,7 +12446,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 271 declared debt(s)",
+        "COMPOSES, with 268 declared debt(s)",
         composes=True,
     )
 
@@ -13018,3 +13009,64 @@ def test_the_linter_refuses_a_reactant_ratio_that_disagrees_with_its_own_molar_m
     result = run_linter(definition)
     assert result.returncode == 1
     assert "the sensitivity" in result.stdout or "ratio_of_o2_draw" in result.stdout, result.stdout[-900:]
+
+
+def test_the_thermal_budget_is_a_partition_by_vehicle(tmp_path):
+    """The LM sublimator's capacity is published, and landing it split the total it landed in.
+
+    `load_budget` had split its *demands* by vehicle since it was written — `csm_total_demand_w`
+    and `lm_total_demand_w` — and summed its *capacities* into one `total_rejection_capacity_w`
+    whose own relation argued a 1,723 W CSM margin. With the LM's sublimator unset that was merely
+    incomplete; the moment the LM's 3,649 W was published, one number held two vehicles' rejection
+    under a one-vehicle sentence. So the totals are per vehicle now, and the check is a partition
+    in both directions: a part whose vehicle's total does not reach it, a part that names no
+    vehicle, and a declared total with no parts are each refused.
+    """
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    budget = thermal["load_budget"]
+    assert budget["csm_rejection_capacity_w"] == 4933
+    assert budget["lm_rejection_capacity_w"] == 3649
+    assert "total_rejection_capacity_w" not in budget, (
+        "one total for two vehicles is the defect the split removed"
+    )
+    # Every part says which vehicle it belongs to, and the parts of each vehicle reach its total.
+    parts: dict[str, float] = {"csm": thermal["radiator_model"]["csm"]["rejection_w"]}
+    for component in thermal["components"]:
+        if isinstance(component.get("rejection_w"), (int, float)):
+            assert component.get("vehicle"), f"{component['id']} declares a capacity and no vehicle"
+            parts[str(component["vehicle"])] = component["rejection_w"]
+    assert parts == {"csm": 2345, "lm": 3649}, parts
+
+    # The LM sublimator's own two figures, from the LM ECS subsystem specification.
+    lm = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())["thermal"]["radiators"][2]
+    assert lm["id"] == "lm_sublimator" and lm["vehicle"] == "lm"
+    assert lm["rejection_w"] == 3649, "12,450 Btu/hr at 0.29307107 W per Btu/hr"
+    assert lm["water_consumption_kg_per_h"] == 5.171, "0.19 lb/min"
+    assert lm["provenance"]["basis"] == "historical"
+    assert "12,450 Btu/hr" in lm["provenance"]["source"], lm["provenance"]["source"][-200:]
+
+    # A part that names no vehicle is refused rather than added to whichever total is nearest.
+    definition = copy_definition(tmp_path / "unowned-part")
+    path = definition / "domains" / "thermal" / "components.yaml"
+    text = path.read_text()
+    old = "  - id: evaporator_csm\n    kind: flow\n    class: evaporator\n    vehicle: csm\n"
+    assert old in text, "the fixture no longer matches the CSM evaporator"
+    path.write_text(
+        text.replace(old, "  - id: evaporator_csm\n    kind: flow\n    class: evaporator\n", 1)
+    )
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "counts no total for ['evaporator_csm']" in result.stdout, result.stdout[-900:]
+
+    # And a total that counts hardware the file does not have.
+    definition = copy_definition(tmp_path / "orphan-total")
+    path = definition / "domains" / "thermal" / "components.yaml"
+    text = path.read_text()
+    old = "  lm_rejection_capacity_w: 3649\n"
+    assert old in text, "the fixture no longer matches the split totals"
+    path.write_text(text.replace(old, old + "  mars_rejection_capacity_w: 100\n", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "mars_rejection_capacity_w" in result.stdout and "does not have" in result.stdout, (
+        result.stdout[-900:]
+    )
