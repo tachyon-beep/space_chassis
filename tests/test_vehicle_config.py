@@ -3556,16 +3556,22 @@ def test_an_edge_whose_value_is_another_declaration_s_function(tmp_path):
     # move, because the two edges bind their own compartment's field rather than a shared literal.
     broken(
         "conductance",
-        [("domains/thermal/components.yaml", "    tau_s: 2880\n    conductance_w_per_k: 125\n    provenance:\n      basis: derived", "    tau_s: 2880\n    conductance_w_per_k: 150\n    provenance:\n      basis: derived")],
-        ["E-CABIN-HEAT-CSM.sensitivity.derivation: derives 0.00666667"],
+        [("domains/thermal/components.yaml", "    tau_s: 2880\n    lumped_mass_kg: 400\n    specific_heat_j_per_kg_k: 900\n    conductance_w_per_k: 125\n    provenance:\n      basis: derived", "    tau_s: 2880\n    lumped_mass_kg: 400\n    specific_heat_j_per_kg_k: 900\n    conductance_w_per_k: 150\n    provenance:\n      basis: derived")],
+        [
+            "E-CABIN-HEAT-CSM.sensitivity.derivation: derives 0.00666667",
+            # And the zone's own lump check fires too, because 400 kg x 900 J/kg-K over 150 W/K is
+            # 2,400 s against a declared `tau_s` of 2,880. One edit, two refusals, and both are
+            # right: the edge and the time constant are two readings of the same three fields.
+            "which is a time constant of 2400 s",
+        ],
     )
     definition = copy_definition(tmp_path / "conductance_other")
     path = definition / "domains" / "thermal" / "components.yaml"
     text = path.read_text()
     path.write_text(
         text.replace(
-            "    tau_s: 2880\n    conductance_w_per_k: 125\n    provenance:\n      basis: derived",
-            "    tau_s: 2880\n    conductance_w_per_k: 150\n    provenance:\n      basis: derived",
+            "    tau_s: 2880\n    lumped_mass_kg: 400\n    specific_heat_j_per_kg_k: 900\n    conductance_w_per_k: 125\n    provenance:\n      basis: derived",
+            "    tau_s: 2880\n    lumped_mass_kg: 400\n    specific_heat_j_per_kg_k: 900\n    conductance_w_per_k: 150\n    provenance:\n      basis: derived",
             1,
         )
     )
@@ -5664,6 +5670,11 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
         "co2_removal_lm_kg_s": "co2_kg_per_crew_day",
         "fc_h2_draw_kg_s": "h2_per_o2",
         "fc_o2_draw_kg_s": "per_joule_kg",
+        # The three zones whose thermal lump was a sentence: their time constant is `m x c_p / G`
+        # over three fields now, so it re-derives like everything else in this dict.
+        "zone_csm_cabin_t": "tau_s",
+        "zone_lm_cabin_t": "tau_s",
+        "zone_csm_avionics_t": "tau_s",
     }
     seen = {}
     for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
@@ -5963,7 +5974,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 262 declared debt(s)" in result.stdout
+    assert "with 260 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6016,13 +6027,16 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
             prov = state.get("provenance") or {}
             if prov.get("derivation") or prov.get("computation"):
                 declared.append((path.parent.name, str(state["id"]), state, prov))
-    assert len(declared) == 13, f"{len(declared)} declared arithmetics"
+    # 13 -> 16 with the three thermal zones whose time constant stopped being a sentence:
+    # `tau = m x c_p / G` over three declared fields, re-evaluated every run.
+    assert len(declared) == 16, f"{len(declared)} declared arithmetics"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
     assert subjects == [
         "nominal_kg_s",
         "per_joule_kg",
         "ratio_of_o2_draw",
+        "tau_s",
         "total_k",
         "total_w",
     ], subjects
@@ -6328,7 +6342,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 264 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 262 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6434,7 +6448,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 264 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 262 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -7930,7 +7944,11 @@ def test_the_equilibrium_check_resolves_what_the_zone_declares(tmp_path):
     )
     refusal(
         "no_conductance",
-        [("domains/thermal/components.yaml", "    tau_s: 2880\n    conductance_w_per_k: 125\n    provenance:\n      basis: derived", "    tau_s: 2880\n    provenance:\n      basis: derived")],
+        [("domains/thermal/components.yaml", "    tau_s: 2880\n    lumped_mass_kg: 400\n    specific_heat_j_per_kg_k: 900\n    conductance_w_per_k: 125\n    provenance:\n      basis: derived", "    tau_s: 2880\n    provenance:\n      basis: derived")],
+        # The break removes the whole lump — mass, heat capacity and conductance together — so the
+        # lump check stays silent and the equilibrium check names the missing field. Removing the
+        # conductance *alone* is a different case, and the lump check owns it: see
+        # `test_a_zones_time_constant_is_its_lump_over_its_conductance`.
         "carries no numeric `conductance_w_per_k`",
     )
 
@@ -10231,6 +10249,15 @@ def test_the_bay_conductances_owe_one_scalar_each_not_two(tmp_path):
         assert "conductance_w_per_k" not in state, f"{state_id} declares the same unknown twice"
         assert edges[edge_id]["sensitivity"]["value"] == "UNCONFIGURED"
         assert "G = C/tau" in edges[edge_id]["sensitivity"]["relation"], edge_id
+        # **And the relation is a derivation now.** The round that found `lumped_mass_kg` read by
+        # nothing made both edges name the scalar and the division, so the edge is no longer a
+        # second count of the zone's unknown: `check_declared_derivation` skips an owed input and
+        # the debt stays where the quantity lives.
+        sensitivity = edges[edge_id]["sensitivity"]
+        assert sensitivity["basis"] == "derived", edge_id
+        assert sensitivity["derivation"]["expression"] == (
+            "tau_s / (lumped_mass_kg * specific_heat_j_per_kg_k)"
+        ), edge_id
 
     # The cabin's, by contrast, is derived from both — which is what makes the pair the template.
     cabin = states["zone_csm_cabin_t"]
@@ -10266,7 +10293,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 263 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 261 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10409,7 +10436,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "263", "the view must agree with the headline count"
+    assert owed == "261", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -11991,7 +12018,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 263 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -11999,7 +12026,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 263 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
 
@@ -12014,7 +12041,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 264 declared debt(s)" in out, out[-300:]
+    assert "with 262 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12173,7 +12200,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 264 declared debt(s)" in out, out[-400:]
+    assert "with 262 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12320,7 +12347,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 264 declared debt(s)" in out, out[-400:]
+    assert "with 262 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12330,7 +12357,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 263 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
 
@@ -12472,7 +12499,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 263 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
 
@@ -13173,3 +13200,108 @@ def test_a_bounded_search_record_is_what_the_corpus_now_carries():
     assert valve["crack_pressure_psid"] == 6.0
     assert valve["reverse_limit_psid"] == 0.902
     assert "csm_ecs_study_guide.pdf" in valve["provenance"]["source"]
+
+
+def test_a_zones_time_constant_is_its_lump_over_its_conductance(tmp_path):
+    """The mass was written in a sentence in every zone, and as an unread field in two of them.
+
+    Every `lag` zone computes `tau = C/G` with `C = m x c_p`. The cabin's relation said "C = 400 kg
+    aluminium-equivalent x 900 J/kg-K", the avionics plate's said "C = 60 kg", and the two
+    unregulated bays declared a `lumped_mass_kg` that **appeared in no file under `tools/`** — so the
+    field was declared exactly where the corpus could not fill it and omitted where it could.
+
+    The mass is not a second statement of the time constant. It is the input that turns the constant
+    into a conductance, which is what `E-BAY-HEAT-CSM` and `E-BAY-HEAT-LM` need in K per W, and the
+    comment above `zone_csm_service_t` had said so all along: "`C = m x c_p` and `G = C / tau`, so
+    ONE number closes the edge above: the lumped mass". Nothing evaluated it.
+    """
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    states = {s["id"]: s for s in thermal["state"]}
+    for zone, (mass, heat, conductance, tau) in (
+        ("zone_csm_cabin_t", (400, 900, 125, 2880)),
+        ("zone_lm_cabin_t", (400, 900, 125, 2880)),
+        ("zone_csm_avionics_t", (60, 900, 133, 406)),
+    ):
+        state = states[zone]
+        assert state["lumped_mass_kg"] == mass, zone
+        assert state["specific_heat_j_per_kg_k"] == heat, zone
+        assert state["conductance_w_per_k"] == conductance, zone
+        assert state["tau_s"] == tau, zone
+        assert state["provenance"]["computes"] == "tau_s", zone
+        assert state["provenance"]["basis"] == "derived", zone
+
+    # The two bays keep their owed mass, and it is now the *one* scalar between the zone and a
+    # closed edge: both edges carry the division that reads it.
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    edges = {e["id"]: e for e in coupling["edges"]}
+    for edge_id, zone in (
+        ("E-BAY-HEAT-CSM", "zone_csm_service_t"),
+        ("E-BAY-HEAT-LM", "zone_lm_descent_t"),
+    ):
+        assert states[zone]["lumped_mass_kg"] == "UNCONFIGURED", zone
+        assert states[zone]["specific_heat_j_per_kg_k"] == 900, zone
+        sensitivity = edges[edge_id]["sensitivity"]
+        assert sensitivity["basis"] == "derived", edge_id
+        assert sensitivity["derivation"]["expression"] == (
+            "tau_s / (lumped_mass_kg * specific_heat_j_per_kg_k)"
+        ), edge_id
+        assert sensitivity["derivation"]["inputs"]["lumped_mass_kg"] == (
+            f"domains/thermal/components.yaml:state.{zone}.lumped_mass_kg"
+        ), edge_id
+
+    # A lump that disagrees with its own time constant is refused.
+    definition = copy_definition(tmp_path / "lump")
+    path = definition / "domains" / "thermal" / "components.yaml"
+    text = path.read_text()
+    old = "    lumped_mass_kg: 400\n    specific_heat_j_per_kg_k: 900\n    conductance_w_per_k: 125\n"
+    assert old in text, "the fixture no longer matches the cabin lump"
+    path.write_text(text.replace(old, "    lumped_mass_kg: 500\n" + old.split("\n", 1)[1], 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "which is a time constant of 3600 s" in result.stdout, result.stdout[-900:]
+
+
+def test_an_edge_that_names_where_its_value_comes_from_is_not_a_second_debt(tmp_path):
+    """The obligation is counted where the quantity lives — the rule the derivation check states.
+
+    `check_declared_derivation` says it outright: "the obligation is counted where the quantity
+    lives, and this is a use of it rather than a second unknown." The edge walk counted it anyway, so
+    an edge `derived` from an owed field appeared twice in the headline. Two edges reached that state
+    the moment their derivations landed, and the count is the figure a reader plans against.
+
+    Skipping them is not a hole: a derivation whose inputs are all numbers resolves, and
+    `check_declared_derivation` refuses it for carrying nothing to hold it against — this test drives
+    that direction too, so the skip cannot become a way to owe a value quietly.
+    """
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    derived = [
+        e["id"]
+        for e in coupling["edges"]
+        if (e.get("sensitivity") or {}).get("value") == "UNCONFIGURED"
+        and (e.get("sensitivity") or {}).get("derivation")
+    ]
+    assert derived == ["E-BAY-HEAT-CSM", "E-BAY-HEAT-LM"], derived
+    result = run_linter(VEHICLE, strict=True)
+    for edge_id in derived:
+        assert f"coupling.yaml:edge {edge_id}:" not in result.stdout, (
+            f"{edge_id} is counted as a debt of its own as well as where its input lives"
+        )
+    # And the input is still counted, exactly once.
+    assert result.stdout.count("lumped_mass_kg: is UNCONFIGURED") == 2, result.stdout[-900:]
+
+    # The other direction: an evaluable derivation with nothing to hold it against is refused.
+    definition = copy_definition(tmp_path / "evaluable")
+    path = definition / "coupling.yaml"
+    text = path.read_text()
+    old = (
+        "          tau_s: domains/thermal/components.yaml:state.zone_lm_descent_t.tau_s\n"
+        "          lumped_mass_kg: domains/thermal/components.yaml:state.zone_lm_descent_t.lumped_mass_kg\n"
+        "          specific_heat_j_per_kg_k: domains/thermal/components.yaml:state.zone_lm_descent_t.specific_heat_j_per_kg_k\n"
+    )
+    assert old in text, "the fixture no longer matches E-BAY-HEAT-LM's derivation"
+    path.write_text(
+        text.replace(old, "          tau_s: 10800\n          lumped_mass_kg: 400\n          specific_heat_j_per_kg_k: 900\n", 1)
+    )
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "which there is nothing to hold it against" in result.stdout, result.stdout[-900:]
