@@ -5503,6 +5503,13 @@ def test_the_burn_budget_is_held_against_the_burns_that_spend_it(tmp_path):
     appears eight times in the linter and in both other tools, every one of them the diode's
     `capability.snapshot`. A sweep over the tools' own vocabulary reported the block as read.
 
+    **All three engines are rated now.** This test asserted `["sps", "dps"]` with the DPS's budget
+    `UNCONFIGURED`, because the entry its note carried said the DPS's rating was unpublished — and
+    both LM ratings are on printed pages 19 and 27 of the LM Propulsion and RCS study guide, which
+    is the document whose page 89 the round before this one opened for the thruster's minimum firing
+    time. The ascent engine lands at 460 s against a 434.88 s ascent burn, which is 94.5 % of its
+    rating and the tightest budget on the vehicle.
+
     What it had to be spent against was not a field either. The mission's burn **durations** were
     clauses in `delta_v_budget`'s provenance — *"A11 Tbl 7-II: LOI-1 2,917.4 ft/s over 357.53 s"* —
     so a budget existed, the figures that spend it existed, and nothing joined them. The durations
@@ -5518,10 +5525,23 @@ def test_the_burn_budget_is_held_against_the_burns_that_spend_it(tmp_path):
     mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
 
     capability = propulsion["capability"]
-    assert [e["engine"] for e in capability] == ["sps", "dps"], [e["engine"] for e in capability]
+    assert [e["engine"] for e in capability] == ["sps", "dps", "aps"], [e["engine"] for e in capability]
     sps = next(e for e in capability if e["engine"] == "sps")
     assert sps["total_burn_s"] == 750 and sps["restarts_qualified"] == 50
-    assert next(e for e in capability if e["engine"] == "dps")["total_burn_s"] == "UNCONFIGURED"
+    assert next(e for e in capability if e["engine"] == "dps")["total_burn_s"] == 960
+    assert next(e for e in capability if e["engine"] == "aps")["total_burn_s"] == 460
+
+    # **Every rated engine is now spent against, which is what a third entry buys.** Until the
+    # ascent engine had a rating, the rendezvous burn's missing duration was not a debt — a burn on
+    # an unrated engine has nothing to be summed into. With the rating, `check_burn_capability`
+    # counts three burns with no recorded duration instead of two.
+    for engine in ("sps", "dps", "aps"):
+        row = next(e for e in capability if e["engine"] == engine)
+        flown = sum(
+            float(b["burn_s"]) for b in mission["delta_v_budget"]
+            if b.get("engine", "").endswith(engine) and "burn_s" in b
+        )
+        assert flown < row["total_burn_s"], (engine, flown, row["total_burn_s"])
 
     burns = mission["delta_v_budget"]
     spent = sum(
@@ -5573,9 +5593,12 @@ def test_the_burn_budget_is_held_against_the_burns_that_spend_it(tmp_path):
     assert "sum to 868.28 s" in result.stdout
     assert "whose last burn is the one that runs out" in result.stdout
 
-    # A budget for the ascent engine, reached through `vehicle_keys`, smaller than its burn.
+    # A budget for the ascent engine, reached through `vehicle_keys`, smaller than its burn. **This
+    # case used to rename the DPS's entry to `aps`,** because there was no ascent entry to shrink —
+    # and with one there, that mutation is now caught one line earlier by the duplicate-engine rule.
+    # The property is the same property, so the fixture shrinks the real entry instead.
     result = broken(
-        lambda d: budget_of(d, "dps").update(engine="aps", total_burn_s=100), domain="propulsion"
+        lambda d: budget_of(d, "aps").update(total_burn_s=100), domain="propulsion"
     )
     assert result.returncode == 1, result.stdout[-800:]
     assert "burns on aps sum to 434.88 s" in result.stdout
@@ -5601,7 +5624,10 @@ def test_the_burn_budget_is_held_against_the_burns_that_spend_it(tmp_path):
         text=True,
         check=False,
     ).stdout
-    assert "records no `burn_s` for 3 burn(s)" in owed, owed[-600:]
+    # Four, not three: the live vehicle records none for three burns, and this copy has just
+    # removed `loi_1`'s. It read three until the ascent engine was rated, because the rendezvous
+    # burn's missing duration was not counted while the APS had no budget to be summed into.
+    assert "records no `burn_s` for 4 burn(s)" in owed, owed[-600:]
 
 
 def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
@@ -5937,7 +5963,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 267 declared debt(s)" in result.stdout
+    assert "with 262 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6302,7 +6328,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 269 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 264 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6408,7 +6434,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 269 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 264 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -10240,7 +10266,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 268 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 263 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10383,7 +10409,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "268", "the view must agree with the headline count"
+    assert owed == "263", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -11965,7 +11991,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 268 declared debt(s)",
+        "COMPOSES, with 263 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -11973,7 +11999,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 268 declared debt(s)",
+        "COMPOSES, with 263 declared debt(s)",
         composes=True,
     )
 
@@ -11988,7 +12014,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 269 declared debt(s)" in out, out[-300:]
+    assert "with 264 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12147,7 +12173,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 269 declared debt(s)" in out, out[-400:]
+    assert "with 264 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12294,7 +12320,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 269 declared debt(s)" in out, out[-400:]
+    assert "with 264 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12304,7 +12330,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 268 declared debt(s)",
+        "COMPOSES, with 263 declared debt(s)",
         composes=True,
     )
 
@@ -12446,7 +12472,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 268 declared debt(s)",
+        "COMPOSES, with 263 declared debt(s)",
         composes=True,
     )
 
@@ -13070,3 +13096,80 @@ def test_the_thermal_budget_is_a_partition_by_vehicle(tmp_path):
     assert "mars_rejection_capacity_w" in result.stdout and "does not have" in result.stdout, (
         result.stdout[-900:]
     )
+
+
+def test_the_linter_refuses_an_unavailability_claim_that_names_no_document(tmp_path):
+    """Four rounds of finding "not published" false, and the fix is to make the claim bounded.
+
+    Round 2: the 100 lbf thruster's minimum firing time, on PDF p. 89 of a study guide the manifest
+    listed. Round 3: the fuel cell's reactant per joule, one division from three published numbers.
+    Round 4: the LM sublimator's capacity and water rate, "genuinely unpublished" with four
+    documents named as searched — none of which has it. Round 5: the DPS's 960-second life and the
+    ascent engine's 460, on printed pages 19 and 27 of the same guide round 2 opened.
+
+    The shape is not carelessness. "Not published" is a negative over a library of 8,954 titles
+    asserted from a handful of documents, and nothing made the author write down which handful — so
+    a claim with no search behind it could not be checked by the person who made it. The rule is the
+    strongest the evidence supports: a provenance saying the figure is not to be had must name a
+    document. It cannot verify the search; what it does is make the claim bounded, so the next round
+    can ask whether those documents are all of them.
+    """
+    definition = copy_definition(tmp_path / "unsupported-negative")
+    path = definition / "domains" / "comms" / "components.yaml"
+    text = path.read_text()
+    # **The whole note, not its last sentence.** The first version of this fixture swapped only the
+    # closing line, and the note went on carrying the search record above it — so the copy composed
+    # and the test failed for the right reason. A claim and its search are one declaration and a
+    # fixture has to replace both.
+    start = text.index("  - id: gimbal\n")
+    note = text.index("      note: >-\n", start)
+    end = text.index("\n\n", note)
+    path.write_text(
+        text[:note]
+        + "      note: >-\n"
+        + "        the mechanism that keeps a 9.4-degree beam on Earth, and the component F-11\n"
+        + "        fails. Both parameters are owed: no source publishes the Apollo HGA's gimbal\n"
+        + "        range or slew rate"
+        + text[end:]
+    )
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "names no document it looked in" in result.stdout, result.stdout[-900:]
+
+
+def test_a_bounded_search_record_is_what_the_corpus_now_carries():
+    """And the escape is to not make the claim, which four of the five entries took.
+
+    There are two honest ways to satisfy the rule: name the documents searched, or state the debt
+    without asserting a negative about the literature. Four of the five entries this round did the
+    second — "the parameters are owed" rather than "no source gives them" — because that is what was
+    actually known: the folder had searched seven documents, not the library.
+    """
+    for relative, cid in (
+        ("domains/comms/components.yaml", "gimbal"),
+        ("domains/eclss/components.yaml", "condensing_heat_exchanger"),
+        ("domains/structure/components.yaml", "hatch_crew_csm"),
+        ("domains/structure/components.yaml", "docking_interface"),
+        ("domains/structure/components.yaml", "pyro_lm_separation"),
+    ):
+        document = yaml.safe_load((VEHICLE / relative).read_text())
+        component = next(c for c in document["components"] if c.get("id") == cid)
+        note = component["provenance"]["note"]
+        assert component["provenance"]["basis"] == "UNCONFIGURED", cid
+        assert "Searched, and none has it" in note, (
+            f"{cid} no longer carries the search record, so its claim is unbounded again"
+        )
+    # And the three values this round actually sourced.
+    propulsion = yaml.safe_load((VEHICLE / "domains" / "propulsion" / "components.yaml").read_text())
+    ratings = {row["engine"]: row for row in propulsion["capability"]}
+    assert ratings["dps"]["total_burn_s"] == 960 and ratings["dps"]["restarts_qualified"] == 20
+    assert ratings["aps"]["total_burn_s"] == 460 and ratings["aps"]["restarts_qualified"] == 35
+    for engine in ("dps", "aps"):
+        assert ratings[engine]["provenance"]["basis"] == "historical", engine
+        assert "lm_propulsion_rcs_study_guide.pdf" in ratings[engine]["provenance"]["source"], engine
+
+    structure = yaml.safe_load((VEHICLE / "domains" / "structure" / "components.yaml").read_text())
+    valve = next(c for c in structure["components"] if c.get("id") == "relief_valve")
+    assert valve["crack_pressure_psid"] == 6.0
+    assert valve["reverse_limit_psid"] == 0.902
+    assert "csm_ecs_study_guide.pdf" in valve["provenance"]["source"]
