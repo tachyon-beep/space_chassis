@@ -758,7 +758,7 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # integrator never read the field. That is this counter's whole purpose, and it is the reason
     # the build order was reporting states as blocked by numbers that were published all along —
     # page 89 of the RCS study guide, and page 14 of the EPS study guide.
-    assert (counted_more, sentinel, no_input) == (26, 13, 0), (counted_more, sentinel, no_input)
+    assert (counted_more, sentinel, no_input) == (24, 13, 0), (counted_more, sentinel, no_input)
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -5974,7 +5974,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 260 declared debt(s)" in result.stdout
+    assert "with 258 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6342,7 +6342,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 262 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 260 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6448,7 +6448,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 262 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 260 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -7685,7 +7685,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # been counted as ready because the integrator never read a level, which is the defect the
     # round found — the build order was reporting a state as advanceable that could only have
     # produced a wrong number.
-    assert len(buckets["ready"]) == 15
+    assert len(buckets["ready"]) == 16
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -7706,14 +7706,14 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # Four more moved in when a `computed` effect began naming its input: `link_snr`, `tx_power`,
     # `instrumentation_power` and `nav_solution` are blocked by a field now rather than by the
     # rule that would compute them.
-    assert len(buckets["value"]) == 29
+    assert len(buckets["value"]) == 27
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
     # coupling, and `instrumentation_power`, `bus_tie_closed` and `thruster_valve` each have every
     # input declared. `load_shed_class` followed its own edge into the table form.
-    assert len(buckets["edge"]) == 6
-    assert len(buckets["ready"]) == 15
+    assert len(buckets["edge"]) == 7
+    assert len(buckets["ready"]) == 16
 
 
 def test_the_plant_reports_the_build_order():
@@ -8471,9 +8471,13 @@ def test_every_stock_declares_where_it_starts():
     # the map could not say: it held `values["internal"]` as a single slot, so `initial_values` and
     # `step` both dropped it and six declared starting values were read by nothing.
     declared = [s for s in stocks if isinstance(s.spec.get("initial"), (int, float))]
-    assert len(declared) == 16, f"{len(declared)} stocks declare a numeric initial"
+    # 16 -> 18 when the two propellant stocks stopped owing their `initial`: `prop_main_kg` is
+    # the SPS's load and `prop_rcs_kg` the three RCS loads summed, both `derived` now.
+    assert len(declared) == 18, f"{len(declared)} stocks declare a numeric initial"
     on_nodes = {k: v for k, v in seeded.items() if k != "internal"}
-    assert len(on_nodes) == 10, f"{len(on_nodes)} node stocks carry a value"
+    # 10 -> 12 with `prop_main` and `prop_rcs`: the two stocks whose `initial` was owed because
+    # nothing said which tanks the nodes were. Both carry their loads now.
+    assert len(on_nodes) == 12, f"{len(on_nodes)} node stocks carry a value"
     assert len(seeded["internal"]) == 6, sorted(seeded["internal"])
     assert len(on_nodes) + len(seeded["internal"]) == len(declared)
     # The ones the corpus can supply, and the numbers it supplies them with. The last is the
@@ -10293,7 +10297,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 261 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 259 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10436,7 +10440,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "261", "the view must agree with the headline count"
+    assert owed == "259", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -12018,7 +12022,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 261 declared debt(s)",
+        "COMPOSES, with 259 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12026,7 +12030,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 261 declared debt(s)",
+        "COMPOSES, with 259 declared debt(s)",
         composes=True,
     )
 
@@ -12041,7 +12045,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 262 declared debt(s)" in out, out[-300:]
+    assert "with 260 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12200,7 +12204,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 262 declared debt(s)" in out, out[-400:]
+    assert "with 260 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12347,7 +12351,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 262 declared debt(s)" in out, out[-400:]
+    assert "with 260 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12357,7 +12361,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 261 declared debt(s)",
+        "COMPOSES, with 259 declared debt(s)",
         composes=True,
     )
 
@@ -12499,7 +12503,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 261 declared debt(s)",
+        "COMPOSES, with 259 declared debt(s)",
         composes=True,
     )
 
@@ -13305,3 +13309,80 @@ def test_an_edge_that_names_where_its_value_comes_from_is_not_a_second_debt(tmp_
     result = run_linter(definition)
     assert result.returncode == 1
     assert "which there is nothing to hold it against" in result.stdout, result.stdout[-900:]
+
+
+def test_every_loaded_tank_is_carried_by_a_stock_or_declared_not_to_be(tmp_path):
+    """The graph had stocks for four of the vehicle's six loaded tanks, and nothing joined the lists.
+
+    `prop_main_kg` owed its `initial` for as long as the domain has existed, on the reasoning that "a
+    single initial for the node would be a choice about which tank it *is* rather than a figure
+    anything publishes". Asking the question turned up the other half: the only edge out of the node
+    derives its rate from `vehicle.yaml:propulsion.sps.isp_s`, so the choice had been made one file
+    over — and **the LM's descent and ascent propellant, 10,624 kg or a third of the vehicle's
+    propellant, was in no stock at all** while the mass closure and the Δv budget both knew about it.
+
+    So each stock declares the tanks it carries, the two the graph does not carry are named with
+    their reason, and a carrier's level is the sum of its list.
+    """
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    consumables = yaml.safe_load((VEHICLE / "domains" / "consumables" / "components.yaml").read_text())
+
+    assert coupling["nodes"]["prop_main"]["carries"] == ["sps"]
+    assert coupling["nodes"]["prop_rcs"]["carries"] == ["rcs_sm", "rcs_cm", "rcs_lm"]
+    off = vehicle["propulsion"]["not_on_a_coupling_stock"]
+    assert sorted(off) == ["lm_aps", "lm_dps"], off
+
+    states = {s["node"]: s for s in consumables["state"] if s.get("node")}
+    assert states["prop_main"]["initial"] == 18508 == vehicle["propulsion"]["sps"]["mass_kg"]
+    assert states["prop_rcs"]["initial"] == 1008
+    assert states["prop_rcs"]["initial"] == sum(
+        vehicle["propulsion"][k]["mass_kg"] for k in ("rcs_sm", "rcs_cm", "rcs_lm")
+    )
+    # And the two the graph does not carry are 10,624 kg between them — the figure the round is for.
+    assert sum(vehicle["propulsion"][k]["mass_kg"] for k in off) == 10624
+
+    # A tank loaded and carried by nothing is refused.
+    definition = copy_definition(tmp_path / "uncarried")
+    path = definition / "vehicle.yaml"
+    text = path.read_text()
+    old = '    lm_aps: "2,376 kg'
+    assert old in text, "the fixture no longer matches the off-graph declaration"
+    start = text.index(old)
+    end = text.index("\n", text.index("460 s rating", start))
+    path.write_text(text[:start] + text[end + 1 :])
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "declares 2376 kg of 'lm_aps' loaded and no coupling stock carries it" in result.stdout, (
+        result.stdout[-900:]
+    )
+
+
+def test_a_stocks_level_is_the_tanks_it_says_it_holds(tmp_path):
+    """`carries` gives the two derived propellant initials a reader, and catches a stale one.
+
+    The initials are `derived` — 18,508 from the SPS's load and 1,008 from the three RCS systems' —
+    and a derivation the linter evaluates is a value that cannot drift from its inputs. This holds
+    the other end: the *level* against the list, so a stock whose `carries` changes without its
+    initial moving is refused by name rather than composing.
+    """
+    definition = copy_definition(tmp_path / "carried-twice")
+    path = definition / "coupling.yaml"
+    text = path.read_text()
+    old = "    carries: [rcs_sm, rcs_cm, rcs_lm]\n"
+    assert old in text, "the fixture no longer matches prop_rcs's carries list"
+    path.write_text(text.replace(old, "    carries: [rcs_sm, rcs_cm, rcs_lm, sps]\n", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "'sps', which 'prop_main' already carries" in result.stdout, result.stdout[-900:]
+
+    # And a level that is not the sum of its list.
+    definition = copy_definition(tmp_path / "wrong-level")
+    path = definition / "domains" / "consumables" / "components.yaml"
+    text = path.read_text()
+    old = "    initial: 1008\n"
+    assert old in text, "the fixture no longer matches prop_rcs's initial"
+    path.write_text(text.replace(old, "    initial: 1200\n", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "derives 1008 from 'sm + cm + lm'" in result.stdout, result.stdout[-900:]
