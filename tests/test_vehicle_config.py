@@ -11675,3 +11675,244 @@ def test_a_faults_magnitude_is_one_name_with_its_unit_and_its_channel(tmp_path):
         '      magnitude: "about a cupful an hour"\n',
         "A magnitude is a number or an owed one",
     )
+
+
+def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tmp_path):
+    """The one link in the reading chain that nothing joined, and the class that named it.
+
+    A reading reaches the crew through three declarations and two joins. `channels.yaml` states a
+    resolution for every canonical channel and the display contract's `displayed_precision` is held
+    to it — a panel may round the channel and may not invent resolution. The other end was joined to
+    nothing: the four instruments in `domains/eclss/components.yaml` declared `range_psia`,
+    `precision_psia`, `range_mmhg` and `precision_mmhg` — the unit inside the key name, which is the
+    shape the fault magnitudes were cured of — and no tool read any of the eight fields. `class:
+    sensor`, the one word in the corpus that says *this is an instrument*, was read by nothing
+    either, so the four instruments were four blocks of prose that no channel depended on.
+
+    **The two ranges are different quantities.** The channel's `range` is a *band* — the cabin's
+    acceptable 4.8-5.2 psia, with the alarms firing below it — while the instrument's is a *scale*,
+    the span it can physically read, 0-10 psia. So the honest relation is containment rather than
+    equality: an instrument whose full scale does not contain the band the vehicle calls normal
+    saturates inside its own operating envelope, and the crew read the rail rather than the cabin.
+    `range_kind` already carried that distinction for the registry, so the sensor side reuses the
+    word `scale` instead of inventing a second vocabulary, and the join is then a comparison rather
+    than a description.
+
+    Two things this round got wrong on the way, both of them kept as cases below. The first version
+    of the unit-in-key rule matched the *prefix* `range_`, which matched `range_kind` — the
+    vocabulary of `range` rather than a unit inside a name — and refused all four sensors for the
+    field that says what their range means. And the first broken copy restored the old spelling by
+    deleting `range` and `unit` together, which let the missing-figure rule fire first and `continue`
+    past the rule under test: a break that drops an identifier reports the hole rather than the
+    defect, so the unit-in-key case moves only the *name* and keeps every figure present.
+    """
+    registry: dict[str, dict] = {}
+    for value in yaml.safe_load((VEHICLE / "channels.yaml").read_text()).values():
+        if isinstance(value, list):
+            for row in value:
+                if isinstance(row, dict) and row.get("id"):
+                    registry[str(row["id"])] = row
+
+    eclss = yaml.safe_load((VEHICLE / "domains" / "eclss" / "components.yaml").read_text())
+    sensors = [e for e in eclss["components"] if e.get("class") == "sensor"]
+    assert sorted(e["id"] for e in sensors) == [
+        "cabin_pressure_sensor_1",
+        "cabin_pressure_sensor_2",
+        "co2_sensor",
+        "lm_cabin_pressure_sensor",
+    ], [e.get("id") for e in sensors]
+
+    figures = {"range", "range_kind", "unit", "precision"}
+    # `<quantity>_<unit>`, tested by the suffix rather than the prefix — `range_kind` begins with
+    # `range_` and is not one of these, which is the mistake the linter made first and this test
+    # repeated the first time it ran. The units are the registry's own, lowercased, because a key
+    # name is snake_case and the registry spells one of them `mmHg`.
+    units = {str(row.get("unit", "")).lower() for row in registry.values()}
+    for entry in sensors:
+        # The link, and the closed key set: the defect was a *name*, so the count of names is what
+        # has to stay at one.
+        assert figures <= set(entry), entry
+        assert not [k for k in entry if str(k).rsplit("_", 1)[-1].lower() in units], entry
+        row = registry[str(entry["measures"])]
+        assert entry["range_kind"] == "scale", entry["id"]
+        assert row["range_kind"] == "band", entry["id"]
+        # In the channel's own unit, no finer than the instrument resolves, and wide enough to hold
+        # the band the vehicle calls normal. The last is the physical claim: a transducer that
+        # saturates at 4.9 psia cannot read the bottom of the cabin's acceptable range.
+        assert entry["unit"] == row["unit"], entry["id"]
+        assert float(entry["precision"]) <= float(row["precision"]), entry["id"]
+        assert entry["range"][0] <= row["range"][0], entry["id"]
+        assert row["range"][1] <= entry["range"][1], entry["id"]
+
+    # Two instruments on one channel is the redundant pair, and the rule is silent about the count.
+    assert len([e for e in sensors if e["measures"] == "eclss.cabin_pressure_psia"]) == 2
+
+    # Each case is a whole block, so the anchor is unique by construction and a rewrite of the
+    # corpus that moves a line breaks the fixture loudly rather than silently matching nothing.
+    CO2 = (
+        "  - id: co2_sensor\n"
+        "    kind: flow\n"
+        "    class: sensor\n"
+        "    measures: eclss.co2_pp_mmhg\n"
+        "    range: [0, 20]\n"
+        "    range_kind: scale\n"
+        "    unit: mmHg\n"
+        "    precision: 0.1\n"
+    )
+    PRESSURE = (
+        "  - id: cabin_pressure_sensor_1\n"
+        "    kind: flow\n"
+        "    class: sensor\n"
+        "    measures: eclss.cabin_pressure_psia\n"
+        "    range: [0, 10]\n"
+        "    range_kind: scale\n"
+        "    unit: psia\n"
+        "    precision: 0.01\n"
+    )
+    CHANNEL = (
+        "  - id: eclss.co2_pp_mmhg\n"
+        "    unit: mmHg\n"
+        "    layer: measurement\n"
+        "    precision: 0.1\n"
+        "    rate_hz: 0.5\n"
+        "    priority: P3\n"
+        "    range: [0, 5]\n"
+    )
+
+    def refusal(
+        name: str, where: str, old: str, new: str, needle: str, *, composes: bool = False
+    ) -> str:
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / where
+        text = path.read_text()
+        assert text.count(old) == 1, f"the fixture no longer matches {old[:60]!r} exactly once"
+        path.write_text(text.replace(old, new, 1))
+        result = run_linter(definition)
+        assert needle in result.stdout, result.stdout[:1400]
+        if composes:
+            assert result.returncode == 0, result.stdout[:600]
+        else:
+            assert result.returncode == 1, result.stdout[:600]
+        return result.stdout
+
+    components = "domains/eclss/components.yaml"
+
+    # The defect itself: the unit welded into the key name, which is what the four sensors did.
+    refusal(
+        "unit-in-key",
+        components,
+        CO2,
+        CO2.replace("    range: [0, 20]\n", "    range_mmhg: [0, 20]\n")
+        .replace("    unit: mmHg\n", "")
+        .replace("    precision: 0.1\n", ""),
+        "carries its unit in the key name",
+    )
+    # And the boundary the first version of the rule got wrong: `range_kind` is the vocabulary of
+    # `range` and not a unit inside a name, so losing it is a missing figure and nothing else.
+    out = refusal(
+        "kind-not-unit",
+        components,
+        CO2,
+        CO2.replace("    range_kind: scale\n", ""),
+        "not there to compare",
+    )
+    assert "carries its unit in the key name" not in out
+
+    # A declaration nothing reads, still: an instrument that names no channel, and one that names a
+    # channel which does not exist. The second is the typo the link exists to catch.
+    refusal(
+        "no-channel",
+        components,
+        CO2,
+        CO2.replace("    measures: eclss.co2_pp_mmhg\n", ""),
+        "declares no `measures`",
+    )
+    refusal(
+        "wrong-channel",
+        components,
+        CO2,
+        CO2.replace("eclss.co2_pp_mmhg", "eclss.co2_pp_mmhq"),
+        "is not a channel in `channels.yaml`",
+    )
+
+    # The two inequalities, each read from one side. A channel that publishes finer than the
+    # transducer resolves is a number the vehicle never measured, whichever file moved.
+    refusal(
+        "instrument-coarse",
+        components,
+        CO2,
+        CO2.replace("    precision: 0.1\n", "    precision: 0.5\n"),
+        "may not invent resolution",
+    )
+    refusal(
+        "registry-tightened",
+        "channels.yaml",
+        CHANNEL,
+        CHANNEL.replace("    precision: 0.1\n", "    precision: 0.001\n"),
+        "may not invent resolution",
+    )
+    # Containment, and the physical failure it is about: an instrument that cannot reach the top of
+    # the band the vehicle calls normal.
+    refusal(
+        "saturates",
+        components,
+        PRESSURE,
+        PRESSURE.replace("    range: [0, 10]\n", "    range: [4.9, 10]\n"),
+        "saturates inside its own operating envelope",
+    )
+    refusal(
+        "wrong-unit",
+        components,
+        CO2,
+        CO2.replace("    unit: mmHg\n", "    unit: psia\n"),
+        "the channel it measures publishes in 'mmHg'",
+    )
+    refusal(
+        "not-a-span",
+        components,
+        CO2,
+        CO2.replace("    range: [0, 20]\n", "    range: [20, 0]\n"),
+        "not a span with two numeric ends",
+    )
+    # `range_kind` is not decoration: a sensor claiming an operating band would be answering the
+    # channel's question, and the containment test below it would not mean anything.
+    refusal(
+        "sensor-band",
+        components,
+        CO2,
+        CO2.replace("    range_kind: scale\n", "    range_kind: band\n"),
+        "the full span it can read",
+    )
+
+    # The legal directions, which the rule must not refuse: a channel may round its instrument — that
+    # is what the panel does to the channel — and a full scale ending exactly on the band's edge
+    # still contains it.
+    refusal(
+        "channel-rounds",
+        components,
+        CO2,
+        CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
+        "COMPOSES, with 292 declared debt(s)",
+        composes=True,
+    )
+    refusal(
+        "exact-edge",
+        components,
+        PRESSURE,
+        PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
+        "COMPOSES, with 292 declared debt(s)",
+        composes=True,
+    )
+
+    # A figure that is not there to compare is a debt and not a refusal — the same split the display
+    # contract makes one join further along. A measured channel with no `range` at all is the case:
+    # the corpus still composes, and the count is one higher.
+    out = refusal(
+        "no-range",
+        "channels.yaml",
+        CHANNEL,
+        CHANNEL.replace("    range: [0, 5]\n", ""),
+        "cannot be held against the channel's `range`",
+        composes=True,
+    )
+    assert "with 293 declared debt(s)" in out, out[-300:]
