@@ -70,10 +70,23 @@ def copy_definition(destination: Path) -> Path:
     The domains come too: by round 2 the definition is four top-level files plus one
     directory per landed domain, and a fixture that copied only the first four would let a
     test pass while the thing it claims to test was never read.
+
+    **And the prose comes too, for the same reason, one round later.** The linter now holds the
+    folder's own status board against the files it describes (`check_readme_figures`), the method
+    table in `plant.md` against `METHODS`, and the fault scheduler's docstring against the domains'
+    fault policies (`check_tool_docstrings`). A fixture that copied only the YAML would make every
+    one of those checks refuse for absence in every test in this file — which is the same defect
+    the domains clause above records, arriving in the fixture that clause was written for. So the
+    fixture copies what the linter reads and nothing else: the two prose files and the one tool
+    whose docstring makes a claim, not the 750 KB `check_vehicle.py` the fixture is *running*.
     """
     destination.mkdir(parents=True, exist_ok=True)
     for name in FILES:
         shutil.copy(VEHICLE / name, destination / name)
+    for name in ("README.md", "plant.md"):
+        shutil.copy(VEHICLE / name, destination / name)
+    (destination / "tools").mkdir(exist_ok=True)
+    shutil.copy(VEHICLE / "tools" / "faults.py", destination / "tools" / "faults.py")
     domains = VEHICLE / "domains"
     if domains.is_dir():
         shutil.copytree(domains, destination / "domains")
@@ -5919,7 +5932,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 293 declared debt(s)" in result.stdout
+    assert "with 289 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6278,7 +6291,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 295 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 291 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6384,7 +6397,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 295 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 291 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -10200,7 +10213,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 294 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 290 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10340,7 +10353,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "294", "the view must agree with the headline count"
+    assert owed == "290", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -11892,7 +11905,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 294 declared debt(s)",
+        "COMPOSES, with 290 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -11900,7 +11913,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 294 declared debt(s)",
+        "COMPOSES, with 290 declared debt(s)",
         composes=True,
     )
 
@@ -11915,7 +11928,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 295 declared debt(s)" in out, out[-300:]
+    assert "with 291 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12074,7 +12087,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 295 declared debt(s)" in out, out[-400:]
+    assert "with 291 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12221,7 +12234,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 295 declared debt(s)" in out, out[-400:]
+    assert "with 291 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12231,7 +12244,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 294 declared debt(s)",
+        "COMPOSES, with 290 declared debt(s)",
         composes=True,
     )
 
@@ -12373,6 +12386,345 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 294 declared debt(s)",
+        "COMPOSES, with 290 declared debt(s)",
         composes=True,
+    )
+
+
+def test_the_linter_refuses_a_front_table_that_states_the_wrong_figures(tmp_path):
+    """The README's own table described three things about the folder and none of them had a reader.
+
+    `plant.md` has had **seven** integrator classes since the first transport delay landed and the
+    table said six; `coupling.yaml` declares **seven** cycles and the table said six; the linter
+    derives a **57**-node tick order and the table said 39. Nothing read any of the three, which is
+    this folder's recurring finding — *a declaration no tool reads has already drifted* — arriving
+    in the first table a reader sees. Three fixtures, one per figure, because a check that reads the
+    declarations it was told about cannot see the ones beside them.
+    """
+    for name, old, new, needle in (
+        (
+            "methods",
+            "the seven integrator classes",
+            "the six integrator classes",
+            "while `METHODS` holds 7",
+        ),
+        ("cycles", "seven declared cycles", "six declared cycles", "while it declares 7"),
+        ("order", "the 57-node tick order", "the 39-node tick order", "while the linter derives 57"),
+    ):
+        definition = copy_definition(tmp_path / f"front-{name}")
+        path = definition / "README.md"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        result = run_linter(definition)
+        assert result.returncode == 1, f"{name}: the linter composed a stale front table"
+        assert needle in result.stdout, result.stdout[-900:]
+
+
+def test_the_linter_refuses_a_per_domain_paragraph_whose_counts_have_drifted(tmp_path):
+    """Nine of the ten per-domain clauses were wrong, and the tenth was right by stating nothing.
+
+    Power's paragraph said nine states and thirteen thresholds while the domain declares thirteen
+    and seventeen; thermal's said eleven and eighteen against twenty and seventeen; eclss's said
+    twelve, thirteen and eleven against sixteen, twenty and twenty-one. The clauses are one form so
+    that they can be *read*, and this breaks one of them by four states to prove the reader runs.
+    """
+    definition = copy_definition(tmp_path / "domain-count")
+    path = definition / "README.md"
+    text = path.read_text()
+    old = "declares 13 states, 17 thresholds, 5 verbs, 12 faults"
+    assert old in text, "the fixture no longer matches the power clause"
+    path.write_text(text.replace(old, "declares 9 states, 17 thresholds, 5 verbs, 12 faults", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "while `domains/power/` declares 13" in result.stdout, result.stdout[-900:]
+
+
+def test_the_linter_refuses_a_domain_paragraph_with_no_count_clause(tmp_path):
+    """A figure nobody can check is the next round's finding, so its *absence* is refused too.
+
+    A domain could drop its clause — the form is optional in the regex, because a domain that
+    states fewer things is making a smaller claim — and then the paragraph would be prose that no
+    tool reads at all. This is the other half of that: the clause is required to exist, and writing
+    the counts as words is how it stops being readable. Thermal's clause is spelled out, and the
+    refusal is the one that says so rather than the one that says the numbers are wrong, which is
+    the difference between a missing claim and a false one.
+    """
+    definition = copy_definition(tmp_path / "no-clause")
+    path = definition / "README.md"
+    text = path.read_text()
+    old = "20 states, 17 thresholds, 5 verbs, 11 faults"
+    assert old in text, "the fixture no longer matches the thermal clause"
+    path.write_text(
+        text.replace(old, "twenty states, seventeen thresholds, five verbs, eleven faults", 1)
+    )
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "states no count clause for this domain" in result.stdout, result.stdout[-900:]
+
+
+def test_the_linter_refuses_two_count_clauses_for_one_domain(tmp_path):
+    """One domain's paragraph contradicting itself is the defect the single clause form prevents.
+
+    The reader collects the clauses in a domain's paragraph as a *set*, so two different ones are a
+    refusal rather than a last-one-wins. That matters here more than elsewhere: the folder's own
+    history is a status section that carried two debt counts eleven lines apart, and a check
+    satisfied by either was satisfied by a file that contradicted itself.
+    """
+    definition = copy_definition(tmp_path / "two-clauses")
+    path = definition / "README.md"
+    text = path.read_text()
+    old = "declares 13 states, 17 thresholds, 5 verbs, 12 faults"
+    assert old in text, "the fixture no longer matches the power clause"
+    second = "It also declares 9 states, 17 thresholds, 5 verbs, 12 faults. "
+    path.write_text(text.replace(old, second + old, 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "different count clauses for one domain" in result.stdout, result.stdout[-900:]
+
+
+def test_the_linter_refuses_a_method_table_whose_heading_disagrees_with_the_set(tmp_path):
+    """`plant.md` §3's heading is the README's source for the method count, so it needs a reader too.
+
+    The table is the contract — the seven classes are what a domain picks from — and its heading
+    says how many there are. A heading that says six while `METHODS` holds seven is the same defect
+    one file over, and holding only the README would leave the number's *source* unchecked.
+    """
+    definition = copy_definition(tmp_path / "method-heading")
+    path = definition / "plant.md"
+    text = path.read_text()
+    old = "## 3. Seven methods"
+    assert old in text, "the fixture no longer matches the §3 heading"
+    path.write_text(text.replace(old, "## 3. Six methods", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "heads the method table" in result.stdout, result.stdout[-900:]
+
+
+def test_the_linter_refuses_a_tool_docstring_whose_fault_counts_have_drifted(tmp_path):
+    """`faults.py` said 118, 58 and 60 while the domains declared 128, 66 and 62.
+
+    Ten domains landed faults after the sentence was written and the sentence never moved, and
+    nothing read it — `test_the_readme_status_matches_the_tools` scans the tools, but for the form
+    `N declared debts`, so `N declared faults` was invisible to the reader that exists. `plant.py`
+    met this and solved it by *removing* its figures; these stay, because a fault corpus's size and
+    its split between stochastic and conditional is worth a reader's knowing, and the check derives
+    all three with the predicate the scheduler itself uses.
+    """
+    definition = copy_definition(tmp_path / "fault-docstring")
+    path = definition / "tools" / "faults.py"
+    text = path.read_text()
+    old = "The vehicle has 128 declared faults"
+    assert old in text, "the fixture no longer matches the faults.py docstring"
+    path.write_text(text.replace(old, "The vehicle has 118 declared faults", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "states 118 declared faults" in result.stdout, result.stdout[-900:]
+
+
+def test_the_linter_refuses_a_debt_that_says_its_own_obligation_is_answered(tmp_path):
+    """Two `open_debts` entries recorded their own resolution and stayed in the counted list.
+
+    `mission.yaml` carried "the lunar occultation comms blackout is **modelled** and no longer a
+    debt" and "`transition_evidence` ... **Resolved against the vehicle rather than left open**".
+    Each was still counted in the headline, and the blackout one was worse than redundant: its
+    second half restated the per-phase *sequence* debt three entries above it, so one obligation was
+    declared twice in one list and counted twice. A debt that answers itself is not a debt, and the
+    cost of leaving one standing is that the entry still *names* what is missing and the name is now
+    wrong.
+    """
+    definition = copy_definition(tmp_path / "answered-debt")
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    old = "and nothing here says how far out the vehicle starts."
+    assert old in text, "the fixture no longer matches the entry-corridor debt"
+    path.write_text(text.replace(old, " This is no longer owed.", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "'no longer owed'" in result.stdout, result.stdout[-900:]
+
+
+def test_the_linter_refuses_a_debt_about_a_coupling_edge_that_has_stopped_owing(tmp_path):
+    """Five entries across four files said `E-GNC-RCS` "has no sensitivity" while it carries 1.0.
+
+    The edge has had `value: 1.0, unit: mode per mode, basis: derived` since the round that
+    promoted `guidance` to a service node, and its own note says the opposite of the debts in as
+    many words — "this edge is now closed without them". The corpus was contradicting itself across
+    two keys of one file and three other files, and the contradiction inflated the count by five.
+    The fixture injects the claim about an edge with a *numeric* value and no closure wording in its
+    note, so the rule that fires is the sensitivity one and not the note one beside it.
+    """
+    definition = copy_definition(tmp_path / "senseless-debt")
+    path = definition / "vehicle.yaml"
+    text = path.read_text()
+    old = "each unit thrust direction and lever arm from the centre of mass."
+    assert old in text, "the fixture no longer matches the thruster-geometry debt"
+    path.write_text(
+        text.replace(old, old + " Without them E-BUS-PUMP has no sensitivity.", 1)
+    )
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "names E-BUS-PUMP and says 'has no sensitivity'" in result.stdout, result.stdout[-900:]
+
+
+def test_the_linter_refuses_a_debt_that_names_an_edge_whose_note_says_it_is_closed(tmp_path):
+    """The note and the debt are two declarations about one edge, and nothing had compared them.
+
+    This rule is deliberately blunt: if an edge's own prose says it is closed, a list of what the
+    vehicle still owes has no business naming it. The escape is to not write the id, which is the
+    right burden — the debt that was wrong here did not need the id to make its point. The words
+    'is now closed' live inside `sensitivity.note` rather than beside `from`/`to`/`kind`, and the
+    first version of this reader looked only at the edge-level key, so it stayed silent on the one
+    edge it was written for. That is the check-that-cannot-run failure, found by writing the rule
+    and watching it not fire.
+    """
+    definition = copy_definition(tmp_path / "closed-edge-debt")
+    path = definition / "coupling.yaml"
+    text = path.read_text()
+    old = "- \"The ladder's missing rung."
+    assert old in text, "the fixture no longer matches the shed-rung debt"
+    path.write_text(
+        text.replace(old, "- \"E-GNC-RCS is still owed. The ladder's missing rung.", 1)
+    )
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "whose own note says it" in result.stdout, result.stdout[-900:]
+
+
+def test_the_linter_refuses_a_cycle_whose_members_are_a_path(tmp_path):
+    """A cycle entry with no back-edge is never walked back, so nothing checked that it closed.
+
+    `C-RAD-COOL` declared `algebraic: true` and `back_edge: null` and named `E-RAD-THERM` and
+    `E-WATER-RAD`, which chain `water_cooling -> radiator_reject -> coolant_supply_t` — a path. It
+    survived because the closure check needs a back-edge to walk back to, so the absence of one
+    read as a property of the loop rather than as the reason the check did not run. The fixture
+    rebuilds exactly that shape out of a cycle that does close, which is also why the refusal
+    exists: the members are all real edges a domain needs, and what is false is only that they
+    close.
+    """
+    definition = copy_definition(tmp_path / "path-cycle")
+    path = definition / "coupling.yaml"
+    text = path.read_text()
+    anchor = "  - id: C-BAT-THERMAL\n"
+    assert anchor in text, "the fixture no longer matches the cycle list"
+    # `C-RAD-COOL`, exactly as it stood: two real edges that chain rather than close. It is
+    # reconstructed rather than adapted from a cycle that does close, because *reusing* one is not
+    # the defect — the defect is a cycle entry whose members are a path, and a fixture built by
+    # corrupting a working loop also removes a back-edge from the schedule and gets refused for
+    # that instead. The first version of this test did exactly that and asserted on the wrong
+    # refusal, which is how the difference was found.
+    path.write_text(
+        text.replace(
+            anchor,
+            "  - id: C-RAD-COOL\n"
+            "    name: \"radiator rejection versus coolant temperature\"\n"
+            "    members: [E-RAD-THERM, E-WATER-RAD]\n"
+            "    back_edge: null\n"
+            "    delay_ticks: 0\n"
+            "    algebraic: true\n"
+            + anchor,
+            1,
+        )
+    )
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "together form a path rather than a loop" in result.stdout, result.stdout[-900:]
+
+
+def test_the_linter_and_the_plant_read_one_crew_placement_declaration(tmp_path):
+    """`also_present` was read by the plant and not by the linter, so two debts outlived their answer.
+
+    `descent` and `surface` name only LM configurations and declare `also_present: [csm_alone]`,
+    which is where the CM pilot is while the LM is on the surface. `tools/plant.py --crew` read
+    both keys and placed every crew member in every phase; the linter's crew check read
+    `configurations` alone and went on reporting two debts naming the CSM as missing — debts the
+    vehicle had already answered, which is worse than debts it had not, because the count is the
+    headline and the entry names the wrong thing.
+
+    So the two readers are held together here rather than in prose: with the declaration removed the
+    linter must report the phase and the plant must report the same person unplaced, and with it
+    present neither says anything. Two tools disagreeing about one field is the defect; each tool
+    being internally consistent is what let it run for as long as it did.
+    """
+    definition = copy_definition(tmp_path / "also-present")
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    old = (
+        "    also_present: [csm_alone]   # the CSM waits in lunar orbit while the LM descends; "
+        "the CM pilot is aboard it and alone\n"
+    )
+    assert old in text, "the fixture no longer matches descent's also_present"
+
+    plant = VEHICLE / "tools" / "plant.py"
+
+    def crew_report(where: Path) -> str:
+        return subprocess.run(
+            [sys.executable, str(plant), "--dir", str(where), "--crew"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+
+    # As declared: neither tool has anything to say about `descent`.
+    lint = run_linter(definition)
+    assert lint.returncode == 0, lint.stdout[-900:]
+    assert "phase descent" not in lint.stdout, "a phase that places its crew is reported as a debt"
+    assert "UNPLACED" not in crew_report(definition)
+
+    # With the declaration gone both tools name the same phase and the same person.
+    path.write_text(text.replace(old, "", 1))
+    lint = run_linter(definition)
+    assert "mission.yaml:phase descent: names no configuration holding ['csm']" in lint.stdout, (
+        lint.stdout[-900:]
+    )
+    crew = crew_report(definition)
+    assert "descent                UNPLACED ['csm_pilot']" in crew, crew[-900:]
+    assert "surface                every crew member placed" in crew, (
+        "only the phase whose declaration was removed may lose its placement"
+    )
+
+
+def test_the_linter_refuses_a_registry_census_that_has_drifted_from_the_registry(tmp_path):
+    """`channels.yaml` counted its own `range_kind` assignments, and the count was one short.
+
+    The entry that argues the assignments are *derived* rather than chosen gave its own census —
+    "57 channels carry the field — 43 `band`, 14 `scale`" — and by the time anything read it the
+    registry carried 58, 44 and 14. One channel gained the field and the prose explaining the field
+    did not, in the file whose entire subject is what a channel declares. The check sits beside
+    `check_range_kinds`, which reads the assignments themselves, because a census is a claim about
+    the registry made inside the registry.
+    """
+    definition = copy_definition(tmp_path / "census")
+    path = definition / "channels.yaml"
+    text = path.read_text()
+    old = "58 channels carry the field — 44 `band`, 14 `scale`"
+    assert old in text, "the fixture no longer matches the range_kind census"
+    path.write_text(text.replace(old, "57 channels carry the field — 43 `band`, 14 `scale`", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "states the `range_kind` census as 57 channels" in result.stdout, result.stdout[-900:]
+
+
+def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
+    """The status line's own sentence, held whole rather than in the three figures a test read.
+
+    The sentence is "148 channels, 134 states over 57 scheduled nodes, 142 thresholds, 58 verbs and
+    128 classified events". `test_the_readme_status_matches_the_tools` reads the first three; the
+    last three were read by nothing, which is the same defect one clause further along in the same
+    line. The fixture moves the threshold count by one, because that is the smallest change the
+    reader has to catch and the one a domain landing a threshold makes.
+    """
+    definition = copy_definition(tmp_path / "status-line")
+    path = definition / "README.md"
+    text = path.read_text()
+    # The sentence is hard-wrapped between "142" and "thresholds", so the anchor is the half that
+    # fits on one line. A fixture that matched the whole clause would fail on a reflow rather than
+    # on the value it is about — the same distinction the reader itself makes.
+    old = "thresholds, 58 verbs and 128 classified events"
+    assert old in text, "the fixture no longer matches the status line"
+    path.write_text(text.replace(old, "thresholds, 58 verbs and 127 classified events", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "states 127 classified events while the corpus declares 128" in result.stdout, (
+        result.stdout[-900:]
     )
