@@ -5919,7 +5919,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 291 declared debt(s)" in result.stdout
+    assert "with 292 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6278,7 +6278,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 293 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 294 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6384,7 +6384,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 293 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 294 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -10200,7 +10200,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 292 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 293 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10340,7 +10340,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "292", "the view must agree with the headline count"
+    assert owed == "293", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -11892,7 +11892,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 292 declared debt(s)",
+        "COMPOSES, with 293 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -11900,7 +11900,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 292 declared debt(s)",
+        "COMPOSES, with 293 declared debt(s)",
         composes=True,
     )
 
@@ -11915,4 +11915,182 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 293 declared debt(s)" in out, out[-300:]
+    assert "with 294 declared debt(s)" in out, out[-300:]
+
+
+def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
+    """The absorber's rating, declared three times, read twice — and a debt nothing ever wrote.
+
+    `domains/eclss/components.yaml` declares each absorber as a `kind: stock` whose `node` is the
+    counter it feeds, and states the rating beside it as `rated_man_hours`: 72 for the CSM's LiOH
+    element, 41 for the LM's loaded primary cartridge and 78 for its secondary. The same two figures
+    are published in `vehicle.yaml#consumables.co2_removal`, and `coupling.yaml`'s counters declare
+    `exhausted_at` with an `exhausted_at_source` naming the published field — so the chain is
+    article -> counter -> published figure.
+
+    Two of its three links were checked and the ends were joined to nothing. `exhausted_at_source`
+    was resolved by `check_initial_sources`, and the counter is what the threshold and the plant
+    both read — but the field `rated_man_hours` appeared in **no file under `tools/`**, and the only
+    mention of `csm_element_man_hours` was a comment about what would happen if somebody changed it.
+    The file's own comment above the components had already said the ratings "were written right here
+    the whole time" — about the round that found the shared counter — and nothing had read them
+    since.
+
+    **The check that closes the other two copies counts them, in its own comment, as two.** That is
+    this folder's recurring lesson arriving in the comment of the check written to catch it: a
+    hand-written list of what to compare is the bug, and this one was a list of two where the corpus
+    had three. The join needs no new field, because the component already names its counter and the
+    counter is already held to the published figure; the reverse direction — a counter no component
+    is the article of — is a debt, for the same reason the comms join reports an unclaimed vehicle
+    entry as one: a gap in the modelling rather than a contradiction between two files.
+
+    And the round's other half came out of reading a note rather than a field. The
+    `absorber_capacity_lm` node says the 78 + 6 x 41 = 324 man-hours that are physically aboard are
+    "declared in `vehicle.yaml` and modelled nowhere — a debt, named in `open_debts`". There were
+    nine entries in `coupling.yaml#open_debts` and none of them was that one, so the capacity was
+    recorded nowhere *but in the sentence promising the record* — which is worse than an unset
+    field, because a reader who sees the promise stops looking. The entry is written now.
+    """
+    eclss = yaml.safe_load((VEHICLE / "domains" / "eclss" / "components.yaml").read_text())
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    published = vehicle["consumables"]["co2_removal"]
+
+    # The chain, all three links: the article's rating, the counter's, and the figure both come from.
+    assert len([c for c in eclss["components"] if "rated_man_hours" in c]) == 3, eclss["components"]
+    for node_id, field, figure in (
+        ("absorber_capacity_csm", "csm_element_man_hours", 72),
+        ("absorber_capacity_lm", "lm_primary_man_hours", 41),
+    ):
+        node = coupling["nodes"][node_id]
+        article = next(c for c in eclss["components"] if c.get("node") == node_id)
+        assert published[field] == figure, field
+        assert node["exhausted_at_source"] == f"vehicle.yaml:consumables.co2_removal.{field}"
+        assert node["exhausted_at"] == figure, node_id
+        assert article["rated_man_hours"] == figure, article["id"]
+
+    # The third article's rating is a real published figure and its counter is genuinely owed, so
+    # the walker reports the unset `node` and `rated_man_hours` stays one spelling rather than two.
+    secondary = next(c for c in eclss["components"] if c["id"] == "lm_lioh_cartridge_secondary")
+    assert secondary["rated_man_hours"] == published["lm_secondary_man_hours"] == 78
+    assert secondary["node"] == "UNCONFIGURED"
+    assert not [k for k in secondary if "rating" in str(k) or "capacity" in str(k)], secondary
+
+    # The debt the note promised, now written and counted.
+    debts = coupling["open_debts"]
+    promised = coupling["nodes"]["absorber_capacity_lm"]["note"]
+    assert "named in `open_debts`" in promised
+    spares = [d for d in debts if "spare LiOH cartridges" in d]
+    assert len(spares) == 1, debts
+    assert "324 man-hours" in spares[0] and "lm_spares: 6" in spares[0]
+    owed = subprocess.run(
+        [sys.executable, str(LINTER), "--dir", str(VEHICLE), "--debts"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    assert "spare LiOH cartridges" in owed, owed[-600:]
+
+    def refusal(name: str, where: str, old: str, new: str, needle: str, *, composes: bool = False):
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / where
+        text = path.read_text()
+        assert text.count(old) == 1, f"the fixture no longer matches {old[:60]!r} exactly once"
+        path.write_text(text.replace(old, new, 1))
+        result = run_linter(definition)
+        assert needle in result.stdout, result.stdout[:1200]
+        if composes:
+            assert result.returncode == 0, result.stdout[:600]
+        else:
+            assert result.returncode == 1, result.stdout[:600]
+        return result.stdout
+
+    ARTICLE = (
+        "  - id: csm_lioh_element\n"
+        "    kind: stock\n"
+        "    class: absorber\n"
+        "    node: absorber_capacity_csm\n"
+        "    rated_man_hours: 72\n"
+    )
+    SECONDARY = (
+        "  - id: lm_lioh_cartridge_secondary\n"
+        "    kind: stock\n"
+        "    class: absorber\n"
+        "    node: UNCONFIGURED\n"
+        "    rated_man_hours: 78\n"
+    )
+    COUNTER = (
+        "  absorber_capacity_csm:\n"
+        "    domain: eclss\n"
+        "    kind: stock\n"
+        "    unit: man_hours\n"
+        '    apollo: "846"\n'
+        "    exhausted_at: 72\n"
+    )
+
+    # The third copy disagreeing with the counter it feeds: the article changes, the counter does not.
+    refusal(
+        "article-drift",
+        "domains/eclss/components.yaml",
+        ARTICLE,
+        ARTICLE.replace("    rated_man_hours: 72\n", "    rated_man_hours: 80\n"),
+        "the article disagreeing with the counter it feeds",
+    )
+    # And the counter moving away from the *published* figure, which is the other link of the same
+    # chain and was already checked: both rules fire, and this asserts the round did not replace the
+    # one that was there.
+    out = refusal(
+        "counter-drift",
+        "coupling.yaml",
+        COUNTER,
+        COUNTER.replace("    exhausted_at: 72\n", "    exhausted_at: 80\n"),
+        "the article disagreeing with the counter it feeds",
+    )
+    assert "One of the two is the rating and the other is a copy of it" in out, out[:1200]
+
+    # A link to nothing, and a link to something that is not a counter.
+    refusal(
+        "no-such-node",
+        "domains/eclss/components.yaml",
+        ARTICLE,
+        ARTICLE.replace("node: absorber_capacity_csm", "node: absorber_capacity_csmm"),
+        "which coupling.yaml does not declare",
+    )
+    refusal(
+        "not-a-counter",
+        "domains/eclss/components.yaml",
+        ARTICLE,
+        ARTICLE.replace("node: absorber_capacity_csm", "node: cabin_atm"),
+        "declares no numeric `exhausted_at`",
+    )
+    # The reverse direction: an article that stops being declared leaves the counter's rating
+    # attributed to nobody, which is a debt rather than a refusal — and one higher than live, which
+    # is what says the new rule's debt is counted rather than merely printed.
+    out = refusal(
+        "no-article",
+        "domains/eclss/components.yaml",
+        ARTICLE,
+        ARTICLE.replace("    rated_man_hours: 72\n", ""),
+        "no component in any domain is the article of",
+        composes=True,
+    )
+    assert "with 294 declared debt(s)" in out, out[-400:]
+
+    # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
+    # the unset `node` is already a debt, and one missing datum under two names reads like two.
+    owed_view = subprocess.run(
+        [sys.executable, str(LINTER), "--dir", str(VEHICLE), "--debts"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    assert "components[10].node: is UNCONFIGURED" in owed_view, owed_view[-600:]
+    # And wiring the spare to the loaded cartridge's counter — the plausible mistake, since it is the
+    # only LM counter there is — is caught rather than silently adding 78 man-hours to a 41 rating.
+    refusal(
+        "spare-on-primary",
+        "domains/eclss/components.yaml",
+        SECONDARY,
+        SECONDARY.replace("node: UNCONFIGURED", "node: absorber_capacity_lm"),
+        "the article disagreeing with the counter it feeds",
+    )
