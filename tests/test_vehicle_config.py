@@ -5986,7 +5986,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 255 declared debt(s)" in result.stdout
+    assert "with 252 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6354,7 +6354,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 257 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 254 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6460,7 +6460,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 257 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 254 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -10343,7 +10343,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 256 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 253 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10486,7 +10486,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "256", "the view must agree with the headline count"
+    assert owed == "253", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -12068,7 +12068,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 256 declared debt(s)",
+        "COMPOSES, with 253 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12076,7 +12076,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 256 declared debt(s)",
+        "COMPOSES, with 253 declared debt(s)",
         composes=True,
     )
 
@@ -12091,7 +12091,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 257 declared debt(s)" in out, out[-300:]
+    assert "with 254 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12250,7 +12250,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 257 declared debt(s)" in out, out[-400:]
+    assert "with 254 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12397,7 +12397,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 257 declared debt(s)" in out, out[-400:]
+    assert "with 254 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12407,7 +12407,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 256 declared debt(s)",
+        "COMPOSES, with 253 declared debt(s)",
         composes=True,
     )
 
@@ -12549,7 +12549,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 256 declared debt(s)",
+        "COMPOSES, with 253 declared debt(s)",
         composes=True,
     )
 
@@ -13586,8 +13586,9 @@ def test_the_docked_configuration_s_mass_properties_re_derive_from_the_data_book
     """
     vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
     block = vehicle["mass_properties"]
-    frame = block["frame"]
-    assert frame["id"] == "APOLLO_XA"
+    frames = {f["id"]: f for f in block["frames"]}
+    assert sorted(frames) == ["APOLLO_XA", "LM_XE"], sorted(frames)
+    frame = frames["APOLLO_XA"]
     # The datum itself: without this transformation a station is a number against nothing.
     assert "SNA-8-D-027" in frame["provenance"]["source"], frame["provenance"]["source"]
     assert "Figures 2-16 and 2-17" in frame["provenance"]["source"]
@@ -13597,6 +13598,7 @@ def test_the_docked_configuration_s_mass_properties_re_derive_from_the_data_book
 
     table = {t["id"]: t for t in block["tables"]}["ODB_3_2_21"]
     assert table["configuration"] == "csm_lm_docked"
+    assert table["frame"] == "APOLLO_XA"
     assert "CSM-113/LM-11" in table["title"] and "as a function of spacecraft weight" in table["title"]
     assert "p. 351" in table["pages"], table["pages"]
     rows = {row["id"]: row for row in table["rows"]}
@@ -13639,21 +13641,14 @@ def test_the_docked_configuration_s_mass_properties_re_derive_from_the_data_book
     assert ixx + iyy > izz and iyy + izz > ixx and izz + ixx > iyy
     assert 7.0 < iyy / ixx < 12.0, iyy / ixx
 
-    # And the four configurations still owed say so with their own table named — the shape the
-    # single prose debt became, so that each one is walkable rather than described.
-    owed = {c["id"]: c for c in block["configurations"][1:]}
-    assert sorted(owed) == [
-        "csm_alone",
-        "csm_lm_ascent_docked",
-        "lm_alone_descent",
-        "lm_ascent_stage",
-    ]
-    for config_id, entry in owed.items():
-        assert entry["properties"] == "UNCONFIGURED", config_id
-        assert entry["table"].startswith("ODB_3_2_"), config_id
-        # Three name the book and the fourth names the two tables it is arithmetic over; all four
-        # name something a reader can go and read, which is the difference this round made.
-        assert "Table 3.2-" in entry["note"], config_id
+    # And the last configuration still owed says so with its own tables named. Round 10 landed
+    # `csm_alone`, `lm_alone_descent` and `lm_ascent_stage` from Tables 3.2-22, 3.2-25 and 3.2-26,
+    # so what is left here is the one no single table covers.
+    owed = {c["id"]: c for c in block["configurations"] if c.get("properties")}
+    assert sorted(owed) == ["csm_lm_ascent_docked"], sorted(owed)
+    entry = owed["csm_lm_ascent_docked"]
+    assert entry["table"] == "ODB_3_2_22 + ODB_3_2_26"
+    assert "arithmetic over two tables this file now carries" in entry["note"]
 
 
 def test_the_linter_refuses_a_mass_property_table_that_disagrees_with_itself(tmp_path):
@@ -13708,3 +13703,112 @@ def test_the_linter_refuses_a_mass_property_table_that_disagrees_with_itself(tmp
     assert "No mass distribution has principal moments that violate the triangle inequality" in result.stdout, (
         result.stdout[-900:]
     )
+
+
+def test_the_other_three_configurations_mass_properties_re_derive_from_their_own_tables():
+    """Each configuration's own table, in its own frame — and the LM's is not Apollo's.
+
+    Round 9 landed the docked stack from Table 3.2-21 and left four configurations named but owed.
+    Three of them are read here from the tables the volume indexes for exactly those vehicles: the
+    CSM alone at the circularization burn (3.2-22, **Apollo coordinates**), the LM at P.D.I.
+    (3.2-25, **LM coordinates**) and the ascent stage at liftoff (3.2-26, LM coordinates). The
+    fourth — the CSM docked to an ascent stage — no table covers, and stays owed.
+
+    The frame is the half that is easy to get wrong: 3.2-25's X-BAR is about 186 inches and the
+    docked stack's is about 1046, not because one vehicle is longer but because the LM's own origin
+    is 399.5 inches along the Apollo axis. A tensor transfers between the two by nothing at all —
+    the book's transformation is a pure translation — which is exactly why the frame has to be
+    declared rather than assumed.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    block = vehicle["mass_properties"]
+    frames = {f["id"] for f in block["frames"]}
+    assert frames == {"APOLLO_XA", "LM_XE"}
+
+    tables = {t["id"]: t for t in block["tables"]}
+    kg_per_lb, in_to_m, slug_ft2_to_kg_m2 = 0.45359237, 0.0254, 1.355817948330809
+    prints_average = {"ODB_3_2_21", "ODB_3_2_22"}
+    for table in tables.values():
+        assert table["frame"] in frames, table["id"]
+        # The AVERAGE column is the volume's, not every table's: the two CSM tables print it, the
+        # three LM tables do not, and a faithful transcription must not invent it.
+        for row in table["rows"]:
+            assert ("average_moment" in row) == (table["id"] in prints_average), table["id"]
+
+    for config_id, table_id, frame_id in (
+        ("csm_alone", "ODB_3_2_22", "APOLLO_XA"),
+        ("lm_alone_descent", "ODB_3_2_25", "LM_XE"),
+        ("lm_ascent_stage", "ODB_3_2_26", "LM_XE"),
+    ):
+        entry = next(c for c in block["configurations"] if c["id"] == config_id)
+        assert entry["table"] == table_id and "properties" not in entry, config_id
+        table = tables[table_id]
+        assert table["configuration"] == config_id and table["frame"] == frame_id
+        mass_kg = next(c["mass_kg"] for c in vehicle["configurations"] if c["id"] == config_id)
+        weight_lb = mass_kg / kg_per_lb
+        assert entry["weight_lb"]["value"] == pytest.approx(weight_lb, abs=0.01), config_id
+        rows = sorted(table["rows"], key=lambda r: r["weight_lb"])
+        assert rows[0]["weight_lb"] < weight_lb < rows[-1]["weight_lb"], config_id
+        lo, hi = rows[0], rows[1]
+        fraction = (weight_lb - lo["weight_lb"]) / (hi["weight_lb"] - lo["weight_lb"])
+
+        def interpolate(field: str, lo=lo, hi=hi, fraction=fraction) -> float:
+            return lo[field] + fraction * (hi[field] - lo[field])
+
+        assert entry["x_bar_m"]["value"] == pytest.approx(interpolate("x_bar_in") * in_to_m, abs=1e-4)
+        for axis in ("ixx", "iyy", "izz", "pxy", "pxz", "pyz"):
+            declared = entry["inertia_kg_m2"][axis]["value"]
+            # At the declared precision: the moments are declared to a tenth of a kilogram-metre
+            # squared in the tens of thousands, the products to a tenth in the hundreds.
+            assert declared == pytest.approx(
+                interpolate(f"{axis}_slug_ft2") * slug_ft2_to_kg_m2, rel=1e-4, abs=0.05
+            ), (config_id, axis)
+        # And the tensor is a real one, at every configuration and not only the docked one.
+        ixx = entry["inertia_kg_m2"]["ixx"]["value"]
+        iyy = entry["inertia_kg_m2"]["iyy"]["value"]
+        izz = entry["inertia_kg_m2"]["izz"]["value"]
+        assert ixx + iyy > izz and iyy + izz > ixx and izz + ixx > iyy, config_id
+
+    # The LM's stations are LM stations: the ascent stage's centre of mass is 6.2 m along the LM's
+    # own axis, which in the Apollo frame is 399.5 in = 10.1 m further along — the reason the frame
+    # could not be left to a reader's assumption.
+    ascent = next(c for c in block["configurations"] if c["id"] == "lm_ascent_stage")
+    assert 6.0 < ascent["x_bar_m"]["value"] < 6.4
+    assert "399.5" in next(f for f in block["frames"] if f["id"] == "LM_XE")["definition"]
+
+
+def test_the_linter_refuses_a_mass_property_table_whose_frame_is_not_declared(tmp_path):
+    """A tensor in an unnamed frame is a tensor nothing can rotate or offset.
+
+    The LM tables are in LM coordinates and the CSM's in Apollo's, and the difference is 399.5
+    inches of station — so a table that names a frame the file does not declare is refused by name
+    rather than read as though the two were interchangeable. The second fixture is the other half
+    of the interpolation rule, on a configuration that is not the docked one: the rows a
+    derivation names must bracket the weight it is interpolating at.
+    """
+    vehicle_yaml = (VEHICLE / "vehicle.yaml").read_text()
+
+    definition = copy_definition(fixture_dir(tmp_path, "frameless"))
+    path = definition / "vehicle.yaml"
+    old = "    - id: ODB_3_2_25\n      configuration: lm_alone_descent\n      frame: LM_XE\n"
+    assert old in vehicle_yaml
+    path.write_text(vehicle_yaml.replace(old, old.replace("frame: LM_XE", "frame: LM_STATION"), 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "not a frame this block declares" in result.stdout, result.stdout[-900:]
+
+    definition = copy_definition(fixture_dir(tmp_path, "wrong-rows"))
+    path = definition / "vehicle.yaml"
+    old = (
+        "              i_low: vehicle.yaml:mass_properties.tables.ODB_3_2_26.rows.w10632_7.ixx_slug_ft2\n"
+        "              i_high: vehicle.yaml:mass_properties.tables.ODB_3_2_26.rows.w10863_3.ixx_slug_ft2\n"
+    )
+    new = (
+        "              i_low: vehicle.yaml:mass_properties.tables.ODB_3_2_26.rows.w10863_3.ixx_slug_ft2\n"
+        "              i_high: vehicle.yaml:mass_properties.tables.ODB_3_2_26.rows.w10632_7.ixx_slug_ft2\n"
+    )
+    assert old in vehicle_yaml
+    path.write_text(vehicle_yaml.replace(old, new, 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "the moment of inertia declares" in result.stdout, result.stdout[-900:]
