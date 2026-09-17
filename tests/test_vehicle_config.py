@@ -763,6 +763,12 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # as blocked by numbers that were published all along — page 89 of the RCS study guide, page 14 of
     # the EPS study guide, the four-gas model's own partial pressures, and a load budget's own
     # `demand_w` field.
+    # Round 18 kept this counter where it was and closed a *fourth* kind before it could be
+    # counted: `build_order` now asks `lag_driver_basis` of a lag's driver, so the four states
+    # `advance` refuses for a dimensionally-wrong driver are classified as owing an *edge* rather
+    # than as ready. They were reported by `unexplained` above as "a new kind of disagreement" the
+    # moment the plant grew the rule and the classifier had not — which is this test doing exactly
+    # what it was written for.
     assert (counted_more, sentinel, no_input) == (17, 13, 0), (counted_more, sentinel, no_input)
 
 
@@ -5988,7 +5994,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 249 declared debt(s)" in result.stdout
+    assert "with 254 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6356,7 +6362,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 251 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 256 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6462,7 +6468,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 251 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 256 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -7702,7 +7708,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # And `ready` went 16 -> 18 when the two cabins' six gas stocks took their initials: those six
     # were `stock` states whose level was owed, so they were blocked by a value the round found, and
     # four of the twenty-four states that closed a value debt are now blocked by an edge instead.
-    assert len(buckets["ready"]) == 18
+    assert len(buckets["ready"]) == 14
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -7740,9 +7746,10 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # that stopped owing a value owe an edge, and those edges were already counted as debts — the
     # worklist simply could not see them behind the earlier refusal. 11 -> 12 in round 14, when
     # `battery_charge_j` stopped owing its smallest flow: `E-BUS-BAT` still carries no sensitivity,
-    # and that edge was a debt all along.
-    assert len(buckets["edge"]) == 12
-    assert len(buckets["ready"]) == 18
+    # and that edge was a debt all along. 12 -> 16 in round 18, when four lags whose drivers are in
+    # the wrong quantity stopped being counted ready.
+    assert len(buckets["edge"]) == 16
+    assert len(buckets["ready"]) == 14
 
 
 def test_the_plant_reports_the_build_order():
@@ -10383,7 +10390,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 250 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 255 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10526,7 +10533,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "250", "the view must agree with the headline count"
+    assert owed == "255", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -12117,7 +12124,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 250 declared debt(s)",
+        "COMPOSES, with 255 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12125,7 +12132,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 250 declared debt(s)",
+        "COMPOSES, with 255 declared debt(s)",
         composes=True,
     )
 
@@ -12140,7 +12147,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 251 declared debt(s)" in out, out[-300:]
+    assert "with 256 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12299,7 +12306,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 251 declared debt(s)" in out, out[-400:]
+    assert "with 256 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12446,7 +12453,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 251 declared debt(s)" in out, out[-400:]
+    assert "with 256 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12456,7 +12463,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 250 declared debt(s)",
+        "COMPOSES, with 255 declared debt(s)",
         composes=True,
     )
 
@@ -12598,7 +12605,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 250 declared debt(s)",
+        "COMPOSES, with 255 declared debt(s)",
         composes=True,
     )
 
@@ -14164,3 +14171,64 @@ def test_the_battery_s_smallest_flow_is_its_smallest_load_and_its_quantum_is_fin
     assert tick_hz == 50
     assert stock["quantum"] < smallest / tick_hz, (stock["quantum"], smallest / tick_hz)
     assert stock["quantum"] == 0.1
+
+
+def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
+    """The lag integrator applies no conversion, and nothing said so — so both were dimensional errors.
+
+    A real tick advanced exactly two of the 134 states, and both numbers were nonsense: `crew_workload`
+    is an `enum-level` and was relaxed toward `water_potable`'s 14 kg of water; `thrust_main_n` is in
+    newtons and was relaxed toward `prop_main`'s 18,508 kg of propellant. Neither is a crash — both
+    are plausible numbers — which is why the rule has to exist rather than the values being watched.
+
+    `lag_driver_basis` is the lag-side analogue of `stock_flux_basis`: the two ends of a driver edge
+    must be the same quantity, the edge's own unit must be that identity, and its scale must be 1,
+    because `relax toward values[source]` is the whole of the lag model. **Both tools call it**, so
+    the linter's debt and the plant's refusal cannot come apart.
+
+    This test holds the rule at both ends: the synthetic cases for the shape, and the corpus's own
+    tick, which now advances nothing rather than two wrong numbers.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as linter
+    import plant
+
+    nodes = {"tank": {"unit": "kg", "kind": "stock"}, "heat": {"unit": "W", "kind": "flow"}}
+
+    def edge(**sens):
+        return {"id": "E-TEST", "from": "tank", "to": "zone", "kind": "lag", "sensitivity": sens}
+
+    ok, why = linter.lag_driver_basis(edge(value=1.0, unit="K per K"), "K", {"zone": {"unit": "K"}})
+    assert ok, why
+    ok, why = linter.lag_driver_basis(edge(value=1.0, unit="kg per kg"), "kg", nodes)
+    assert ok, why
+
+    # A different quantity on the two ends.
+    ok, why = linter.lag_driver_basis(edge(value=1.0, unit="K per K"), "K", nodes)
+    assert not ok and "denominated in" in why, why
+    # A rate where a level belongs — `crew_workload`'s own shape.
+    ok, why = linter.lag_driver_basis(edge(value=0.094583, unit="kg/h per crew"), "enum-level", nodes)
+    assert not ok and "different quantity" in why, why
+    # A reversed ratio — `thrust_main_n`'s own shape.
+    ok, why = linter.lag_driver_basis(edge(value=0.00032423409, unit="kg/s per N"), "N", nodes)
+    assert not ok, why
+    # And a scale the integrator does not apply — `E-BUS-PUMP`'s own shape.
+    ok, why = linter.lag_driver_basis(
+        edge(value=0.00089998, unit="kg/s per V"), "kg/s", {"bus": {"unit": "V"}}
+    )
+    assert not ok and "does not apply" in why, why
+
+    # The corpus: every lag's driver edge is either integrable or reported by name, and a real tick
+    # advances none of the states that would have gone wrong.
+    world = plant.load_world(VEHICLE)
+    gaps: list = []
+    plant.step(world, plant.initial_values(world), 1.0 / 50.0, gaps)
+    assert len(gaps) == len(world.states), "a tick advanced something again"
+    reasons = {g.state.id: (g.where, g.owed) for g in gaps}
+    assert "coupling.yaml:edge E-CREW-WATER" in reasons["crew_workload"][0], reasons["crew_workload"]
+    assert "coupling.yaml:edge E-PROP-ENG" in reasons["thrust_main_n"][0], reasons["thrust_main_n"]
+    for state_id in ("crew_workload", "thrust_main_n"):
+        assert "driver" in reasons[state_id][1] or "quantity" in reasons[state_id][1], reasons[state_id]
