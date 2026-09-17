@@ -14462,3 +14462,42 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
     # finding — this is that reader.
     entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
     assert "142 published points" in entry and "71 are *derived*" in entry
+
+
+def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
+    """Sixty-three of 134 channels are their own source state; the other 71 are a sentence.
+
+    Round 23 found that by *refusing* to publish a channel whose unit is not its source state's — the
+    registry's `derivation` is prose, so a derived channel cannot be filled — and the two figures went
+    into the `presentation.yaml` debt as a sentence. A count in prose with no reader is this folder's
+    oldest finding, so `check_channel_derivations` recomputes both from the registry and the states
+    and holds the sentence to them: the moment a channel gains an evaluable `derivation`, a unit, or
+    the registry gains a row, the two disagree and the linter says so.
+
+    The check cannot make the 71 evaluable. What it can do is make sure nobody has to count them by
+    hand again — and the fixture below proves it refuses when the count moves.
+    """
+    points = (VEHICLE / "domains" / "thermal" / "points.yaml").read_text()
+    definition = copy_definition(fixture_dir(tmp_path, "derived-count"))
+    path = definition / "domains" / "thermal" / "points.yaml"
+    # Give one derived channel an evaluable derivation: the count of *stated* derivations moves, so
+    # the sentence and the registry disagree even though the 63/71 split does not.
+    old = "    derivation: \"mass flow divided by the fluid's density, 1,050 kg/m3\"\n"
+    assert old in points, "the fixture no longer matches the flow channel's point row"
+    new = (
+        "    derivation:\n"
+        "      expression: \"mass_flow_kg_s / density_kg_m3 * 60000\"\n"
+        "      inputs:\n"
+        "        mass_flow_kg_s: domains/thermal/components.yaml:state.coolant_flow_kg_s.value\n"
+        "        density_kg_m3: 1050\n"
+    )
+    path.write_text(points.replace(old, new, 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "carrying an evaluable `derivation`" in result.stdout, result.stdout[-900:]
+
+    # And the corpus's own sentence carries both figures, which is what makes it a declaration.
+    presentation = yaml.safe_load((VEHICLE / "presentation.yaml").read_text())
+    entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
+    assert "only 63 have the state's own unit" in entry
+    assert "The other 71 are *derived*" in entry
