@@ -5986,7 +5986,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 252 declared debt(s)" in result.stdout
+    assert "with 250 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6354,7 +6354,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 254 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 252 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6460,7 +6460,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 254 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 252 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -8498,8 +8498,10 @@ def test_every_stock_declares_where_it_starts():
     # when the two cabins' six gas stocks landed behind them: four `derived` from a declared partial
     # pressure and two `derived` as exactly zero, which is what `atmosphere_model.check` says the
     # nitrogen is. The two oxygens were already declared and *moved* rather than closed — they are
-    # the remainder of the cabin's total now — so they are not part of the six.
-    assert len(declared) == 24, f"{len(declared)} stocks declare a numeric initial"
+    # the remainder of the cabin's total now — so they are not part of the six. 24 -> 25 when the
+    # helium charge landed from the Operational Data Book's loading table (round 13), which is the
+    # last stock in the corpus whose `initial` was owed to a document nobody had opened.
+    assert len(declared) == 25, f"{len(declared)} stocks declare a numeric initial"
     on_nodes = {k: v for k, v in seeded.items() if k != "internal"}
     # 10 -> 12 with `prop_main` and `prop_rcs`: the two stocks whose `initial` was owed because
     # nothing said which tanks the nodes were. Both carry their loads now. **The six cabin gases
@@ -8507,7 +8509,7 @@ def test_every_stock_declares_where_it_starts():
     # `lm_cabin_atm` were already keys because each node's *oxygen* was declared, and four stocks
     # share each of those keys, so the map holds the last of them and six new values are invisible
     # here. The per-stock figures are the round-8 closure test's business rather than this count's.
-    assert len(on_nodes) == 12, f"{len(on_nodes)} node stocks carry a value"
+    assert len(on_nodes) == 13, f"{len(on_nodes)} node stocks carry a value"
     assert len(seeded["internal"]) == 6, sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
@@ -10343,7 +10345,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 253 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 251 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10486,7 +10488,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "253", "the view must agree with the headline count"
+    assert owed == "251", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -10517,7 +10519,16 @@ def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
 
     assert p_states["pressurant_pressure_psi"]["provenance"]["basis"] == "UNCONFIGURED"
     assert "placeholder" in p_states["pressurant_pressure_psi"]["tau_s_placeholder"]
-    assert c_states["pressurant_he_kg"]["provenance"]["basis"] == "UNCONFIGURED"
+    # **The helium entry is the case that moved.** It was the corpus's example of a placeholder
+    # inside a wholly-owed entry — `basis: UNCONFIGURED` with a `quantum_placeholder` beside a
+    # `quantum` — and round 13 landed its charge from the Operational Data Book, so its provenance
+    # is `historical` now. What is still owed is the *flow*, so the placeholder is still a
+    # placeholder and the entry still carries one obligation: the assertion that matters is the
+    # one that says the placeholder is attached to something unset.
+    assert c_states["pressurant_he_kg"]["min_flow_per_s"] == "UNCONFIGURED", (
+        "the placeholder's justification is that the smallest flow is owed; if that landed, this "
+        "entry no longer needs the note"
+    )
     assert (
         "picked because the helium feed is slow"
         in c_states["pressurant_he_kg"]["quantum_placeholder"]
@@ -12068,7 +12079,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 253 declared debt(s)",
+        "COMPOSES, with 251 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12076,7 +12087,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 253 declared debt(s)",
+        "COMPOSES, with 251 declared debt(s)",
         composes=True,
     )
 
@@ -12091,7 +12102,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 254 declared debt(s)" in out, out[-300:]
+    assert "with 252 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12250,7 +12261,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 254 declared debt(s)" in out, out[-400:]
+    assert "with 252 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12397,7 +12408,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 254 declared debt(s)" in out, out[-400:]
+    assert "with 252 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12407,7 +12418,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 253 declared debt(s)",
+        "COMPOSES, with 251 declared debt(s)",
         composes=True,
     )
 
@@ -12549,7 +12560,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 253 declared debt(s)",
+        "COMPOSES, with 251 declared debt(s)",
         composes=True,
     )
 
@@ -14018,3 +14029,67 @@ def test_the_linter_refuses_a_transfer_sized_to_the_moon_s_mean_distance(tmp_pat
     result = run_linter(definition)
     assert result.returncode == 1
     assert "declares no `distance_km`" in result.stdout, result.stdout[-900:]
+
+
+def test_the_helium_charge_is_a_loading_requirement_and_not_a_mystery():
+    """Eight claims said a figure was unpublished while the whole search was the contract.
+
+    `pressurant_he_kg` carried `basis: UNCONFIGURED` with the note *"the helium load and its
+    regulated flow are not published for either vehicle"*, and its search record was
+    `apollo_diode.md:139` — **the contract, not the archive**. The Operational Data Book's own
+    loading table for this mission has the charge line by line, in the text layer, at a page its
+    section index already pointed at. Seven more entries were doing the same thing, and
+    `check_unavailability_claims` now refuses it: a negative over a library cannot be established
+    by reading the specification that library is filling in.
+
+    What the stock holds is the **SPS bottles' 87.6 lb**, because that is the charge whose
+    destination is this node's only edge. The other three helium loads the same table publishes
+    (fuel tanks, SM/RCS, CM/RCS) go elsewhere, and the LM's own table is a different one.
+    """
+    consumables = yaml.safe_load((VEHICLE / "domains" / "consumables" / "components.yaml").read_text())
+    stock = next(s for s in consumables["state"] if s["id"] == "pressurant_he_kg")
+    assert stock["initial"] == 39.73469
+    derivation = stock["initial_derivation"]
+    assert derivation["inputs"]["sps_bottles_lb"] == 87.6
+    # At the declared value's own precision: 87.6 lb is 39.734691612 kg and the entry carries
+    # the five decimal places the conversion supports.
+    assert stock["initial"] == pytest.approx(87.6 * 0.45359237, abs=1e-5)
+    assert stock["initial_provenance"]["basis"] == "derived"
+    assert stock["provenance"]["basis"] == "historical"
+    source = stock["provenance"]["source"]
+    assert "3.2-10" in source and "MISSION J-2" in source, source
+    assert "87.6" in source and "3600" in source, source
+    # The claim that was false is gone, and the note now says what the table also publishes.
+    assert "not published for either vehicle" not in stock["provenance"]["note"]
+    assert "LM-II - Helium & Nitrogen" in stock["initial_note"]
+    # The regulated flow is a *different* quantity and is still owed — the table has pressures.
+    assert stock["min_flow_per_s"] == "UNCONFIGURED"
+
+
+def test_the_linter_refuses_an_unavailability_claim_whose_search_is_the_contract(tmp_path):
+    """A claim of "not published" that names only the diode corpus is a claim about the wrong library.
+
+    The rule does not verify a search and cannot — what it does is insist that the search was made
+    in the archive this vehicle is sourced *from*, rather than in the specification it has to
+    satisfy. The fixture restores the helium entry's own sentence, which is the shape all eight
+    findings had.
+    """
+    components = (VEHICLE / "domains" / "consumables" / "components.yaml").read_text()
+    definition = copy_definition(fixture_dir(tmp_path, "contract-search"))
+    path = definition / "domains" / "consumables" / "components.yaml"
+    start = components.index(
+        '    provenance:\n      basis: historical\n      source: "ODB Vol III (SNA-8-D-027(III) Rev 3) Table 3.2-10'
+    )
+    end = components.index("\n  - id: ", start)
+    restored = (
+        "    provenance:\n"
+        "      basis: UNCONFIGURED\n"
+        "      note: \"the helium load and its regulated flow are not published for either "
+        "vehicle; apollo_diode.md:139 gives pressurant_pressure_psi as 'vehicle dependent'\"\n"
+    )
+    path.write_text(components[:start] + restored + components[end + 1 :])
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "its whole search record is the contract's own documents" in result.stdout, (
+        result.stdout[-900:]
+    )
