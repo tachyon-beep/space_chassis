@@ -851,7 +851,14 @@ def test_a_domain_point_may_instantiate_a_registered_template(tmp_path):
     result = run_linter(definition)
     assert result.returncode == 1
     assert "is not a registered channel" in result.stdout
-    assert "res.recon_o2_kg" not in result.stdout, "template instantiation must still resolve"
+    # **The refusals, not the whole output.** This assertion used to read the whole of stdout, and
+    # round 31's `ledgers` debt names `res.recon_o2_kg` among the eight concrete names no point row
+    # publishes — so the test failed on a *debt* about the template while the property it exists to
+    # hold (that a concrete name resolves against the pattern rather than being refused) was intact.
+    # A claim about what is refused has to be read off the refusals.
+    refusals = result.stdout.split("OWED (a value that is needed and unset)")[0]
+    assert "res.recon_o2_kg" not in refusals, "template instantiation must still resolve"
+    assert "res.recon_[resource]_kg" not in refusals
 
 
 def test_the_linter_refuses_a_crew_readout_the_position_cannot_perceive(tmp_path):
@@ -6024,7 +6031,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 257 declared debt(s)" in result.stdout
+    assert "with 258 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6392,7 +6399,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 259 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 260 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6498,7 +6505,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 259 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 260 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -10475,7 +10482,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 258 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 259 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10620,8 +10627,10 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
     # 247 -> 257 when every integrator began declaring its starting value (ten of the new
     # obligations are literal `UNCONFIGURED` scalars, so they are in this view as well as in the
-    # headline), and 257 -> 258 when the missing supply-tank pressure became a named prose debt.
-    assert owed == "258", "the view must agree with the headline count"
+    # headline), 257 -> 258 when the missing supply-tank pressure became a named prose debt, and
+    # 258 -> 259 when the ledger block's eight unpublished names became one.
+
+    assert owed == "259", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -12212,7 +12221,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 258 declared debt(s)",
+        "COMPOSES, with 259 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12220,7 +12229,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 258 declared debt(s)",
+        "COMPOSES, with 259 declared debt(s)",
         composes=True,
     )
 
@@ -12235,7 +12244,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 259 declared debt(s)" in out, out[-300:]
+    assert "with 260 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12394,7 +12403,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 259 declared debt(s)" in out, out[-400:]
+    assert "with 260 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12541,7 +12550,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 259 declared debt(s)" in out, out[-400:]
+    assert "with 260 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12551,7 +12560,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 258 declared debt(s)",
+        "COMPOSES, with 259 declared debt(s)",
         composes=True,
     )
 
@@ -12693,7 +12702,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 258 declared debt(s)",
+        "COMPOSES, with 259 declared debt(s)",
         composes=True,
     )
 
@@ -15044,3 +15053,143 @@ def test_a_channel_derivation_naming_a_node_the_value_map_cannot_read_is_refused
 
     # And the unbroken corpus composes, so the three refusals above are the breaks and not the check.
     assert run_linter(VEHICLE).returncode == 0
+
+
+def test_the_frame_carries_no_channel_family_and_no_residual_that_is_an_observation():
+    """A channel id with a placeholder in it is a *family*, and the frame published two of them.
+
+    `res.ledger_[resource]_kg` and `res.recon_[resource]_kg` are the ledger and the residual of
+    `consumables/components.yaml#ledgers` — the vehicle's only instrument for *the tank disagrees
+    with the bookkeeping*, and the thing a slow leak shows up in. Both point rows read
+    `prop_main_kg`, the **observed** stock, and both have the unit of the thing they read, so the
+    unit test passed them and the frame carried:
+
+        res.ledger_[resource]_kg: 18508.0
+        res.recon_[resource]_kg: 18508.0
+
+    A residual of 18,508 kg is not a residual; it is the propellant mass under a name that claims to
+    be `observed minus ledger`, and a fleet reading it would see a bookkeeping error the size of the
+    tank. And the name itself is unusable: `values` is `map[channel_id, ...]`, and this is a family
+    that also claims to be the water, the oxygen and the RCS ledger at once.
+
+    So the emitter omits a family, and this test is the reader for that rule: **no key in any frame
+    carries a placeholder**. What would let these two be published is the registry's own open debt —
+    each registry entry naming the values its placeholders take — after which the instantiations
+    (`res.recon_main_propellant_kg` and its seven siblings) are the ids, and the ledger accumulator
+    and the residual state they need are what `ledgers` now reports as owed.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    registry = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    families = [
+        str(row["id"])
+        for rows in registry.values()
+        if isinstance(rows, list)
+        for row in rows
+        if isinstance(row, dict) and row.get("id") and "[" in str(row["id"])
+    ]
+    assert len(families) == 25, families
+    assert "res.ledger_[resource]_kg" in families and "res.recon_[resource]_kg" in families
+
+    world = plant.load_world(VEHICLE)
+
+    def frame(values: dict) -> dict:
+        return plant.emit_frame(
+            world,
+            tick=0,
+            seq=0,
+            boot_id="0" * 32,
+            met_s=0.0,
+            sensor_time_s=0.0,
+            values=values,
+            quality={},
+            phase="translunar_coast",
+            vehicle="csm",
+            state_revision=0,
+        )["values"]
+
+    started = plant.initial_values(world)
+    gaps: list = []
+    ticked = plant.step(world, started, 60.0, gaps)
+    for label, published in (("t=0", frame(started)), ("after a tick", frame(ticked))):
+        placeholders = [key for key in published if "[" in key]
+        assert not placeholders, (label, placeholders)
+        assert "res.ledger_[resource]_kg" not in published, label
+        assert "res.recon_[resource]_kg" not in published, label
+    # The observations they were standing in for are still published, so the omission is the family
+    # and not the resource.
+    published = frame(started)
+    assert published["res.main_propellant_kg"] == 18508.0
+    assert published["res.water_potable_kg"] == 14.0
+    assert published["res.rcs_propellant_kg"] == 1008.0
+
+
+def test_the_ledger_block_names_channels_that_nothing_publishes(tmp_path):
+    """Eight names in `ledgers` resolve through a registry *template*, and no point row publishes them.
+
+    `consumables/components.yaml#ledgers` declares one triple per resource — a ledger channel, an
+    observation and their residual — with **concrete** names (`res.ledger_main_propellant_kg`). The
+    registry declares the **family** (`res.ledger_[resource]_kg`), and `ChannelIndex`'s wildcard
+    matches one against the other, so `check_domain`'s rule that every ledger channel must be
+    registered has been passing on eight names that nothing publishes. Only the four observations
+    exist as rows.
+
+    The rule added here asks the registry's *publisher* rather than its pattern, and what it can say
+    about the difference is a debt rather than a refusal: the vehicle owes a ledger accumulator per
+    resource and an `algebraic` residual over it, and `consumers:` already declares the draws that
+    would drive the accumulator. The fixture publishes one of the eight names exactly and watches
+    the debt's own count fall from eight to seven, which is what proves the check reads the corpus
+    rather than a list.
+    """
+    real = run_linter(VEHICLE)
+    assert real.returncode == 0, real.stdout[-900:]
+    assert "names 8 channel(s) that no point row publishes" in real.stdout, real.stdout[-900:]
+    for name in (
+        "res.ledger_main_propellant_kg",
+        "res.recon_main_propellant_kg",
+        "res.ledger_water_potable_kg",
+        "res.recon_o2_kg",
+    ):
+        assert name in real.stdout, name
+    assert "a ledger accumulator per resource" in real.stdout
+
+    # **The check reads the ledger block rather than a list of eight.** A fifth resource is added
+    # with the three channels a triple owes: its observation is a channel the corpus already
+    # publishes, and its ledger and residual names are matched by the same two templates — so the
+    # debt grows to ten and names the two new ones, and nothing else in the corpus moves.
+    definition = copy_definition(fixture_dir(tmp_path, "ledger-fifth"))
+    path = definition / "domains" / "consumables" / "components.yaml"
+    text = path.read_text()
+    anchor = "  - resource: water_potable\n"
+    assert anchor in text
+    fifth = (
+        "  - resource: water_cooling\n"
+        "    ledger_channel: res.ledger_water_cooling_kg\n"
+        "    observed_channel: res.water_cooling_kg\n"
+        "    residual_channel: res.recon_water_cooling_kg\n"
+        "    observed_how: a fixture, to prove the check reads this block\n"
+        "    provenance:\n"
+        "      basis: chosen\n"
+        "      reason: a fixture entry, removed with the fixture\n"
+    )
+    path.write_text(text.replace(anchor, fifth + anchor, 1))
+    result = run_linter(definition)
+    assert result.returncode == 0, result.stdout[-900:]
+    assert "names 10 channel(s) that no point row publishes" in result.stdout, result.stdout[-900:]
+    assert "res.ledger_water_cooling_kg" in result.stdout
+    assert "res.recon_water_cooling_kg" in result.stdout
+
+    # And a ledger channel that resolves to nothing at all is still a refusal rather than a debt.
+    broken = copy_definition(fixture_dir(tmp_path, "ledger-unregistered"))
+    path = broken / "domains" / "consumables" / "components.yaml"
+    text = path.read_text()
+    anchor = '    residual_channel: "res.recon_main_propellant_kg"\n'
+    assert anchor in text
+    path.write_text(text.replace(anchor, '    residual_channel: "nonsense.channel"\n', 1))
+    result = run_linter(broken)
+    assert result.returncode == 1
+    assert "which is not a registered channel" in result.stdout, result.stdout[-900:]
