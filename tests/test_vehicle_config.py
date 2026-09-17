@@ -2678,7 +2678,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert "declares 148 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
     assert "derived here as 20 unperturbed, 15 of them `service`" in result.stdout
     # One block deleted is one debt added: the corpus stands at 262, so the ablation is 263.
-    assert "COMPOSES, with 263 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 262 declared debt(s)." in result.stdout
 
     # The failure chains, which are owed *and* refused: the README's front table names fifteen.
     definition = copy_definition(fixture_dir(tmp_path, "no-chains"))
@@ -2700,7 +2700,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "declares no coverage block. The domain publishes 15 channel(s)" in result.stdout
     assert "no fault perturbs 1 of them" in result.stdout
-    assert "COMPOSES, with 263 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 262 declared debt(s)." in result.stdout
 
     # The filter's rates. The block is nested rather than top level, and the obligation is C-07's
     # rather than this check's — which is why the first reading of it in this round was wrong.
@@ -2714,7 +2714,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "domains/gnc/components.yaml:estimator.sub_stepping: is not declared" in result.stdout
     assert "C-07's resolution requires the interface" in result.stdout
-    assert "COMPOSES, with 263 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 262 declared debt(s)." in result.stdout
 
 
 def test_the_readme_s_chain_count_is_held_against_the_file(tmp_path):
@@ -5938,6 +5938,10 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
         # loop's collected load is the sum over the zones that name it.
         "loop_primary_load_w": "cabin_heat_csm_w",
         "loop_lm_load_w": "cabin_heat_lm_w",
+        # The radiative balance: the equilibrium temperature the panel relaxes toward, and the
+        # rejection the corpus's own law gives at it.
+        "radiator_eq_t": "environment_heat_w",
+        "radiator_rejection_w": "emissivity",
     }
     seen = {}
     for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
@@ -6238,7 +6242,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
     # The corpus stands at 262; removing the obligation takes the headline back to 261.
-    assert "with 261 declared debt(s)" in result.stdout
+    assert "with 260 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6297,7 +6301,7 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     # derived state the corpus declares on the `internal` sentinel.
     # 17 -> 19 in round 41, with the two loops' collected loads: the sums the domain's own debt
     # called "a sum over `heat_inputs` that nothing evaluates".
-    assert len(declared) == 19, f"{len(declared)} declared arithmetics"
+    assert len(declared) == 21, f"{len(declared)} declared arithmetics"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
     assert subjects == [
@@ -6610,7 +6614,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 263 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 262 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6716,7 +6720,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 263 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 262 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -7942,7 +7946,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 135 -> 136 in round 40, with the avionics bay's heat rate: the one heated zone whose 360 W no
     # state carried, and the ingredient the loop's collected load was missing.
     # 136 -> 138 in round 41, with the two loops' collected loads: the sums that ingredient fed.
-    assert sum(len(rows) for rows in buckets.values()) == 138
+    assert sum(len(rows) for rows in buckets.values()) == 139
 
     # `ready` means what it says: only the two classes the reference plant can actually advance.
     # The ready class is no longer only the plant's two integrators: round 20 taught it to evaluate
@@ -7977,7 +7981,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 28 -> 30 in round 41: `loop_primary_load_w` and `loop_lm_load_w`, the same declared-arithmetic
     # shape one level up — the classifier fix is what lets them be counted ready rather than as
     # owing code.
-    assert len(buckets["ready"]) == 30
+    assert len(buckets["ready"]) == 33
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -8000,7 +8004,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 68 -> 69 in round 33, the other half of the value move above: the suit circuit's flow took
     # the ECS guide's published 35 cfm as its initial, so `suit_loop_flow_cfm` stopped owing a value
     # and now owes the driver that would advance it, which is domain code.
-    assert len(buckets["rule"]) == 69, "just over half the vehicle is domain code"
+    assert len(buckets["rule"]) == 68, "just over half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -8040,7 +8044,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 16 -> 14 in round 29, the other half of the value move above: the two zones whose driver edge
     # carries no sensitivity were being reported as an edge debt, and the starting value they also
     # owe is now named first.
-    assert len(buckets["edge"]) == 14
+    assert len(buckets["edge"]) == 13
 
 
 def test_the_plant_reports_the_build_order():
@@ -8052,7 +8056,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "138 states, by what blocks them" in result.stdout
+    assert "139 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -8296,7 +8300,7 @@ def test_every_heated_zone_declares_the_state_that_carries_its_heat(tmp_path):
     # The debt is closed, and the check still reports an absent link when one comes back.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 262 declared debt(s)." in intact.stdout
+    assert "COMPOSES, with 261 declared debt(s)." in intact.stdout
     assert "names no heat-rate state" not in intact.stdout
 
     def fixture(name: str, old: str, new: str) -> subprocess.CompletedProcess[str]:
@@ -8392,7 +8396,7 @@ def test_a_loop_s_collected_load_is_the_sum_over_the_zones_that_name_it(tmp_path
     # The note rather than a debt, in the linter's own words, and the count unmoved by it.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 262 declared debt(s)." in intact.stdout
+    assert "COMPOSES, with 261 declared debt(s)." in intact.stdout
     assert (
         "vehicle.yaml#thermal.loops.loop_secondary.load_state: is not declared, and no zone names "
         "this loop" in intact.stdout
@@ -11224,7 +11228,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 262 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 261 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -11375,7 +11379,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     # the one heated zone that has none: its 360 W is assigned to a compartment and carried by
     # nothing.
 
-    assert owed == "262", "the view must agree with the headline count"
+    assert owed == "261", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -11707,7 +11711,7 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     scalar = [e for e in edges if e.sensitivity.get("value") not in (None, "UNCONFIGURED")]
     tables = [e for e in edges if e.sensitivity.get("regimes")]
     assert len(tables) == 8, f"the regime edges changed: {[e.id for e in tables]}"
-    assert len(scalar) + len(tables) == 68
+    assert len(scalar) + len(tables) == 69
     ready = subprocess.run(
         [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--readiness"],
         capture_output=True,
@@ -11716,7 +11720,7 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     )
     assert ready.returncode == 0, ready.stderr
     found = re.search(r"edges with a sensitivity\s+(\d+) / (\d+)", ready.stdout)
-    assert (int(found.group(1)), int(found.group(2))) == (68, len(edges)), found.group(0)
+    assert (int(found.group(1)), int(found.group(2))) == (69, len(edges)), found.group(0)
 
 
 def test_a_verb_that_starts_a_state_is_declared_rather_than_described(tmp_path):
@@ -12966,7 +12970,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 262 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12974,7 +12978,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 262 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
 
@@ -12989,7 +12993,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 263 declared debt(s)" in out, out[-300:]
+    assert "with 262 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -13148,7 +13152,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 263 declared debt(s)" in out, out[-400:]
+    assert "with 262 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -13295,7 +13299,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 263 declared debt(s)" in out, out[-400:]
+    assert "with 262 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -13305,7 +13309,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 262 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
 
@@ -13447,7 +13451,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 262 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
 
@@ -13470,7 +13474,7 @@ def test_the_linter_refuses_a_front_table_that_states_the_wrong_figures(tmp_path
             "while `METHODS` holds 7",
         ),
         ("cycles", "seven declared cycles", "six declared cycles", "while it declares 7"),
-        ("order", "the 57-node tick order", "the 39-node tick order", "while the linter derives 57"),
+        ("order", "the 58-node tick order", "the 39-node tick order", "while the linter derives 58"),
     ):
         definition = copy_definition(tmp_path / f"front-{name}")
         path = definition / "README.md"
@@ -13514,7 +13518,7 @@ def test_the_linter_refuses_a_domain_paragraph_with_no_count_clause(tmp_path):
     definition = copy_definition(tmp_path / "no-clause")
     path = definition / "README.md"
     text = path.read_text()
-    old = "23 states, 17 thresholds, 5 verbs, 11 faults"
+    old = "24 states, 17 thresholds, 5 verbs, 11 faults"
     assert old in text, "the fixture no longer matches the thermal clause"
     path.write_text(
         text.replace(old, "twenty states, seventeen thresholds, five verbs, eleven faults", 1)
@@ -15171,7 +15175,7 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # state on the `internal` sentinel whose rule the corpus declares, so a real tick computes it.
     # 20 -> 22 in round 41, with the two loops' collected loads, which sum the heat rates that tick
     # has just produced.
-    assert len(advanced) == 22, sorted(advanced)
+    assert len(advanced) == 25, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares.
     assert values["cabin_heat_csm"] == 733.0
@@ -15340,8 +15344,8 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     # count buys over the old gate: a reader is told how far the conversion has got, not that it
     # should not have started.
     assert (
-        "states that 14 of the derived channels carry an evaluable `derivation`, and the registry "
-        "now has 15" in result.stdout
+        "states that 15 of the derived channels carry an evaluable `derivation`, and the registry "
+        "now has 16" in result.stdout
     ), result.stdout[-900:]
 
     # And the corpus's own sentence carries all three figures, which is what makes it a declaration.
@@ -15351,7 +15355,7 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     # state-sourced one, where its unit is its source's.
     assert "only 64 have the state's own unit" in entry
     assert "The other 71 are *derived*" in entry
-    assert "14 of the 71 now carry an evaluable `derivation`" in entry
+    assert "15 of the 71 now carry an evaluable `derivation`" in entry
 
 
 def test_the_frame_publishes_a_derived_channel_at_this_tick_s_own_readings():
@@ -15604,8 +15608,13 @@ def test_every_integrator_declares_where_its_value_starts(tmp_path):
     assert states["zone_csm_cabin_t"]["initial_source"] == (
         "vehicle.yaml:thermal.zones.csm_cabin.nominal_temperature_k"
     )
+    # The panel's start moved in round 45: it was the radiator model's own 285 K linearisation
+    # point, which is the *design* condition with no absorbed load, and it is the equilibrium the
+    # panel's law gives for the environment this corpus declares — the temperature at which the
+    # rejection equals the load, so the loop closes from the first tick instead of after a warm-up
+    # that put the coolant return above its own band.
     assert states["zone_radiator_t"]["initial_source"] == (
-        "domains/thermal/components.yaml:radiator_model.csm.radiating_temperature_k"
+        "domains/thermal/components.yaml:state.radiator_eq_t.total_k"
     )
     assert states["coolant_flow_kg_s"]["initial_derivation"]["expression"] == (
         "nominal_flow_lb_per_h * lb_to_kg * seconds_per_hour".replace(
@@ -16309,24 +16318,37 @@ def test_a_prose_row_says_whether_it_is_a_chore_or_a_debt(tmp_path):
         return run_linter(definition)
 
     # 1. Owed *and* evaluable: the row computes its channel or it does not.
+    # The row chosen is one that is still *prose*: `thermal.coolant_return_c` was the fixture until
+    # round 45 made it arithmetic, and a row that is already evaluable cannot be given an `owed`
+    # sentence to contradict.
     both = fixture(
         "owed-and-evaluable",
-        "  - channel: thermal.coolant_return_c\n    from: coolant_loop_t\n    layer: measurement\n"
-        '    derivation: "the coolant returning from the radiator to the evaporator, after the'
-        ' radiator has rejected the load"\n',
-        "  - channel: thermal.coolant_return_c\n    from: coolant_loop_t\n    layer: measurement\n"
+        "  - channel: thermal.evaporator_rejection_w\n    from: radiator_rejection_w\n"
+        '    layer: estimate\n'
+        '    derivation: "the evaporator\'s rejection, capped at its rated capacity, with the '
+        'water it consumes charged to res.water_cooling_kg"\n',
+        "  - channel: thermal.evaporator_rejection_w\n    from: radiator_rejection_w\n"
+        "    layer: estimate\n"
         "    derivation:\n      expression: temperature_k - kelvin_offset\n      inputs:\n"
-        "        temperature_k: coolant_loop_t\n        kelvin_offset: 273.15\n",
+        "        temperature_k: coolant_loop_t\n        kelvin_offset: 273.15\n"
+        "    owed: >-\n      a sentence long enough to pass the length rule and short enough to\n"
+        "      read, naming what would close this row rather than asserting it is owed\n",
     )
     assert both.returncode == 1
     assert "declares itself `owed` and carries an evaluable `derivation`" in both.stdout
 
-    # 2. A phrase where a sentence belongs: the whole block scalar replaced by two words.
+    # 2. A phrase where a sentence belongs. Since round 45 the corpus has **no** owed row to
+    # reword — both of them became arithmetic — so the fixture adds one to a prose row rather than
+    # replacing one, which is the same declaration the check is about.
     phrase_dir = copy_definition(fixture_dir(tmp_path, "owed-phrase"))
     phrase_path = phrase_dir / "domains" / "thermal" / "points.yaml"
-    phrased = re.sub(
-        r"(?m)^    owed: >-\n(?:      .*\n)+", '    owed: "not yet"\n', phrase_path.read_text(), count=1
+    original = phrase_path.read_text()
+    phrased = original.replace(
+        "  - channel: thermal.evaporator_rejection_w\n",
+        '  - channel: thermal.evaporator_rejection_w\n    owed: "not yet"\n',
+        1,
     )
+    assert phrased != original, "the fixture no longer matches the evaporator row"
     assert 'owed: "not yet"' in phrased
     phrase_path.write_text(phrased)
     phrase = run_linter(phrase_dir)
@@ -16350,23 +16372,21 @@ def test_a_prose_row_says_whether_it_is_a_chore_or_a_debt(tmp_path):
     )
     assert moved.returncode == 1
     assert (
-        "states that 1 of the prose rows declare in their own `owed` field what would close them, "
-        "and the registry now has 2" in moved.stdout
+        "states that 0 of the prose rows declare in their own `owed` field what would close them, "
+        "and the registry now has 1" in moved.stdout
     ), moved.stdout[-900:]
 
-    # And the corpus's own one: the loop's return, waiting on the radiator's drop. Its radiator
-    # inlet was the other until round 44 converted it to arithmetic, which is what moved the count
-    # above from 2 to 1 in the first place.
+    # And the corpus's own: **none**, since round 45. The two that carried an `owed` sentence were
+    # the loop's return temperature and its radiator inlet, and each became arithmetic when the
+    # figure it was waiting on landed — the inlet in round 44 (the specific heat) and the return in
+    # round 45 (the radiator's own law, at last with a surface temperature to be a function of).
     asserted = yaml.safe_load(points)
     owed = {
         str(row["channel"]): str(row["owed"])
         for row in asserted["points"]
         if isinstance(row, dict) and row.get("owed")
     }
-    assert sorted(owed) == ["thermal.coolant_return_c"], sorted(owed)
-    for channel, sentence in owed.items():
-        assert len(sentence) > 200, (channel, len(sentence))
-        assert "what would close it" in sentence.lower() or "would close it" in sentence.lower()
+    assert owed == {}, sorted(owed)
 
 
 def test_the_mechanical_conversions_land_on_the_declarations_that_sized_them():
@@ -16418,14 +16438,14 @@ def test_the_mechanical_conversions_land_on_the_declarations_that_sized_them():
     # The nine, by the registry's own count of evaluable derivations.
     lint = run_linter(VEHICLE)
     assert lint.returncode == 0, lint.stdout[-900:]
-    assert "14 of the 71 now carry an evaluable `derivation`" in lint.stdout
+    assert "15 of the 71 now carry an evaluable `derivation`" in lint.stdout
     entry = next(
         d
         for d in yaml.safe_load((VEHICLE / "presentation.yaml").read_text())["open_debts"]
         if "frame publishes channel ids now" in d
     )
-    assert "14 of the 71 now carry an evaluable `derivation`" in entry
-    assert "1 of the prose rows declares in its own `owed` field" in entry
+    assert "15 of the 71 now carry an evaluable `derivation`" in entry
+    assert "0 of the prose rows declare in their own `owed` field" in entry
 
 
 def test_the_mission_s_clock_is_declared_where_its_name_implies(tmp_path):
