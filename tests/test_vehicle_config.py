@@ -692,9 +692,11 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     it from a number it was handed. That is the honest direction for a worklist — the spec *is*
     incomplete.
 
-    **Thirteen are the `internal` sentinel**, which `build_order` routes to `rule` and `advance`
-    calls a missing edge. No edge can reach the sentinel, so its driver is domain code, and `rule`
-    is the file an implementer should open.
+    **Ten are the `internal` sentinel**, which `build_order` routes to `rule` and `advance` calls a
+    missing edge. No edge can reach the sentinel, so its driver is domain code, and `rule` is the
+    file an implementer should open. It was thirteen until round 29: three of them —
+    `comm_amp_t`, `crew_workload` and `suit_loop_flow_cfm` — now owe a starting value the worklist
+    can name, so they are classified as *value* and counted below instead.
 
     **And a third kind ran the other way for one round**, which round 100 added and round 101 closed:
     a state with no input at all is reported as owing an *edge* — no rule can be written without one
@@ -769,7 +771,15 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # than as ready. They were reported by `unexplained` above as "a new kind of disagreement" the
     # moment the plant grew the rule and the classifier had not — which is this test doing exactly
     # what it was written for.
-    assert (counted_more, sentinel, no_input) == (17, 13, 0), (counted_more, sentinel, no_input)
+    #
+    # **17 -> 22 and 13 -> 10 in round 29**, when every integrator began declaring its starting
+    # value: five states are now classified as owing a *value* — `comm_amp_t`, `crew_workload`,
+    # `suit_loop_flow_cfm`, `zone_csm_avionics_t` and `zone_lm_descent_t` — and `advance` still
+    # refuses each of them for the edge or the rule behind it. That is the documented direction: the
+    # worklist reads the whole spec, and the spec now says it is missing a starting value, which is
+    # true whether or not the plant would get that far. The same five carry the move in the build
+    # order's own bucket counts.
+    assert (counted_more, sentinel, no_input) == (22, 10, 0), (counted_more, sentinel, no_input)
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -6014,7 +6024,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 246 declared debt(s)" in result.stdout
+    assert "with 256 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6382,7 +6392,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 248 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 258 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6488,7 +6498,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 248 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 258 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -7751,7 +7761,12 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 84 -> 75 in round 20: the nine algebraic states whose derivation the plant now evaluates left
     # this bucket, and the four on shared nodes that the map cannot hold entered it. 75 -> 71 in
     # round 22, when the key space stopped being the reason those four were here.
-    assert len(buckets["rule"]) == 71, "just over half the vehicle is domain code"
+    # 71 -> 68 in round 29, when the integrators' starting values became declarations: three states
+    # that were here only because nothing can *drive* them — `comm_amp_t`, `crew_workload` and
+    # `suit_loop_flow_cfm`, all lags on the `internal` sentinel — now owe a value the classifier can
+    # name, which is the cheaper and truer bucket. They are still domain code's problem in the end;
+    # what changed is which debt a reader is sent after first.
+    assert len(buckets["rule"]) == 68, "just over half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -7767,7 +7782,12 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 14, when `battery_charge_j.min_flow_per_s` was derived from the smallest load on its bus: the
     # state stopped owing a value and started owing the edge behind it, which is why the *edge*
     # bucket moved the other way in the same round.
-    assert len(buckets["value"]) == 20
+    # 20 -> 25 in round 29: the ten integrators that now declare an owed starting value entered
+    # this bucket, and five of them were in `edge` or `rule` before — `comm_amp_t`, `crew_workload`,
+    # `suit_loop_flow_cfm`, `zone_csm_avionics_t` and `zone_lm_descent_t`. The other five were
+    # already here for another field. An `initial` the plant reads is a value it wants, and the
+    # build order says so before it says "code".
+    assert len(buckets["value"]) == 25
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
@@ -7779,7 +7799,10 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # `battery_charge_j` stopped owing its smallest flow: `E-BUS-BAT` still carries no sensitivity,
     # and that edge was a debt all along. 12 -> 16 in round 18, when four lags whose drivers are in
     # the wrong quantity stopped being counted ready.
-    assert len(buckets["edge"]) == 16
+    # 16 -> 14 in round 29, the other half of the value move above: the two zones whose driver edge
+    # carries no sensitivity were being reported as an edge debt, and the starting value they also
+    # owe is now named first.
+    assert len(buckets["edge"]) == 14
     # 18 -> 14 in round 18 (four lags with dimensionally-wrong drivers), 14 -> 23 in round 20: the
     # plant now evaluates an `algebraic` state's declared `derivation`, so thirteen relations the
     # corpus already states are ready rather than owing code.
@@ -8560,6 +8583,12 @@ def test_every_stock_declares_where_it_starts():
     So every stock now declares `initial`, and a numeric one must say where it came from: either
     `initial_source`, a resolvable path into the document that declares the same number, or its
     own `initial_provenance`. A figure with neither is a guess wearing a unit.
+
+    **And the rule reaches every integrator now, which is why two of the counts below moved.**
+    `lag` and `delay` carry a value across ticks exactly as a `stock` does, and the plant answered
+    for them while the configuration was silent; the round that extended the rule left the three
+    groundings identical, so this test's per-stock assertions stand unchanged and only the map's
+    shape grew. `test_every_integrator_declares_where_its_value_starts` is the other half.
     """
     plant = _plant()
     world = plant.load_world(VEHICLE)
@@ -8595,8 +8624,14 @@ def test_every_stock_declares_where_it_starts():
     # single-state.** So this counts node keys, and the number it counts is no longer the number of
     # stocks: thirteen nodes carry one stock each and keep their node key, the rest are states on
     # shared nodes and are addressable by state id alone.
-    assert len(on_nodes) == 36, f"{len(on_nodes)} node keys carry a value"
-    assert len(seeded["internal"]) == 6, sorted(seeded["internal"])
+    # **36 -> 52 and 6 -> 9 when the rule was widened from `stock` to `INTEGRATOR_METHODS`.** The
+    # map is now the seed of every integrator, not of every tank: sixteen more node keys (the two
+    # cabin zones, the coolant supply, the transport delay, the fuel-cell converter, the main thrust
+    # and the rest) and three more sentinel entries (`gyro_bias`, `dps_throttle_pct` and
+    # `chamber_pressure_pct`, which are lags on the `internal` node — the other seven lags that
+    # declare `UNCONFIGURED` are owed, and an owed value is not a seeded one).
+    assert len(on_nodes) == 52, f"{len(on_nodes)} node keys carry a value"
+    assert len(seeded["internal"]) == 9, sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
     # six of the twenty-four declared values are the last of their key rather than a key of their
@@ -8626,9 +8661,13 @@ def test_every_stock_declares_where_it_starts():
         ("battery_energy", 12096000.0),
     ):
         assert seeded[node] == expected, node
-    # The sentinel IS seeded, as a map keyed by state id — the six accumulators, each at zero, and
-    # nothing else. The key existing at all is the point: a command that writes one of them needs a
-    # place to put the value, and before this round there was none.
+    # The sentinel IS seeded, as a map keyed by state id — the six accumulators, plus the three
+    # lags that live here and declare a starting value of their own. The accumulator key existing at
+    # all is the point: a command that writes one of them needs a place to put the value, and before
+    # that round there was none. The three lags happen to be zero as well, and the values assertion
+    # below cannot tell the two reasons apart — an accumulator starts at zero because that is what
+    # an accumulator is, and a gyro-bias estimate starts at zero because a declaration says so.
+    # Which is which is the *declaration's* business, and this is the map's.
     assert set(seeded["internal"]) == {
         "bias_accumulator",
         "sensor_bus_errors",
@@ -8636,6 +8675,9 @@ def test_every_stock_declares_where_it_starts():
         "recorder",
         "pulse_residual",
         "impulse_total",
+        "gyro_bias",
+        "dps_throttle_pct",
+        "chamber_pressure_pct",
     }, sorted(seeded["internal"])
     assert set(seeded["internal"].values()) == {0.0}
 
@@ -10433,7 +10475,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 247 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 257 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10576,7 +10618,9 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "247", "the view must agree with the headline count"
+    # 247 -> 257 when every integrator began declaring its starting value: ten of the new obligations
+    # are literal `UNCONFIGURED` scalars, so they are in this view as well as in the headline.
+    assert owed == "257", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -12167,7 +12211,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 247 declared debt(s)",
+        "COMPOSES, with 257 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12175,7 +12219,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 247 declared debt(s)",
+        "COMPOSES, with 257 declared debt(s)",
         composes=True,
     )
 
@@ -12190,7 +12234,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 248 declared debt(s)" in out, out[-300:]
+    assert "with 258 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12349,7 +12393,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 248 declared debt(s)" in out, out[-400:]
+    assert "with 258 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12496,7 +12540,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 248 declared debt(s)" in out, out[-400:]
+    assert "with 258 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12506,7 +12550,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 247 declared debt(s)",
+        "COMPOSES, with 257 declared debt(s)",
         composes=True,
     )
 
@@ -12648,7 +12692,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 247 declared debt(s)",
+        "COMPOSES, with 257 declared debt(s)",
         composes=True,
     )
 
@@ -14385,8 +14429,11 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     assert values["cabin_heat_csm"] == 733.0
     assert "cabin_atm" not in values
     # And the sentinel's sub-map is merged rather than replaced, so its six accumulators all survive
-    # a tick — the same defect as the node collision, one level down.
-    assert len(values["internal"]) == 6
+    # a tick — the same defect as the node collision, one level down. **9 -> 6 -> 9**: the round that
+    # gave every integrator a starting value seeds three lags that live on the sentinel
+    # (`gyro_bias`, `dps_throttle_pct`, `chamber_pressure_pct`), and the merge is what keeps them
+    # from wiping the accumulators.
+    assert len(values["internal"]) == 9
 
 
 def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes():
@@ -14582,10 +14629,12 @@ def test_the_frame_publishes_a_derived_channel_at_this_tick_s_own_readings():
 
     # **At 295 K, which is the temperature the model's own check is taken at**, the four channels are
     # the declared mixture — the reader for the claim that these rows are that relation and not a
-    # conversion chosen to fit.
-    at_nominal = dict(plant.initial_values(world))
-    at_nominal["cabin_zone_t"] = 295.0
-    at_nominal["lm_cabin_zone_t"] = 295.0
+    # conversion chosen to fit. That temperature is now the *seed's*: round 29 declared the cabins'
+    # `initial`, sourced from `vehicle.yaml#thermal.zones.<zone>.nominal_temperature_k`, so the
+    # value map the plant starts from carries it without this test putting it there.
+    at_nominal = plant.initial_values(world)
+    assert at_nominal["zone_csm_cabin_t"] == 295.0
+    assert at_nominal["zone_lm_cabin_t"] == 295.0
     published = frame_at(at_nominal)
     assert published["eclss.co2_pp_mmhg"] == pytest.approx(check["co2"], abs=1e-6)
     assert published["eclss.lm_co2_pp_mmhg"] == pytest.approx(check["co2"], abs=1e-6)
@@ -14605,20 +14654,37 @@ def test_the_frame_publishes_a_derived_channel_at_this_tick_s_own_readings():
         # The failure this replaces: the source state's own number under the channel's name.
         assert published[channel] != pytest.approx(stocks[mass], rel=1e-3)
 
-    # **And at the tick's own readings.** One tick relaxes each cabin's zone lag toward its
-    # equilibrium, so the temperature in the value map is no longer 295 K and the pressure follows
-    # it: the channel is a reading of a coupled plant rather than a restatement of a constant.
+    # **And at the tick's own readings.** Over one minute the cabin's lag relaxes toward its
+    # equilibrium and the pressure regulator's stock integrates, so both operands of the gas law
+    # have moved off their declared starting values — and the channel follows both, which is what
+    # makes it a reading of a coupled plant rather than a restatement of a constant. A 60 s tick is
+    # used rather than one 20 ms frame because that is where the arithmetic becomes legible: at the
+    # declared tick the move is 2e-5 of a kelvin and the assertion would be measuring nothing.
     gaps: list = []
-    ticked = plant.step(world, plant.initial_values(world), 1.0 / 50.0, gaps)
-    assert ticked["cabin_zone_t"] != pytest.approx(295.0)
+    ticked = plant.step(world, plant.initial_values(world), 60.0, gaps)
+    equilibrium = ticked["cabin_eq_csm"]
+    assert equilibrium < ticked["cabin_zone_t"] < 295.0
+    moved = 295.0 - ticked["cabin_zone_t"]
+    assert moved > 0.1, moved
+    assert ticked["csm_cabin_o2_kg"] != stocks["csm_cabin_o2_kg"]
     after = frame_at(ticked)
     assert after["eclss.pp_o2_mmhg"] == pytest.approx(
-        partial(stocks["csm_cabin_o2_kg"], "o2", "csm", ticked["cabin_zone_t"]), rel=1e-9
+        partial(ticked["csm_cabin_o2_kg"], "o2", "csm", ticked["cabin_zone_t"]), rel=1e-9
     )
     assert after["eclss.lm_pp_o2_mmhg"] == pytest.approx(
-        partial(stocks["lm_cabin_o2_kg"], "o2", "lm", ticked["lm_cabin_zone_t"]), rel=1e-9
+        partial(ticked["lm_cabin_o2_kg"], "o2", "lm", ticked["lm_cabin_zone_t"]), rel=1e-9
     )
-    assert after["eclss.pp_o2_mmhg"] < published["eclss.pp_o2_mmhg"]
+    # The value moved with the plant, so it is not the nominal-temperature one under a live name.
+    assert after["eclss.pp_o2_mmhg"] != pytest.approx(published["eclss.pp_o2_mmhg"], rel=1e-5)
+
+    # **The two keys a state's value lives under move together.** The lag branch wrote only the node
+    # key while `initial_values` seeds both, so the state-id key written once at t=0 shadowed every
+    # later write: `state_level` prefers the state's own id, read the seed back as the current level,
+    # and the lag relaxed from 295 K for ever while the node key froze after one tick. Two ticks are
+    # enough to show it — with the fix the two agree and the second tick moves.
+    twice = plant.step(world, ticked, 60.0, gaps)
+    assert twice["zone_csm_cabin_t"] == twice["cabin_zone_t"]
+    assert twice["cabin_zone_t"] < ticked["cabin_zone_t"]
 
     # The statistics that are *not* the instantaneous value are still omitted rather than filled
     # with it. A one-hour mean needs an hour of state the plant does not carry, so the row's
@@ -14626,13 +14692,16 @@ def test_the_frame_publishes_a_derived_channel_at_this_tick_s_own_readings():
     assert "eclss.co2_pp_1h_avg_mmhg" not in after
     assert "eclss.lm_co2_pp_1h_avg_mmhg" not in after
 
-    # And **at t=0 they are absent too**, because the cabin temperature the law needs has no
-    # declared starting value: `zone_csm_cabin_t` carries no `initial`, so the plant's lag falls back
-    # to its driver and the state does not exist until a tick has run. The round that declares that
-    # initial moves this assertion — which is the point of pinning it.
+    # **And at t=0 they are there, because the round that pinned their absence declared the
+    # temperature.** This assertion used to read `not in at_zero`, with the reasoning that
+    # `zone_csm_cabin_t` carried no `initial` and the law had no cabin temperature to read until a
+    # tick had run. Round 29 gave every integrator a declared starting value, and the two cabins'
+    # is the 295 K `vehicle.yaml#thermal.zones` calls their nominal — so the frame's first tick
+    # already carries the four channels, at the mixture the atmosphere model declares.
     at_zero = frame_at(plant.initial_values(world))
-    assert "eclss.pp_o2_mmhg" not in at_zero
-    assert "eclss.co2_pp_mmhg" not in at_zero
+    assert at_zero["eclss.pp_o2_mmhg"] == pytest.approx(246.37, abs=5e-3)
+    assert at_zero["eclss.co2_pp_mmhg"] == pytest.approx(check["co2"], abs=1e-6)
+    assert at_zero["eclss.lm_pp_o2_mmhg"] == pytest.approx(246.37, abs=5e-3)
 
 
 def test_a_channel_derivation_naming_a_reading_that_is_not_a_state_is_refused(tmp_path):
@@ -14674,3 +14743,128 @@ def test_a_channel_derivation_naming_a_reading_that_is_not_a_state_is_refused(tm
     assert run_linter(VEHICLE).returncode == 0
 
 
+
+
+def test_every_integrator_declares_where_its_value_starts(tmp_path):
+    """A `stock` was the only class asked for an initial, so twenty lags began at their driver.
+
+    `advance()`'s lag branch relaxed a state from its *driver* when it had no value, and the linter
+    had never asked a lag for one — the rule was written when `stock` was the only integrator
+    implemented, and it was never widened when the lag branch landed. The cost was not a gap but a
+    number: the two cabin zones began at their equilibrium, 286.214 K, rather than at the 295 K
+    `vehicle.yaml#thermal.zones` calls their nominal, and the frame's four partial pressures had no
+    cabin temperature to read on the first tick because of it.
+
+    Three fixtures, because the rule has three halves: a lag with no initial at all, an owed initial
+    with no note saying what would close it, and a number with no grounding. Each asserts the
+    linter's own words, and the last asserts that the corpus's own declarations are what the rule
+    asks for — the two cabin zones sourced from `vehicle.yaml`, the radiator from the temperature
+    its own rating is written at, and the loop from its published flow.
+    """
+    components = (VEHICLE / "domains" / "thermal" / "components.yaml").read_text()
+
+    # 1. No initial at all. `zone_lm_cabin_t` is the lag whose value the plant used to invent.
+    missing = copy_definition(fixture_dir(tmp_path, "lag-initial"))
+    path = missing / "domains" / "thermal" / "components.yaml"
+    old = (
+        "  - id: zone_lm_cabin_t\n    method: lag\n    node: lm_cabin_zone_t\n    unit: K\n"
+        "    initial: 295\n"
+        "    initial_source: vehicle.yaml:thermal.zones.lm_cabin.nominal_temperature_k\n"
+    )
+    assert old in components, "the fixture no longer matches the LM cabin's state row"
+    path.write_text(components.replace(old, old.split("    initial:")[0], 1))
+    result = run_linter(missing)
+    assert result.returncode == 1
+    assert "is a lag and declares no initial condition" in result.stdout, result.stdout[-900:]
+    assert "carries a value across ticks — that is what its method means" in result.stdout
+
+    # 2. `UNCONFIGURED` with no `initial_note`: an owed starting value is a decision, and the note is
+    # where the decision and what would close it are written.
+    unannotated = copy_definition(fixture_dir(tmp_path, "lag-note"))
+    path = unannotated / "domains" / "thermal" / "components.yaml"
+    start = components.index("  - id: comm_amp_t")
+    end = components.index("  - id: coolant_loop_t")
+    block = components[start:end]
+    assert "    initial_note: >-\n" in block
+    # The note *only* comes out — the state's provenance stays, so this fixture isolates one refusal
+    # rather than three, and the pattern takes the key line and its block scalar's own continuation.
+    stripped = re.sub(r"(?m)^    initial_note: >-\n(?:^      .*\n)+", "", block)
+    assert "initial_note" not in stripped and "initial: UNCONFIGURED" in stripped
+    path.write_text(components[:start] + stripped + components[end:])
+    result = run_linter(unannotated)
+    assert result.returncode == 1
+    assert "is UNCONFIGURED with no `initial_note`" in result.stdout, result.stdout[-900:]
+
+    # 3. A number with no grounding: the round that widened the rule also gave lags and delays the
+    # three groundings a stock has, and a bare literal is none of them.
+    ungrounded = copy_definition(fixture_dir(tmp_path, "lag-grounding"))
+    path = ungrounded / "domains" / "thermal" / "components.yaml"
+    assert "    initial: 295\n" in components
+    path.write_text(components.replace("    initial: 295\n", "    initial: 295\n    spare: 1\n", 1)
+                    .replace("    initial_source: vehicle.yaml:thermal.zones.csm_cabin"
+                             ".nominal_temperature_k\n", "", 1))
+    result = run_linter(ungrounded)
+    assert result.returncode == 1
+    assert "with none of `initial_source`, `initial_derivation` or `initial_provenance`" in (
+        result.stdout
+    ), result.stdout[-900:]
+
+    # And the corpus's own declarations are the ones the rule asks for.
+    thermal = yaml.safe_load(components)
+    states = {str(s["id"]): s for s in thermal["state"]}
+    assert states["zone_csm_cabin_t"]["initial_source"] == (
+        "vehicle.yaml:thermal.zones.csm_cabin.nominal_temperature_k"
+    )
+    assert states["zone_radiator_t"]["initial_source"] == (
+        "domains/thermal/components.yaml:radiator_model.csm.radiating_temperature_k"
+    )
+    assert states["coolant_flow_kg_s"]["initial_derivation"]["expression"] == (
+        "nominal_flow_lb_per_h * lb_to_kg * seconds_per_hour".replace(
+            "* seconds_per_hour", "/ seconds_per_hour"
+        )
+    )
+    assert run_linter(VEHICLE).returncode == 0
+
+
+def test_the_plant_refuses_a_lag_with_no_declared_starting_value(tmp_path):
+    """The plant used to answer the question the corpus had not: it relaxed the lag from its driver.
+
+    That is the shape this folder is organised against, and it was invisible because the answer was
+    plausible — a cabin at 286.214 K is a number a thermal engineer would recognise, and it is the
+    *equilibrium* rather than the nominal 295 K the vehicle declares. The refusal here is the other
+    half of the rule: with `initial` required by the linter and seeded by `initial_values`, a lag
+    that reaches a tick without a value is a defect in the corpus rather than a limit of the plant,
+    so it is named instead of invented. The same fixture also pins the two-key bug the seeding
+    exposed: the value must move under the state's own id *and* its node's.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    definition = copy_definition(fixture_dir(tmp_path, "plant-lag-initial"))
+    path = definition / "domains" / "thermal" / "components.yaml"
+    text = path.read_text()
+    old = (
+        "  - id: zone_csm_cabin_t\n    method: lag\n    node: cabin_zone_t\n    unit: K\n"
+        "    initial: 295\n"
+        "    initial_source: vehicle.yaml:thermal.zones.csm_cabin.nominal_temperature_k\n"
+    )
+    assert old in text
+    # The two lines that declare the cabin's starting value come out; everything else stays.
+    path.write_text(text.replace(old, old.split("    initial:")[0], 1))
+
+    world = plant.load_world(definition)
+    assert "zone_csm_cabin_t" not in plant.initial_values(world)
+    gaps: list = []
+    plant.step(world, plant.initial_values(world), 60.0, gaps)
+    refused = {gap.state.id: gap for gap in gaps}
+    assert "zone_csm_cabin_t" in refused, sorted(refused)
+    assert refused["zone_csm_cabin_t"].where.endswith(".initial"), refused["zone_csm_cabin_t"].where
+    assert "declares no starting value, so there is nothing to relax from" in (
+        refused["zone_csm_cabin_t"].owed
+    ), refused["zone_csm_cabin_t"].owed
+    # And the LM cabin, which the fixture left alone, still advances — so the refusal is the break
+    # and not the tick.
+    assert "zone_lm_cabin_t" not in refused
