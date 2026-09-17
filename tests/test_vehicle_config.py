@@ -7708,7 +7708,10 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     assert sum(len(rows) for rows in buckets.values()) == 134
 
     # `ready` means what it says: only the two classes the reference plant can actually advance.
-    assert {s.method for s in buckets["ready"]} <= {"lag", "stock"}
+    # The ready class is no longer only the plant's two integrators: round 20 taught it to evaluate
+    # an `algebraic` state's declared `derivation`, so a relation the corpus already states is
+    # ready. The sentence the bucket prints changed with it — "the two classes" became "the classes".
+    assert {s.method for s in buckets["ready"]} <= {"lag", "stock", "algebraic"}
     # And a state that owes a rule is never also counted as ready.
     assert not ({s.id for s in buckets["rule"]} & {s.id for s in buckets["ready"]})
 
@@ -7724,7 +7727,10 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # And `ready` went 16 -> 18 when the two cabins' six gas stocks took their initials: those six
     # were `stock` states whose level was owed, so they were blocked by a value the round found, and
     # four of the twenty-four states that closed a value debt are now blocked by an edge instead.
-    assert len(buckets["ready"]) == 14
+    # 18 -> 14 in round 18 (four lags with dimensionally-wrong drivers), 14 -> 23 in round 20: the
+    # plant now evaluates an `algebraic` state's declared `derivation`, so thirteen relations the
+    # corpus already states are ready rather than owing code.
+    assert len(buckets["ready"]) == 23
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -7736,7 +7742,9 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # state has always needed is the code that drives it. The numbers were published, on
     # `lm_propulsion_rcs_study_guide.pdf` p. 89, and landing them put the three back in the bucket
     # they belong to. The same three left `value`.
-    assert len(buckets["rule"]) == 84, "half the vehicle is domain code"
+    # 84 -> 75 in round 20: the nine algebraic states whose derivation the plant now evaluates left
+    # this bucket, and the four on shared nodes that the map cannot hold entered it.
+    assert len(buckets["rule"]) == 75, "just over half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -7765,7 +7773,10 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # and that edge was a debt all along. 12 -> 16 in round 18, when four lags whose drivers are in
     # the wrong quantity stopped being counted ready.
     assert len(buckets["edge"]) == 16
-    assert len(buckets["ready"]) == 14
+    # 18 -> 14 in round 18 (four lags with dimensionally-wrong drivers), 14 -> 23 in round 20: the
+    # plant now evaluates an `algebraic` state's declared `derivation`, so thirteen relations the
+    # corpus already states are ready rather than owing code.
+    assert len(buckets["ready"]) == 23
 
 
 def test_the_plant_reports_the_build_order():
@@ -14307,3 +14318,46 @@ def test_the_linter_refuses_an_internal_order_with_no_reason(tmp_path):
     result = run_linter(definition)
     assert result.returncode == 1
     assert "is declared without an `internal_order_note`" in result.stdout, result.stdout[-900:]
+
+
+def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
+    """Thirteen `algebraic` states state their rule as a `derivation`, and the plant would not read it.
+
+    Every one of them has been evaluated by the linter since the idiom landed — a load sum, an
+    equilibrium temperature, an environment heat — and the plant refused all thirteen with *"its rule
+    is not in the configuration"*, which was false. This test holds both ends: the plant evaluates
+    them through the same `derivation_value` the linter's rule is written in terms of, and the values
+    it produces are the corpus's own numbers.
+
+    It also holds the refusal that the first run exposed. The plant's value map is keyed by node, so
+    a node carrying four gas stocks cannot hold them: `csm_cabin_o2_kg` came out as 0.05315987 (the
+    water vapour's mass) and `lm_cabin_o2_kg` as 0.0 (the nitrogen's). A state on a shared node is
+    refused by name now, and this asserts the refusal rather than the wrong number.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    world = plant.load_world(VEHICLE)
+    gaps: list = []
+    values = plant.step(world, plant.initial_values(world), 1.0 / 50.0, gaps)
+    advanced = {s.id for s in world.states} - {g.state.id for g in gaps}
+    assert len(advanced) == 17, sorted(advanced)
+
+    # The arithmetic is the corpus's, at the values the corpus declares.
+    assert values["cabin_heat_csm"] == 733.0
+    assert values["cabin_heat_lm"] == 827.0
+    assert values["cabin_eq_csm"] == pytest.approx(286.214, abs=5e-4)
+    assert values["environment_heat"] == pytest.approx(2477.02, abs=5e-3)
+    # And the two cabin lags relaxed toward those equilibria in the same tick, which is the point of
+    # evaluating the relation rather than refusing it.
+    assert "zone_csm_cabin_t" in advanced and "zone_lm_cabin_t" in advanced
+
+    # The shared-node refusal, by name, for a stock whose node carries four others.
+    reasons = {g.state.id: (g.where, g.owed) for g in gaps}
+    where, owed = reasons["csm_cabin_o2_kg"]
+    assert where.endswith("csm_cabin_o2_kg"), where
+    assert "keyed by node" in owed and "another state's number" in owed, owed
+    assert "csm_cabin_h2o_kg" in owed, owed
