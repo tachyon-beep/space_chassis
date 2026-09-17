@@ -14476,6 +14476,14 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
 
     The check cannot make the 71 evaluable. What it can do is make sure nobody has to count them by
     hand again — and the fixture below proves it refuses when the count moves.
+
+    **It used to refuse the conversion itself.** The first version of the check fired on *any*
+    derived channel carrying an evaluable `derivation` — the instrument working, and a gate rather
+    than a reader: it could say the conversion was due and not how far it had got, so landing the
+    first batch would have meant deleting the check. The count of evaluable derivations is a figure
+    in the debt's sentence now, the check holds the sentence to it, and this fixture proves the join
+    by moving the count with a *reading* binding — the bare state id round 27 decided on — because
+    that is the input form the conversion uses and the linter had never had to resolve one.
     """
     points = (VEHICLE / "domains" / "thermal" / "points.yaml").read_text()
     definition = copy_definition(fixture_dir(tmp_path, "derived-count"))
@@ -14488,16 +14496,181 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
         "    derivation:\n"
         "      expression: \"mass_flow_kg_s / density_kg_m3 * 60000\"\n"
         "      inputs:\n"
-        "        mass_flow_kg_s: domains/thermal/components.yaml:state.coolant_flow_kg_s.value\n"
+        "        mass_flow_kg_s: coolant_flow_kg_s\n"
         "        density_kg_m3: 1050\n"
     )
     path.write_text(points.replace(old, new, 1))
     result = run_linter(definition)
     assert result.returncode == 1
-    assert "carrying an evaluable `derivation`" in result.stdout, result.stdout[-900:]
+    # The refusal names the figure it is about rather than the shape of the debt, which is what the
+    # count buys over the old gate: a reader is told how far the conversion has got, not that it
+    # should not have started.
+    assert (
+        "states that 4 of the derived channels carry an evaluable `derivation`, and the registry now "
+        "has 5" in result.stdout
+    ), result.stdout[-900:]
 
-    # And the corpus's own sentence carries both figures, which is what makes it a declaration.
+    # And the corpus's own sentence carries all three figures, which is what makes it a declaration.
     presentation = yaml.safe_load((VEHICLE / "presentation.yaml").read_text())
     entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
     assert "only 63 have the state's own unit" in entry
     assert "The other 71 are *derived*" in entry
+    assert "4 of the 71 now carry an evaluable `derivation`" in entry
+
+
+def test_the_frame_publishes_a_derived_channel_at_this_tick_s_own_readings():
+    """A channel is a reading, so a derived one is computed from the states it names — not omitted, and not its source.
+
+    The four partial pressures were the frame's clearest gap: `eclss.pp_o2_mmhg` reads
+    `csm_cabin_o2_kg`, a mass in kilograms, and the channel's unit is millimetres of mercury — so the
+    emitter omitted it rather than publish 2.5 kg under an oxygen channel's name. Round 27 settled
+    what a channel's derivation may read (a bare state id is *that state's value this tick*), this
+    round gave the four rows the gas law, and what this test holds is the number:
+
+      - **at the corpus's own nominal 295 K the four reproduce the mixture `atmosphere_model.check`
+        declares** — 3.0 mmHg of carbon dioxide and the 246.37 mmHg of oxygen the total-pressure
+        block derives — which is the relation agreeing with the declaration it came from, in both
+        compartments, from the stocks the states declare;
+      - **at the plant's own ticked state they reproduce the gas law at the temperature the vehicle
+        actually holds**, which is a different number, and the difference is the point: a channel
+        fixed to the nominal would report a cabin whose own temperature channel disagreed with it.
+
+    And the two one-hour averages are still omitted, deliberately: a rolling mean is a different
+    statistic from the instantaneous value, so the same expression under that channel's name would
+    be a wrong reading rather than a missing one.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    world = plant.load_world(VEHICLE)
+
+    def frame_at(values: dict) -> dict:
+        return plant.emit_frame(
+            world,
+            tick=1,
+            seq=1,
+            boot_id="0" * 32,
+            met_s=0.02,
+            sensor_time_s=0.02,
+            values=values,
+            quality={},
+            phase="translunar_coast",
+            vehicle="csm",
+            state_revision=0,
+        )["values"]
+
+    # The declared initial mixture, and the composition of the two cabins' own rows, which is what
+    # the derivation reads: the gas law over each compartment's stock and volume.
+    eclss = yaml.safe_load((VEHICLE / "domains" / "eclss" / "components.yaml").read_text())
+    check = eclss["atmosphere_model"]["check"]["partial_pressures_mmhg"]
+    molar = {
+        str(g["id"]): g["molar_mass_kg_per_mol"] for g in eclss["atmosphere_model"]["gases"]
+    }
+    volume = eclss["atmosphere_model"]["volume_m3"]
+    stocks = {
+        str(s["id"]): s.get("initial")
+        for s in eclss["state"]
+        if isinstance(s, dict) and str(s.get("id", "")).endswith("_kg")
+    }
+    r_gas, mmhg = 8.314462618153, 133.322387415
+
+    def partial(mass_kg: float, gas: str, cabin: str, kelvin: float) -> float:
+        return mass_kg / molar[gas] * r_gas * kelvin / (volume[cabin] * mmhg)
+
+    # **At 295 K, which is the temperature the model's own check is taken at**, the four channels are
+    # the declared mixture — the reader for the claim that these rows are that relation and not a
+    # conversion chosen to fit.
+    at_nominal = dict(plant.initial_values(world))
+    at_nominal["cabin_zone_t"] = 295.0
+    at_nominal["lm_cabin_zone_t"] = 295.0
+    published = frame_at(at_nominal)
+    assert published["eclss.co2_pp_mmhg"] == pytest.approx(check["co2"], abs=1e-6)
+    assert published["eclss.lm_co2_pp_mmhg"] == pytest.approx(check["co2"], abs=1e-6)
+    # 246.37 mmHg is the oxygen the total-pressure block derives as the remainder after the declared
+    # water vapour and carbon dioxide; 4.8-5.2 psia less those shares.
+    assert published["eclss.pp_o2_mmhg"] == pytest.approx(246.37, abs=5e-3)
+    assert published["eclss.lm_pp_o2_mmhg"] == pytest.approx(246.37, abs=5e-3)
+    for channel, mass, gas, cabin in (
+        ("eclss.co2_pp_mmhg", "csm_cabin_co2_kg", "co2", "csm"),
+        ("eclss.pp_o2_mmhg", "csm_cabin_o2_kg", "o2", "csm"),
+        ("eclss.lm_co2_pp_mmhg", "lm_cabin_co2_kg", "co2", "lm"),
+        ("eclss.lm_pp_o2_mmhg", "lm_cabin_o2_kg", "o2", "lm"),
+    ):
+        assert published[channel] == pytest.approx(
+            partial(stocks[mass], gas, cabin, 295.0), rel=1e-9
+        ), channel
+        # The failure this replaces: the source state's own number under the channel's name.
+        assert published[channel] != pytest.approx(stocks[mass], rel=1e-3)
+
+    # **And at the tick's own readings.** One tick relaxes each cabin's zone lag toward its
+    # equilibrium, so the temperature in the value map is no longer 295 K and the pressure follows
+    # it: the channel is a reading of a coupled plant rather than a restatement of a constant.
+    gaps: list = []
+    ticked = plant.step(world, plant.initial_values(world), 1.0 / 50.0, gaps)
+    assert ticked["cabin_zone_t"] != pytest.approx(295.0)
+    after = frame_at(ticked)
+    assert after["eclss.pp_o2_mmhg"] == pytest.approx(
+        partial(stocks["csm_cabin_o2_kg"], "o2", "csm", ticked["cabin_zone_t"]), rel=1e-9
+    )
+    assert after["eclss.lm_pp_o2_mmhg"] == pytest.approx(
+        partial(stocks["lm_cabin_o2_kg"], "o2", "lm", ticked["lm_cabin_zone_t"]), rel=1e-9
+    )
+    assert after["eclss.pp_o2_mmhg"] < published["eclss.pp_o2_mmhg"]
+
+    # The statistics that are *not* the instantaneous value are still omitted rather than filled
+    # with it. A one-hour mean needs an hour of state the plant does not carry, so the row's
+    # `derivation` is still prose and the frame leaves the channel out.
+    assert "eclss.co2_pp_1h_avg_mmhg" not in after
+    assert "eclss.lm_co2_pp_1h_avg_mmhg" not in after
+
+    # And **at t=0 they are absent too**, because the cabin temperature the law needs has no
+    # declared starting value: `zone_csm_cabin_t` carries no `initial`, so the plant's lag falls back
+    # to its driver and the state does not exist until a tick has run. The round that declares that
+    # initial moves this assertion — which is the point of pinning it.
+    at_zero = frame_at(plant.initial_values(world))
+    assert "eclss.pp_o2_mmhg" not in at_zero
+    assert "eclss.co2_pp_mmhg" not in at_zero
+
+
+def test_a_channel_derivation_naming_a_reading_that_is_not_a_state_is_refused(tmp_path):
+    """The conversion's new input form has a new way to be wrong, and the linter names it.
+
+    A channel's derivation may bind a bare name — that state's value this tick — so a typo in that
+    name is a channel whose input resolves to nothing. The plant would omit the channel in silence,
+    which is the failure mode this whole round is about arriving in the round's own mechanism: the
+    frame loses a reading and no reader is told. So the linter resolves every binding of every
+    evaluable channel derivation, and the two fixtures below are the two shapes of a binding that
+    does not resolve — a name that is not a state, and a path that has been renamed.
+    """
+    points = (VEHICLE / "domains" / "eclss" / "points.yaml").read_text()
+
+    # A bare name that is not a state id. `zone_csm_cabin_t` is the state; `zone_csm_cabin_temp` is
+    # the name a converter writes when they have the zone's id in mind rather than its state's.
+    renamed_state = copy_definition(fixture_dir(tmp_path, "channel-reading"))
+    path = renamed_state / "domains" / "eclss" / "points.yaml"
+    assert "        temperature_k: zone_csm_cabin_t\n" in points
+    path.write_text(points.replace("temperature_k: zone_csm_cabin_t", "temperature_k: zone_csm_cabin_temp", 1))
+    result = run_linter(renamed_state)
+    assert result.returncode == 1
+    assert "which is neither a source nor one of the" in result.stdout, result.stdout[-900:]
+    assert "a name that is not a state is a binding the emitter can only fail on" in result.stdout
+
+    # A source that has been renamed. The constant is real and the path is one field away from it,
+    # which is exactly how a rename reads: like a source that is unset.
+    renamed_path = copy_definition(fixture_dir(tmp_path, "channel-source"))
+    path = renamed_path / "domains" / "eclss" / "points.yaml"
+    old = "atmosphere_model.volume_m3.csm"
+    assert old in points
+    path.write_text(points.replace(old, "atmosphere_model.volume_m3.command", 1))
+    result = run_linter(renamed_path)
+    assert result.returncode == 1
+    assert "has no 'atmosphere_model.volume_m3.command'" in result.stdout, result.stdout[-900:]
+    assert "A source that has been renamed reads exactly like a source that is unset" in result.stdout
+
+    # And the unbroken corpus composes, so the two refusals above are the break and not the check.
+    assert run_linter(VEHICLE).returncode == 0
+
+
