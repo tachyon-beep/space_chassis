@@ -5489,12 +5489,28 @@ def test_a_declared_internal_order_is_the_order_the_plant_advances_them(tmp_path
     world = plant.load_world(VEHICLE)
     ordered, alphabetised = world.sentinel_states()
     assert len(ordered) == len([s for s in world.states if s.node == "internal"])
-    assert alphabetised, "every domain declares an order, so the tiebreak path is untested here"
+    # Round 19 declared an order for all nine, so the tiebreak path is exercised by *removing* a
+    # declaration rather than by relying on a domain that has none. It has to keep working: the
+    # plant still advances a corpus that declares nothing, and it still says which domains it
+    # decided for.
+    assert not alphabetised, f"a domain still has no order: {alphabetised}"
 
-    # Break a copy: give one of those domains the reverse of the order the tiebreak chose. The
-    # declaration must win, or the field is decoration.
     fixture = copy_definition(fixture_dir(tmp_path, "sentinel_order_"))
-    domain = alphabetised[0]
+    stripped = fixture / "domains" / "power" / "components.yaml"
+    text = stripped.read_text()
+    assert "internal_order:" in text
+    stripped.write_text(
+        text[: text.index("# The order these states advance in.")]
+        + text[text.index("\nstate:\n") + 1 :]
+    )
+    stripped_world = plant.load_world(fixture)
+    _, tiebroken = stripped_world.sentinel_states()
+    assert tiebroken == ["power"], tiebroken
+    stripped.write_text(text)
+
+    # Break a copy differently: give one domain the reverse of the order the tiebreak would choose.
+    # The declaration must win, or the field is decoration.
+    domain = "power"
     path = fixture / "domains" / domain / "components.yaml"
     components = yaml.safe_load(path.read_text())
     mine = sorted(
@@ -5994,7 +6010,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 254 declared debt(s)" in result.stdout
+    assert "with 245 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6362,7 +6378,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 256 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 247 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6468,7 +6484,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 256 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 247 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -9650,11 +9666,12 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
     by edges that say what feeds what, and `internal` states have no edges at all — that is what
     the sentinel means — so the alphabet was the only signal there was.
 
-    Nine domains owe the declaration and no source in the corpus supplies it, so each is a debt
-    naming its own states rather than a refusal: the honest instrument for a declaration that is
-    needed and unset.
+    **Round 19 declared all nine**, so this test no longer measures a debt: it holds the nine
+    declarations to the states they order, and it holds the *linter* to refusing the two shapes that
+    would make a declaration meaningless — an order that is not the domain's own sentinel set, and
+    one with no note saying what the order is for.
     """
-    owed = []
+    declared = []
     for components_path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
         components = yaml.safe_load(components_path.read_text()) or {}
         on_sentinel = sorted(
@@ -9667,22 +9684,22 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
                 f"{components_path.parent.name} declares an order for fewer than two sentinel states"
             )
             continue
-        assert "internal_order" not in components, (
-            f"{components_path.parent.name} declares one — update this test to check it"
+        order = components.get("internal_order")
+        assert isinstance(order, list), (components_path.parent.name, order)
+        assert sorted(str(x) for x in order) == on_sentinel, (
+            f"{components_path.parent.name}'s order is not its own sentinel states"
         )
-        owed.append((components_path.parent.name, on_sentinel))
+        assert len(str(components.get("internal_order_note") or "")) > 80, (
+            f"{components_path.parent.name} declares an order with no reason"
+        )
+        declared.append((components_path.parent.name, on_sentinel))
 
-    assert len(owed) == 9, f"{len(owed)} domains owe an `internal_order`: {[d for d, _ in owed]}"
-    assert sum(len(s) for _, s in owed) == 54, "the sentinel's state count moved"
+    assert len(declared) == 9, f"{len(declared)} domains declare one: {[d for d, _ in declared]}"
+    assert sum(len(states) for _, states in declared) == 54, "the sentinel's state count moved"
 
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
-    reported = [line for line in result.stdout.splitlines() if "internal_order:" in line]
-    assert len(reported) == 9, f"{len(reported)} of 9 reported"
-    for domain, states in owed:
-        line = next(x for x in reported if f"domains/{domain}/" in x)
-        for state in states:
-            assert state in line, f"{domain}'s debt does not name {state}"
+    assert "internal_order" not in result.stdout, "a declaration is still reported as a debt"
 
 
 def test_vehicle_yaml_counts_its_own_open_debts():
@@ -10390,7 +10407,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 255 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 246 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10533,7 +10550,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "255", "the view must agree with the headline count"
+    assert owed == "246", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -12124,7 +12141,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 255 declared debt(s)",
+        "COMPOSES, with 246 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12132,7 +12149,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 255 declared debt(s)",
+        "COMPOSES, with 246 declared debt(s)",
         composes=True,
     )
 
@@ -12147,7 +12164,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 256 declared debt(s)" in out, out[-300:]
+    assert "with 247 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12306,7 +12323,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 256 declared debt(s)" in out, out[-400:]
+    assert "with 247 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12453,7 +12470,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 256 declared debt(s)" in out, out[-400:]
+    assert "with 247 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12463,7 +12480,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 255 declared debt(s)",
+        "COMPOSES, with 246 declared debt(s)",
         composes=True,
     )
 
@@ -12605,7 +12622,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 255 declared debt(s)",
+        "COMPOSES, with 246 declared debt(s)",
         composes=True,
     )
 
@@ -14232,3 +14249,61 @@ def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     assert "coupling.yaml:edge E-PROP-ENG" in reasons["thrust_main_n"][0], reasons["thrust_main_n"]
     for state_id in ("crew_workload", "thrust_main_n"):
         assert "driver" in reasons[state_id][1] or "quantity" in reasons[state_id][1], reasons[state_id]
+
+
+def test_every_domain_that_uses_the_sentinel_declares_the_order_it_advances_in():
+    """Nine domains left the sentinel's order to a lexicographic tiebreak, and the fix is a decision.
+
+    No edge can target the `internal` sentinel, so the states on it — every mode, latch and
+    accumulator the command surface writes — are advanced after the whole schedule, and within a
+    domain the order is `internal_order`'s business. Nine domains had none, so the frozen tiebreak
+    decided: the states went in alphabetical order, which is a decision nothing made.
+
+    **Nothing on the sentinel advances today** — the rules that would move these states are domain
+    code — so the declaration is a decision about the rules rather than a consequence of them, and
+    each note says which kind it is: the physics (`propulsion`'s throttle before the chamber
+    pressure it produces), the command surface (the modes a command sets before the accumulators
+    that count them), or a chain a domain already documents for its own node states.
+
+    The linter now requires the note of *every* `internal_order`, not only of `independent`, because
+    a list is a claim too: a reader cannot tell a considered order from the alphabet renamed.
+    """
+    declared = {}
+    for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        components = yaml.safe_load(path.read_text()) or {}
+        sentinel = sorted(
+            str(state["id"])
+            for state in components.get("state") or []
+            if isinstance(state, dict) and state.get("node") == "internal" and state.get("id")
+        )
+        if len(sentinel) < 2:
+            continue
+        order = components.get("internal_order")
+        assert isinstance(order, list), (path.parent.name, order)
+        assert sorted(str(s) for s in order) == sentinel, path.parent.name
+        note = str(components.get("internal_order_note") or "")
+        assert len(note) > 80, (path.parent.name, note)
+        declared[path.parent.name] = order
+    assert len(declared) == 9, sorted(declared)
+    # The orders are the domains' own decisions, not one template: propulsion's is physics and
+    # comms' is a link chain, so no two need agree.
+    assert declared["propulsion"][0] == "dps_throttle_pct"
+    assert declared["comms"][0] == "comm_mode"
+
+
+def test_the_linter_refuses_an_internal_order_with_no_reason(tmp_path):
+    """A list is a claim about which state has to advance first, and a claim needs writing down.
+
+    The note was required only of `internal_order: independent` until round 19. A list with no note
+    is indistinguishable from the frozen tiebreak under another name — which is the defect the
+    field exists to remove — so the refusal is now the same for both forms.
+    """
+    components = (VEHICLE / "domains" / "power" / "components.yaml").read_text()
+    definition = copy_definition(fixture_dir(tmp_path, "orderless"))
+    path = definition / "domains" / "power" / "components.yaml"
+    start = components.index("internal_order_note: >-")
+    end = components.index("\nstate:\n", start)
+    path.write_text(components[:start] + components[end + 1 :])
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "is declared without an `internal_order_note`" in result.stdout, result.stdout[-900:]
