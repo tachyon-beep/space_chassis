@@ -1222,7 +1222,9 @@ def test_the_linter_derives_the_phase_ladder_from_its_durations(tmp_path):
     # The whole ladder is contiguous: each start is the previous end, and the last end is the total.
     for (_, _start, duration), (_, next_start, _d) in zip(ladder, ladder[1:], strict=False):
         assert next_start == pytest.approx(_start + duration), next_start
-    assert ladder[-1][1] + ladder[-1][2] == mission["met_epoch_provenance"]["total_duration_h"]
+    # Round 35: the mission's clock is at the top level of `mission.yaml`. It used to be nested
+    # inside `met_epoch_provenance` — where the *epoch* came from — and the linter read it there.
+    assert ladder[-1][1] + ladder[-1][2] == mission["total_duration_h"]
 
     def refusal(name: str, old: str, new: str, needle: str) -> None:
         definition = copy_definition(tmp_path / name)
@@ -7232,9 +7234,9 @@ def test_the_missions_clock_is_held_to_the_phase_ladder(tmp_path):
     definition = copy_definition(tmp_path / "total")
     path = definition / "mission.yaml"
     text = path.read_text()
-    anchor = "  total_ticks: 34560000\n"
+    anchor = "total_ticks: 34560000\n"
     assert anchor in text, "the fixture no longer matches the tick count"
-    path.write_text(text.replace(anchor, "  total_ticks: 3456\n", 1))
+    path.write_text(text.replace(anchor, "total_ticks: 3456\n", 1))
 
     result = run_linter(definition)
     assert result.returncode == 1
@@ -9624,7 +9626,7 @@ def test_the_guidance_model_is_re_derived_rather_than_trusted(tmp_path):
     assert estimator["dimension"] == 3 * len(vector) == 15
     assert estimator["sub_stepping"]["plant_tick_hz"] == 50
     mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
-    assert estimator["sub_stepping"]["plant_tick_hz"] == mission["met_epoch_provenance"]["tick_hz"]
+    assert estimator["sub_stepping"]["plant_tick_hz"] == mission["tick_hz"]
 
     # `gnc` was the only domain with a components file and no `open_debts`, which is how the two
     # limits named inside `trajectory_segment`'s note stayed out of every count.
@@ -15693,3 +15695,162 @@ def test_the_mechanical_conversions_land_on_the_declarations_that_sized_them():
     )
     assert "13 of the 71 now carry an evaluable `derivation`" in entry
     assert "2 of the prose rows declare in their own `owed` field" in entry
+
+
+def test_the_mission_s_clock_is_declared_where_its_name_implies(tmp_path):
+    """The duration, the tick rate and the tick count sat inside the epoch's *provenance* block.
+
+    `met_epoch_provenance` says where the epoch came from. Until round 35 it also carried
+    `total_duration_h`, `tick_hz`, `total_ticks` and their own two provenance blocks — five
+    declarations and two origins, two spaces deeper than the level their names imply. The linter read
+    them *there* (`check_mission_model` asked for `met_epoch_provenance.total_duration_h`), so the file
+    and its reader agreed and neither could notice. What noticed was a reader written *fresh*, without
+    the assumption: the plant's new `--determinism` asked `mission.yaml` for `tick_hz`, found nothing,
+    and refused.
+
+    The refusal added here is the shape rather than the instance: **a provenance block that carries
+    another provenance block** is refused, because one provenance describes one value and a second one
+    inside it means a second value came in with it. The fixture re-nests a key and watches the linter
+    say so; the corpus's own top level is asserted alongside it.
+    """
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    # The clock, at the level a reader looks for it.
+    for key in ("total_duration_h", "total_duration_provenance", "tick_hz", "total_ticks",
+                "total_ticks_provenance"):
+        assert key in mission, f"{key} is not a top-level key of mission.yaml"
+    assert mission["tick_hz"] == 50
+    assert mission["total_ticks"] == 192 * 3600 * 50
+    # And the epoch's provenance is provenance: a basis and its reason, and nothing else.
+    assert set(mission["met_epoch_provenance"]) == {"basis", "reason"}
+    assert mission["met_epoch_provenance"]["basis"] == "chosen"
+
+    # A provenance block carrying another one is refused, wherever it is.
+    definition = copy_definition(fixture_dir(tmp_path, "nested-provenance"))
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    anchor = "met_epoch_provenance:\n  basis: chosen\n"
+    assert anchor in text
+    path.write_text(
+        text.replace(
+            anchor,
+            "met_epoch_provenance:\n  basis: chosen\n"
+            "  total_ticks_provenance:\n    basis: derived\n    relation: \"a fixture\"\n",
+            1,
+        )
+    )
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "provenance block(s) inside a provenance block" in result.stdout, result.stdout[-900:]
+    assert "sat inside its epoch's provenance until round 35" in result.stdout
+
+
+def test_two_runs_of_one_start_produce_the_same_compare_point(tmp_path):
+    """`plant.md` §6's step 7 was a comment, and the definition of done's second clause names it.
+
+    §6 says two runs are equivalent **iff every per-tick state hash is byte-identical**, and lists the
+    compare-point as a rule: *"a hash over canonically-encoded state, every tick"*. The plant's `step`
+    carried that sentence as a comment and nothing else, so "the plant runs" was a claim with no
+    instrument behind it. This test is the instrument's reader:
+
+      - **two independent runs agree** — a fresh world each time, so anything the loader does in file
+        order is inside the comparison rather than outside it;
+      - **the hash is not vacuous** — a 1e-12 change to one value moves it, which is the contract's own
+        point (*"no ε survives a comparator"*);
+      - **and it is canonical under an edit that changes nothing** — swapping two edges into one node
+        in `coupling.yaml` leaves every compare-point identical, because contributors are sorted by id
+        before summing. That is §6's other rule, and the plant summed in declaration order until round
+        35.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    def run(root, ticks: int = 24) -> list[str]:
+        world = plant.load_world(root)
+        values = plant.initial_values(world)
+        hashes = []
+        for _ in range(ticks):
+            values = plant.step(world, values, 1.0 / 50.0, [])
+            hashes.append(plant.state_hash(values))
+        return hashes
+
+    first = run(VEHICLE)
+    second = run(VEHICLE)
+    assert len(first) == 24 and len(set(first)) == 24, "the compare-point must move every tick"
+    assert first == second, "two runs of one start disagree"
+
+    # Not vacuous: bit-identity, not equality within a tolerance.
+    world = plant.load_world(VEHICLE)
+    values = plant.initial_values(world)
+    nudged = dict(values)
+    nudged["csm_cabin_o2_kg"] = float(values["csm_cabin_o2_kg"]) + 1e-12
+    assert plant.state_hash(nudged) != plant.state_hash(values)
+    # And the encoding is canonical rather than incidental: key order cannot change it.
+    reordered = {key: values[key] for key in sorted(values, reverse=True)}
+    assert plant.state_hash(reordered) == plant.state_hash(values)
+
+    # The canonical summation order, demonstrated where it bites: two edges into one node, swapped.
+    definition = copy_definition(fixture_dir(tmp_path, "edge-order"))
+    path = definition / "coupling.yaml"
+    text = path.read_text()
+    blocks = [
+        (m.group(1), m.start(), m.end())
+        for m in re.finditer(r"(?ms)^  - id: (E-[A-Z0-9-]+)\n(.*?)(?=^  - id: |\Z)", text)
+        if "to: cabin_atm" in m.group(2)
+    ]
+    assert len(blocks) >= 2, [b[0] for b in blocks]
+    (a, sa, ea), (b, sb, eb) = blocks[0], blocks[1]
+    assert sa < sb
+    path.write_text(text[:sa] + text[sb:eb] + text[ea:sb] + text[sa:ea] + text[eb:])
+    assert run(definition) == first, f"swapping {a} and {b} changed a compare-point"
+
+
+def test_the_determinism_view_runs_two_runs_and_says_so(tmp_path):
+    """The CLI is a contract: it prints the compare-points and exits non-zero if two runs differ."""
+    result = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--determinism", "--ticks", "12"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "the declared tick: 50 Hz" in result.stdout
+    assert "two independent runs of the same start: **12 of 12 compare-points identical**" in (
+        result.stdout
+    ), result.stdout
+    # A corpus with no tick at all is a refusal rather than a guess: the view names what is missing.
+    definition = copy_definition(fixture_dir(tmp_path, "no-tick"))
+    path = definition / "mission.yaml"
+    path.write_text(path.read_text().replace("tick_hz: 50\n", "", 1))
+    result = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--dir", str(definition),
+         "--determinism", "--ticks", "2"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 3
+    assert "declares no numeric tick_hz" in result.stderr
+
+    # **The third reader, which the move would otherwise have turned into a check that ran nothing.**
+    # `check_gnc_substepping` compared `gnc/estimator#sub_stepping.plant_tick_hz` against the
+    # mission's tick, read one level down inside `met_epoch_provenance`, and `return`ed silently when
+    # it was not there. Moving the clock made it silent; this fixture makes it speak.
+    moved = copy_definition(fixture_dir(tmp_path, "tick-moved"))
+    path = moved / "mission.yaml"
+    path.write_text(path.read_text().replace("tick_hz: 50\n", "tick_hz: 40\n", 1))
+    result = run_linter(moved)
+    assert result.returncode == 1
+    assert "domains/gnc/components.yaml:estimator.sub_stepping.plant_tick_hz" in result.stdout
+    assert "`mission.yaml#tick_hz` is 40" in result.stdout, result.stdout[-900:]
+
+    # And the epoch's provenance, which nothing validated until this round.
+    ungrounded = copy_definition(fixture_dir(tmp_path, "epoch-basis"))
+    path = ungrounded / "mission.yaml"
+    path.write_text(path.read_text().replace("met_epoch_provenance:\n  basis: chosen\n",
+                                             "met_epoch_provenance:\n  basis: probably\n", 1))
+    result = run_linter(ungrounded)
+    assert result.returncode == 1
+    assert "provenance basis 'probably' is not one of" in result.stdout, result.stdout[-900:]
