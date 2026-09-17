@@ -779,7 +779,11 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # worklist reads the whole spec, and the spec now says it is missing a starting value, which is
     # true whether or not the plant would get that far. The same five carry the move in the build
     # order's own bucket counts.
-    assert (counted_more, sentinel, no_input) == (22, 10, 0), (counted_more, sentinel, no_input)
+    # **22 -> 21 and 10 -> 11 in round 33**, when the suit circuit's flow took the ECS guide's
+    # published 35 cfm as its initial: `suit_loop_flow_cfm` stopped owing a *value*, so it left the
+    # first counter, and the worklist now calls it `rule` while `advance` calls it a missing edge —
+    # which is the sentinel's own documented disagreement, one state further along.
+    assert (counted_more, sentinel, no_input) == (21, 11, 0), (counted_more, sentinel, no_input)
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -6031,7 +6035,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 261 declared debt(s)" in result.stdout
+    assert "with 260 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6399,7 +6403,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 263 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 262 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6505,7 +6509,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 263 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 262 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -7775,7 +7779,10 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # `suit_loop_flow_cfm`, all lags on the `internal` sentinel — now owe a value the classifier can
     # name, which is the cheaper and truer bucket. They are still domain code's problem in the end;
     # what changed is which debt a reader is sent after first.
-    assert len(buckets["rule"]) == 68, "just over half the vehicle is domain code"
+    # 68 -> 69 in round 33, the other half of the value move above: the suit circuit's flow took
+    # the ECS guide's published 35 cfm as its initial, so `suit_loop_flow_cfm` stopped owing a value
+    # and now owes the driver that would advance it, which is domain code.
+    assert len(buckets["rule"]) == 69, "just over half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -7798,7 +7805,9 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # build order says so before it says "code".
     # 25 -> 26 in round 32: `o2_supply_pressure_psi` owes its time constant, which is the first
     # thing the plant asks a lag for.
-    assert len(buckets["value"]) == 26
+    # 26 -> 25 in round 33: `suit_loop_flow_cfm` took the ECS guide's published 35 cfm as its
+    # initial, so it stopped owing a value — and the bucket it moved to is `rule`, above.
+    assert len(buckets["value"]) == 25
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
@@ -8644,8 +8653,10 @@ def test_every_stock_declares_where_it_starts():
     # 52 -> 53 in round 32: the oxygen supply tank's pressure state, whose own id is a key of this
     # map beside the sentinel's sub-map — which is what `on_nodes` counts, node aliases *and* every
     # state id that is not the sentinel's own name.
-    assert len(on_nodes) == 53, f"{len(on_nodes)} node keys carry a value"
-    assert len(seeded["internal"]) == 10, sorted(seeded["internal"])
+    # 53 -> 54 in round 33: `suit_loop_flow_cfm` is seeded at the ECS guide's 35 cfm, so its own id
+    # joins this map beside the sentinel's sub-map.
+    assert len(on_nodes) == 54, f"{len(on_nodes)} node keys carry a value"
+    assert len(seeded["internal"]) == 11, sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
     # six of the twenty-four declared values are the last of their key rather than a key of their
@@ -8670,19 +8681,23 @@ def test_every_stock_declares_where_it_starts():
         ("h2_csm", 24.5),
         ("water_potable", 14.0),
         ("water_cooling", 13.0),
-        ("absorber_capacity_csm", 72.0),
-        ("absorber_capacity_lm", 41.0),
+        # **0 since round 33, and that is the point of the pair.** These are consumption counters
+        # (the node's own `accumulates` says they count man-hours *spent*), so they start at nothing
+        # spent; they carried the *rating* here, sourced from the same node's `exhausted_at`, which
+        # is the equality round 33 removed.
+        ("absorber_capacity_csm", 0.0),
+        ("absorber_capacity_lm", 0.0),
         ("battery_energy", 12096000.0),
     ):
         assert seeded[node] == expected, node
     # The sentinel IS seeded, as a map keyed by state id — the six accumulators, plus the lags that
     # live here and declare a starting value of their own. The accumulator key existing at all is the
     # point: a command that writes one of them needs a place to put the value, and before that round
-    # there was none. Four of the lags happen to be zero and the fifth is the oxygen supply tank's
-    # 900 psig, and the values assertion below cannot tell those reasons apart — an accumulator starts
-    # at zero because that is what an accumulator is, and a supply pressure starts at 900 because
-    # `csm_ecs_study_guide.pdf` p. 12 says so. Which is which is the *declaration's* business, and
-    # this is the map's.
+    # there was none. Several of the lags happen to be zero, one is the oxygen supply tank's 900 psig
+    # and one is the suit circuit's 35 cfm, and the values assertion below cannot tell those reasons
+    # apart — an accumulator starts at zero because that is what an accumulator is; a supply pressure
+    # starts at 900 because `csm_ecs_study_guide.pdf` p. 12 says so; and a suit loop starts at 35
+    # because p. 39 says so. Which is which is the *declaration's* business, and this is the map's.
     assert set(seeded["internal"]) == {
         "bias_accumulator",
         "sensor_bus_errors",
@@ -8692,13 +8707,15 @@ def test_every_stock_declares_where_it_starts():
         "impulse_total",
         "gyro_bias",
         "o2_supply_pressure_psi",
+        "suit_loop_flow_cfm",
         "dps_throttle_pct",
         "chamber_pressure_pct",
     }, sorted(seeded["internal"])
     # Zero everywhere except the supply tank's pressure, which is the one seeded sentinel value that
     # is not an accumulator's origin.
-    assert set(seeded["internal"].values()) == {0.0, 900.0}
+    assert set(seeded["internal"].values()) == {0.0, 35.0, 900.0}
     assert seeded["internal"]["o2_supply_pressure_psi"] == 900.0
+    assert seeded["internal"]["suit_loop_flow_cfm"] == 35.0
 
     # Every numeric initial is grounded, and every `initial_source` resolves and agrees — through
     # `initial_factor` where the source is published in other units than the state integrates.
@@ -10497,7 +10514,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 262 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 261 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10646,7 +10663,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     # 258 -> 259 when the ledger block's eight unpublished names became one, and 259 -> 262 when
     # the oxygen supply tank landed: its time constant and its provenance are both owed.
 
-    assert owed == "262", "the view must agree with the headline count"
+    assert owed == "261", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -12237,7 +12254,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 262 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12245,7 +12262,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 262 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
 
@@ -12260,7 +12277,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 263 declared debt(s)" in out, out[-300:]
+    assert "with 262 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12419,7 +12436,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 263 declared debt(s)" in out, out[-400:]
+    assert "with 262 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12566,7 +12583,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 263 declared debt(s)" in out, out[-400:]
+    assert "with 262 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12576,7 +12593,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 262 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
 
@@ -12718,7 +12735,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 262 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
 
@@ -13029,7 +13046,10 @@ def test_the_linter_refuses_a_registry_census_that_has_drifted_from_the_registry
     definition = copy_definition(tmp_path / "census")
     path = definition / "channels.yaml"
     text = path.read_text()
-    old = "58 channels carry the field — 44 `band`, 14 `scale`"
+    # 44/14 -> 43/15 in round 33, when `prop.dps_throttle_pct`'s operating band became a scale: the
+    # census follows the registry, and the fixture below moves it by one channel rather than by a
+    # kind, which is the smallest change the reader has to catch.
+    old = "58 channels carry the field — 43 `band`, 15 `scale`"
     assert old in text, "the fixture no longer matches the range_kind census"
     path.write_text(text.replace(old, "57 channels carry the field — 43 `band`, 14 `scale`", 1))
     result = run_linter(definition)
@@ -14463,7 +14483,9 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # from wiping the accumulators.
     # 9 -> 10 in round 32: the supply tank's pressure is seeded at its published 900 psig, and it
     # stays there through a tick because its time constant is owed.
-    assert len(values["internal"]) == 10
+    # 10 -> 11 in round 33: the suit circuit's flow is seeded on the sentinel at the ECS guide's
+    # published 35 cfm.
+    assert len(values["internal"]) == 11
 
 
 def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes():
@@ -15311,3 +15333,200 @@ def test_the_oxygen_supply_pressure_is_a_state_with_a_published_starting_value(t
     assert "reads 'o2_supply_psi', which is neither a state in this domain nor a coupling node" in (
         result.stdout
     ), result.stdout[-900:]
+
+
+def test_a_band_must_contain_the_starting_value_of_the_state_it_publishes(tmp_path):
+    """The suit loop's published delivery is 35 cfm and the recommended band stopped at 33.
+
+    A `band` is a claim about the values a channel should read; a state's `initial` is the value it
+    starts at. Where the channel publishes that state unchanged — same unit, no arithmetic — the two
+    are claims about one number, and nothing was holding them together. Two cases existed:
+
+      - **`eclss.suit_loop_flow_cfm`**, whose range was `27-33 **Sim**` — the diode table's own word
+        for *recommended*, and no source — while `csm_ecs_study_guide.pdf` **PDF p. 39** publishes the
+        CSM's suit compressor at "approximately **35 cubic feet per minute** of suit gas" in normal
+        space operations. A band centred five cfm below what the circuit delivers tells a fleet to
+        look at a healthy suit loop. Conflict C-27 records it and this round moved the band to 32-38
+        on the published figure, keeping the recommendation's own half-width;
+      - **`prop.dps_throttle_pct`**, band `[10, 60]` while its state's starting value is 0 — the
+        actuator parks at its closed stop whenever the engine is off. That is not a wrong number, it
+        is a wrong *kind of range*: the operating band belongs on the component, where
+        `operating_band_pct` and `non_operating_band_pct` already carry it, and the channel's range is
+        the full percentage scale.
+
+    The check reads the three declarations the registry already had — `range`, `range_kind`, `from`,
+    and the state's `initial` — and refuses when they disagree, naming both fixes. What it cannot see
+    is stated in its docstring: a channel with an evaluable derivation publishes arithmetic rather
+    than the state, and the plant's own frame test is that half's reader.
+    """
+    components = (VEHICLE / "domains" / "eclss" / "components.yaml").read_text()
+    sweep = copy_definition(fixture_dir(tmp_path, "band-vs-initial"))
+    path = sweep / "domains" / "eclss" / "components.yaml"
+    # The suit loop's flow drops to 25 cfm — inside the *old* recommended band and below the new
+    # one's floor, which is the shape a re-anchored band is meant to catch.
+    old = "    initial: 35\n    initial_provenance:\n"
+    assert old in components
+    path.write_text(components.replace(old, "    initial: 25\n    initial_provenance:\n", 1))
+    result = run_linter(sweep)
+    assert result.returncode == 1
+    assert "channels.yaml:eclss.suit_loop_flow_cfm.range" in result.stdout
+    assert "which is outside it" in result.stdout
+    assert "which makes the range a `scale`" in result.stdout
+
+    # **The other direction: the band moves rather than the value.** The same join has to fire when
+    # the *range* is what changed, or it would only be checking the corpus's initials against
+    # themselves.
+    band_moved = copy_definition(fixture_dir(tmp_path, "band-moved"))
+    path = band_moved / "channels.yaml"
+    text = path.read_text()
+    anchor = "  - id: eclss.suit_loop_flow_cfm\n    unit: ft3/min\n"
+    assert anchor in text
+    moved = (
+        "  - id: eclss.suit_loop_flow_cfm\n    unit: ft3/min\n"
+        "    layer: measurement\n    precision: 0.5\n    rate_hz: 1\n    priority: P3\n"
+        "    range: [10, 20]\n    range_kind: band\n"
+        '    events: ["<20"]\n    event_class: alarm\n'
+        "    provenance:\n      basis: apollo\n      ref: \"apollo_diode.md:92\"\n"
+    )
+    start = text.index(anchor)
+    end = text.index("id: eclss.absorber_capacity_pct", start)
+    path.write_text(text[:start] + moved + "  - " + text[end:])
+    result = run_linter(band_moved)
+    assert result.returncode == 1
+    assert "channels.yaml:eclss.suit_loop_flow_cfm.range" in result.stdout, result.stdout[-900:]
+    assert "is the band [10, 20]" in result.stdout
+
+    # And the corpus's own declarations: the figure is the document's, and it is inside the band.
+    registry = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    row = next(
+        r
+        for rows in registry.values()
+        if isinstance(rows, list)
+        for r in rows
+        if isinstance(r, dict) and r.get("id") == "eclss.suit_loop_flow_cfm"
+    )
+    assert row["range_kind"] == "band"
+    assert row["range"][0] <= 35 <= row["range"][1], row["range"]
+    assert row["provenance"]["basis"] == "historical"
+    assert "PDF p. 39" in row["provenance"]["source"]
+    assert "35 cubic feet per minute" in row["provenance"]["source"]
+
+    eclss = yaml.safe_load(components)
+    state = next(s for s in eclss["state"] if s["id"] == "suit_loop_flow_cfm")
+    assert state["initial"] == 35
+    assert state["initial_provenance"]["basis"] == "historical"
+    assert "PDF p. 39" in state["initial_provenance"]["source"]
+
+    # The throttle channel, whose range the round turned into a scale rather than a band.
+    throttle = next(
+        r
+        for rows in registry.values()
+        if isinstance(rows, list)
+        for r in rows
+        if isinstance(r, dict) and r.get("id") == "prop.dps_throttle_pct"
+    )
+    assert throttle["range_kind"] == "scale"
+    assert throttle["range"] == [0, 100]
+    # And for the same reason: 0 % is where the actuator parks, which is what the state declares.
+    propulsion = yaml.safe_load((VEHICLE / "domains" / "propulsion" / "components.yaml").read_text())
+    dps = next(s for s in propulsion["state"] if s["id"] == "dps_throttle_pct")
+    assert dps["initial"] == 0
+
+
+def test_no_published_frame_value_sits_outside_its_channel_s_band():
+    """The wider instrument: every value the reference plant publishes, against every band.
+
+    The linter can hold a band against a state's declared `initial` only where the channel publishes
+    that state unchanged. A channel that carries an evaluable `derivation` publishes arithmetic over
+    several readings, and a linter has no tick to evaluate it at — so the frame itself is where the
+    claim can be checked, and this test checks it: emit the plant's frames at t=0 and after a tick,
+    and assert that every published value lies inside its channel's declared band, where the registry
+    declares a band with numeric bounds.
+
+    That is DoD #5's own sentence — *no live declaration contradicts another* — applied to the window
+    the fleet actually reads, and it is what would have caught the suit loop's 35 cfm outside the
+    recommended 27-33 without anybody reading the conflict register.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    registry = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    bands = {}
+    for rows in registry.values():
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict) or not row.get("id"):
+                continue
+            rng = row.get("range")
+            if (
+                row.get("range_kind") == "band"
+                and isinstance(rng, list)
+                and len(rng) == 2
+                and all(isinstance(b, (int, float)) and not isinstance(b, bool) for b in rng)
+            ):
+                bands[str(row["id"])] = (float(rng[0]), float(rng[1]))
+    assert len(bands) == 43, len(bands)
+
+    world = plant.load_world(VEHICLE)
+    started = plant.initial_values(world)
+    gaps: list = []
+    ticked = plant.step(world, started, 60.0, gaps)
+    checked = set()
+    for label, values in (("t=0", started), ("after a tick", ticked)):
+        frame = plant.emit_frame(
+            world,
+            tick=0,
+            seq=0,
+            boot_id="0" * 32,
+            met_s=0.0,
+            sensor_time_s=0.0,
+            values=values,
+            quality={},
+            phase="translunar_coast",
+            vehicle="csm",
+            state_revision=0,
+        )["values"]
+        for channel, published in frame.items():
+            low, high = bands.get(channel, (None, None))
+            if low is None or not isinstance(published, (int, float)):
+                continue
+            assert low <= published <= high, (
+                label,
+                channel,
+                published,
+                (low, high),
+            )
+            checked.add(channel)
+    # The bands that the frame actually exercised, so the assertion above is not vacuous.
+    assert len(checked) >= 10, sorted(checked)
+
+    # **And the counter the bands caught points the right way.** `absorber_man_hours_*` counts
+    # man-hours *spent* — the node's own `accumulates` says so — while the channel publishes capacity
+    # *left*, so the two move in opposite directions. Before this round the counter's `initial` was
+    # the rating itself, which made the channel read 100 % before the mission, 0 % after the first
+    # tick, and cross every threshold on it on the way.
+    spent_values = plant.step(world, plant.initial_values(world), 600.0, [])
+    spent_frame = plant.emit_frame(
+        world,
+        tick=0,
+        seq=0,
+        boot_id="0" * 32,
+        met_s=0.0,
+        sensor_time_s=0.0,
+        values=spent_values,
+        quality={},
+        phase="translunar_coast",
+        vehicle="csm",
+        state_revision=0,
+    )["values"]
+    for spent_id, channel in (
+        ("absorber_man_hours_csm", "eclss.absorber_capacity_pct"),
+        ("absorber_man_hours_lm", "eclss.lm_absorber_capacity_pct"),
+    ):
+        assert spent_values[spent_id] > 0, (spent_id, spent_values[spent_id])
+        assert spent_frame[channel] < 100.0, (channel, spent_frame[channel])
+        assert spent_frame[channel] > 99.0, (channel, spent_frame[channel])

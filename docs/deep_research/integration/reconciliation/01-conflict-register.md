@@ -355,6 +355,35 @@ and if the latter, which document that figure comes from.
 
 ---
 
+### C-27 · The suit circuit's flow, and a recommended range that excludes it
+
+| Source | Says |
+|---|---|
+| `csm_ecs_study_guide.pdf` **PDF p. 39** (printed p. 3-9), §III, the suit compressor | "In normal space operations, the operating compressor delivers approximately **35 cubic feet per minute** of suit gas at a pressure rise of 10 inches of water within the conditions of 4.93 psia and 80 F. Under emergency operating conditions, the operating compressor delivers approximately **34.5 cubic feet per minute** suit gas at a pressure rise of 6.9 inches of water" |
+| `lm_ecs.txt`, the LM's suit circuit (a different circuit, and per suit) | "half of the **12 CFM** suit circuit oxygen flow will pass directly into the body of the SSA at the waist and half of the flow will pass into the helmet" |
+| `apollo_diode.md:92` | `eclss.suit_loop_flow_cfm`, `ft³/min`, recommended range **27–33 `Sim`**, precision 0.5, 1 Hz, event `<20` |
+| `domains/eclss/components.yaml:state suit_loop_flow_cfm` (before this round) | `initial: UNCONFIGURED` — the starting flow was owed, and the note said `apollo_diode.md:92` publishes *the band* rather than a starting value |
+
+**Resolved: the recommendation moved, not the figure.** The 27–33 range carried the `Sim` marker —
+"recommended nominal / expected range", the table's own words — and no source: it is the simulator
+designer's judgement, while the compressor's delivery is a published figure for the same circuit. A
+band whose centre is 30 sits 5 cfm *below* what the document says the circuit delivers, so a healthy
+suit loop would read at the top of its own band and a fleet would be told to look at it. The
+disposition is therefore: **`initial: 35`**, `historical`, with the page in the field; and the band
+**re-anchored at 32–38** — the published design point as the centre, and the recommendation's own
+half-width of 3 retained, because the width is a judgement about normal variation and the centre is
+now a citation. Both published points (35 normal, 34.5 emergency) sit inside it, and apollo's `<20`
+event is far below either.
+
+**What the round could not settle, and did not assume.** The LM's 12 cfm is a *per-suit* flow in the
+LM's own circuit, and `eclss.suit_loop_flow_cfm` is the CSM's; nothing in the corpus gives the CSM
+circuit's per-suit split, so no attempt was made to reconcile the two numbers. Whether the CSM's
+suit circuit should have its own published *indication* band (rather than a design point with a
+chosen width) is open, and a CSM suit-circuit flow indication in the Apollo Operations Handbook or
+the ECS specification would close it.
+
+---
+
 ## D — decisions
 
 ### D-01 · Take the durable acceptance ledger; decline the mounts and the cryptography
