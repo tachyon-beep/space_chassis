@@ -8614,6 +8614,92 @@ def test_the_readme_status_matches_the_tools():
     )
 
 
+def test_the_changelog_row_for_the_linter_is_held_against_the_linter():
+    """A row of prose about the linter, and four of its five countable figures were stale.
+
+    `integration/reconciliation/README.md` carries one row per file, and the row for
+    `vehicle/tools/check_vehicle.py` states what the tool is: **294** declared debts, **661**
+    `report.refuse` call sites, a **41**-node tick order, **138** severity declarations, and **41**
+    named channels with **3** described categories withheld. Counted against the tools, they were
+    263, 767, 57, 142 and 38 with none — four stale figures in the sentence a reader uses to size
+    the tool, and nothing read any of them. That is this folder's oldest finding (*a declaration no
+    tool reads has already drifted*) arriving in the one file the vehicle's README cannot hold: it
+    is one directory away, and when the vehicle moves to its own repository it stays behind.
+
+    **So the reader is here rather than in the linter**, which is the same choice this test file
+    already makes for that README's test count: the linter must not depend on a file that is not
+    part of the vehicle. Every figure is derived rather than repeated — the debts and the node count
+    from the linter's own output, the call sites from the tool's source, the severities and the
+    withheld split from the corpus — and the reader is exercised against a stale row per figure, so
+    a rule that matched nothing could not pass by accident.
+    """
+    row = next(
+        (
+            line
+            for line in (
+                REPO / "docs" / "deep_research" / "integration" / "reconciliation" / "README.md"
+            ).read_text().splitlines()
+            if line.startswith("| `../../vehicle/tools/check_vehicle.py`")
+        ),
+        None,
+    )
+    assert row is not None, "the changelog carries no row for the linter"
+
+    lint = run_linter(VEHICLE)
+    assert lint.returncode == 0, lint.stdout[-900:]
+    debts = re.search(r"with (\d+) declared debt", lint.stdout).group(1)
+    nodes = re.search(r"the node schedule is (\d+) nodes", lint.stdout).group(1)
+    calls = str((VEHICLE / "tools" / "check_vehicle.py").read_text().count("report.refuse("))
+    thresholds = sum(
+        len((yaml.safe_load(path.read_text()) or {}).get("thresholds") or [])
+        for path in sorted((VEHICLE / "domains").glob("*/profiles.yaml"))
+    )
+    named = described = 0
+    for path in sorted((VEHICLE / "domains").glob("*/points.yaml")):
+        for entry in (yaml.safe_load(path.read_text()) or {}).get("not_published") or []:
+            if isinstance(entry, dict) and entry.get("channel"):
+                named += 1
+            else:
+                described += 1
+
+    def stated(text: str) -> dict[str, str]:
+        return {
+            "debts": re.search(r"(\d+) declared debts?", text).group(1),
+            "calls": re.search(r"(\d+) `report\.refuse` call sites", text).group(1),
+            "nodes": re.search(r"(\d+)-node tick order", text).group(1),
+            "severities": re.search(r"\((\d+) severity declarations", text).group(1),
+            "withheld": "/".join(
+                re.search(r"(\d+) named channels and (\d+) described categories", text).groups()
+            ),
+        }
+
+    live = {
+        "debts": debts,
+        "calls": calls,
+        "nodes": nodes,
+        "severities": str(thresholds),
+        "withheld": f"{named}/{described}",
+    }
+    assert stated(row) == live, (stated(row), live)
+
+    # And the reader itself, one stale figure at a time: each is replaced by what the row said
+    # before this round, and the reader has to notice.
+    for key, old, stale in (
+        ("debts", f"{debts} declared debts", "294 declared debts"),
+        ("calls", f"{calls} `report.refuse` call sites", "661 `report.refuse` call sites"),
+        ("nodes", f"{nodes}-node tick order", "41-node tick order"),
+        ("severities", f"({thresholds} severity declarations", "(138 severity declarations"),
+        (
+            "withheld",
+            f"{named} named channels and {described} described categories",
+            "41 named channels and 3 described categories",
+        ),
+    ):
+        assert old in row, old
+        mutated = stated(row.replace(old, stale, 1))
+        assert mutated[key] != live[key], f"the reader did not see the stale {key}: {mutated[key]}"
+
+
 def _in_words(n: int) -> str:
     """Enough of a number-to-words conversion for a count in the low hundreds.
 
