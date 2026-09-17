@@ -6024,7 +6024,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 256 declared debt(s)" in result.stdout
+    assert "with 257 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6392,7 +6392,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 258 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 259 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6498,7 +6498,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 258 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 259 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -10475,7 +10475,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 257 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 258 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10618,9 +10618,10 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    # 247 -> 257 when every integrator began declaring its starting value: ten of the new obligations
-    # are literal `UNCONFIGURED` scalars, so they are in this view as well as in the headline.
-    assert owed == "257", "the view must agree with the headline count"
+    # 247 -> 257 when every integrator began declaring its starting value (ten of the new
+    # obligations are literal `UNCONFIGURED` scalars, so they are in this view as well as in the
+    # headline), and 257 -> 258 when the missing supply-tank pressure became a named prose debt.
+    assert owed == "258", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -12211,7 +12212,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 257 declared debt(s)",
+        "COMPOSES, with 258 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12219,7 +12220,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 257 declared debt(s)",
+        "COMPOSES, with 258 declared debt(s)",
         composes=True,
     )
 
@@ -12234,7 +12235,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 258 declared debt(s)" in out, out[-300:]
+    assert "with 259 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12393,7 +12394,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 258 declared debt(s)" in out, out[-400:]
+    assert "with 259 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12540,7 +12541,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 258 declared debt(s)" in out, out[-400:]
+    assert "with 259 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12550,7 +12551,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 257 declared debt(s)",
+        "COMPOSES, with 258 declared debt(s)",
         composes=True,
     )
 
@@ -12692,7 +12693,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 257 declared debt(s)",
+        "COMPOSES, with 258 declared debt(s)",
         composes=True,
     )
 
@@ -14725,7 +14726,7 @@ def test_a_channel_derivation_naming_a_reading_that_is_not_a_state_is_refused(tm
     result = run_linter(renamed_state)
     assert result.returncode == 1
     assert "which is neither a source nor one of the" in result.stdout, result.stdout[-900:]
-    assert "a name that is not a state is a binding the emitter can only fail on" in result.stdout
+    assert "a name that is none of those is a binding the emitter can only fail on" in result.stdout
 
     # A source that has been renamed. The constant is real and the path is one field away from it,
     # which is exactly how a rename reads: like a source that is unset.
@@ -14868,3 +14869,178 @@ def test_the_plant_refuses_a_lag_with_no_declared_starting_value(tmp_path):
     # And the LM cabin, which the fixture left alone, still advances — so the refusal is the break
     # and not the tick.
     assert "zone_lm_cabin_t" not in refused
+
+
+def test_a_node_sourced_channel_is_published_in_the_unit_its_channel_declares():
+    """Seven channels read a coupling node, and the frame published the node's number under its own name.
+
+    The emitter's unit test was a comparison of two *states*: `row["unit"]` against `state.unit`.
+    The branch that handles a node source had no test at all, so `values[node]` went out under
+    whatever the channel was called — `prop.propellant_remaining_pct` read 18,508 kg and published
+    it as a percentage, `eclss.o2_supply_pressure_psi` published a mass under a pressure,
+    `res.battery_energy_wh` published joules under a watt-hour, and `eclss.cabin_temp_c` published
+    295 kelvin as 295 degrees Celsius. `coupling.yaml#nodes` carries every node's unit, so the
+    comparison was always available and was simply not made.
+
+    This test holds both halves. Six of the seven carry an evaluable `derivation` now, and what it
+    checks is that each is the *declared* relation rather than a conversion chosen to fit — the
+    battery's watt-hours against the cells' own `ah x v_nominal`, the propellant's percentage
+    against the tank load `vehicle.yaml#propulsion` declares, the absorber counters against their
+    ratings, and the two cabin temperatures against `degC` where the channel's own band is written.
+    The seventh, `eclss.o2_supply_pressure_psi`, is omitted rather than mis-stated: a pressure is not
+    a function of a mass, and the omission is what `domains/eclss/components.yaml#open_debts` names.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    world = plant.load_world(VEHICLE)
+    frame = plant.emit_frame(
+        world,
+        tick=0,
+        seq=0,
+        boot_id="0" * 32,
+        met_s=0.0,
+        sensor_time_s=0.0,
+        values=plant.initial_values(world),
+        quality={},
+        phase="translunar_coast",
+        vehicle="csm",
+        state_revision=0,
+    )
+    values = frame["values"]
+    registry = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    channels = {
+        str(row["id"]): row
+        for rows in registry.values()
+        if isinstance(rows, list)
+        for row in rows
+        if isinstance(row, dict) and row.get("id")
+    }
+
+    # The battery, against the cells' own rating times their nominal voltage: 3 x 40 Ah x 28 V.
+    power = yaml.safe_load((VEHICLE / "domains" / "power" / "components.yaml").read_text())
+    entry_cells = [
+        c
+        for c in power["components"]
+        if c.get("class") == "storage" and c.get("chemistry") == "silver-oxide/zinc"
+    ]
+    assert len(entry_cells) == 3, entry_cells
+    watt_hours = sum(float(c["ah"]) * float(c["v_nominal"]) for c in entry_cells)
+    assert values["res.battery_energy_wh"] == pytest.approx(watt_hours, rel=1e-9)
+
+    # The propellant, against the declared tank load and the stock's own initial.
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    loaded = vehicle["propulsion"]["sps"]["mass_kg"]
+    stock = yaml.safe_load((VEHICLE / "domains" / "consumables" / "components.yaml").read_text())
+    initial = next(s["initial"] for s in stock["state"] if s["id"] == "prop_main_kg")
+    assert initial == loaded
+    assert values["prop.propellant_remaining_pct"] == pytest.approx(
+        initial / loaded * 100, rel=1e-9
+    )
+
+    # The two absorber counters, against their own declared ratings.
+    consumables = vehicle["consumables"]["co2_removal"]
+    assert values["eclss.absorber_capacity_pct"] == pytest.approx(100.0)
+    assert values["eclss.lm_absorber_capacity_pct"] == pytest.approx(100.0)
+    assert consumables["csm_element_man_hours"] == 72
+    assert consumables["lm_primary_man_hours"] == 41
+
+    # The two cabin temperatures, and the reason the conversion matters: the node is in kelvin, the
+    # channel is in `degC`, and the channel's own declared band is written in Celsius.
+    assert values["eclss.cabin_temp_c"] == pytest.approx(295.0 - 273.15, abs=1e-9)
+    assert values["eclss.lm_cabin_temp_c"] == pytest.approx(295.0 - 273.15, abs=1e-9)
+    # The CSM's channel declares the band in Celsius and the value lands inside it; the LM's
+    # declares none, which is a smaller claim rather than a missing one.
+    low, high = channels["eclss.cabin_temp_c"]["range"]
+    assert low <= values["eclss.cabin_temp_c"] <= high, values["eclss.cabin_temp_c"]
+    assert "range" not in channels["eclss.lm_cabin_temp_c"]
+    # The failure this replaces, stated as the value it used to carry.
+    assert values["eclss.cabin_temp_c"] != pytest.approx(295.0, abs=1.0)
+
+    # And the two the vehicle cannot compute are absent, not wrong: the supply-tank pressure (the
+    # channel's source is a mass) and the zone template (its source is a list of states, and the
+    # frame's keys are channel ids).
+    assert "eclss.o2_supply_pressure_psi" not in values
+    assert "thermal.zone_[id]_t_c" not in values
+    assert not [key for key in values if key.startswith("thermal.zone_")]
+    # The channel is still registered, watched and perturbed by four faults — it is the *producer*
+    # that is owed, which is what the debt entry says.
+    assert "eclss.o2_supply_pressure_psi" in {str(r["id"]) for r in channels.values()}
+
+
+def test_a_channel_derivation_naming_a_node_the_value_map_cannot_read_is_refused(tmp_path):
+    """A bare name is a reading only if this tick's value map has a key for it.
+
+    Round 27's decision made a bare input a reading, and round 29's node batch showed the rule needs
+    one qualification: a coupling node's *name* is a key only where the node carries exactly one
+    state, because `state_values` writes no node key for a shared node — one value cannot mean four.
+    So a derivation that names `cabin_atm` is a channel the emitter can only omit, and the linter
+    refuses it by name. The three fixtures are the three shapes: a crowded node, a source that is a
+    list with no placeholder, and a converted row losing its derivation while the debt's count says
+    it has one.
+    """
+    points = (VEHICLE / "domains" / "eclss" / "points.yaml").read_text()
+
+    # 1. A node carrying several states. `cabin_atm` carries five, and its name is not a key.
+    crowded = copy_definition(fixture_dir(tmp_path, "crowded-node"))
+    path = crowded / "domains" / "eclss" / "points.yaml"
+    old = "        temperature_k: cabins_zone_t\n"
+    assert old not in points
+    anchor = "  - channel: eclss.cabin_temp_c\n    from: cabin_zone_t\n    layer: measurement\n"
+    assert anchor in points
+    path.write_text(
+        points.replace(
+            anchor + "    derivation:\n      expression: temperature_k - kelvin_offset\n"
+            "      inputs:\n        temperature_k: cabin_zone_t\n",
+            anchor + "    derivation:\n      expression: temperature_k - kelvin_offset\n"
+            "      inputs:\n        temperature_k: cabin_atm\n",
+            1,
+        )
+    )
+    result = run_linter(crowded)
+    assert result.returncode == 1
+    assert "is a coupling node carrying 5 states" in result.stdout, result.stdout[-900:]
+    assert "name the state the arithmetic is about" in result.stdout
+
+    # 2. A source that is a list and a name that carries no placeholder for it.
+    listed = copy_definition(fixture_dir(tmp_path, "list-source"))
+    path = listed / "domains" / "thermal" / "points.yaml"
+    thermal = path.read_text()
+    anchor = '  - channel: thermal.loop_transport_c\n    from: loop_transport_t\n'
+    assert anchor in thermal
+    path.write_text(
+        thermal.replace(
+            anchor,
+            "  - channel: thermal.loop_transport_c\n"
+            "    from: [zone_csm_avionics_t, zone_csm_service_t]\n",
+            1,
+        )
+    )
+    result = run_linter(listed)
+    assert result.returncode == 1
+    assert "its own name carries no placeholder for the keys it would instantiate" in (
+        result.stdout
+    ), result.stdout[-900:]
+
+    # 3. A converted row loses its derivation: the node count in the debt's sentence moves.
+    lost = copy_definition(fixture_dir(tmp_path, "node-count"))
+    path = lost / "domains" / "consumables" / "points.yaml"
+    text = path.read_text()
+    block = (
+        "    derivation:\n      expression: energy_j / joules_per_watt_hour\n"
+        "      inputs:\n        energy_j: battery_energy\n        joules_per_watt_hour: 3600\n"
+    )
+    assert block in text
+    path.write_text(text.replace(block, '    derivation: "the battery stock, as a resource"\n', 1))
+    result = run_linter(lost)
+    assert result.returncode == 1
+    assert (
+        "states that 6 of those carry an evaluable `derivation`, and the registry now has 5"
+        in result.stdout
+    ), result.stdout[-900:]
+
+    # And the unbroken corpus composes, so the three refusals above are the breaks and not the check.
+    assert run_linter(VEHICLE).returncode == 0
