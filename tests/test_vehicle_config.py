@@ -13587,6 +13587,79 @@ def test_the_linter_refuses_a_tool_docstring_whose_fault_counts_have_drifted(tmp
     assert "states 118 declared faults" in result.stdout, result.stdout[-900:]
 
 
+def test_the_linter_refuses_a_node_count_three_files_state_differently(tmp_path):
+    """One schedule, four figures, and no two of them in the same file agreed.
+
+    `tools/plant.py`'s module docstring, `plant.md` §2 and a comment in `check_vehicle.py` each
+    stated a size for the tick order, and each said something different — all of them smaller than
+    the order the linter derives, because each was written against the schedule of its own round and
+    none had a reader. `faults.py`'s fault figures were at least *about* one quantity in one era;
+    these had drifted apart from each other, which is the stronger form: a reader who believed the
+    docstring would have had a different vehicle from a reader who believed the contract.
+
+    `plant.md` and `tools/` are not the README. The README is a round log and quotes a past round's
+    figures on purpose — this file's own changelog test does exactly that with an old tick-order
+    figure, and the README's front table beside it states the live one — so a reader that walked the
+    README would refuse the record. These two are where the vehicle's *current* shape is stated, and
+    the count is held against the schedule the run already derived rather than against a second
+    counter, which would be one more declaration to drift.
+
+    The fixture checks the walk as well as the rule: `plant.md` and a tool other than `plant.py` are
+    each broken in turn, because a check that named one file and one form would pass this test's
+    first case and miss three quarters of the defect.
+    """
+    # The corpus at rest: the three figures agree, and the README's historical ones are untouched.
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-1500:]
+    readme = (VEHICLE / "README.md").read_text()
+    assert "41 nodes" in readme, (
+        "the README no longer quotes a historical tick-order figure, so this test's claim that the "
+        "check deliberately leaves the round log alone is no longer being exercised"
+    )
+
+    # The contract, which the plant is built against.
+    definition = copy_definition(fixture_dir(tmp_path, "stale-nodes-in-contract"))
+    path = definition / "plant.md"
+    text = path.read_text()
+    old = "The derived order is 58 nodes"
+    assert old in text, "the fixture no longer matches plant.md's tick-order sentence"
+    path.write_text(text.replace(old, "The derived order is 40 nodes", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "states '40 nodes'" in result.stdout, result.stdout[-900:]
+    assert "the schedule the linter derives for this vehicle is 58 nodes" in result.stdout
+
+    # A tool that is not the one the reader was written for, and the other spelling of the claim.
+    other = copy_definition(fixture_dir(tmp_path, "stale-nodes-in-tool"))
+    path = other / "tools" / "faults.py"
+    text = path.read_text()
+    anchor = '"""'
+    assert anchor in text
+    path.write_text(text.replace(anchor, anchor + "\nA fixture's claim: 12 nodes schedule this vehicle.\n", 1))
+    result = run_linter(other)
+    assert result.returncode == 1
+    assert "tools/faults.py" in result.stdout and "states '12 nodes'" in result.stdout, (
+        result.stdout[-900:]
+    )
+
+    # And the tick-order form, which is the spelling a writer reaches for when the sentence is about
+    # the order rather than about the graph. `plant.py` is not in the fixture — `copy_definition`
+    # copies exactly the one tool the linter reads a docstring from — so the form is planted in
+    # `plant.md`, which is the other file the walk covers and the one a reader is most likely to
+    # meet it in.
+    order = copy_definition(fixture_dir(tmp_path, "stale-node-tick-order"))
+    path = order / "plant.md"
+    text = path.read_text()
+    anchor = "The derived order is 58 nodes and `check_vehicle.py` reports its tail on every"
+    assert anchor in text, "the fixture no longer matches plant.md's tick-order sentence"
+    path.write_text(
+        text.replace(anchor, "The derived order is a 40-node tick order and `check_vehicle.py`", 1)
+    )
+    result = run_linter(order)
+    assert result.returncode == 1
+    assert "states '40-node tick order'" in result.stdout, result.stdout[-900:]
+
+
 def test_the_linter_refuses_a_debt_that_says_its_own_obligation_is_answered(tmp_path):
     """Two `open_debts` entries recorded their own resolution and stayed in the counted list.
 
