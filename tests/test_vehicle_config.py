@@ -5458,10 +5458,14 @@ def test_a_tick_accounts_for_every_state_in_the_order(tmp_path):
         "the tick did not reach the sentinel"
     )
 
+    # **A state's outcome is recorded under its own id now**, which is round 22's key space: a state
+    # on a node carrying four others has no node key to be found under, and `s.node in committed`
+    # would have reported two correctly advanced states as unaccounted for.
     unaccounted = [
         s.id
         for s in sequence
         if s.id not in gapped
+        and s.id not in committed
         and s.node not in committed
         and s.id not in committed.get("internal", {})
     ]
