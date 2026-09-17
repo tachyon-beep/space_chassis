@@ -5985,6 +5985,7 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
         # by `check_power_inventory` — so this is the *state* where before there was only a check.
         "bus_a_load_w": "csm_sband_transceiver",
         "cabin_dp_psi": "pressure_pa",
+        "fuel_cell_power_w": "csm_sband_transceiver",
         # And the RCS propellant estimate (round 48): the relation was a sentence and every
         # ingredient — the impulse stock and the capacity C-26 re-derived — was declared.
         "propellant_estimate": "impulse_used",
@@ -6359,13 +6360,14 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     # connected electrical load (the fourteen `demand_w` fields). They are the reason the subject
     # list below is no longer a closed vocabulary of parameter names — a state that *is* its computed
     # value has no parameter to name, and the field it produces is the state itself.
-    assert len(declared) == 26, f"{len(declared)} declared arithmetics"
+    assert len(declared) == 27, f"{len(declared)} declared arithmetics"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
     assert subjects == [
         "bus_a_load_w",
         "cabin_dp_psi",
         "csm_cabin_pressure_pa",
+        "fuel_cell_power_w",
         "lm_cabin_pressure_pa",
         "nominal_kg_s",
         "per_joule_kg",
@@ -8067,7 +8069,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # over the four gas stocks and the zone's temperature *as a reading* — the first derivations
     # in the corpus that read another state's value this tick, and the first whose `computes`
     # field is the state's own id rather than a parameter of it.
-    assert len(buckets["ready"]) == 40
+    assert len(buckets["ready"]) == 41
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -8092,7 +8094,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # and now owes the driver that would advance it, which is domain code.
     # 68 -> 66 in round 47, the other half of the move above: the two pressures left this bucket
     # for `ready` without the rule layer's count changing anywhere else.
-    assert len(buckets["rule"]) == 62, "just under half the vehicle is domain code"
+    assert len(buckets["rule"]) == 61, "just under half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -8359,6 +8361,60 @@ def test_the_structural_differential_is_the_compartments_own_pressure(tmp_path):
     result = run_linter(definition)
     assert result.returncode == 1
     assert "A derived value that no longer re-derives" in result.stdout, result.stdout[-900:]
+
+
+def test_the_cells_output_is_the_load_read_the_other_way(tmp_path):
+    """One quantity, two directions, and the state that had said so all along.
+
+    `fuel_cell_power_w`'s own note read "the cell's output is a function of reactant availability and
+    **load**, solved to consistency each tick" — and the load became a state in round 50. So this is
+    the second pair in the corpus that is one relation read in two directions (round 44's
+    `radiator_rejection_w` and `loop_primary_load_w` are the first), and the direction is what a
+    reader has to notice: a *load* is what is connected, a *generation* is what has to come from
+    somewhere.
+
+    **The test holds the pair against each other rather than against a number**, because the claim is
+    that they cannot disagree: both are the fourteen `demand_w` fields, so a load that moves moves the
+    generation with it. What it also holds is the thing a fleet would get wrong — the headroom is the
+    module capacity, not the difference between these two, and a `load_margin_w` computed as
+    generation-minus-load would be zero by construction.
+    """
+    power = yaml.safe_load((VEHICLE / "domains" / "power" / "components.yaml").read_text())
+    loads = {row["id"]: row for row in power["loads"]}
+    csm = {name: row for name, row in loads.items() if row["vehicle"] == "csm"}
+    cell = next(s for s in power["state"] if s["id"] == "fuel_cell_power_w")
+    bus = next(s for s in power["state"] if s["id"] == "bus_a_load_w")
+    assert cell["provenance"]["basis"] == "derived"
+    assert cell["provenance"]["computes"] == "fuel_cell_power_w"
+    assert cell["fuel_cell_power_w"] == 1723
+    # The two derivations name the same declarations, which is what makes them one quantity.
+    assert set(cell["provenance"]["derivation"]["inputs"]) == set(
+        bus["provenance"]["derivation"]["inputs"]
+    )
+    assert set(cell["provenance"]["derivation"]["inputs"]) == set(csm)
+    # And the headroom is the capacity, which is what `load_margin_w`'s note says a margin means.
+    modules = [c for c in power["components"] if str(c.get("id", "")).startswith("fc_")]
+    assert len(modules) == 3 and sum(int(c["rated_w"]) for c in modules) == 4260
+    assert cell["fuel_cell_power_w"] < sum(int(c["rated_w"]) for c in modules)
+
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    values = plant.step(world, plant.initial_values(world), 0.02, [])
+    assert values["fuel_cell_power_w"] == values["bus_a_load_w"] == 1723.0
+
+    # A load that moves moves both, because neither restates the total.
+    definition = copy_definition(fixture_dir(tmp_path, "cell-load-moved"))
+    path = definition / "domains" / "power" / "components.yaml"
+    document = yaml.safe_load(path.read_text())
+    heater = next(row for row in document["loads"] if row["id"] == "csm_heaters")
+    heater["demand_w"] = 320
+    path.write_text(yaml.safe_dump(document, sort_keys=False, width=100))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "fuel_cell_power_w.provenance.derivation" in result.stdout, result.stdout[-900:]
+    assert "bus_a_load_w.provenance.derivation" in result.stdout, (
+        "the load and the generation are one quantity, so a moved load has to refuse both"
+    )
 
 
 def test_the_two_cabins_compute_their_pressure_by_one_law():
@@ -15856,7 +15912,10 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # 29 -> 30 in round 50, when `bus_a_load_w`'s relation became arithmetic over the load inventory
     # and `cabin_dp_psi`'s became a conversion of the pressure the eclss domain now computes: the sum
     # every electrical reader needs, and the structural face of a life-support quantity.
-    assert len(advanced) == 31, sorted(advanced)
+    # 31 -> 32 in round 51, when `fuel_cell_power_w`'s became the same sum read the other way: the
+    # cell generates what the bus draws, and its own note had said "a function of … and load" all
+    # along.
+    assert len(advanced) == 32, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares.
     assert values["cabin_heat_csm"] == 733.0
