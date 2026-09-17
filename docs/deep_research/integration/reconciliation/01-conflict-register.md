@@ -382,6 +382,40 @@ suit circuit should have its own published *indication* band (rather than a desi
 chosen width) is open, and a CSM suit-circuit flow indication in the Apollo Operations Handbook or
 the ECS specification would close it.
 
+### C-28 · The coolant's return, and a band that put a healthy loop over its own warning
+
+| Source | Says |
+|---|---|
+| `apollo_diode.md:102` | `thermal.coolant_return_c`, °C, recommended range **5–15 `Sim`**, precision 0.1, 2 Hz, event **>20** |
+| `csm_ecs_study_guide.pdf` **PDF p. 74** | the glycol temperature-control valve: "if the temperature is less than 45 F the glycol temp control valve will … to mix with **the returning cold glycol** to obtain 45 F at the inlet to the evaporator"; also "**167 LBS/HR**. 45 F water-glycol entering the heat exchanger assembly", and the evaporator's outlet "maintained at 46 F" |
+| `vehicle.yaml#thermal.loops.loop_primary` (before this round) | `supply_c: 7.2`, `return_c: [5, 15]`, `evaporator_outlet_c: [2.8, 7.2]`, `radiator_inlet_c: [22.8, 23.9]`, `evaporator_actuation_c: 9.4` |
+| `domains/thermal/points.yaml` (before this round) | `thermal.coolant_return_c`'s derivation: *"the loop temperature after the coldplates, before the radiator"*; `thermal.radiator_inlet_c`'s: *"the loop temperature entering the radiator"* |
+
+**Resolved: the prose was wrong about which station the return is, and no figure changed.** The two
+rows name one station — the line leaving the coldplates — while the bands they are held to are
+sixteen kelvin apart: the return's `[5, 15]` with a `>20` warning, and the published radiator inlet's
+`[22.8, 23.9]`. If they were one station, a healthy vehicle in lunar orbit would trip
+`coolant_return_high` on every pass, and the alarm would be the corpus's own. The study guide's
+sentence says which sense of "return" the vehicle uses: the returning **cold** glycol, mixed up to
+45 F at the evaporator inlet — the line coming back *through the radiator*, not the one leaving the
+coldplates. So the loop field is renamed `radiator_outlet_c` (band unchanged), the two channel
+descriptions name their stations, the heat load is `radiator_inlet − supply` rather than
+`return − supply`, and `check_thermal_bindings` refuses the three shapes that let the two names
+collapse: a post-load band starting below the loop's own supply, a radiator outlet warmer than the
+radiator inlet, and a loop carrying both `return_c` and a named radiator station.
+
+**What the round could not settle, and did not assume.** Three things, each with the page that would
+close it. (1) The loop's heat balance is still owed — a `specific_heat_j_per_kg_k` (the corpus's
+relation says "about 3,600", a mass-fraction average of 62.5/37.5 glycol-water gives ≈3.08 × 10³,
+and neither is a document) and a state holding the loop's collected load; the `Sim` band was
+therefore left exactly as the diode publishes it. (2) `Apollo_Block_II_ECS_Components.pdf` lists a
+**Primary** and a **Secondary** Glycol Evaporator, and the study guide's p. 74 gives **167 lb/hr**
+where the corpus carries TN D-6718's **200 lb/hr** for the primary: whether those are two circuits or
+one circuit at two points is not settled by anything read here, and the loop list is the place the
+answer lands. (3) The study guide's "46 F as sensed at the outlet of the evaporator" is 0.6 K above
+the top of the corpus's `evaporator_outlet_c: [2.8, 7.2]`, which is TN D-6718's 37–45 F range — a
+deadband or a second source, and the AOH SECS schematic is what would say which.
+
 ---
 
 ## D — decisions

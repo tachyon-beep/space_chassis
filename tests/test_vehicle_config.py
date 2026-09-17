@@ -3858,6 +3858,85 @@ def test_the_loops_fluid_is_one_substance_described_three_ways(tmp_path):
     )
 
 
+def test_a_loop_s_stations_are_ordered_along_the_path_the_coolant_takes(tmp_path):
+    """One band, two names, and a healthy vehicle tripping its own warning.
+
+    `vehicle.yaml#thermal.loops.loop_primary` carried `return_c: [5, 15]` beside
+    `radiator_inlet_c: [22.8, 23.9]`, and `domains/thermal/points.yaml` described the two channels
+    that read them as the *same station* — "the loop temperature after the coldplates, before the
+    radiator" and "the loop temperature entering the radiator". If they were one station, a vehicle
+    at the published radiator inlet (73-75 F, `historical`, TN D-6718 and NR) would sit above the
+    return channel's own `>20` C warning for the whole of lunar orbit, and the alarm would be the
+    corpus's own. Nothing compared two fields of one loop, so both readings stood.
+
+    The vehicle's own vocabulary says which sense of "return" it uses.
+    `csm_ecs_study_guide.pdf` **PDF p. 74**: *"if the temperature is less than 45 F the glycol temp
+    control valve will … to mix with the returning cold glycol to obtain 45 F at the inlet to the
+    evaporator"* — the returning glycol is the line coming back **through the radiator**, not the
+    one leaving the coldplates. So the band was never wrong; its name was: the field is
+    `radiator_outlet_c` now, the heat load is `radiator_inlet − supply` rather than
+    `return − supply`, and the two channels name their stations.
+
+    Three rules hold the path, because the loop's own geometry forces them: the loads only add heat
+    (a post-load band cannot start below the supply), the radiator only rejects it (its outlet
+    cannot be warmer than its inlet), and a loop that names its radiator's stations may not also
+    carry `return_c` — two different things return on such a loop, and that ambiguity is the defect.
+    The LM's loop keeps its `return_c`: it has no radiator, so the name has one meaning there.
+    """
+    vehicle = "vehicle.yaml"
+
+    def refusal(name: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(tmp_path / name)
+        path = definition / vehicle
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        result = run_linter(definition)
+        assert result.returncode == 1, result.stdout[-900:]
+        assert needle in result.stdout, f"{needle!r} did not fire:\n{result.stdout[-1500:]}"
+
+    # The corpus first: the band is on the station the guide's sentence puts it on, and the
+    # radiator's drop is a drop.
+    loops = {
+        str(row["id"]): row
+        for row in yaml.safe_load((VEHICLE / vehicle).read_text())["thermal"]["loops"]
+    }
+    primary = loops["loop_primary"]
+    assert primary["radiator_outlet_c"] == [5, 15]
+    assert primary["radiator_inlet_c"] == [22.8, 23.9]
+    assert primary["radiator_outlet_c"][1] < primary["radiator_inlet_c"][0], primary
+    assert "return_c" not in primary, primary
+
+    # 1. The old name back: `return` beside a named radiator station is the ambiguity itself.
+    refusal(
+        "renamed-back",
+        "        radiator_outlet_c: [5, 15]\n",
+        "        return_c: [5, 15]\n",
+        "declares a return on a loop that names its radiator's stations",
+    )
+    # 2. A post-load band that starts below the supply: the loads would be cooling the loop.
+    refusal(
+        "cold-inlet",
+        "        radiator_inlet_c: [22.8, 23.9]\n",
+        "        radiator_inlet_c: [5, 23.9]\n",
+        "entering the radiator cannot be colder than the one leaving the evaporator",
+    )
+    # 3. An outlet warmer than the inlet: a radiator that heats the loop.
+    refusal(
+        "warm-outlet",
+        "        radiator_outlet_c: [5, 15]\n",
+        "        radiator_outlet_c: [5, 30]\n",
+        "a radiator that warms the loop",
+    )
+    # 4. And the LM, whose return *is* its post-load station: legal there, still ordered.
+    refusal(
+        "lm-return",
+        "        return_c: [8, 20]\n",
+        "        return_c: [1, 20]\n",
+        "starts at 1 C, below this loop's own supply of 7.2 C",
+    )
+
+
 def test_a_zone_is_one_compartment_in_two_files(tmp_path):
     """Two files list the same six zones, and until this round they agreed on almost nothing.
 
@@ -8224,9 +8303,9 @@ def test_the_cabin_equilibrium_is_inside_its_own_limit_band(tmp_path):
     definition = copy_definition(tmp_path / "cold")
     path = definition / "vehicle.yaml"
     text = path.read_text()
-    anchor = "        supply_c: 7.2\n        return_c: [5, 15]"
+    anchor = "        supply_c: 7.2\n        # **`return_c` was this field's name until round 37"
     assert anchor in text, "the fixture no longer matches loop_primary"
-    path.write_text(text.replace(anchor, "        supply_c: 1.0\n        return_c: [5, 15]", 1))
+    path.write_text(text.replace(anchor, "        supply_c: 1.0\n        # **`return_c` was this field's name until round 37", 1))
 
     result = run_linter(definition)
     assert result.returncode == 1
@@ -15669,12 +15748,14 @@ def test_a_prose_row_says_whether_it_is_a_chore_or_a_debt(tmp_path):
     """A row may declare itself `owed`, and the count of them is held to the debt's sentence.
 
     The corpus's prose derivations were two kinds wearing one name: an expression nobody had written
-    yet, and one whose **terms do not exist**. `thermal.coolant_return_c` is the second — return minus
-    supply is the vehicle's heat load in one subtraction, the rise is
-    `load_w / (mass_flow_kg_s * c_p)`, the flow is a reading, and the fluid's specific heat and the
-    loop's collected load are declared nowhere. Converting that row the obvious way published the
-    *supply* under the return's name, which is exactly what the two rows did until this round: they
-    read one state and claimed two different temperatures.
+    yet, and one whose **terms do not exist**. `thermal.coolant_return_c` is the second — the drop
+    across the radiator is the vehicle's heat load in one subtraction, the fall is
+    `rejection_w / (mass_flow_kg_s * c_p)`, the flow is a reading, and the fluid's specific heat and
+    the loop's collected load are declared nowhere. (Until round 37 this sentence said *return minus
+    supply*, which named the wrong station: the return is the coolant coming back from the radiator,
+    and the line leaving the coldplates is the radiator inlet.) Converting that row the obvious way
+    published the *supply* under the return's name, which is exactly what the two rows did until that
+    round: they read one state and claimed two different temperatures.
 
     So the row says so in an `owed` field — a declaration the linter reads, not a comment — and the
     count of them goes into the `presentation.yaml` sentence with every other figure this check holds.
@@ -15696,7 +15777,8 @@ def test_a_prose_row_says_whether_it_is_a_chore_or_a_debt(tmp_path):
     both = fixture(
         "owed-and-evaluable",
         "  - channel: thermal.coolant_return_c\n    from: coolant_loop_t\n    layer: measurement\n"
-        '    derivation: "the loop temperature after the coldplates, before the radiator"\n',
+        '    derivation: "the coolant returning from the radiator to the evaporator, after the'
+        ' radiator has rejected the load"\n',
         "  - channel: thermal.coolant_return_c\n    from: coolant_loop_t\n    layer: measurement\n"
         "    derivation:\n      expression: temperature_k - kelvin_offset\n      inputs:\n"
         "        temperature_k: coolant_loop_t\n        kelvin_offset: 273.15\n",
