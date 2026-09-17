@@ -7730,7 +7730,9 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 18 -> 14 in round 18 (four lags with dimensionally-wrong drivers), 14 -> 23 in round 20: the
     # plant now evaluates an `algebraic` state's declared `derivation`, so thirteen relations the
     # corpus already states are ready rather than owing code.
-    assert len(buckets["ready"]) == 23
+    # 23 -> 27 in round 22: the value space is keyed by state, so the states on a shared node that
+    # the map could not hold are advanceable.
+    assert len(buckets["ready"]) == 27
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -7743,8 +7745,9 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # `lm_propulsion_rcs_study_guide.pdf` p. 89, and landing them put the three back in the bucket
     # they belong to. The same three left `value`.
     # 84 -> 75 in round 20: the nine algebraic states whose derivation the plant now evaluates left
-    # this bucket, and the four on shared nodes that the map cannot hold entered it.
-    assert len(buckets["rule"]) == 75, "just over half the vehicle is domain code"
+    # this bucket, and the four on shared nodes that the map cannot hold entered it. 75 -> 71 in
+    # round 22, when the key space stopped being the reason those four were here.
+    assert len(buckets["rule"]) == 71, "just over half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -7776,7 +7779,9 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 18 -> 14 in round 18 (four lags with dimensionally-wrong drivers), 14 -> 23 in round 20: the
     # plant now evaluates an `algebraic` state's declared `derivation`, so thirteen relations the
     # corpus already states are ready rather than owing code.
-    assert len(buckets["ready"]) == 23
+    # 23 -> 27 in round 22: the value space is keyed by state, so the states on a shared node that
+    # the map could not hold are advanceable.
+    assert len(buckets["ready"]) == 27
 
 
 def test_the_plant_reports_the_build_order():
@@ -8565,6 +8570,7 @@ def test_every_stock_declares_where_it_starts():
     # the map could not say: it held `values["internal"]` as a single slot, so `initial_values` and
     # `step` both dropped it and six declared starting values were read by nothing.
     declared = [s for s in stocks if isinstance(s.spec.get("initial"), (int, float))]
+    declared_ids = {s.id for s in declared}
     # 16 -> 18 when the two propellant stocks stopped owing their `initial`: `prop_main_kg` is
     # the SPS's load and `prop_rcs_kg` the three RCS loads summed, both `derived` now. 18 -> 24
     # when the two cabins' six gas stocks landed behind them: four `derived` from a declared partial
@@ -8581,7 +8587,11 @@ def test_every_stock_declares_where_it_starts():
     # `lm_cabin_atm` were already keys because each node's *oxygen* was declared, and four stocks
     # share each of those keys, so the map holds the last of them and six new values are invisible
     # here. The per-stock figures are the round-8 closure test's business rather than this count's.
-    assert len(on_nodes) == 13, f"{len(on_nodes)} node stocks carry a value"
+    # **Round 22's key space: a state key for every stock, a node key only where the node is
+    # single-state.** So this counts node keys, and the number it counts is no longer the number of
+    # stocks: thirteen nodes carry one stock each and keep their node key, the rest are states on
+    # shared nodes and are addressable by state id alone.
+    assert len(on_nodes) == 36, f"{len(on_nodes)} node keys carry a value"
     assert len(seeded["internal"]) == 6, sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
@@ -8591,10 +8601,14 @@ def test_every_stock_declares_where_it_starts():
     declared_nodes = {
         str(s.node) for s in stocks if isinstance(s.spec.get("initial"), (int, float))
     }
-    assert declared_nodes <= set(seeded), sorted(declared_nodes - set(seeded))
-    assert len(declared) > len(seeded), (
-        "if the counts ever match again, the map has stopped sharing keys and this test's comment "
-        "is the thing to re-read"
+    # **Round 22 changed what the map's keys are.** They are state ids now, plus a node alias where
+    # the node carries one state — so a *stock* is always addressable by its own id, and a stock on a
+    # shared node is addressable *only* that way: `cabin_atm` is no longer a key at all, which is the
+    # fix rather than a loss. The invariant that survives is the one that matters: every declared
+    # stock has an entry under its own id.
+    assert declared_ids <= set(seeded), sorted(declared_ids - set(seeded))
+    assert {"cabin_atm", "lm_cabin_atm"} & set(seeded) == set(), (
+        "a node carrying four gas stocks must not be a key: one value cannot mean four"
     )
     # The ones the corpus can supply, and the numbers it supplies them with. The last is the
     # battery's charge, which stopped being owed in this round: 3,360 Wh of entry cells times
@@ -14348,7 +14362,7 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     gaps: list = []
     values = plant.step(world, plant.initial_values(world), 1.0 / 50.0, gaps)
     advanced = {s.id for s in world.states} - {g.state.id for g in gaps}
-    assert len(advanced) == 17, sorted(advanced)
+    assert len(advanced) == 19, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares.
     assert values["cabin_heat_csm"] == 733.0
@@ -14359,12 +14373,19 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # evaluating the relation rather than refusing it.
     assert "zone_csm_cabin_t" in advanced and "zone_lm_cabin_t" in advanced
 
-    # The shared-node refusal, by name, for a stock whose node carries four others.
-    reasons = {g.state.id: (g.where, g.owed) for g in gaps}
-    where, owed = reasons["csm_cabin_o2_kg"]
-    assert where.endswith("csm_cabin_o2_kg"), where
-    assert "keyed by node" in owed and "another state's number" in owed, owed
-    assert "csm_cabin_h2o_kg" in owed, owed
+    # **Round 22 keyed the value space by state, so the gases are the right gases.** This test used
+    # to assert the shared-node refusal by name — `csm_cabin_o2_kg` came out as the water vapour's
+    # mass — and what follows is what replaced it.
+    assert values["csm_cabin_o2_kg"] == 2.528302
+    assert values["csm_cabin_h2o_kg"] == 0.05315987
+    assert values["lm_cabin_o2_kg"] == 2.87112285
+    # A node carrying one state keeps its node key, because every reader asks for it that way; a node
+    # carrying five has no node key at all, because there is no single value it could mean.
+    assert values["cabin_heat_csm"] == 733.0
+    assert "cabin_atm" not in values
+    # And the sentinel's sub-map is merged rather than replaced, so its six accumulators all survive
+    # a tick — the same defect as the node collision, one level down.
+    assert len(values["internal"]) == 6
 
 
 def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes():
@@ -14405,4 +14426,4 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
     # And the debt states both figures, because a number in prose with no reader is the next round's
     # finding — this is that reader.
     entry = next(d for d in presentation["open_debts"] if "channel_id" in d)
-    assert "99 of the 142" in entry and "four gas masses" in entry
+    assert "142 published points" in entry and "Round 22 keyed the plant's value space" in entry
