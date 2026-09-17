@@ -424,6 +424,36 @@ the guidance and navigation equipment"*. The corpus says so now: every loop decl
 the top of the corpus's `evaporator_outlet_c: [2.8, 7.2]`, which is TN D-6718's 37–45 F range — a
 deadband or a second source, and the AOH SECS schematic is what would say which.
 
+### C-29 · The loop's heat load: the electrical demand against the rejection requirement
+
+| Source | Says |
+|---|---|
+| `domains/power/components.yaml#load_budget` and the zone heat rates summed in round 41 | the CSM's demand is **1,723 W** — `loop_primary_load_w`, the sum over the zones that name the loop |
+| TN D-6718 **PDF p. 17** | the Blk I radiator's "3700-Btu/hr capability as compared to the **4850-Btu/hr requirement** for an average earth-orbital environment" = **1,421.4 W** |
+| TN D-6718 **PDF p. 11** and NR | the loop's published flow (200 lb/hr) and its rise (45 °F mixed supply to the 73–75 °F radiator inlet, 28 °F = 15.5556 K) |
+
+**Recorded rather than reconciled, and the arithmetic is why.** `Q = m_dot * c_p * dT` is exact. Over
+the document's own flow and rise, the 4,850 Btu/hr requirement gives `c_p` = **3,626 J/kg·K** — inside
+the range a 62.5/37.5 glycol-water mixture can have, and 0.7 % from the "about 3,600" the corpus
+carried as prose — while the 1,723 W electrical demand gives **4,394 J/kg·K**, above water's 4,182 and
+impossible for any aqueous glycol mixture. So the loop's *thermal* load is not the zones' electrical
+demand, and the 302 W between the two is real: some electrical energy leaves the vehicle without
+becoming heat in a compartment (the S-band amplifier's radiated power, light through the windows), and
+the 4,850 Btu/hr requirement is an average rather than a peak.
+
+**The consequence is a reading, not an error.** With `c_p` = 3,626.1, the loop's inlet is
+`7.2 + 1,723 / (0.0252 x 3,626.1)` = **26.06 °C** at MET 0, above the loop's declared
+`radiator_inlet_c: [22.8, 23.9]` design band and below the channel's own 35 °C caution. The band is
+the design point at which the radiator carries the requirement alone; a vehicle at its full electrical
+demand makes the **evaporator** take the difference, which is what `thermal.evaporator_rejection_w`
+(2,345 W) and the `water_cooling` budget are for.
+
+**What would settle it** is a coolant heat-fraction per load — how much of each load's electrical
+input becomes heat in its compartment rather than leaving as RF or light — or a peak-load figure for
+the lunar mission to set against the earth-orbital average. Neither is in any document read so far;
+both are named here rather than assumed, and `loop_primary_load_w` keeps its meaning (the zones'
+demand) with the gap recorded instead of absorbed.
+
 ---
 
 ## D — decisions

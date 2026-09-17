@@ -8450,6 +8450,86 @@ def test_a_loop_s_collected_load_is_the_sum_over_the_zones_that_name_it(tmp_path
     assert "carry 1007 W between them" in total.stdout
 
 
+def test_the_coolants_specific_heat_is_arithmetic_from_the_loops_own_figures(tmp_path):
+    """The figure the corpus carried as "about 3,600 J/kg-K", and the term nobody could check.
+
+    `coolant_loop_t`'s relation has said "with c_p about 3,600 J/kg-K" since the loop landed, and
+    the round that named the heat balance's missing terms could only repeat it: the rise is
+    `load_w / (m_dot * c_p)`, the flow is a reading, and the property was prose. `Q = m_dot * c_p *
+    dT` is exact, and TN D-6718 publishes all three of the other terms for this loop — the
+    **4,850-Btu/hr requirement** for an average earth-orbital environment (PDF p. 17), the
+    **200 lb/hr** flow (PDF p. 11) and the **45 F to 73-75 F** rise those pages give — so the
+    property is arithmetic: 1,421.4 W over 0.025199576 kg/s and 15.5556 K is **3,626.1 J/kg-K**,
+    inside the range a 62.5/37.5 glycol-water mixture can have and 0.7 % from the prose.
+
+    The declaration is `derived` and `check_thermal_bindings` re-derives it, so the field cannot
+    drift from its own arithmetic. And the conversion it unblocked is the point: with the property
+    declared, `thermal.radiator_inlet_c` is `supply + load_w / (m_dot * c_p)` — the first of the two
+    coolant temperatures that have waited since round 34 — so the frame publishes a number where it
+    published a gap, at 26.06 C.
+
+    That reading is above the loop's **design** band [22.8, 23.9] and below the channel's 35 C
+    caution, which is C-29's subject rather than an error: the band is the point at which the
+    radiator carries the requirement alone, and a vehicle at its full 1,723 W demand makes the
+    evaporator take the difference.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    loop = {str(x["id"]): x for x in vehicle["thermal"]["loops"]}["loop_primary"]
+    requirement = loop["heat_rejection_requirement_w"]
+    rise = loop["thermal_rise_k"]
+    flow = loop["nominal_flow_lb_per_h"]
+    cp = loop["specific_heat_j_per_kg_k"]
+    m_dot = flow * 0.45359237 / 3600
+    # The requirement is the document's 4,850 Btu/hr converted and rounded to a tenth of a watt,
+    # which is the precision it is declared to; the specific heat then follows from it.
+    assert requirement == pytest.approx(4850 * 0.29307107, abs=0.05)
+    assert cp == pytest.approx(requirement / (m_dot * rise), rel=1e-4)
+    # 3,626 is what the prose said "about": 3,600 to within a percent.
+    assert abs(cp - 3600) / 3600 < 0.01
+
+    # The channel that reads it, and the number a tick publishes.
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    world = plant.load_world(VEHICLE)
+    values = plant.step(world, plant.initial_values(world), 1.0 / 50.0, [])
+    frame = plant.emit_frame(
+        world,
+        tick=1,
+        seq=1,
+        boot_id="0" * 32,
+        met_s=0.02,
+        sensor_time_s=0.02,
+        values=values,
+        quality={},
+        phase="translunar_coast",
+        vehicle="csm",
+        state_revision=1,
+    )
+    inlet = frame["values"]["thermal.radiator_inlet_c"]
+    assert inlet == pytest.approx(7.2 + 1723.0 / (0.025199576111111112 * cp), rel=1e-6)
+    assert inlet == pytest.approx(26.06, abs=0.01)
+    # Inside the channel's own range and below its event, which is what makes it a reading.
+    channels = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    row = next(r for rows in channels.values() if isinstance(rows, list)
+               for r in rows if isinstance(r, dict) and r.get("id") == "thermal.radiator_inlet_c")
+    assert row["range"][0] <= inlet <= row["range"][1]
+
+    # A specific heat that disagrees with the loop's own three terms is refused.
+    definition = copy_definition(fixture_dir(tmp_path, "cp"))
+    path = definition / "vehicle.yaml"
+    text = path.read_text()
+    anchor_text = "        specific_heat_j_per_kg_k: 3626.1\n"
+    assert anchor_text in text, "the fixture no longer matches the loop's specific heat"
+    path.write_text(text.replace(anchor_text, "        specific_heat_j_per_kg_k: 3600\n", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "the loop's own published terms give" in result.stdout, result.stdout[-900:]
+
+
 def test_a_loop_declares_whether_it_serves_zones_or_backs_them_up(tmp_path):
     """`loop_secondary` had no declared role, and nothing said what the 167 lb/hr was.
 
@@ -15260,8 +15340,8 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     # count buys over the old gate: a reader is told how far the conversion has got, not that it
     # should not have started.
     assert (
-        "states that 13 of the derived channels carry an evaluable `derivation`, and the registry "
-        "now has 14" in result.stdout
+        "states that 14 of the derived channels carry an evaluable `derivation`, and the registry "
+        "now has 15" in result.stdout
     ), result.stdout[-900:]
 
     # And the corpus's own sentence carries all three figures, which is what makes it a declaration.
@@ -15271,7 +15351,7 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     # state-sourced one, where its unit is its source's.
     assert "only 64 have the state's own unit" in entry
     assert "The other 71 are *derived*" in entry
-    assert "13 of the 71 now carry an evaluable `derivation`" in entry
+    assert "14 of the 71 now carry an evaluable `derivation`" in entry
 
 
 def test_the_frame_publishes_a_derived_channel_at_this_tick_s_own_readings():
@@ -16270,18 +16350,20 @@ def test_a_prose_row_says_whether_it_is_a_chore_or_a_debt(tmp_path):
     )
     assert moved.returncode == 1
     assert (
-        "states that 2 of the prose rows declare in their own `owed` field what would close them, "
-        "and the registry now has 3" in moved.stdout
+        "states that 1 of the prose rows declare in their own `owed` field what would close them, "
+        "and the registry now has 2" in moved.stdout
     ), moved.stdout[-900:]
 
-    # And the corpus's own two: the loop's return and its radiator inlet, each with its sentence.
+    # And the corpus's own one: the loop's return, waiting on the radiator's drop. Its radiator
+    # inlet was the other until round 44 converted it to arithmetic, which is what moved the count
+    # above from 2 to 1 in the first place.
     asserted = yaml.safe_load(points)
     owed = {
         str(row["channel"]): str(row["owed"])
         for row in asserted["points"]
         if isinstance(row, dict) and row.get("owed")
     }
-    assert sorted(owed) == ["thermal.coolant_return_c", "thermal.radiator_inlet_c"], sorted(owed)
+    assert sorted(owed) == ["thermal.coolant_return_c"], sorted(owed)
     for channel, sentence in owed.items():
         assert len(sentence) > 200, (channel, len(sentence))
         assert "what would close it" in sentence.lower() or "would close it" in sentence.lower()
@@ -16336,14 +16418,14 @@ def test_the_mechanical_conversions_land_on_the_declarations_that_sized_them():
     # The nine, by the registry's own count of evaluable derivations.
     lint = run_linter(VEHICLE)
     assert lint.returncode == 0, lint.stdout[-900:]
-    assert "13 of the 71 now carry an evaluable `derivation`" in lint.stdout
+    assert "14 of the 71 now carry an evaluable `derivation`" in lint.stdout
     entry = next(
         d
         for d in yaml.safe_load((VEHICLE / "presentation.yaml").read_text())["open_debts"]
         if "frame publishes channel ids now" in d
     )
-    assert "13 of the 71 now carry an evaluable `derivation`" in entry
-    assert "2 of the prose rows declare in their own `owed` field" in entry
+    assert "14 of the 71 now carry an evaluable `derivation`" in entry
+    assert "1 of the prose rows declares in its own `owed` field" in entry
 
 
 def test_the_mission_s_clock_is_declared_where_its_name_implies(tmp_path):
