@@ -755,13 +755,15 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # into it again, `no_input` moves and this fails.
     #
     # `counted_more` went 30 -> 27 when the RCS cluster's three fields were landed, 27 -> 26 when
-    # the fuel cell's reactant chain closed, and 26 -> 18 when the two cabins' six gas stocks took
-    # their initials: in every case the worklist said a state owed a *value* because its spec held an
+    # the fuel cell's reactant chain closed, 26 -> 18 when the two cabins' six gas stocks took their
+    # initials, and 18 -> 17 when the battery's smallest flow was derived from the smallest load it
+    # feeds: in every case the worklist said a state owed a *value* because its spec held an
     # `UNCONFIGURED`, and `advance` said it was ready because the integrator never read the field.
     # That is this counter's whole purpose, and it is the reason the build order was reporting states
     # as blocked by numbers that were published all along — page 89 of the RCS study guide, page 14 of
-    # the EPS study guide, and the four-gas model's own partial pressures.
-    assert (counted_more, sentinel, no_input) == (18, 13, 0), (counted_more, sentinel, no_input)
+    # the EPS study guide, the four-gas model's own partial pressures, and a load budget's own
+    # `demand_w` field.
+    assert (counted_more, sentinel, no_input) == (17, 13, 0), (counted_more, sentinel, no_input)
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -7724,8 +7726,11 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # Six left `value` in round 8 — the two cabins' gas stocks, which took the initials the four-gas
     # model derived for them — and four of the twenty-four states that *were* blocked by an edge
     # rather than by code came in behind them, because a stock with no level had been reporting the
-    # value debt first. The net move is 27 -> 21 while the debt count fell by six.
-    assert len(buckets["value"]) == 21
+    # value debt first. The net move is 27 -> 21 while the debt count fell by six. 21 -> 20 in round
+    # 14, when `battery_charge_j.min_flow_per_s` was derived from the smallest load on its bus: the
+    # state stopped owing a value and started owing the edge behind it, which is why the *edge*
+    # bucket moved the other way in the same round.
+    assert len(buckets["value"]) == 20
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
@@ -7733,8 +7738,10 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # input declared. `load_shed_class` followed its own edge into the table form.
     # 7 -> 11 in round 8, which is the other half of the value move above: four of the six states
     # that stopped owing a value owe an edge, and those edges were already counted as debts — the
-    # worklist simply could not see them behind the earlier refusal.
-    assert len(buckets["edge"]) == 11
+    # worklist simply could not see them behind the earlier refusal. 11 -> 12 in round 14, when
+    # `battery_charge_j` stopped owing its smallest flow: `E-BUS-BAT` still carries no sensitivity,
+    # and that edge was a debt all along.
+    assert len(buckets["edge"]) == 12
     assert len(buckets["ready"]) == 18
 
 
