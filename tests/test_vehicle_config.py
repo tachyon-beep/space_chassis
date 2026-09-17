@@ -8003,11 +8003,13 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 136 -> 138 in round 41, with the two loops' collected loads: the sums that ingredient fed.
     assert sum(len(rows) for rows in buckets.values()) == 139
 
-    # `ready` means what it says: only the two classes the reference plant can actually advance.
-    # The ready class is no longer only the plant's two integrators: round 20 taught it to evaluate
-    # an `algebraic` state's declared `derivation`, so a relation the corpus already states is
-    # ready. The sentence the bucket prints changed with it — "the two classes" became "the classes".
-    assert {s.method for s in buckets["ready"]} <= {"lag", "stock", "algebraic"}
+    # `ready` means what it says: only the classes the reference plant can actually advance.
+    # It is no longer only the plant's two integrators — round 20 taught it to evaluate an
+    # `algebraic` state's declared `derivation`, so a relation the corpus already states is ready,
+    # and round 49 taught it the **`delay`** ring, so a state whose rule is a `delay_s` is ready too.
+    # The sentence the bucket prints changed with the first of those: "the two classes" became "the
+    # classes". `dynamics` is the one class left, and it is four states.
+    assert {s.method for s in buckets["ready"]} <= {"lag", "stock", "algebraic", "delay"}
     # And a state that owes a rule is never also counted as ready.
     assert not ({s.id for s in buckets["rule"]} & {s.id for s in buckets["ready"]})
 
@@ -8040,7 +8042,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # over the four gas stocks and the zone's temperature *as a reading* — the first derivations
     # in the corpus that read another state's value this tick, and the first whose `computes`
     # field is the state's own id rather than a parameter of it.
-    assert len(buckets["ready"]) == 37
+    assert len(buckets["ready"]) == 38
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -8065,7 +8067,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # and now owes the driver that would advance it, which is domain code.
     # 68 -> 66 in round 47, the other half of the move above: the two pressures left this bucket
     # for `ready` without the rule layer's count changing anywhere else.
-    assert len(buckets["rule"]) == 65, "just under half the vehicle is domain code"
+    assert len(buckets["rule"]) == 64, "just under half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -8363,6 +8365,128 @@ def test_the_lag_integrator_applies_the_conversion_its_edge_declares():
     # what it lacks is the propellant flow to relax toward, not the code that would relax it.
     assert "thrust_main_n" in {s.id for s in buckets["edge"]}
     assert "thrust_main_n" not in {s.id for s in buckets["rule"]}
+
+
+def test_the_delay_integrator_hands_back_what_entered_one_pipe_ago(tmp_path):
+    """The seventh method, which the reference plant could not advance at all.
+
+    `plant.md` §3 grew a seventh class when the first transport delay landed, and its two
+    implementation constraints are stated there as non-negotiable: **a ring, not a chain of small
+    nodes**, and **indexed by tick, not by accumulated wall time** — because the delay is part of the
+    state, so it is part of the snapshot and the compare-point hash, and a delay stored as a float
+    deadline is a replay divergence waiting for a slow machine.
+
+    The corpus's own delay is `loop_transport_t`, and it is the *wrong* one to observe the ring with:
+    its driver is `coolant_supply_t`, which nothing advances yet, so the pipe's contents never change
+    and a broken ring would look exactly like a working one. So the ring is tested where it can be
+    seen — a hand-built world with a driver this test drives, and a **`None` slot for a tick that has
+    not happened yet**, which is the difference between a pipe full of 0 K and a pipe that is empty.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    def world(delay_s: float, initial: float = 100.0):
+        state = plant.State(
+            id="transport_t",
+            domain="thermal",
+            node="transport",
+            method="delay",
+            unit="K",
+            spec={"id": "transport_t", "method": "delay", "node": "transport", "unit": "K",
+                  "delay_s": delay_s, "initial": initial},
+        )
+        edge = plant.Edge(
+            id="E-TRANSPORT",
+            source="source",
+            target="transport",
+            kind="delay",
+            sensitivity={"value": 1.0, "unit": "K per K", "basis": "derived", "at": "nominal"},
+        )
+        return plant.World(
+            root=VEHICLE,
+            states=[state],
+            edges=[edge],
+            back_edges=set(),
+            schedule=["transport"],
+            nodes={"transport": {"unit": "K", "kind": "state"},
+                   "source": {"unit": "K", "kind": "state"}},
+            channels={},
+            frame_fields=[],
+            verbs={},
+            documents={},
+            advance_order={"transport": ["transport_t"]},
+        )
+
+    w = world(delay_s=1.0)  # one second at 50 Hz
+    values: dict = {"transport_t": 100.0}
+    seen = []
+    for tick in range(1, 161):
+        # The driver steps every ten ticks, so a working ring reproduces a staircase fifty ticks
+        # late — and a ring that is off by one tick, or that reads before it writes, cannot.
+        values = {**values, "source": 100.0 + 10.0 * ((tick - 1) // 10)}
+        values = {**values, **plant.advance(w, w.states[0], values, 0.02)}
+        seen.append(values["transport_t"])
+    # The first fifty ticks are the pipe filling: nothing has travelled the whole length yet, so the
+    # state holds its declared `initial` — which for a transport line is the right answer rather
+    # than a fallback, and is what the corpus's own `initial_provenance` says.
+    assert seen[:50] == [100.0] * 50, seen[:52]
+    # And from the fiftieth tick on, it is exactly what entered fifty ticks ago.
+    for index in range(50, 160):
+        entered_at = 100.0 + 10.0 * ((index - 50) // 10)
+        assert seen[index] == entered_at, (index, seen[index], entered_at)
+
+    # The ring's depth is `delay_s / dt`, and a delay that is not a whole number of ticks is a
+    # refusal rather than a rounding: `plant.md` §3 indexes by tick, so the corpus has to say which.
+    w = world(delay_s=0.025)
+    try:
+        plant.advance(w, w.states[0], {"transport_t": 100.0, "source": 100.0}, 0.02)
+    except plant.Unconfigured as exc:
+        assert "not a whole number" in str(exc.what), exc.what
+    else:
+        raise AssertionError("a delay of 1.25 ticks was rounded rather than refused")
+
+    # And a delay shorter than one tick is not a delay: reading the driver straight through would be
+    # a lag with tau = 0 wearing this class's name.
+    # A `dt` a whole number of times larger, so the residence is a *fraction* of a tick rather than
+    # a fraction of one that the whole-number rule catches first.
+    w = world(delay_s=0.02)
+    try:
+        plant.advance(w, w.states[0], {"transport_t": 100.0, "source": 100.0}, 0.05)
+    except plant.Unconfigured as exc:
+        assert "not a delay" in str(exc.what), exc.what
+    else:
+        raise AssertionError("a sub-tick delay was read straight through")
+
+    # And the linter refuses a delay whose edge carries a scale, so a corpus that would make the ring
+    # a record of something the pipe never carried is refused before it runs.
+    scaled = copy_definition(fixture_dir(tmp_path, "scaled-delay"))
+    path = scaled / "coupling.yaml"
+    text = path.read_text()
+    old_edge = '    sensitivity: {value: 1.0, unit: "K per K", basis: derived, relation: "the coupling is the signal itself; one unit in, one unit out", at: nominal,\n    delay_ticks: UNCONFIGURED,'
+    assert old_edge in text, "the fixture no longer matches E-COOL-TRANSPORT"
+    path.write_text(
+        text.replace(
+            old_edge,
+            '    sensitivity: {value: 0.9, unit: "K per K", basis: derived, relation: "a fixture", at: nominal,\n    delay_ticks: UNCONFIGURED,',
+            1,
+        )
+    )
+    result = run_linter(scaled)
+    assert result.returncode == 1
+    assert "into a `delay` state" in result.stdout, result.stdout[-900:]
+    assert "record of a quantity the pipe never carried" in result.stdout
+
+    # The corpus's own delay composes, and its real pipe is 1,042 s = 52,100 ticks.
+    corpus = plant.load_world(VEHICLE)
+    state = next(s for s in corpus.states if s.id == "loop_transport_t")
+    assert state.method == "delay" and state.spec["delay_s"] == 1042
+    assert float(state.spec["delay_s"]) / 0.02 == 52100.0
+    values = plant.step(corpus, plant.initial_values(corpus), 0.02, [])
+    assert values["loop_transport_t"] == 280.35
+    assert len(values["loop_transport_t__delay"]["slots"]) == 52100
 
 
 def test_the_plant_reports_the_build_order():
@@ -15590,7 +15714,9 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # 27 -> 28 in round 48, when `propellant_estimate`'s relation became arithmetic over the
     # impulse stock: `100 * (1 - impulse_total / capacity)`, with the capacity C-26 had just
     # re-derived. Same class, one more state, and the reading is a live stock.
-    assert len(advanced) == 28, sorted(advanced)
+    # 28 -> 29 in round 49, with `loop_transport_t`: the seventh integrator class, which the plant
+    # refused outright until the round that gave it a ring.
+    assert len(advanced) == 29, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares.
     assert values["cabin_heat_csm"] == 733.0
