@@ -2677,8 +2677,8 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "declares 148 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
     assert "derived here as 20 unperturbed, 15 of them `service`" in result.stdout
-    # One block deleted is one debt added: the corpus stands at 263, so the ablation is 264.
-    assert "COMPOSES, with 264 declared debt(s)." in result.stdout
+    # One block deleted is one debt added: the corpus stands at 262, so the ablation is 263.
+    assert "COMPOSES, with 263 declared debt(s)." in result.stdout
 
     # The failure chains, which are owed *and* refused: the README's front table names fifteen.
     definition = copy_definition(fixture_dir(tmp_path, "no-chains"))
@@ -2700,7 +2700,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "declares no coverage block. The domain publishes 15 channel(s)" in result.stdout
     assert "no fault perturbs 1 of them" in result.stdout
-    assert "COMPOSES, with 264 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 263 declared debt(s)." in result.stdout
 
     # The filter's rates. The block is nested rather than top level, and the obligation is C-07's
     # rather than this check's — which is why the first reading of it in this round was wrong.
@@ -2714,7 +2714,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "domains/gnc/components.yaml:estimator.sub_stepping: is not declared" in result.stdout
     assert "C-07's resolution requires the interface" in result.stdout
-    assert "COMPOSES, with 264 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 263 declared debt(s)." in result.stdout
 
 
 def test_the_readme_s_chain_count_is_held_against_the_file(tmp_path):
@@ -5931,6 +5931,9 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
         "zone_csm_cabin_t": "tau_s",
         "zone_lm_cabin_t": "tau_s",
         "zone_csm_avionics_t": "tau_s",
+        # The fourth heat rate, which is a sum of three loads like the other three — the map names
+        # the first of its inputs so the test reads the same declaration the derivation does.
+        "avionics_bay_heat_w": "csm_imu",
     }
     seen = {}
     for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
@@ -6230,8 +6233,8 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    # The corpus stands at 263; removing the obligation takes the headline back to 262.
-    assert "with 262 declared debt(s)" in result.stdout
+    # The corpus stands at 262; removing the obligation takes the headline back to 261.
+    assert "with 261 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6286,7 +6289,9 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
                 declared.append((path.parent.name, str(state["id"]), state, prov))
     # 13 -> 16 with the three thermal zones whose time constant stopped being a sentence:
     # `tau = m x c_p / G` over three declared fields, re-evaluated every run.
-    assert len(declared) == 16, f"{len(declared)} declared arithmetics"
+    # 16 -> 17 in round 40, with the avionics bay's heat rate: the fifth heat rate, and the first
+    # derived state the corpus declares on the `internal` sentinel.
+    assert len(declared) == 17, f"{len(declared)} declared arithmetics"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
     assert subjects == [
@@ -6599,7 +6604,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 264 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 263 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6705,7 +6710,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 264 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 263 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -7928,7 +7933,9 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     assert set(seen) == {s.id for s in world.states}, "a state is classified by nothing"
     # 134 -> 135 in round 32, with the oxygen supply tank's pressure state: the channel that
     # publishes it had a mass for a source, and the vehicle had no tank to read.
-    assert sum(len(rows) for rows in buckets.values()) == 135
+    # 135 -> 136 in round 40, with the avionics bay's heat rate: the one heated zone whose 360 W no
+    # state carried, and the ingredient the loop's collected load was missing.
+    assert sum(len(rows) for rows in buckets.values()) == 136
 
     # `ready` means what it says: only the two classes the reference plant can actually advance.
     # The ready class is no longer only the plant's two integrators: round 20 taught it to evaluate
@@ -7955,7 +7962,12 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # corpus already states are ready rather than owing code.
     # 23 -> 27 in round 22: the value space is keyed by state, so the states on a shared node that
     # the map could not hold are advanceable.
-    assert len(buckets["ready"]) == 27
+    # 27 -> 28 in round 40: `avionics_bay_heat_w` is the fifth heat rate and the first state on the
+    # `internal` sentinel whose rule the corpus *declares* — a `derivation` over three dotted paths
+    # that the plant evaluates in a real tick. The sentinel routing ran before the arithmetic test,
+    # so the one rule that asks "is the rule already in the configuration?" was unreachable for
+    # every state on the sentinel, and this one was filed as owing domain code that exists.
+    assert len(buckets["ready"]) == 28
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -8019,12 +8031,6 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # carries no sensitivity were being reported as an edge debt, and the starting value they also
     # owe is now named first.
     assert len(buckets["edge"]) == 14
-    # 18 -> 14 in round 18 (four lags with dimensionally-wrong drivers), 14 -> 23 in round 20: the
-    # plant now evaluates an `algebraic` state's declared `derivation`, so thirteen relations the
-    # corpus already states are ready rather than owing code.
-    # 23 -> 27 in round 22: the value space is keyed by state, so the states on a shared node that
-    # the map could not hold are advanceable.
-    assert len(buckets["ready"]) == 27
 
 
 def test_the_plant_reports_the_build_order():
@@ -8036,9 +8042,58 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "135 states, by what blocks them" in result.stdout
+    assert "136 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
+
+
+def test_a_declared_rule_is_ready_even_on_the_internal_sentinel(tmp_path):
+    """The worklist's one rule about arithmetic was unreachable for every state on the sentinel.
+
+    `build_order` asks "is the rule already in the configuration?" — an `algebraic` state carrying a
+    `derivation` over named inputs is *ready*, because the plant evaluates it in a real tick. That
+    test sat below the `internal` routing and the routing `continue`s, so for a state on the sentinel
+    the answer was always "owes a rule: domain code".
+
+    `avionics_bay_heat_w` is what exposed it: the avionics bay's 360 W, the fifth heat rate, summed
+    from the three loads `heat_inputs.csm_avionics_bay` assigns. It is on the sentinel deliberately —
+    a heat-rate edge landing on `coldplate_t` would become that lag's canonical driver and relax a
+    kelvin state toward a watt — and its rule is a `derivation` the linter re-derives and the plant
+    evaluates. The worklist filed it under code that exists, which is the one thing the bucket must
+    not do.
+
+    The fixture is the negative: strip the derivation from a copy and the state goes back to owing a
+    rule, because then there genuinely is code to write.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    state = next(s for s in world.states if s.id == "avionics_bay_heat_w")
+    assert state.node == "internal", state.node
+    assert state.method == "algebraic"
+    derivation = (state.spec.get("provenance") or {}).get("derivation")
+    assert isinstance(derivation, dict) and derivation.get("expression"), derivation
+    buckets = plant.build_order(world)
+    assert state.id in {s.id for s in buckets["ready"]}, [s.id for s in buckets["rule"]][:5]
+    # And the claim the bucket makes: the plant really does compute it, in one tick, from those
+    # paths — 360 W, the sum `check_thermal_heat_inputs` also holds against the zone's loads.
+    values = plant.step(world, plant.initial_values(world), 0.02, [])
+    assert values["avionics_bay_heat_w"] == 360.0, values.get("avionics_bay_heat_w")
+
+    # The negative, in a broken copy: no derivation, no ready — the state owes the code after all.
+    definition = copy_definition(fixture_dir(tmp_path, "no-derivation"))
+    path = definition / "domains" / "thermal" / "components.yaml"
+    text = path.read_text()
+    start = text.index("  - id: avionics_bay_heat_w\n")
+    end = text.index("  - id: zone_csm_cabin_t\n")
+    block = text[start:end]
+    lines = block.split("\n")
+    first = next(i for i, line in enumerate(lines) if line == "      derivation:")
+    after = next(i for i in range(first + 1, len(lines)) if lines[i].strip() and not lines[i].startswith("        "))
+    stripped = "\n".join(lines[:first] + lines[after:])
+    assert stripped != block, "the fixture no longer matches the heat rate's derivation"
+    path.write_text(text[:start] + stripped + text[end:])
+    broken = plant.build_order(plant.load_world(definition))
+    assert "avionics_bay_heat_w" in {s.id for s in broken["rule"]}, "a state with no rule was called ready"
 
 
 def test_a_state_with_an_outbound_edge_and_no_driver_is_reported():
@@ -8196,10 +8251,12 @@ def test_every_heated_zone_declares_the_state_that_carries_its_heat(tmp_path):
     that does not resolve is refused, an absent one is a debt, and two zones may not name one state
     (a loop's collected load sums its zones, so a shared state would count the same watts twice).
 
-    The avionics bay is the one that is owed, and it is the ingredient the loop's heat balance is
-    missing: `heat_inputs.csm_avionics_bay` assigns the IMU, the guidance computer and the
-    instrumentation, and no state sums them. That debt is in the corpus's own count — the fixture
-    that removes the link from a zone that *has* a state is the one that must be refused.
+    The avionics bay was the one that was owed — `heat_inputs.csm_avionics_bay` assigns the IMU, the
+    guidance computer and the instrumentation, and no state summed them — and the debt is
+    **closed**: `avionics_bay_heat_w` carries the 360 W, and the fixtures below are what keep the
+    rule honest now that the corpus no longer trips it. An absent link is still a debt (the checker
+    is exercised by a fixture that removes one), a link that does not resolve is still a refusal,
+    and two zones still may not share a state.
     """
     thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
     vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
@@ -8210,31 +8267,27 @@ def test_every_heated_zone_declares_the_state_that_carries_its_heat(tmp_path):
     states = {str(s["id"]): s for s in thermal["state"]}
     unheated = {str(k) for k in thermal.get("unheated") or {}}
 
-    # Every heated zone names a loop, and every one but the avionics bay names a state that carries
-    # exactly its own loads.
-    owed = []
+    # Every heated zone names a loop **and** a state that carries exactly its own loads — including
+    # the avionics bay, which was the debt this check reported until the round that landed
+    # `avionics_bay_heat_w` closed it. The fixture below is what keeps the rule itself honest: the
+    # debt is gone from the corpus, not from the check.
     for zone, block in thermal["heat_inputs"].items():
         row = zones[zone]
         assert row["cooled_by"] in loops, zone
+        assert "heat_state" in row, zone
         declared = sum(int(loads[i]["demand_w"] or 0) for i in block["loads"])
-        if "heat_state" not in row:
-            owed.append(zone)
-            continue
         assert states[row["heat_state"]]["total_w"] == declared, zone
-    assert owed == ["csm_avionics_bay"], owed
+    assert zones["csm_avionics_bay"]["heat_state"] == "avionics_bay_heat_w"
     assert zones["csm_service_bay"]["heat_state"] == "service_bay_heat_w"
     assert zones["lm_descent_bay"]["heat_state"] == "descent_bay_heat_w"
     for zone in unheated:
         assert "heat_state" not in zones[zone], zone
 
-    # The debt is in the corpus's own count, in the linter's own words.
+    # The debt is closed, and the check still reports an absent link when one comes back.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 263 declared debt(s)." in intact.stdout
-    assert (
-        "vehicle.yaml#thermal.zones.csm_avionics_bay.heat_state: names no heat-rate state, and "
-        "`heat_inputs.csm_avionics_bay` assigns 3 load(s) summing to 360 W" in intact.stdout
-    ), intact.stdout[-1200:]
+    assert "COMPOSES, with 262 declared debt(s)." in intact.stdout
+    assert "names no heat-rate state" not in intact.stdout
 
     def fixture(name: str, old: str, new: str) -> subprocess.CompletedProcess[str]:
         definition = copy_definition(fixture_dir(tmp_path, name))
@@ -8270,6 +8323,13 @@ def test_every_heated_zone_declares_the_state_that_carries_its_heat(tmp_path):
     )
     assert refused.returncode == 1
     assert "already names. One state cannot be two compartments' heat" in refused.stdout
+
+    # An absent link is a debt rather than a refusal: the zone's heat has no carrier, and the
+    # message names the zone's own figure so the reader can paste it into the state to build.
+    absent = fixture("no-state", "        heat_state: service_bay_heat_w\n", "")
+    assert absent.returncode == 0, absent.stdout[-900:]
+    assert "names no heat-rate state" in absent.stdout, absent.stdout[-900:]
+    assert "summing to 630 W" in absent.stdout
 
     # And the total itself, now that the service bay's is held: 630 W against its four loads.
     definition = copy_definition(fixture_dir(tmp_path, "bay-total"))
@@ -10187,7 +10247,7 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
     assert len(declared) == 10, f"{len(declared)} domains declare one: {[d for d, _ in declared]}"
     # 54 -> 56: the oxygen supply tank's pressure joined the sentinel, and — the same round — the
     # count it is part of is what this assertion exists to notice.
-    assert sum(len(states) for _, states in declared) == 56, "the sentinel's state count moved"
+    assert sum(len(states) for _, states in declared) == 57, "the sentinel's state count moved"
 
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
@@ -10899,7 +10959,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 263 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 262 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -11050,7 +11110,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     # the one heated zone that has none: its 360 W is assigned to a compartment and carried by
     # nothing.
 
-    assert owed == "263", "the view must agree with the headline count"
+    assert owed == "262", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -12641,7 +12701,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 263 declared debt(s)",
+        "COMPOSES, with 262 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12649,7 +12709,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 263 declared debt(s)",
+        "COMPOSES, with 262 declared debt(s)",
         composes=True,
     )
 
@@ -12664,7 +12724,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 264 declared debt(s)" in out, out[-300:]
+    assert "with 263 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12823,7 +12883,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 264 declared debt(s)" in out, out[-400:]
+    assert "with 263 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12970,7 +13030,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 264 declared debt(s)" in out, out[-400:]
+    assert "with 263 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12980,7 +13040,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 263 declared debt(s)",
+        "COMPOSES, with 262 declared debt(s)",
         composes=True,
     )
 
@@ -13122,7 +13182,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 263 declared debt(s)",
+        "COMPOSES, with 262 declared debt(s)",
         composes=True,
     )
 
@@ -13189,7 +13249,7 @@ def test_the_linter_refuses_a_domain_paragraph_with_no_count_clause(tmp_path):
     definition = copy_definition(tmp_path / "no-clause")
     path = definition / "README.md"
     text = path.read_text()
-    old = "20 states, 17 thresholds, 5 verbs, 11 faults"
+    old = "21 states, 17 thresholds, 5 verbs, 11 faults"
     assert old in text, "the fixture no longer matches the thermal clause"
     path.write_text(
         text.replace(old, "twenty states, seventeen thresholds, five verbs, eleven faults", 1)
@@ -14842,7 +14902,9 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     gaps: list = []
     values = plant.step(world, plant.initial_values(world), 1.0 / 50.0, gaps)
     advanced = {s.id for s in world.states} - {g.state.id for g in gaps}
-    assert len(advanced) == 19, sorted(advanced)
+    # 19 -> 20 in round 40, with the avionics bay's heat rate: the fifth heat rate and the first
+    # state on the `internal` sentinel whose rule the corpus declares, so a real tick computes it.
+    assert len(advanced) == 20, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares.
     assert values["cabin_heat_csm"] == 733.0
@@ -14872,7 +14934,9 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # stays there through a tick because its time constant is owed.
     # 10 -> 11 in round 33: the suit circuit's flow is seeded on the sentinel at the ECS guide's
     # published 35 cfm.
-    assert len(values["internal"]) == 11
+    # 11 -> 12 in round 40: `avionics_bay_heat_w` is computed on the sentinel from three dotted
+    # paths, and the merge is what puts it in the sub-map without disturbing the accumulators.
+    assert len(values["internal"]) == 12
 
 
 def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes():
