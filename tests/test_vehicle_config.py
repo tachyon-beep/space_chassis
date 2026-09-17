@@ -2631,6 +2631,118 @@ def test_a_domain_s_coverage_claim_must_be_true(tmp_path):
         )
 
 
+def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
+    """Four fields were consulted only when present, and this folder has a sentence for that.
+
+    `README.md` wrote it when `point_units` was the case: *a field consulted only when it is present
+    cannot report its own absence*. This round asked the same question of **blocks** and found four
+    the linter holds and cannot miss:
+
+      - `channels.yaml#coverage`, the vehicle-wide census — deleting it left 148 registered channels
+        with no claim about them and the same verdict;
+      - `coupling.yaml#failure_chains`, the fifteen stories and every rule that joins them to the
+        fault policies — `if not chains: return` meant the whole block was optional in the code;
+      - a domain's `fault_policy.yaml#coverage`, whose docstring says "every domain makes one" while
+        `if not coverage: return` made it optional, so a domain with no claim read exactly like one
+        whose exception list is empty;
+      - `domains/gnc/components.yaml#estimator.sub_stepping`, which reads like applicability — an
+        estimator that does not sub-step needs no block — until C-07's resolution is read: *"every
+        domain declares its natural rate even though the scheduler ignores it today."*
+
+    The fourth is the round's own mistake, kept here because it is the useful half: the first
+    reading was that the sub-stepping block was a design declaration and its absence therefore not
+    owed, and making it a debt would be inventing an obligation. The register already stated the
+    obligation, and a round that reports absences cannot exempt the one whose obligation it has not
+    looked up.
+
+    Each of the four is a debt rather than a refusal, because nothing about a missing claim is
+    *wrong*: the claim is owed. The debt's words carry the count the linter derives, so the sentence
+    that reports the absence is also the sentence that says what closes it. The failure chains are
+    the case with two halves — the README's front table names them, so deleting them is refused as
+    well as owed — and `test_the_readme_s_chain_count_is_held_against_the_file` is the other half.
+    """
+
+    def without_block(text: str, key: str) -> str:
+        """One top-level block, gone: the `key:` line and everything indented under it."""
+        stripped = re.sub(rf"(?ms)^{key}:\n(?:[ \t].*\n|\n)*", "", text, count=1)
+        assert stripped != text, f"the fixture no longer matches {key}"
+        return stripped
+
+    # The registry's own census. The debt is declared once for the whole registry, and its message
+    # states the three figures the block would have carried — derived, so the reader can paste them.
+    definition = copy_definition(fixture_dir(tmp_path, "no-census"))
+    path = definition / "channels.yaml"
+    path.write_text(without_block(path.read_text(), "coverage"))
+    result = run_linter(definition)
+    assert result.returncode == 0, result.stdout[-900:]
+    assert "declares 148 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
+    assert "derived here as 20 unperturbed, 15 of them `service`" in result.stdout
+    assert "COMPOSES, with 263 declared debt(s)." in result.stdout
+
+    # The failure chains, which are owed *and* refused: the README's front table names fifteen.
+    definition = copy_definition(fixture_dir(tmp_path, "no-chains"))
+    path = definition / "coupling.yaml"
+    path.write_text(without_block(path.read_text(), "failure_chains"))
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "calls `coupling.yaml`'s chain list 'fifteen' while it declares 0" in result.stdout
+    assert (
+        "declares no failure chains, and the domains' fault policies declare 128 fault(s) between them"
+        in result.stdout
+    ), result.stdout[-1400:]
+
+    # One domain's claim. `thermal` publishes fifteen channels and no fault perturbs one of them.
+    definition = copy_definition(fixture_dir(tmp_path, "no-domain-coverage"))
+    path = definition / "domains" / "thermal" / "fault_policy.yaml"
+    path.write_text(without_block(path.read_text(), "coverage"))
+    result = run_linter(definition)
+    assert result.returncode == 0, result.stdout[-900:]
+    assert "declares no coverage block. The domain publishes 15 channel(s)" in result.stdout
+    assert "no fault perturbs 1 of them" in result.stdout
+    assert "COMPOSES, with 263 declared debt(s)." in result.stdout
+
+    # The filter's rates. The block is nested rather than top level, and the obligation is C-07's
+    # rather than this check's — which is why the first reading of it in this round was wrong.
+    definition = copy_definition(fixture_dir(tmp_path, "no-sub-stepping"))
+    path = definition / "domains" / "gnc" / "components.yaml"
+    lines = path.read_text().split("\n")
+    start = next(i for i, line in enumerate(lines) if line.strip() == "sub_stepping:")
+    end = next(i for i in range(start + 1, len(lines)) if lines[i].strip() and not lines[i].startswith("    "))
+    path.write_text("\n".join(lines[:start] + lines[end:]))
+    result = run_linter(definition)
+    assert result.returncode == 0, result.stdout[-900:]
+    assert "domains/gnc/components.yaml:estimator.sub_stepping: is not declared" in result.stdout
+    assert "C-07's resolution requires the interface" in result.stdout
+    assert "COMPOSES, with 263 declared debt(s)." in result.stdout
+
+
+def test_the_readme_s_chain_count_is_held_against_the_file(tmp_path):
+    """The front table named the chains, and nothing read the name.
+
+    `coupling.yaml`'s row in the README's file table says *"the fifteen failure chains"*. Deleting
+    the whole `failure_chains` block from a broken copy composed until this round: the check that
+    holds the chains returned on their absence, and the summary line counted *"0 failure chains"* for
+    a reader that does not exist. Two statements about one list, neither with a reader — the same
+    silence in two files.
+
+    The count is a checked figure now, beside the "declared cycles" and "N-node tick order" clauses
+    in the same row, which already had readers. The fixture moves the README rather than the file
+    because that is the direction the reader runs in, and it moves it by one because that is the
+    smallest change it has to catch.
+    """
+    definition = copy_definition(fixture_dir(tmp_path, "chains"))
+    path = definition / "README.md"
+    text = path.read_text()
+    old = "and the fifteen failure chains"
+    assert old in text, "the fixture no longer matches the front table"
+    path.write_text(text.replace(old, "and the fourteen failure chains", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "calls `coupling.yaml`'s chain list 'fourteen' while it declares 15" in result.stdout, (
+        result.stdout[-900:]
+    )
+
+
 def test_every_objective_says_who_settles_it_and_from_what(tmp_path):
     """A challenge whose definition of success is prose has no score.
 
