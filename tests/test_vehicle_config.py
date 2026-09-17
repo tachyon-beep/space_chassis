@@ -2259,9 +2259,9 @@ def test_the_linter_refuses_an_initial_state_that_cannot_reach_the_moon(tmp_path
     text = path.read_text()
     # The conic the published speed actually gives: a = 97,687 km, e = 0.932814.
     for old, new in (
-        ("    semi_major_axis_km: 254545", "    semi_major_axis_km: 97687"),
-        ("    eccentricity: 0.974216", "    eccentricity: 0.932814"),
-        ("    speed_at_cutoff_m_s: 10949.8", "    speed_at_cutoff_m_s: 10834.4"),
+        ("    semi_major_axis_km: 278906", "    semi_major_axis_km: 97687"),
+        ("    eccentricity: 0.976468", "    eccentricity: 0.932814"),
+        ("    speed_at_cutoff_m_s: 10956.1", "    speed_at_cutoff_m_s: 10834.4"),
     ):
         assert old in text, old
         text = text.replace(old, new, 1)
@@ -2284,7 +2284,7 @@ def test_the_linter_rederives_the_osculating_elements(tmp_path):
     definition = copy_definition(tmp_path / "vehicle")
     path = definition / "mission.yaml"
     text = path.read_text()
-    old = "    eccentricity: 0.974216\n"
+    old = "    eccentricity: 0.976468\n"
     assert old in text, "the fixture no longer matches mission.yaml"
     path.write_text(text.replace(old, "    eccentricity: 0.965000\n", 1))
 
@@ -6278,11 +6278,11 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     # acquires a phantom digit from `repr`, so the apogee is written to two places; and the naive
     # fix for that — drop the trailing `.0` — is disproved by the corpus, which writes `2.0000`
     # somewhere and cannot be told from `2.0` by any rule that reads the parsed value.
-    assert linter.significant_figures(502526) == 7, "the phantom digit is what the round is about"
-    assert not linter.agrees_with_derivation(502527.0, a * (1 + e)), (
+    assert linter.significant_figures(551249) == 7, "the phantom digit is what the round is about"
+    assert not linter.agrees_with_derivation(551249.0, a * (1 + e)), (
         "a whole-number apogee cannot satisfy the relation at the precision repr reports"
     )
-    assert linter.agrees_with_derivation(502526.81, a * (1 + e)), "the written form can"
+    assert linter.agrees_with_derivation(551248.78, a * (1 + e)), "the written form can"
     assert linter.significant_figures(2.0) == linter.significant_figures(2.0000), (
         "a float cannot tell 2.0 from 2.0000, and `structure` declares the latter"
     )
@@ -6316,22 +6316,22 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
         )
 
     # The defect exactly as it stood.
-    set_element("apogee_km", "502526")
+    set_element("apogee_km", "551248")
     result = run_linter(fixture)
     assert result.returncode == 1, result.stdout[-1200:]
     assert "osculating_elements.apogee_km" in result.stdout
-    assert "a(1 + e)" in result.stdout and "502527" in result.stdout
+    assert "a(1 + e)" in result.stdout and "declares 551248" in result.stdout
     # The note still prints the derived value, which is the contradiction: the tool was right and
     # the file was wrong for as long as nothing compared them.
-    assert "apogee 502,526.81 km" in result.stdout
+    assert "apogee 551,248.78 km" in result.stdout
 
     # The other three, one at a time.
     for field, value, needle in (
         ("radius_at_cutoff_km", "6563.3", "6378.137"),
-        ("transfer_period_h", "355.04", "Kepler's third law"),
+        ("transfer_period_h", "407.21", "Kepler's third law"),
         ("inclination_deg", "28.5", "determination.inclination"),
     ):
-        set_element("apogee_km", "502526.81")
+        set_element("apogee_km", "551248.78")
         set_element(field, value)
         result = run_linter(fixture)
         assert result.returncode == 1, result.stdout[-800:]
@@ -6341,16 +6341,16 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     # closeness test — and one whole unit out at the element's own precision must still be caught.
     set_element("inclination_deg", "32.521")
     set_element("radius_at_cutoff_km", "6563.24")
-    set_element("transfer_period_h", "355.022")
-    set_element("apogee_km", "502526.8")
+    set_element("transfer_period_h", "407.19")
+    set_element("apogee_km", "551248.8")
     assert run_linter(fixture).returncode == 0, "a coarsely rounded element was refused"
-    set_element("apogee_km", "502525.0")
+    set_element("apogee_km", "551247.0")
     result = run_linter(fixture)
     assert result.returncode == 1, result.stdout[-800:]
     assert "apogee_km" in result.stdout
 
     # And absence stays the walk's: one unset element is one debt, not two.
-    set_element("apogee_km", "502526.81")
+    set_element("apogee_km", "551248.78")
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
@@ -13909,3 +13909,112 @@ def test_the_linter_refuses_a_table_in_a_frame_whose_offset_is_configuration_dep
     assert "whose offset to the body frame depends on the configuration" in result.stdout, (
         result.stdout[-900:]
     )
+
+
+def test_the_transfer_is_sized_to_the_moon_s_own_distance_at_the_arrival_epoch():
+    """Four rounds of "a lunar ephemeris at the arrival epoch" ended in one recorded query.
+
+    The corpus solved its transfer to reach **384,400 km** — the Moon's *mean* distance — at MET
+    73 h, and said in four places that the missing datum was an ephemeris, because the transfer
+    plane is fixed by where the Moon is at arrival. The ephemeris did two things: it made the plane
+    solvable at all, and it moved the radius the transfer has to reach. At
+    2026-09-15T03:13:45Z (= `met_epoch_utc` + 73.0 h) the Moon is **394,751.5 km** out, 10,351 km
+    farther than the mean, and a transfer that reaches *that* radius in the same 73 hours needs a
+    semi-major axis 9.6 % larger.
+
+    This test is the arithmetic, re-done here from the recorded ephemeris rather than read back
+    from the file, and the query itself is asserted to be complete enough to re-run.
+    """
+    import math
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    state = mission["initial_state"]
+    eph = state["lunar_ephemeris_at_arrival"]
+    elements = state["osculating_elements"]
+    orbit = state["earth_parking_orbit"]
+
+    # The epoch is this file's own, plus the ladder's own arrival time — not a second declaration.
+    assert eph["epoch_met_h"] == elements["arrival_at_moon_h"] == 73.0
+    import datetime as _dt
+
+    met = _dt.datetime.strptime(mission["met_epoch_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=_dt.UTC
+    )
+    arrival = met + _dt.timedelta(hours=eph["epoch_met_h"])
+    assert eph["epoch_utc"] == arrival.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # The query, recorded verbatim so the figure is reproducible rather than trusted.
+    query = eph["query"]["parameters"]
+    for needle in ("COMMAND='301'", "CENTER='500@399'", "EPHEM_TYPE='VECTORS'", "REF_SYSTEM='J2000'",
+                   "OUT_UNITS='KM-S'"):
+        assert needle in query, needle
+    assert eph["provenance"]["basis"] == "historical"
+
+    # The vector's own magnitude is the radius the transfer must reach.
+    x, y, z = eph["position_km"]
+    vx, vy, vz = eph["velocity_km_s"]
+    distance = (x * x + y * y + z * z) ** 0.5
+    assert distance == pytest.approx(eph["distance_km"], abs=1e-3)
+    assert (vx * vx + vy * vy + vz * vz) ** 0.5 == pytest.approx(eph["speed_km_s"], abs=1e-5)
+    # And it is not the mean: the whole point of the round.
+    assert distance - 384400.0 > 10000.0, distance
+
+    # The transfer, re-solved here from the ephemeris and the parking orbit.
+    mu, radius_earth = 398600.4418, 6378.137
+    r_p = radius_earth + (orbit["perigee_altitude_km"] + orbit["apogee_altitude_km"]) / 2
+    lo, hi = r_p + 1.0, 1.0e8
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        ecc = 1.0 - r_p / mid
+        ecc_anom = math.acos(max(-1.0, min(1.0, (1.0 - distance / mid) / ecc)))
+        t = (ecc_anom - ecc * math.sin(ecc_anom)) / math.sqrt(mu / mid**3)
+        if t > 73.0 * 3600.0:
+            lo = mid
+        else:
+            hi = mid
+    a_solved = (lo + hi) / 2
+    assert float(elements["semi_major_axis_km"]) == pytest.approx(a_solved, rel=2e-3)
+    rel = abs(float(elements["semi_major_axis_km"]) - 254545.0) / 254545.0
+    assert rel > 0.05, "the mean-distance solution is still in the file"
+
+    # The element that was owed and is determined by the model rather than by a datum.
+    assert elements["true_anomaly_at_cutoff_deg"] == 0.0
+    assert "perigee" in elements["true_anomaly_provenance"]["relation"]
+    # And the two that are still owed are each other's mirror, with the free return as the
+    # discriminator — not a missing document.
+    assert "right_ascension_of_ascending_node" in elements["owed"]
+    assert "exactly two solutions" in elements["owed"]["right_ascension_of_ascending_node"]
+    assert "discriminator" in elements["owed"]["free_return"]
+
+
+def test_the_linter_refuses_a_transfer_sized_to_the_moon_s_mean_distance(tmp_path):
+    """A mean where an epoch belongs is the defect, and the check now measures the right radius.
+
+    Two fixtures: the ephemeris's distance perturbed by 10,000 km, which moves the radius the
+    transfer must reach and leaves the declared semi-major axis unreachable by Kepler's equation;
+    and an ephemeris removed altogether, because a check that cannot run is not a check that
+    passed — the radius would silently fall back to a mean.
+    """
+    mission_yaml = (VEHICLE / "mission.yaml").read_text()
+
+    definition = copy_definition(fixture_dir(tmp_path, "wrong-radius"))
+    path = definition / "mission.yaml"
+    old = "    distance_km: 394751.5123\n"
+    assert old in mission_yaml
+    path.write_text(mission_yaml.replace(old, "    distance_km: 384751.5123\n", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "Kepler's equation puts the Moon's own distance at 73 h" in result.stdout, (
+        result.stdout[-900:]
+    )
+
+    definition = copy_definition(fixture_dir(tmp_path, "no-ephemeris"))
+    path = definition / "mission.yaml"
+    path.write_text(mission_yaml.replace(old, "    unused_distance_km: 394751.5123\n", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "declares no `distance_km`" in result.stdout, result.stdout[-900:]
