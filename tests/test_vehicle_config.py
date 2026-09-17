@@ -6010,7 +6010,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 245 declared debt(s)" in result.stdout
+    assert "with 246 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6378,7 +6378,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 247 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 248 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6484,7 +6484,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 247 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 248 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -10418,7 +10418,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 246 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 247 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10561,7 +10561,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "246", "the view must agree with the headline count"
+    assert owed == "247", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -12152,7 +12152,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 246 declared debt(s)",
+        "COMPOSES, with 247 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12160,7 +12160,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 246 declared debt(s)",
+        "COMPOSES, with 247 declared debt(s)",
         composes=True,
     )
 
@@ -12175,7 +12175,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 247 declared debt(s)" in out, out[-300:]
+    assert "with 248 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12334,7 +12334,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 247 declared debt(s)" in out, out[-400:]
+    assert "with 248 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12481,7 +12481,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 247 declared debt(s)" in out, out[-400:]
+    assert "with 248 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12491,7 +12491,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 246 declared debt(s)",
+        "COMPOSES, with 247 declared debt(s)",
         composes=True,
     )
 
@@ -12633,7 +12633,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 246 declared debt(s)",
+        "COMPOSES, with 247 declared debt(s)",
         composes=True,
     )
 
@@ -14365,3 +14365,44 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     assert where.endswith("csm_cabin_o2_kg"), where
     assert "keyed by node" in owed and "another state's number" in owed, owed
     assert "csm_cabin_h2o_kg" in owed, owed
+
+
+def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes():
+    """The frame's `values` unit is `map[channel_id, ...]`, and the map the plant hands over is keyed by node.
+
+    This is the one field of the file surface the vehicle side owns outright, and its shape is stated
+    in one word — `map[channel_id, number|bool|string]` — so the mismatch is not a matter of taste. The
+    measurement is what makes it a finding rather than a complaint: **99 of the 142 published points
+    come from a state on a node carrying more than one**, four gas masses share `cabin_atm`, and the
+    map therefore cannot name what it carries. Round 20's first tick is the demonstration — the plant
+    set `csm_cabin_o2_kg` to the water vapour's mass because the key could not tell them apart.
+
+    The debt is a *shape*, so it is prose in `presentation.yaml` rather than a state: nothing in the
+    corpus can be configured to fix it. What this test pins is that the declaration still says
+    `channel_id` and that the measurement behind the debt has not drifted.
+    """
+    presentation = yaml.safe_load((VEHICLE / "presentation.yaml").read_text())
+    values_field = next(f for f in presentation["frame"]["fields"] if f["name"] == "values")
+    assert values_field["unit"].startswith("map[channel_id"), values_field["unit"]
+
+    per_node: dict[str, list[str]] = {}
+    state_node: dict[str, str] = {}
+    for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        components = yaml.safe_load(path.read_text()) or {}
+        for state in components.get("state") or []:
+            state_node[str(state["id"])] = str(state.get("node"))
+            per_node.setdefault(str(state.get("node")), []).append(str(state["id"]))
+    shared = {node for node, ids in per_node.items() if len(ids) > 1 and node != "internal"}
+
+    published = unnameable = 0
+    for path in sorted((VEHICLE / "domains").glob("*/points.yaml")):
+        for row in (yaml.safe_load(path.read_text()) or {}).get("points") or []:
+            published += 1
+            if state_node.get(str(row.get("from"))) in shared:
+                unnameable += 1
+    assert published == 142, published
+    assert unnameable == 33, unnameable
+    # And the debt states both figures, because a number in prose with no reader is the next round's
+    # finding — this is that reader.
+    entry = next(d for d in presentation["open_debts"] if "channel_id" in d)
+    assert "99 of the 142" in entry and "four gas masses" in entry
