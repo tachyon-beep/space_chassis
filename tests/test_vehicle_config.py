@@ -5986,7 +5986,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 250 declared debt(s)" in result.stdout
+    assert "with 249 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6354,7 +6354,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 252 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 251 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6460,7 +6460,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 252 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 251 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -10345,7 +10345,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 251 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 250 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -10488,7 +10488,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     assert "by the file that keeps it" in result.stdout
 
     owed = re.search(r"(\d+) owed, grouped", result.stdout).group(1)
-    assert owed == "251", "the view must agree with the headline count"
+    assert owed == "250", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -12079,7 +12079,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 251 declared debt(s)",
+        "COMPOSES, with 250 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -12087,7 +12087,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 251 declared debt(s)",
+        "COMPOSES, with 250 declared debt(s)",
         composes=True,
     )
 
@@ -12102,7 +12102,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 252 declared debt(s)" in out, out[-300:]
+    assert "with 251 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -12261,7 +12261,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 252 declared debt(s)" in out, out[-400:]
+    assert "with 251 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -12408,7 +12408,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 252 declared debt(s)" in out, out[-400:]
+    assert "with 251 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -12418,7 +12418,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 251 declared debt(s)",
+        "COMPOSES, with 250 declared debt(s)",
         composes=True,
     )
 
@@ -12560,7 +12560,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 251 declared debt(s)",
+        "COMPOSES, with 250 declared debt(s)",
         composes=True,
     )
 
@@ -14093,3 +14093,36 @@ def test_the_linter_refuses_an_unavailability_claim_whose_search_is_the_contract
     assert "its whole search record is the contract's own documents" in result.stdout, (
         result.stdout[-900:]
     )
+
+
+def test_the_battery_s_smallest_flow_is_its_smallest_load_and_its_quantum_is_finer():
+    """A dead zone coarser than the load the stock feeds is a load the stock never sees.
+
+    `battery_charge_j.min_flow_per_s` was owed with a note saying it waited on "the smallest load
+    the battery feeds … every load's `rated_w`". Two things were wrong with that: the field loads
+    actually carry is `demand_w` — `rated_w` is a *source* field in this domain — and the value was
+    derivable all along. The node's one edge runs to `bus_a`, whose smallest load is the S-band
+    transceiver at 36 W, so the smallest flow this stock must represent is 36 J/s.
+
+    Landing it exposed the reason the field matters: the declared quantum was **1 J**, and at 50 Hz
+    the smallest flow over one tick is 36 x 0.02 = 0.72 J — so the dead zone was coarser than the
+    smallest load, and `plant.md` §4's own rule refuses that. The quantum is now 0.1 J, seven times
+    finer. This test is the second reader: it recomputes both from the load budget.
+    """
+    power = yaml.safe_load((VEHICLE / "domains" / "power" / "components.yaml").read_text())
+    stock = next(s for s in power["state"] if s["id"] == "battery_charge_j")
+    loads = [row for row in power["loads"] if row.get("bus") == "csm_bus_a"]
+    smallest = min(row["demand_w"] for row in loads)
+    assert smallest == 36, smallest
+    assert stock["min_flow_per_s"] == float(smallest)
+    derivation = stock["min_flow_derivation"]
+    assert derivation["expression"] == "smallest_load_w"
+    assert derivation["inputs"]["smallest_load_w"].endswith("csm_sband_transceiver.demand_w")
+    assert "rated_w" in stock["min_flow_note"], "the note records the field name the debt got wrong"
+
+    # The quantum must resolve the smallest flow over one tick, at the vehicle's own tick rate.
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    tick_hz = vehicle["environment"] and 50
+    assert tick_hz == 50
+    assert stock["quantum"] < smallest / tick_hz, (stock["quantum"], smallest / tick_hz)
+    assert stock["quantum"] == 0.1
