@@ -8450,6 +8450,84 @@ def test_a_loop_s_collected_load_is_the_sum_over_the_zones_that_name_it(tmp_path
     assert "carry 1007 W between them" in total.stdout
 
 
+def test_a_loop_declares_whether_it_serves_zones_or_backs_them_up(tmp_path):
+    """`loop_secondary` had no declared role, and nothing said what the 167 lb/hr was.
+
+    The corpus has carried two CSM glycol circuits since the loop list landed: `loop_primary` at
+    200 lb/hr with the published supply and radiator-inlet bands, and `loop_secondary` at 18 L with
+    figures *scaled* from the primary's and a reason that said only that no source gives them. The
+    zones all name `loop_primary`, so the second circuit's role was a note the check could not turn
+    into a rule, and C-28 carried the open question — two circuits, or one circuit at two points?
+
+    TN D-6718, the Apollo experience report the corpus already takes its 200 lb/hr and 73-75 F inlet
+    from, answers both on **PDF p. 11**: *"The coolant system consists of a primary loop, which is
+    operated continuously, and a secondary loop, which serves as a backup system. The primary loop
+    uses a centrifugal pump to circulate 200 lb/hr of coolant"*; the flow leaving the evaporator
+    *"is divided into a 35-lb/hr flow directed to the inertial measurement unit (IMU) … and a
+    165-lb/hr flow is routed to the suit heat exchanger"*; the two rejoin and *"the 200-lb/hr flow is
+    directed through a series-parallel arrangement of 22 coldplates"*. So the study guide's 167 lb/hr
+    is that **165-lb/hr suit-and-cabin branch of the same loop**, and the second circuit is a
+    **backup**: *"may be operated at the discretion of the crewmembers … does not have cabin-heating
+    capability, nor does it provide cooling to the guidance and navigation equipment."*
+
+    The role is a declaration now, and the check holds it against the zone join in both directions:
+    a `backup` a zone assigns itself to is refused (selection is `set_coolant_loop`'s mode), a
+    `primary` no zone names is refused, and an absent role is a debt.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    loops = {str(x["id"]): x for x in vehicle["thermal"]["loops"]}
+    zones = {str(z["id"]): z for z in vehicle["thermal"]["zones"]}
+    served: dict[str, list[str]] = {loop_id: [] for loop_id in loops}
+    for zone in zones.values():
+        if zone.get("cooled_by") in served:
+            served[zone["cooled_by"]].append(str(zone["id"]))
+    for loop_id, loop in loops.items():
+        assert loop["role"] in ("primary", "backup"), loop_id
+        assert (loop["role"] == "primary") == bool(served[loop_id]), (loop_id, loop["role"], served[loop_id])
+    assert loops["loop_secondary"]["role"] == "backup" and served["loop_secondary"] == []
+
+    # The role's reason cites the document, and the asymmetry the document implies is declared: the
+    # primary has the published 200 lb/hr and the backup has no published flow at all, which is why
+    # its figures are the primary's and marked `chosen`.
+    assert "TN D-6718" in str(loops["loop_secondary"]["provenance"]["reason"])
+    assert loops["loop_primary"]["nominal_flow_lb_per_h"] == 200
+    assert "nominal_flow_lb_per_h" not in loops["loop_secondary"], loops["loop_secondary"]
+    assert loops["loop_secondary"]["provenance"]["basis"] == "chosen"
+
+    def fixture(name: str, old: str, new: str) -> subprocess.CompletedProcess[str]:
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / "vehicle.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        return run_linter(definition)
+
+    # A zone assigning itself to the backup: the assignment is the primary's.
+    assigned = fixture(
+        "zone-on-backup",
+        "        cooled_by: loop_primary\n        heat_state: service_bay_heat_w\n",
+        "        cooled_by: loop_secondary\n        heat_state: service_bay_heat_w\n",
+    )
+    assert assigned.returncode == 1
+    assert "is `backup` and" in assigned.stdout and "name it in `cooled_by`" in assigned.stdout, (
+        assigned.stdout[-900:]
+    )
+
+    # The primary called a backup while three zones name it.
+    swapped = fixture(
+        "primary-as-backup",
+        "        # the heat balance needs to know.\n        role: primary\n",
+        "        # the heat balance needs to know.\n        role: backup\n",
+    )
+    assert swapped.returncode == 1
+    assert "is `backup` and" in swapped.stdout, swapped.stdout[-900:]
+
+    # And no role at all is a debt, in the check's own words.
+    absent = fixture("no-role", "        role: primary\n        provenance:\n", "        provenance:\n")
+    assert absent.returncode == 0
+    assert "is None, and a loop is either `primary`" in absent.stdout, absent.stdout[-900:]
+
+
 def test_the_equilibrium_check_resolves_what_the_zone_declares(tmp_path):
     """The check found all four of its inputs by convention, and skipped silently when one moved.
 

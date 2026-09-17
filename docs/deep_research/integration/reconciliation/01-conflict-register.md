@@ -408,11 +408,19 @@ radiator inlet, and a loop carrying both `return_c` and a named radiator station
 close it. (1) The loop's heat balance is still owed — a `specific_heat_j_per_kg_k` (the corpus's
 relation says "about 3,600", a mass-fraction average of 62.5/37.5 glycol-water gives ≈3.08 × 10³,
 and neither is a document) and a state holding the loop's collected load; the `Sim` band was
-therefore left exactly as the diode publishes it. (2) `Apollo_Block_II_ECS_Components.pdf` lists a
-**Primary** and a **Secondary** Glycol Evaporator, and the study guide's p. 74 gives **167 lb/hr**
-where the corpus carries TN D-6718's **200 lb/hr** for the primary: whether those are two circuits or
-one circuit at two points is not settled by anything read here, and the loop list is the place the
-answer lands. (3) The study guide's "46 F as sensed at the outlet of the evaporator" is 0.6 K above
+therefore left exactly as the diode publishes it. (2) **resolved, and by the document the corpus already cited.** TN D-6718 (the Apollo experience
+report the corpus takes its 200 lb/hr and 73–75 °F inlet from; **PDF p. 11**) reads: *"The coolant
+system consists of a primary loop, which is operated continuously, and a secondary loop, which serves
+as a backup system. The primary loop uses a centrifugal pump to circulate **200 lb/hr** of coolant
+(ethylene glycol and water)"*; the flow leaving the evaporator *"is divided into a **35-lb/hr** flow
+directed to the inertial measurement unit (IMU) … and a **165-lb/hr** flow is routed to the suit heat
+exchanger"*; the two rejoin and *"the 200-lb/hr flow is directed through a series-parallel arrangement
+of 22 coldplates"*. So the study guide's **167 lb/hr is that 165-lb/hr suit-and-cabin branch of the
+same loop**, not a second circuit, and the secondary loop is a **backup** — *"may be operated at the
+discretion of the crewmembers … does not have cabin-heating capability, nor does it provide cooling to
+the guidance and navigation equipment"*. The corpus says so now: every loop declares a `role`, a
+`backup` may not be named by a zone's `cooled_by` (selection is `set_coolant_loop`'s mode), and a
+`primary` with no zone naming it is refused. (3) The study guide's "46 F as sensed at the outlet of the evaporator" is 0.6 K above
 the top of the corpus's `evaporator_outlet_c: [2.8, 7.2]`, which is TN D-6718's 37–45 F range — a
 deadband or a second source, and the AOH SECS schematic is what would say which.
 
