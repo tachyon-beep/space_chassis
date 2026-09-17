@@ -13648,7 +13648,7 @@ def test_the_docked_configuration_s_mass_properties_re_derive_from_the_data_book
     assert sorted(owed) == ["csm_lm_ascent_docked"], sorted(owed)
     entry = owed["csm_lm_ascent_docked"]
     assert entry["table"] == "ODB_3_2_22 + ODB_3_2_26"
-    assert "arithmetic over two tables this file now carries" in entry["note"]
+    assert "owed to **an epoch, not a document**" in entry["note"]
 
 
 def test_the_linter_refuses_a_mass_property_table_that_disagrees_with_itself(tmp_path):
@@ -13812,3 +13812,100 @@ def test_the_linter_refuses_a_mass_property_table_whose_frame_is_not_declared(tm
     result = run_linter(definition)
     assert result.returncode == 1
     assert "the moment of inertia declares" in result.stdout, result.stdout[-900:]
+
+
+def test_the_two_vehicles_do_not_add_up_to_the_docked_table_s_own_row():
+    """A frame offset is a property of the configuration — and adding two tables is not a vehicle.
+
+    `mass_properties.frames.LM_XE` carried `X_A = X_E + 399.5` — which is Figure 2-16's relation,
+    and Figure 2-16 is the **launch configuration**, where the LM sits in the adapter with its
+    docking interface 398.25 inches below the CSM's. Docked, Figure 2-17 mates the two interfaces
+    at X_A = 1110.25 with X_E = 312.5 there, so the offset is 797.75. The corpus had the launch
+    figure applied to docked tables: **10.1 m at every LM station.**
+
+    This test is the evidence for both halves of the round. First the offset: the docked relation
+    is the one that puts the two docking interfaces at the same station, and the launch relation
+    does not. Then the reason the last configuration is still owed after the offset is settled:
+    the addition itself does not work. Composing `csm_alone` with `lm_alone_descent` — which is
+    what `csm_lm_docked` is *defined* as, and whose masses sum to its 44,085 kg — misses the
+    station Table 3.2-21 tabulates for that weight by 22 %, because a weight-indexed table's row
+    and a reference-state sum are different vehicles at the same mass.
+    """
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    block = vehicle["mass_properties"]
+    frames = {f["id"]: f for f in block["frames"]}
+    lm = frames["LM_XE"]
+    offsets = {o["configuration"]: o["offset_in"] for o in lm["offsets"]}
+    assert offsets == {"launch": 399.5, "docked": 797.75}, offsets
+
+    # The physical constraint, from the book's own numbers: docked, the LM's docking interface
+    # (X_E = 312.5) and the CM's (X_A = 1110.25) are the same station.
+    assert 312.5 + offsets["docked"] == 1110.25
+    # And in the launch configuration the same interface is at X_A = 712.0 — the adapter position —
+    # which is 398.25 inches lower. Both figures are right about different vehicles.
+    assert 312.5 + offsets["launch"] == 712.0
+    assert offsets["docked"] - offsets["launch"] == 398.25
+
+    # Every table in that frame says which reading it uses, or why none applies.
+    for table in block["tables"]:
+        if table["frame"] == "LM_XE":
+            assert table.get("offset_configuration") or table.get("offset_not_applicable"), table["id"]
+
+    # The addition, done here so that nobody lands it believing it works. All four quantities are
+    # in the corpus; this is the arithmetic the corpus refuses to carry.
+    def entry(config_id):
+        return next(c for c in block["configurations"] if c["id"] == config_id)
+
+    tables = {t["id"]: t for t in block["tables"]}
+
+    def interpolated(config_id, field):
+        e = entry(config_id)
+        rows = sorted(tables[e["table"]]["rows"], key=lambda r: r["weight_lb"])
+        w = e["weight_lb"]["value"]
+        lo, hi = rows[0], rows[1]
+        f = (w - lo["weight_lb"]) / (hi["weight_lb"] - lo["weight_lb"])
+        return lo[field] + f * (hi[field] - lo[field])
+
+    halves = (("csm_alone", 28807.0, "APOLLO_XA"), ("lm_alone_descent", 15278.0, "LM_XE"))
+    for label, offset_in in (("launch", offsets["launch"]), ("docked", offsets["docked"])):
+        total = sum(m for _, m, _ in halves)
+        stations = []
+        for config_id, mass, frame_id in halves:
+            station = interpolated(config_id, "x_bar_in")
+            if frame_id == "LM_XE":
+                station += offset_in
+            stations.append((mass, station))
+        composed = sum(m * x for m, x in stations) / total
+        tabulated = interpolated("csm_lm_docked", "x_bar_in")
+        miss = abs(composed - tabulated) / tabulated
+        # **Both readings miss.** The offset is not what makes the addition wrong — at the correct
+        # docked offset it is still 9 % — which is the finding: the two tables' reference states
+        # are not the docked row's vehicle at the same weight.
+        assert miss > 0.05, (label, composed, tabulated)
+    assert total == pytest.approx(44085.0, abs=0.5)
+
+    # And the composition stays owed, with the epoch named rather than a document.
+    owed = next(c for c in block["configurations"] if c["id"] == "csm_lm_ascent_docked")
+    assert owed["properties"] == "UNCONFIGURED"
+    assert "epoch" in owed["note"] and "44,085" in owed["note"]
+
+
+def test_the_linter_refuses_a_table_in_a_frame_whose_offset_is_configuration_dependent(tmp_path):
+    """Two figures, two vehicles, 398.25 inches apart — so a table has to say which one it means.
+
+    The LM frame's offset to the body frame depends on the configuration, so a table in it that
+    names neither the configuration it is read in nor a reason no offset applies is refused. That
+    is the check that would have caught this round's defect when it was written: the corpus had the
+    launch configuration's offset on tables whose stations are docked ones.
+    """
+    vehicle_yaml = (VEHICLE / "vehicle.yaml").read_text()
+    definition = copy_definition(fixture_dir(tmp_path, "offsetless"))
+    path = definition / "vehicle.yaml"
+    old = "      offset_not_applicable: >-\n        the LM alone at P.D.I."
+    assert old in vehicle_yaml
+    path.write_text(vehicle_yaml.replace(old, "      unused_offset_note: >-\n        the LM alone at P.D.I.", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "whose offset to the body frame depends on the configuration" in result.stdout, (
+        result.stdout[-900:]
+    )
