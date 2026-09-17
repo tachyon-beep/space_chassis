@@ -330,8 +330,18 @@ that reach belongs to a round that re-derives the closure and the alarms togethe
 is recorded in `domains/eclss/components.yaml:atmosphere_model.check.partial_pressure_provenance`
 so that a reader of the number finds the disagreement rather than a page that does not say it.
 
-**Open.** Which of the two the cabin is flown at, and whether the two compartments get separate
-shares.
+**Resolved: the ECS document, one share for both cabins.** Put to the operator, who chose to fly
+the CSM's 9.209 mmHg in both compartments rather than split the declaration or move to the LM's
+figure. The reasons the decision rests on, recorded so a later round does not re-open it by
+accident: the 9.209 is already the number every dependent declaration was derived from — the
+`eclss.pp_o2_mmhg` band, the LM's two ppO2 thresholds, the four-gas closure and both channels'
+ranges — so splitting it would re-derive six declarations to sharpen one; the Hamilton Standard
+figure is an **LM** table at an LM heat exchanger, so applying it to the CSM would be the same kind
+of cross-application the corpus already declines in the other direction; and the disagreement is
+3–3.5 mmHg on a share whose own `partial_pressure_provenance` states that the 50 °F sentence is
+about the suit circuit. **The inference is the disposition**, and the field says so. What a later
+round may still do is give the LM its own share, which is a modelling change rather than a
+correction to this one.
 
 ### C-26 · The RCS engine's specific impulse
 
@@ -342,16 +352,21 @@ shares.
 | `domains/rcs/components.yaml:thruster` | `thrust_n: 445`, `isp_s: **290**` |
 | the same declaration's own relation | `mass_flow_per_thruster` = 445 / (290 x 9.80665) = **0.15647 kg/s**, which is 4.3 % below the guide's flow rate |
 
-**Open, and recorded rather than resolved.** The two published numbers on p. 90 agree with each other
-and disagree with the declared pair, which is self-consistent and 15 s high; a 445 N thruster at
-0.1633 kg/s also spends the mission's RCS propellant 4.3 % faster, and the load is already one of the
-tighter ones. The corpus's 290 s is not sourced to any page in the manifest, and the round that read
-p. 90 landed its minimum-impulse-bit and transient figures without touching the Isp because the
-decision is a vehicle-level one — it moves `E-RCSP-RCS`, `capability.mass_flow_per_thruster` and the
-RCS propellant budget together.
+**Resolved: the guide's figure, at 277.8 s.** Put to the operator, who chose the published and
+self-corroborating pair over the corpus's unsourced 290 s. The two numbers on p. 90 agree with each
+other — 275 s (approx) and 0.36 lb/s at 100 lbf give 277.78 s — and the figure landed is **277.8**,
+the reading where both are reproduced: `mass_flow_per_thruster` becomes 0.163345 kg/s, **0.03 %** from
+the page's measured 0.163293, where 275 s would be 0.5 % away. What moved, together and in one
+round: `vehicle.yaml#propulsion.rcs_sm/rcs_cm/rcs_lm.isp_s` (290 → 277.8), the article
+`components.thruster_100lbf.isp_s` (the same 100 lbf hardware), `capability.mass_flow_per_thruster`
+(0.15647 → 0.16335), the three `capability.impulse_capacity` values (1,729,109 / 318,520 / 819,051 →
+**1,656,367 / 305,120 / 784,595**: the same tanks price **4.2 % less** total impulse),
+`E-RCSP-RCS`'s sensitivity (0.0003516262803 → 0.0003670685) and the consumables ledger's
+`rcs_firings` rate and minimum flow (0.1565 → 0.16335 kg/s). **The direction matters and is the
+reason this was a decision rather than a repair**: the RCS load is one of the mission's tighter
+ones, and it now spends 4.3 % faster.
 
-**Open.** Whether the vehicle flies at the guide's 275–278 s or keeps the 290 s the corpus declares,
-and if the latter, which document that figure comes from.
+
 
 ---
 

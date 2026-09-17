@@ -717,7 +717,7 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     claimed = {state.id: name for name, rows in buckets.items() for state in rows}
 
     unexplained = []
-    counted_more = sentinel = no_input = 0
+    counted_more = sentinel = no_input = unmet_reading = 0
     for state in world.states:
         try:
             plant.advance(world, state, permissive, 1.0)
@@ -726,6 +726,15 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
             where = str(exc.where)
             if where.startswith("coupling.yaml:edge") or "no incoming edge" in str(exc):
                 actual = "edge"
+            elif where.endswith(".derivation"):
+                # **A fourth kind, added in round 48, and it is the derivation's own dependency.**
+                # The worklist says *ready* when an `algebraic` state declares its rule, which is
+                # the question it exists to answer ("is the rule in the configuration?"); `advance`
+                # says *value* when the rule's readings are not in the map it was handed — which,
+                # for a state whose readings are other states' tick values, is what t=0 looks like.
+                # Both are true, and the honest reading is that the worklist answers about the
+                # *corpus* and the plant about a *tick*.
+                actual = "reading"
             elif where.startswith(f"domains/{state.domain}/components.yaml:state {state.id}."):
                 actual = "value"
             else:
@@ -734,6 +743,8 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
             continue
         if claimed[state.id] == "value":
             counted_more += 1
+        elif claimed[state.id] == "ready" and actual == "reading":
+            unmet_reading += 1
         elif claimed[state.id] == "rule" and actual == "edge" and state.node == "internal":
             sentinel += 1
         elif claimed[state.id] == "edge" and actual == "rule" and state.id == "bus_b_v":
@@ -784,7 +795,17 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # published 35 cfm as its initial: `suit_loop_flow_cfm` stopped owing a *value*, so it left the
     # first counter, and the worklist now calls it `rule` while `advance` calls it a missing edge —
     # which is the sentinel's own documented disagreement, one state further along.
-    assert (counted_more, sentinel, no_input) == (21, 11, 0), (counted_more, sentinel, no_input)
+    # **`unmet_reading` is 3 from round 48**: the two cabins' pressures and the RCS propellant
+    # estimate, whose rules are in the configuration and whose readings are other states' values.
+    # The worklist calls them ready; a tick with nothing supplied calls them a value debt. They are
+    # the states the fourth completion criterion is about, and this counter is where the gap between
+    # "the rule exists" and "the rule can run today" is visible.
+    assert (counted_more, sentinel, no_input, unmet_reading) == (21, 11, 0, 3), (
+        counted_more,
+        sentinel,
+        no_input,
+        unmet_reading,
+    )
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -3314,7 +3335,7 @@ def test_the_engines_the_mission_is_flown_on_are_one_set_of_figures(tmp_path):
         "    vehicle_keys: [lm_dps]",
         "claimed by no component",
     )
-    refusal("domains/rcs/components.yaml", "    isp_s: 290\n", "", "declares no `isp_s`")
+    refusal("domains/rcs/components.yaml", "    isp_s: 277.8\n", "", "declares no `isp_s`")
     # And the fields the first version of this check left out, which is the defect it was written
     # to catch arriving inside the fix for it. It compared a hand-written list of four fields and
     # the engines share six, so `throttle_ratio`, `qualified_restarts`, `engine` and `throttleable`
@@ -3701,7 +3722,7 @@ def test_an_edge_whose_value_is_another_declaration_s_function(tmp_path):
     )
     broken(
         "thruster",
-        [("domains/rcs/components.yaml", "    thrust_n: 445\n    isp_s: 290\n", "    thrust_n: 445\n    isp_s: 295\n")],
+        [("domains/rcs/components.yaml", "    thrust_n: 445\n    isp_s: 277.8\n", "    thrust_n: 445\n    isp_s: 295\n")],
         ["E-RCSP-RCS.sensitivity.derivation"],
     )
     broken(
@@ -5892,6 +5913,18 @@ def test_the_burn_budget_is_held_against_the_burns_that_spend_it(tmp_path):
     assert "records no `burn_s` for 4 burn(s)" in owed, owed[-600:]
 
 
+def _is_state_id(name: str, seen: dict) -> bool:
+    """Whether a bare input name is a state id — the other kind of input a derivation may bind."""
+    if not name or ":" in name:
+        return False
+    for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
+        doc = yaml.safe_load(path.read_text()) or {}
+        for state in doc.get("state") or []:
+            if str(state.get("id")) == name:
+                return True
+    return False
+
+
 def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
     """A `computation` restates its inputs, so it cannot disagree with them.
 
@@ -5942,6 +5975,14 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
         # rejection the corpus's own law gives at it.
         "radiator_eq_t": "environment_heat_w",
         "radiator_rejection_w": "emissivity",
+        # The two cabins' pressures (round 47): one law over four gas stocks and the zone
+        # temperature *as a reading*, and the first derivations whose `computes` field is the
+        # state's own id rather than a parameter of it.
+        "csm_cabin_pressure_pa": "o2_mass",
+        "lm_cabin_pressure_pa": "o2_mass",
+        # And the RCS propellant estimate (round 48): the relation was a sentence and every
+        # ingredient — the impulse stock and the capacity C-26 re-derived — was declared.
+        "propellant_estimate": "impulse_used",
     }
     seen = {}
     for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
@@ -5955,9 +5996,15 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
         derivation = provenance["derivation"]
         assert set(derivation) == {"expression", "inputs"}, (sid, sorted(derivation))
         assert provenance.get("computes"), f"{sid} derives without naming its subject"
+        # **A derivation reads a declaration, or a *state*, and never neither.** A dotted path into
+        # a file is the older form; a bare state id is the reading `derivation_value` has always
+        # bound to "that state's value this tick" for channels, which round 47 let a state's own
+        # arithmetic use as well — so the check is that every input is one of the two, and at least
+        # one of them is present in each form.
         assert any(
-            isinstance(v, str) and ".yaml:" in v for v in derivation["inputs"].values()
-        ), f"{sid}'s derivation reads no declaration at all"
+            isinstance(v, str) and (".yaml:" in v or _is_state_id(v, seen))
+            for v in derivation["inputs"].values()
+        ), f"{sid}'s derivation reads no declaration and no state"
 
     def broken(mutate, domain: str = "thermal") -> subprocess.CompletedProcess[str]:
         fixture = copy_definition(fixture_dir(tmp_path, "derivation_"))
@@ -6301,12 +6348,20 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     # derived state the corpus declares on the `internal` sentinel.
     # 17 -> 19 in round 41, with the two loops' collected loads: the sums the domain's own debt
     # called "a sum over `heat_inputs` that nothing evaluates".
-    assert len(declared) == 21, f"{len(declared)} declared arithmetics"
+    # 21 -> 24 in rounds 47 and 48, with three states whose `computes` field is **their own id**:
+    # the two cabins' pressures (one gas law over four stocks and a zone temperature read live) and
+    # the RCS propellant estimate (`100 * (1 - impulse_total / capacity)`). They are the reason the
+    # subject list below is no longer a closed vocabulary of parameter names — a state that *is* its
+    # computed value has no parameter to name, and the field it produces is the state itself.
+    assert len(declared) == 24, f"{len(declared)} declared arithmetics"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
     assert subjects == [
+        "csm_cabin_pressure_pa",
+        "lm_cabin_pressure_pa",
         "nominal_kg_s",
         "per_joule_kg",
+        "propellant_estimate",
         "ratio_of_o2_draw",
         "tau_s",
         "total_k",
@@ -7981,7 +8036,11 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 28 -> 30 in round 41: `loop_primary_load_w` and `loop_lm_load_w`, the same declared-arithmetic
     # shape one level up — the classifier fix is what lets them be counted ready rather than as
     # owing code.
-    assert len(buckets["ready"]) == 33
+    # 33 -> 35 in round 47: the two cabins' pressures are arithmetic now, held by a gas law
+    # over the four gas stocks and the zone's temperature *as a reading* — the first derivations
+    # in the corpus that read another state's value this tick, and the first whose `computes`
+    # field is the state's own id rather than a parameter of it.
+    assert len(buckets["ready"]) == 37
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -8004,7 +8063,9 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 68 -> 69 in round 33, the other half of the value move above: the suit circuit's flow took
     # the ECS guide's published 35 cfm as its initial, so `suit_loop_flow_cfm` stopped owing a value
     # and now owes the driver that would advance it, which is domain code.
-    assert len(buckets["rule"]) == 68, "just over half the vehicle is domain code"
+    # 68 -> 66 in round 47, the other half of the move above: the two pressures left this bucket
+    # for `ready` without the rule layer's count changing anywhere else.
+    assert len(buckets["rule"]) == 65, "just under half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -8044,7 +8105,264 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 16 -> 14 in round 29, the other half of the value move above: the two zones whose driver edge
     # carries no sensitivity were being reported as an edge debt, and the starting value they also
     # owe is now named first.
-    assert len(buckets["edge"]) == 13
+    assert len(buckets["edge"]) == 12
+
+
+def test_the_plant_advances_a_node_s_states_in_the_order_the_node_declares(tmp_path):
+    """Four of the eleven multi-state nodes were running in an order nobody declared.
+
+    `coupling.yaml#nodes.<node>.state_order` is the order the states on a node advance in, every
+    multi-state node carries one with a note arguing it, `--order` prints it — and `plant.md:71`
+    promises the scheduler obeys it. `step` did not: `states_on` returned the order the *files* list
+    the states in, so `structure_config` computed `configuration` before the two machines it is a
+    projection of, `vehicle_dynamics` integrated the orbit before the rate that determines it,
+    `link` ran the link budget before the transmit power that is a term in it, and `coolant_flow`
+    ran the flow before the pump speed that drives it.
+
+    `link` is the one to look at, because `plant.md` already names it: the frozen lexicographic
+    tiebreak "gets `link` wrong — `link_snr` sorts before `tx_power`, and transmit power is a term
+    in the link budget". The corpus *declares* the right order and the plant was not reading the
+    declaration, so this was not even the tiebreak being wrong; it was a third order, the order the
+    YAML happened to be written in, deciding silently.
+
+    Nothing was visibly wrong yet, and the reason is the finding's own shape: the states that would
+    expose it are ones the plant cannot advance, so four nodes' worth of declared order had never
+    been exercised. This is the reversed-schedule defect arriving one level down.
+    """
+    plant = _plant()
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    world = plant.load_world(VEHICLE)
+    for node, declared in sorted(
+        (node, (spec or {}).get("state_order"))
+        for node, spec in coupling["nodes"].items()
+        if isinstance((spec or {}).get("state_order"), list)
+    ):
+        assert [s.id for s in world.states_on(node)] == declared, (
+            f"{node} advances in a different order from the one it declares"
+        )
+    # And the two independent nodes still get a frozen order, which is the tiebreak rather than a
+    # declaration — the plant must not read "independent" as "whatever the file said".
+    assert [s.id for s in world.states_on("link")] == ["tx_power", "link_snr"]
+    assert [s.id for s in world.states_on("engine_main")] == sorted(
+        ["aps_state", "dps_state", "sps_state"]
+    )
+
+    # The negative, in a broken copy: reverse one node's declared order and the plant follows it —
+    # which is the property, not the specific sequence. A plant that read the declaration would
+    # produce the reversed tuple here; one that ignored it would produce the same tuple twice.
+    definition = copy_definition(fixture_dir(tmp_path, "reversed-node-order"))
+    path = definition / "coupling.yaml"
+    text = path.read_text()
+    old = "    state_order: [body_rate, attitude, orbital_state]\n"
+    assert old in text, "the fixture no longer matches vehicle_dynamics' state_order"
+    path.write_text(text.replace(old, "    state_order: [orbital_state, attitude, body_rate]\n", 1))
+    reversed_world = plant.load_world(definition)
+    assert [s.id for s in reversed_world.states_on("vehicle_dynamics")] == [
+        "orbital_state",
+        "attitude",
+        "body_rate",
+    ]
+    # And the reader is the *plant*, not just the loader: `--order` and the plant's own walk agree
+    # state for state on the corpus, which is the property the promise in `plant.md:71` is about.
+    linter_order = subprocess.run(
+        [sys.executable, str(LINTER), "--dir", str(VEHICLE), "--order"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    walked = [s.id for s in world.states if s.node != "internal"]
+    printed = [line.strip() for line in linter_order.splitlines() if line.startswith("       ")]
+    assert walked == printed, (walked[:6], printed[:6])
+
+
+def test_the_linter_refuses_a_derivation_that_reads_a_state_that_has_not_advanced(tmp_path):
+    """A state's derivation may now read another state — and a reading has to exist when it is read.
+
+    `derivation_value` has always bound a bare name to *that state's value this tick*; it is how a
+    channel says "the live cabin temperature" instead of a literal 295 K. A *state's* derivation was
+    restricted to numbers and `<file>.yaml:<dotted.path>` sources only because the caller that
+    evaluates one had no tick and no order to check a reading against. Round 47 gave it both, so the
+    rule that replaces the restriction is the order itself: the producer must advance first.
+
+    Two refusals come out of it, and the second is the one this feature needs: a name that is no
+    state at all, and a name whose state the schedule reaches *later* than the reader. The second is
+    why the order has to be derived rather than assumed — `zone_csm_cabin_t` is legal for
+    `csm_cabin_pressure_pa` because `cabin_zone_t` advances four nodes earlier, and the same reading
+    written on a state on an earlier node would be last tick's temperature under this tick's name.
+    """
+    # The name that is no state at all, first: the older and more obvious half.
+    definition = copy_definition(fixture_dir(tmp_path, "unknown-reading"))
+    path = definition / "domains" / "eclss" / "components.yaml"
+    text = path.read_text()
+    old = "          cabin_temperature_k: zone_csm_cabin_t\n"
+    assert old in text, "the fixture no longer matches the CSM pressure's temperature reading"
+    path.write_text(text.replace(old, "          cabin_temperature_k: cabin_temperature\n", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "which is no state in this vehicle" in result.stdout, result.stdout[-900:]
+
+    # And the reading the schedule reaches too late: the same law, on the same state, reading a
+    # value that is produced by a *later* node. `co2_removal_lm` is node 56 and `cabin_atm` is 53,
+    # so binding its rate here is three nodes too late by the corpus's own derived order — and the
+    # state has a declared value, which is what makes this the ordering refusal rather than the
+    # "nothing to check it against" one.
+    late = copy_definition(fixture_dir(tmp_path, "late-reading"))
+    path = late / "domains" / "eclss" / "components.yaml"
+    text = path.read_text()
+    path.write_text(
+        text.replace(old, "          cabin_temperature_k: co2_removal_lm_kg_s\n", 1)
+    )
+    result = run_linter(late)
+    assert result.returncode == 1
+    assert "advances at or after it in the tick order" in result.stdout, result.stdout[-900:]
+    assert "co2_removal_lm_kg_s" in result.stdout
+
+    # The corpus's own two readings are legal, and the linter says so by composing.
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-900:]
+
+
+def test_the_two_cabins_compute_their_pressure_by_one_law():
+    """Two compartments, one relation, and nothing in the corpus held them together.
+
+    The LM's pressure entry used to be a sentence — "as the CSM compartment, over the LM's own
+    volume" — and a sentence is not a link: nothing compared the two, so nothing would have noticed
+    the LM's law reading the CSM's molar masses, or its volume, or its gases. Both are arithmetic
+    now, and this holds the halves that have to match and the one that must not.
+    """
+    eclss = yaml.safe_load((VEHICLE / "domains" / "eclss" / "components.yaml").read_text())
+    states = {state["id"]: state for state in eclss["state"]}
+    csm = states["csm_cabin_pressure_pa"]["provenance"]["derivation"]
+    lm = states["lm_cabin_pressure_pa"]["provenance"]["derivation"]
+    # The law is one expression, character for character.
+    assert csm["expression"] == lm["expression"]
+    # The constants and the molar masses are the shared declarations; only the gases, the volume and
+    # the temperature are the compartment's own.
+    shared = {
+        "o2_molar",
+        "n2_molar",
+        "co2_molar",
+        "h2o_molar",
+        "gas_constant",
+    }
+    for key in shared:
+        assert csm["inputs"][key] == lm["inputs"][key], key
+        if key == "gas_constant":
+            assert isinstance(csm["inputs"][key], float)
+        else:
+            assert csm["inputs"][key].startswith("domains/eclss/components.yaml:"), key
+    assert csm["inputs"]["cabin_volume_m3"].endswith("volume_m3.csm")
+    assert lm["inputs"]["cabin_volume_m3"].endswith("volume_m3.lm")
+    # And the reading each one binds is its own compartment's zone — the half a copy-paste breaks.
+    assert csm["inputs"]["cabin_temperature_k"] == "zone_csm_cabin_t"
+    assert lm["inputs"]["cabin_temperature_k"] == "zone_lm_cabin_t"
+    for key in ("o2_mass", "n2_mass", "co2_mass", "h2o_mass"):
+        assert csm["inputs"][key].startswith("csm_"), key
+        assert lm["inputs"][key].startswith("lm_"), key
+    # And both compute something inside the channel's own 4.8-5.2 psia band, which is the claim the
+    # two numbers make about the cabins rather than about the arithmetic.
+    psi = 6894.757293168361
+    for state_id in ("csm_cabin_pressure_pa", "lm_cabin_pressure_pa"):
+        declared = states[state_id][state_id]
+        assert 4.8 < declared / psi < 5.2, (state_id, declared / psi)
+
+
+def test_the_lag_integrator_applies_the_conversion_its_edge_declares():
+    """Four edges declared a conversion and the integrator applied neither the unit nor the value.
+
+    `lag_driver_basis` required a driver edge to be an *identity* transfer — the state's quantity,
+    one for one, scale 1 — because the plant read `values[source]` and relaxed toward it untouched.
+    That rule refused four edges that are not identity transfers and are not wrong: `E-BUS-PUMP` is
+    the pump's volts-to-flow gain (8.9998e-4 kg/s per V), `E-PROP-ENG` and `E-RCSP-RCS` are
+    thrust-to-flow relations, and `E-FC-HEAT` is the cell's waste-heat fraction (0.58336 W per W).
+    Each names both of its quantities in its unit and carries the factor between them in its value,
+    which is what a converter *is*.
+
+    So the rule is now the one the unit makes checkable: a conversion is well-formed when the unit
+    names the state's quantity over the source's, the factor is finite and non-zero, and **the source
+    is a level of that quantity rather than a stock's inventory**. The last clause was added by the
+    same round after the first three let `E-PROP-ENG` through: 3.2423409e-4 kg/s per N is a *flow* at
+    a rated thrust, and the node it leaves holds 18,508 kg of propellant, so multiplying them would
+    have produced a number with three units in it the moment its driver was supplied.
+
+    The branches are exercised directly because the corpus's own conversion edges have other debts in
+    front of them — `E-BUS-PUMP`'s driver is `bus_a_v`, whose rule is not written, and `E-PROP-ENG`'s
+    unit is stated backwards — so a test that waited for a corpus state to move would be testing the
+    schedule rather than this rule.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle
+
+    report = check_vehicle.Report()
+    coupling = check_vehicle.load(VEHICLE / "coupling.yaml", report)
+    nodes = {str(k): dict(v) for k, v in (coupling.get("nodes") or {}).items()}
+
+    def edge(edge_id, source, target, value, unit):
+        return {
+            "id": edge_id,
+            "from": source,
+            "to": target,
+            "kind": "lag",
+            "sensitivity": {"value": value, "unit": unit, "basis": "chosen", "at": "nominal"},
+        }
+
+    # The conversion the corpus declares, as the corpus declares it: well-formed.
+    ok, why = check_vehicle.lag_driver_basis(
+        edge("E-BUS-PUMP", "bus_a", "coolant_flow", 8.9998e-4, "kg/s per V"), "kg/s", nodes
+    )
+    assert ok, why
+
+    # And the identity transfer is still the identity: the same quantity, one for one.
+    ok, why = check_vehicle.lag_driver_basis(
+        edge("E-CABIN-EQ-CSM", "cabin_eq_csm", "cabin_zone_t", 1.0, "K per K"), "K", nodes
+    )
+    assert ok, why
+
+    # A gain between two ends in the *same* quantity is still refused: that is a proportional law,
+    # not a conversion, and `plant.md` §3 refuses a mode applied as a gain.
+    ok, why = check_vehicle.lag_driver_basis(
+        edge("gain", "cabin_eq_csm", "cabin_zone_t", 1.5, "K per K"), "K", nodes
+    )
+    assert not ok and "same quantity" in why, why
+
+    # A stock's inventory is not a rate. With the edge's unit stated the way the corpus states it,
+    # the numerator rule fires first (the corpus's `E-PROP-ENG` says `kg/s per N` for a state in
+    # newtons). The stock clause is the one that survives that fix, so it is exercised against a
+    # source node that *does* carry the denominator's quantity — which is what makes the clause
+    # about the node's kind rather than about its unit.
+    ok, why = check_vehicle.lag_driver_basis(
+        edge("E-PROP-ENG", "prop_main", "thrust_main", 3.2423409e-4, "kg/s per N"), "N", nodes
+    )
+    assert not ok, why
+    stock_source = dict(nodes)
+    stock_source["prop_main"] = {"domain": "consumables", "kind": "stock", "unit": "kg/s"}
+    ok, why = check_vehicle.lag_driver_basis(
+        edge("E-PROP-ENG", "prop_main", "thrust_main", 3084.4, "N per kg/s"),
+        "N",
+        stock_source,
+    )
+    assert not ok, why
+    assert "stock" in why and "rate is owed" in why, why
+
+    # The plant's own walk agrees: the state that stopped being refused for the wrong reason is
+    # `coolant_flow_kg_s`, and what it owes now is named — the bus voltage it reads, not a rule.
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    buckets = plant.build_order(world)
+    assert "coolant_flow_kg_s" in {s.id for s in buckets["ready"]}
+    gaps: list = []
+    plant.step(world, plant.initial_values(world), 0.02, gaps)
+    owed = {g.state.id: str(g.owed) for g in gaps}
+    assert "reads 'bus_a', which nothing supplies" in owed["coolant_flow_kg_s"], owed[
+        "coolant_flow_kg_s"
+    ]
+    # And `thrust_main_n`'s debt moved from *the rule* to the *edge*, which is the truthful place:
+    # what it lacks is the propellant flow to relax toward, not the code that would relax it.
+    assert "thrust_main_n" in {s.id for s in buckets["edge"]}
+    assert "thrust_main_n" not in {s.id for s in buckets["rule"]}
 
 
 def test_the_plant_reports_the_build_order():
@@ -10726,15 +11044,16 @@ def test_the_propulsion_edges_are_stated_as_drains(tmp_path):
     dimensional check refused it — correctly, because N per (kg/s) is what an engine *produces*, not
     what a tank loses.
 
-    Both reversed figures are published rather than owed: Isp 314.5 s and 290 s are in
-    `vehicle.yaml#propulsion`, so `1/(Isp x g0)` closes each edge exactly and **249 became 247**.
+    Both reversed figures are published rather than owed: Isp 314.5 s and **277.8 s** are in
+    `vehicle.yaml#propulsion` (the second moved by C-26, which closed on the RCS study guide's
+    corroborated figure), so `1/(Isp x g0)` closes each edge exactly and **249 became 247**.
     """
     plant = _plant()
     world = plant.load_world(VEHICLE)
     coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
     edges = {e["id"]: e for e in coupling["edges"]}
 
-    for edge_id, isp in (("E-PROP-ENG", 314.5), ("E-RCSP-RCS", 290.0)):
+    for edge_id, isp in (("E-PROP-ENG", 314.5), ("E-RCSP-RCS", 277.8)):
         edge = edges[edge_id]
         assert edge["sensitivity"]["unit"] == "kg/s per N", edge_id
         assert edge["sensitivity"]["value"] == pytest.approx(1.0 / (isp * 9.80665), rel=1e-9)
@@ -15128,20 +15447,37 @@ def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     ok, why = linter.lag_driver_basis(edge(value=1.0, unit="kg per kg"), "kg", nodes)
     assert ok, why
 
-    # A different quantity on the two ends.
-    ok, why = linter.lag_driver_basis(edge(value=1.0, unit="K per K"), "K", nodes)
-    assert not ok and "denominated in" in why, why
-    # A rate where a level belongs — `crew_workload`'s own shape.
+    # **The wording moved in round 48 and so did the answer, for two of these.** The rule used to
+    # refuse any driver in a different quantity because the integrator applied no conversion; it now
+    # accepts a well-formed conversion and refuses the ways one can be ill-formed. So:
+    #
+    # A rate where a level belongs — `crew_workload`'s own shape. The unit's numerator names a
+    # quantity the state is not, which is the first refusal.
     ok, why = linter.lag_driver_basis(edge(value=0.094583, unit="kg/h per crew"), "enum-level", nodes)
-    assert not ok and "different quantity" in why, why
-    # A reversed ratio — `thrust_main_n`'s own shape.
+    assert not ok and "numerator names a quantity the state is not" in why, why
+    # A reversed ratio — `thrust_main_n`'s own shape, refused for the same reason.
     ok, why = linter.lag_driver_basis(edge(value=0.00032423409, unit="kg/s per N"), "N", nodes)
-    assert not ok, why
-    # And a scale the integrator does not apply — `E-BUS-PUMP`'s own shape.
+    assert not ok and "numerator names a quantity the state is not" in why, why
+    # And `E-BUS-PUMP`'s own shape, which is **accepted now**: `kg/s per V` with a factor between
+    # them is the pump's gain, and the integrator multiplies by it. The edge's `from` has to be the
+    # node the unit map declares — `edge()` defaults it to `tank`, which is in no map, and a source
+    # with no declared unit is treated as the same quantity.
     ok, why = linter.lag_driver_basis(
-        edge(value=0.00089998, unit="kg/s per V"), "kg/s", {"bus": {"unit": "V"}}
+        {"id": "E-BUS-PUMP", "from": "bus", "to": "zone", "kind": "lag",
+         "sensitivity": {"value": 0.00089998, "unit": "kg/s per V"}},
+        "kg/s",
+        {"bus": {"unit": "V"}},
     )
-    assert not ok and "does not apply" in why, why
+    assert ok, why
+    # A gain between two ends in the same quantity is what is refused instead, because that is a
+    # proportional law rather than a conversion.
+    ok, why = linter.lag_driver_basis(
+        {"id": "E-GAIN", "from": "bus", "to": "zone", "kind": "lag",
+         "sensitivity": {"value": 1.5, "unit": "kg/s per kg/s"}},
+        "kg/s",
+        {"bus": {"unit": "kg/s"}},
+    )
+    assert not ok and "same quantity" in why, why
 
     # The corpus: every lag's driver edge is either integrable or reported by name, and a real tick
     # advances none of the states that would have gone wrong.
@@ -15248,7 +15584,13 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # state on the `internal` sentinel whose rule the corpus declares, so a real tick computes it.
     # 20 -> 22 in round 41, with the two loops' collected loads, which sum the heat rates that tick
     # has just produced.
-    assert len(advanced) == 25, sorted(advanced)
+    # 25 -> 27 in round 47, with the two cabins' pressures: the gas law over four stocks and the
+    # zone temperature is evaluated on every tick, and the reading is live — a leaking cabin moves
+    # the number, which is the whole reason the states read each other rather than a constant.
+    # 27 -> 28 in round 48, when `propellant_estimate`'s relation became arithmetic over the
+    # impulse stock: `100 * (1 - impulse_total / capacity)`, with the capacity C-26 had just
+    # re-derived. Same class, one more state, and the reading is a live stock.
+    assert len(advanced) == 28, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares.
     assert values["cabin_heat_csm"] == 733.0
@@ -15265,6 +15607,14 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     assert values["csm_cabin_o2_kg"] == 2.528302
     assert values["csm_cabin_h2o_kg"] == 0.05315987
     assert values["lm_cabin_o2_kg"] == 2.87112285
+    # **And the pressure those four masses make together is computed, not declared.** Round 47's
+    # gas law reads all four stocks and the zone's live temperature, so the number here is the law's
+    # — 34,473.78 Pa, which is 4.9999986 psia, against the 5 psia design point the masses were
+    # derived from. The two agree to 2.6 mPa and they are *not* the same claim: the declared total
+    # is where the cabin starts, and this is what the cabin is at, which a leak moves.
+    assert values["csm_cabin_pressure_pa"] == pytest.approx(34473.7767, abs=1e-3)
+    assert values["lm_cabin_pressure_pa"] == pytest.approx(34473.7799, abs=1e-3)
+    assert 4.9999 < values["csm_cabin_pressure_pa"] / 6894.757293168361 < 5.0
     # A node carrying one state keeps its node key, because every reader asks for it that way; a node
     # carrying five has no node key at all, because there is no single value it could mean.
     assert values["cabin_heat_csm"] == 733.0
