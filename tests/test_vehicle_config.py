@@ -8105,6 +8105,12 @@ def test_the_readme_status_matches_the_tools():
     debts = re.search(r"with (\d+) declared debt", lint.stdout).group(1)
     states, nodes = re.search(r"world: (\d+) states over (\d+) nodes", plant).groups()
     scalars = re.search(r"UNCONFIGURED scalars\s+(\d+)", plant).group(1)
+    # **The figure the definition of done watches, which nothing pinned.** Every needle below is a
+    # number the tools derive; the count of states the plant can actually advance was stated nowhere
+    # in this file and asserted nowhere either, so it could move — and did, twice, silently. It is
+    # a declaration now, in the status paragraph and in this list.
+    configured = re.search(r"states fully configured\s+(\d+)", plant).group(1)
+    with_debt = re.search(r"states with a debt\s+(\d+)", plant).group(1)
     rule = re.search(r"(\d+)\s+\d+ %\s+owes a rule", order).group(1)
 
     # The sentence that carries them, and the paragraphs that restate two of them.
@@ -8115,6 +8121,10 @@ def test_the_readme_status_matches_the_tools():
         (f"The **{scalars}** the plant", "the plant's narrower count"),
         (f"so {rule} of the {states} states need code", "the domain-code count"),
         (f"{states} states, by what blocks them", "the build-order view"),
+        (
+            f"{configured} of the {states} states are fully configured and {with_debt} carry a debt",
+            "the configured-state count, which is the one the objective watches",
+        ),
     ):
         assert needle in readme, f"{what} is stale: expected {needle!r} in the README"
 
