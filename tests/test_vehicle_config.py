@@ -8111,6 +8111,22 @@ def test_the_readme_status_matches_the_tools():
     # a declaration now, in the status paragraph and in this list.
     configured = re.search(r"states fully configured\s+(\d+)", plant).group(1)
     with_debt = re.search(r"states with a debt\s+(\d+)", plant).group(1)
+    # **And the definition of done's own second figure.** `--build-order`'s ready-now bucket is what
+    # an implementer reads; what a tick actually does with the same corpus is printed by
+    # `--readiness`, and until round 17 nothing held the two against each other anywhere outside
+    # this file's own prose. The objective states the gap as its second completion criterion
+    # ("today 15 versus 1"), so the number belongs in the README beside the others.
+    advanced = re.search(r"(\d+) of \d+ states advanced", plant).group(1)
+    # The build order is a *second* run of the tool, so its ready bucket is parsed from that.
+    ready = re.search(
+        r"(\d+)\s+\d+ %\s+ready now",
+        subprocess.run(
+            [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--build-order"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout,
+    ).group(1)
     rule = re.search(r"(\d+)\s+\d+ %\s+owes a rule", order).group(1)
 
     # The sentence that carries them, and the paragraphs that restate two of them.
@@ -8124,6 +8140,11 @@ def test_the_readme_status_matches_the_tools():
         (
             f"{configured} of the {states} states are fully configured and {with_debt} carry a debt",
             "the configured-state count, which is the one the objective watches",
+        ),
+        (
+            f"a real tick advances **{advanced}** of the {states} states against the build order's "
+            f"**{ready}** ready",
+            "the tick figure, which is the objective's second completion criterion",
         ),
     ):
         assert needle in readme, f"{what} is stale: expected {needle!r} in the README"
