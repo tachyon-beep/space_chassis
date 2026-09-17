@@ -795,12 +795,12 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # published 35 cfm as its initial: `suit_loop_flow_cfm` stopped owing a *value*, so it left the
     # first counter, and the worklist now calls it `rule` while `advance` calls it a missing edge —
     # which is the sentinel's own documented disagreement, one state further along.
-    # **`unmet_reading` is 3 from round 48**: the two cabins' pressures and the RCS propellant
-    # estimate, whose rules are in the configuration and whose readings are other states' values.
-    # The worklist calls them ready; a tick with nothing supplied calls them a value debt. They are
-    # the states the fourth completion criterion is about, and this counter is where the gap between
-    # "the rule exists" and "the rule can run today" is visible.
-    assert (counted_more, sentinel, no_input, unmet_reading) == (21, 11, 0, 3), (
+    # **`unmet_reading` went 3 -> 4 in round 50**: the cabins' two pressures, the RCS propellant
+    # estimate and the CSM's bus load, whose rules are in the configuration and whose readings are
+    # other states' values. The worklist calls them ready; a tick with nothing supplied calls them a
+    # value debt. They are the states the fourth completion criterion is about, and this counter is
+    # where the gap between "the rule exists" and "the rule can run today" is visible.
+    assert (counted_more, sentinel, no_input, unmet_reading) == (21, 11, 0, 4), (
         counted_more,
         sentinel,
         no_input,
@@ -5980,6 +5980,11 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
         # state's own id rather than a parameter of it.
         "csm_cabin_pressure_pa": "o2_mass",
         "lm_cabin_pressure_pa": "o2_mass",
+        # And the electrical load the bus solve reads (round 50): the relation was the state's own
+        # note ("sum of the enabled loads") and the fourteen `demand_w` fields were already summed
+        # by `check_power_inventory` — so this is the *state* where before there was only a check.
+        "bus_a_load_w": "csm_sband_transceiver",
+        "cabin_dp_psi": "pressure_pa",
         # And the RCS propellant estimate (round 48): the relation was a sentence and every
         # ingredient — the impulse stock and the capacity C-26 re-derived — was declared.
         "propellant_estimate": "impulse_used",
@@ -6348,15 +6353,18 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     # derived state the corpus declares on the `internal` sentinel.
     # 17 -> 19 in round 41, with the two loops' collected loads: the sums the domain's own debt
     # called "a sum over `heat_inputs` that nothing evaluates".
-    # 21 -> 24 in rounds 47 and 48, with three states whose `computes` field is **their own id**:
-    # the two cabins' pressures (one gas law over four stocks and a zone temperature read live) and
-    # the RCS propellant estimate (`100 * (1 - impulse_total / capacity)`). They are the reason the
-    # subject list below is no longer a closed vocabulary of parameter names — a state that *is* its
-    # computed value has no parameter to name, and the field it produces is the state itself.
-    assert len(declared) == 24, f"{len(declared)} declared arithmetics"
+    # 21 -> 25 across rounds 47, 48 and 50, with four states whose `computes` field is **their own
+    # id**: the two cabins' pressures (one gas law over four stocks and a zone temperature read
+    # live), the RCS propellant estimate (`100 * (1 - impulse_total / capacity)`) and the CSM's
+    # connected electrical load (the fourteen `demand_w` fields). They are the reason the subject
+    # list below is no longer a closed vocabulary of parameter names — a state that *is* its computed
+    # value has no parameter to name, and the field it produces is the state itself.
+    assert len(declared) == 26, f"{len(declared)} declared arithmetics"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
     assert subjects == [
+        "bus_a_load_w",
+        "cabin_dp_psi",
         "csm_cabin_pressure_pa",
         "lm_cabin_pressure_pa",
         "nominal_kg_s",
@@ -6376,21 +6384,25 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     fixture = copy_definition(fixture_dir(tmp_path, "computes_"))
 
     def break_an_expression(domain: str, sid: str, expression: str) -> None:
-        """Rewrite one state's `derivation.expression`, keeping the file's own formatting."""
+        """Rewrite one state's `derivation.expression`, in place and by parsing.
+
+        **It was a line edit, and a folded expression broke it.** The first version walked the state's
+        block and replaced the first line beginning `expression: ` — which is the *top-level*
+        expression for every state that writes one on a single line, and the wrong one for a state
+        whose derivation has other keys before it: `bus_a_load_w`'s expression is a `>-` block, so the
+        walk found the first `expression:` inside the nested... and rewrote a *different* key. The
+        fixture then failed to parse and the case reported 116 refusals instead of the one it was
+        testing. Parsing the block and dumping it back is the same edit with no dependence on how the
+        author wrapped the line.
+        """
         path = fixture / "domains" / domain / "components.yaml"
-        lines = path.read_text().splitlines(keepends=True)
-        start = next(i for i, line in enumerate(lines) if line.strip() == f"- id: {sid}")
-        end = next(
-            (i for i in range(start + 1, len(lines)) if re.match(r"^  - id: ", lines[i])),
-            len(lines),
-        )
-        for i in range(start, end):
-            if lines[i].strip().startswith("expression: "):
-                indent = len(lines[i]) - len(lines[i].lstrip())
-                lines[i] = " " * indent + f"expression: {expression!r}\n"
-                path.write_text("".join(lines))
-                return
-        raise AssertionError(f"{sid} declares no expression")
+        document = yaml.safe_load(path.read_text())
+        state = next(s for s in document["state"] if s.get("id") == sid)
+        provenance = state.get("provenance") or {}
+        derivation = provenance.get("derivation")
+        assert isinstance(derivation, dict), f"{sid} declares no derivation"
+        derivation["expression"] = expression
+        path.write_text(yaml.safe_dump(document, sort_keys=False, width=100))
 
     # The one the list never reached. It composed before that round. The break adds one to the
     # expression rather than replacing it: a break that dropped the identifier would leave
@@ -6427,18 +6439,31 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
         # `break_an_expression` quotes the expression itself, so the parsed string goes back as-is.
         break_an_expression(domain, sid, original)
 
-    # A value that names no subject, and one that names a field it does not have.
-    path = fixture / "domains" / "power" / "components.yaml"
-    body = path.read_text()
-    path.write_text(body.replace("      computes: ratio_of_o2_draw\n", "", 1))
+    # A value that names no subject, and one that names a field it does not have. Both mutations
+    # parse and dump, for the reason `break_an_expression` does: this fixture is rewritten by
+    # `yaml.safe_dump` further up, so a later test that edited it by string could not find its own
+    # anchor and would assert against an unbroken corpus — which is what it did.
+    def set_computes(subject: str | None) -> None:
+        path = fixture / "domains" / "power" / "components.yaml"
+        document = yaml.safe_load(path.read_text())
+        provenance = next(
+            s for s in document["state"] if s.get("id") == "fc_h2_draw_kg_s"
+        )["provenance"]
+        if subject is None:
+            del provenance["computes"]
+        else:
+            provenance["computes"] = subject
+        path.write_text(yaml.safe_dump(document, sort_keys=False, width=100))
+
+    set_computes(None)
     result = run_linter(fixture)
     assert result.returncode == 1, result.stdout[-800:]
     assert "provenance.computes" in result.stdout
-    path.write_text(body.replace("computes: ratio_of_o2_draw", "computes: unit", 1))
+    set_computes("unit")
     result = run_linter(fixture)
     assert result.returncode == 1, result.stdout[-800:]
     assert "does not declare as a number" in result.stdout
-    path.write_text(body)
+    set_computes("ratio_of_o2_draw")
     assert run_linter(fixture).returncode == 0, "the fixture did not come back"
 
 
@@ -8042,7 +8067,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # over the four gas stocks and the zone's temperature *as a reading* — the first derivations
     # in the corpus that read another state's value this tick, and the first whose `computes`
     # field is the state's own id rather than a parameter of it.
-    assert len(buckets["ready"]) == 38
+    assert len(buckets["ready"]) == 40
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -8067,7 +8092,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # and now owes the driver that would advance it, which is domain code.
     # 68 -> 66 in round 47, the other half of the move above: the two pressures left this bucket
     # for `ready` without the rule layer's count changing anywhere else.
-    assert len(buckets["rule"]) == 64, "just under half the vehicle is domain code"
+    assert len(buckets["rule"]) == 62, "just under half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -8222,6 +8247,118 @@ def test_the_linter_refuses_a_derivation_that_reads_a_state_that_has_not_advance
     # The corpus's own two readings are legal, and the linter says so by composing.
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
+
+
+def test_the_bus_load_is_the_sum_the_inventory_already_states(tmp_path):
+    """The state every electrical reader needs, where before there was only a check.
+
+    `power.bus_a_current_a` is `load_w / voltage_v` and `power.lcl_[n]_current_a` is the load's own
+    current, so the domain has needed a *state* holding the bus load since the registry was written —
+    and `load_budget.csm_total_demand_w` has held the same number since the round that wrote
+    `check_power_inventory`, which sums the fourteen `demand_w` fields and refuses a stated total that
+    does not match. So this derivation adds no number: it is the check's sum, promoted to the state
+    the solve will read, and the test holds the two together.
+
+    **The scope is the decision the round had to make, and the graph had already made it.** Every
+    electrical edge terminates on `bus_a`, the tie runs `bus_b -> bus_tie -> bus_a`, so the two buses
+    are one electrical system and the current the cells supply is the whole vehicle's draw — the
+    fourteen CSM loads, not the seven that name `csm_bus_a`. A bus-A-only sum would leave the pumps,
+    the heaters and the lighting fed from nowhere, and `power.bus_a_current_a` would read 21 A where
+    apollo publishes 10-120 A against a 40 A continuous rating.
+    """
+    power = yaml.safe_load((VEHICLE / "domains" / "power" / "components.yaml").read_text())
+    loads = {row["id"]: row for row in power["loads"]}
+    csm = {name: row for name, row in loads.items() if row["vehicle"] == "csm"}
+    assert len(csm) == 14, sorted(csm)
+    assert sum(int(row["demand_w"]) for row in csm.values()) == 1723
+    assert power["load_budget"]["csm_total_demand_w"] == 1723
+
+    state = next(s for s in power["state"] if s["id"] == "bus_a_load_w")
+    provenance = state["provenance"]
+    assert provenance["basis"] == "derived"
+    assert provenance["computes"] == "bus_a_load_w"
+    assert state["bus_a_load_w"] == 1723
+    # Every CSM load is named, and every input is that load's own declared demand.
+    derivation = provenance["derivation"]
+    named = {str(v).rsplit(".", 2)[-2] for v in derivation["inputs"].values()}
+    assert named == set(csm), sorted(set(csm) ^ named)
+    for key, source in derivation["inputs"].items():
+        assert source == f"domains/power/components.yaml:loads.{key}.demand_w", key
+
+    # The plant computes it, and the number is the inventory's.
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    values = plant.step(world, plant.initial_values(world), 0.02, [])
+    assert values["bus_a_load_w"] == 1723.0
+
+    # And moving one load's demand, in a broken copy, is refused rather than silently summed at the
+    # old total — which is what makes this a *derived* value rather than a second declaration of one.
+    definition = copy_definition(fixture_dir(tmp_path, "load-moved"))
+    path = definition / "domains" / "power" / "components.yaml"
+    text = path.read_text()
+    # `csm_heaters` is the one 300 W load, so its `demand_w` is unambiguous in the file.
+    old = "    demand_w: 300\n"
+    assert text.count(old) == 1
+    path.write_text(text.replace(old, "    demand_w: 320\n", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "bus_a_load_w.provenance.derivation" in result.stdout, result.stdout[-900:]
+
+
+def test_the_structural_differential_is_the_compartments_own_pressure(tmp_path):
+    """One number, two readers, and a relation that had been written as a citation.
+
+    `structure.cabin_dp_psi` declared a `ref:` to `apollo_diode.md:206` and a note saying it "is a
+    read of the ECLSS compartment, expressed in the units a structural limit is stated in" — a
+    relation wearing a citation's clothes, and nothing joined it to the compartment. Now it is
+    arithmetic over `csm_cabin_pressure_pa`, which round 47 put a gas law behind, so the structural
+    chain's input moves with the cabin's actual pressure instead of with a constant.
+
+    The CSM's compartment is the one read, and that is a decision rather than an oversight: the
+    channel carries no vehicle qualifier, the LM's differential has no channel, and `structure` does
+    not declare `lm_cabin_atm` for this quantity. The separation from `eclss.cabin_pressure_psia` is
+    the whole point of the state — the same number is a life-support quantity to one reader and a
+    load on a vessel to another — so the test holds the two readers to one number.
+    """
+    eclss = yaml.safe_load((VEHICLE / "domains" / "eclss" / "components.yaml").read_text())
+    structure = yaml.safe_load((VEHICLE / "domains" / "structure" / "components.yaml").read_text())
+    state = next(s for s in structure["state"] if s["id"] == "cabin_dp_psi")
+    provenance = state["provenance"]
+    assert provenance["basis"] == "derived"
+    assert provenance["computes"] == "cabin_dp_psi"
+    assert state["cabin_dp_psi"] == 5.0
+    derivation = provenance["derivation"]
+    assert derivation["inputs"]["pressure_pa"] == "csm_cabin_pressure_pa"
+    assert derivation["inputs"]["pascals_per_psi"] == 6894.757293168361
+    # The eclss channel and this state agree, which is the claim the two readers make.
+    channel = None
+    for row in yaml.safe_load((VEHICLE / "domains" / "eclss" / "points.yaml").read_text())["points"]:
+        if row["channel"] == "eclss.cabin_pressure_psia":
+            channel = row
+    assert channel is not None
+    assert channel["derivation"]["inputs"]["pascals_per_psi"] == derivation["inputs"]["pascals_per_psi"]
+    cp = next(s for s in eclss["state"] if s["id"] == "csm_cabin_pressure_pa")
+    assert cp["provenance"]["computes"] == "csm_cabin_pressure_pa"
+
+    # The plant computes both from the one pressure, so they cannot disagree about the cabin.
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    values = plant.step(world, plant.initial_values(world), 0.02, [])
+    psi = derivation["inputs"]["pascals_per_psi"]
+    assert values["cabin_dp_psi"] == pytest.approx(values["csm_cabin_pressure_pa"] / psi, rel=1e-15)
+    assert 4.8 < values["cabin_dp_psi"] < 5.2
+
+    # And it is a reading of the reading: move the pressure in a broken copy and the differential
+    # moves with it, because the derivation is not restating a literal.
+    definition = copy_definition(fixture_dir(tmp_path, "pressure-moved"))
+    path = definition / "domains" / "eclss" / "components.yaml"
+    text = path.read_text()
+    old = "    csm_cabin_pressure_pa: 34473.783836\n"
+    assert old in text
+    path.write_text(text.replace(old, "    csm_cabin_pressure_pa: 35000.0\n", 1))
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "A derived value that no longer re-derives" in result.stdout, result.stdout[-900:]
 
 
 def test_the_two_cabins_compute_their_pressure_by_one_law():
@@ -15716,7 +15853,10 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # re-derived. Same class, one more state, and the reading is a live stock.
     # 28 -> 29 in round 49, with `loop_transport_t`: the seventh integrator class, which the plant
     # refused outright until the round that gave it a ring.
-    assert len(advanced) == 29, sorted(advanced)
+    # 29 -> 30 in round 50, when `bus_a_load_w`'s relation became arithmetic over the load inventory
+    # and `cabin_dp_psi`'s became a conversion of the pressure the eclss domain now computes: the sum
+    # every electrical reader needs, and the structural face of a life-support quantity.
+    assert len(advanced) == 31, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares.
     assert values["cabin_heat_csm"] == 733.0
@@ -17071,10 +17211,14 @@ def test_the_linter_refuses_a_derivation_the_plant_reads_and_nothing_checks(tmp_
     assert result.returncode == 0, f"the unbroken corpus was refused:\n{result.stdout[-2000:]}"
 
     definition = copy_definition(fixture_dir(tmp_path, "state-level-derivation"))
-    path = definition / "domains" / "power" / "components.yaml"
+    path = definition / "domains" / "thermal" / "components.yaml"
     text = path.read_text()
-    anchor = "  - id: bus_a_load_w\n    method: algebraic\n    node: internal\n    unit: W\n"
-    assert anchor in text, "the fixture no longer matches the load sum's state entry"
+    # **`heater_bank_duty`, not `bus_a_load_w`.** This fixture used the load sum until round 50 gave
+    # that state a real derivation — at which point the "arithmetic at the state level" case was
+    # planting a second one beside it, and the fixture was measuring the wrong thing. A state with no
+    # derivation at all is what the case needs, and the thermal domain's commanded duty is one.
+    anchor = '  - id: heater_bank_duty\n    method: algebraic\n    node: internal\n    unit: "-"\n'
+    assert anchor in text, "the fixture no longer matches the heater duty's state entry"
     path.write_text(
         text.replace(
             anchor,
@@ -17103,50 +17247,42 @@ def test_the_linter_refuses_a_derivation_the_plant_reads_and_nothing_checks(tmp_
     # The load sum's own `provenance` block is already there, so the fixture rewrites *it* rather
     # than adding a second one beside it: two `provenance:` keys in one mapping is the other
     # refusal this file already has, and it would have masked the one under test.
+    # **Parsed and dumped, not string-replaced** — the second time in two rounds that a fixture's
+    # edit stopped matching the text it was written against. Rewriting a state's `provenance` by hand
+    # is an edit to a structure, so it is spelled as one.
     moved = copy_definition(fixture_dir(tmp_path, "provenance-derivation"))
-    path = moved / "domains" / "power" / "components.yaml"
-    text = path.read_text()
-    old = (
-        "    note: sum of the enabled loads, recomputed every tick rather than tracked\n"
-        "    provenance:\n"
-        "      basis: chosen\n"
-        '      reason: "a derived sum recomputed each tick, never tracked: tracking it would make '
-        'the electrical network stateful and reintroduce the integration the algebraic class '
-        'exists to avoid"\n'
-    )
-    assert old in text, "the fixture no longer matches the load sum's provenance"
-    path.write_text(
-        text.replace(
-            old,
-            "    note: sum of the enabled loads, recomputed every tick rather than tracked\n"
-            "    provenance:\n"
-            "      basis: derived\n"
-            "      computes: total_w\n"
-            "      derivation:\n"
-            "        expression: csm_sband_transceiver + csm_sband_power_amplifier\n"
-            "        inputs:\n"
-            "          csm_sband_transceiver: domains/power/components.yaml:loads.csm_sband_transceiver.demand_w\n"
-            "          csm_sband_power_amplifier: domains/power/components.yaml:loads.csm_sband_power_amplifier.demand_w\n"
-            "      relation: the sum of the two loads the fixture names, over the declarations themselves\n"
-            "    total_w: 108\n",
-            1,
-        )
-    )
+    path = moved / "domains" / "thermal" / "components.yaml"
+    document = yaml.safe_load(path.read_text())
+    duty = next(s for s in document["state"] if s.get("id") == "heater_bank_duty")
+    duty["total_w"] = 108.0
+    duty["provenance"] = {
+        "basis": "derived",
+        "computes": "total_w",
+        "derivation": {
+            "expression": "csm_cabin_fan + csm_suit_fan",
+            "inputs": {
+                "csm_cabin_fan": "domains/power/components.yaml:loads.csm_cabin_fan.demand_w",
+                "csm_suit_fan": "domains/power/components.yaml:loads.csm_suit_fan.demand_w",
+            },
+        },
+        "relation": "the sum of the two loads the fixture names, over the declarations themselves",
+    }
+    path.write_text(yaml.safe_dump(document, sort_keys=False, width=100))
     plant = _plant()
     landed = plant.load_world(moved)
-    state = next(s for s in landed.states if s.id == "bus_a_load_w")
+    state = next(s for s in landed.states if s.id == "heater_bank_duty")
     assert state.id not in {s.id for s in plant.build_order(landed)["rule"]}, (
         "a state whose rule is declared under `provenance` is still reported as owing code"
     )
     values = plant.step(landed, plant.initial_values(landed), 0.02, [])
-    assert values["bus_a_load_w"] == 108.0, values.get("bus_a_load_w")
+    assert values["heater_bank_duty"] == 145.0, values.get("heater_bank_duty")
 
     # And the value the same arithmetic declares is checked, not merely read: the *same* fixture
     # with `total_w` moved one watt off the sum is a refusal, which is the half of "checkable" that
     # the state-level spelling could never have — there is no field at the state level it could
     # name. This is what the round means by the arithmetic having one home.
-    wrong = moved / "domains" / "power" / "components.yaml"
-    wrong.write_text(wrong.read_text().replace("    total_w: 108\n", "    total_w: 107\n", 1))
+    wrong = moved / "domains" / "thermal" / "components.yaml"
+    wrong.write_text(wrong.read_text().replace("total_w: 108.0", "total_w: 107.0", 1))
     result = run_linter(moved)
     assert result.returncode == 1
     assert "A derived value that no longer re-derives" in result.stdout, result.stdout[-900:]
