@@ -16495,6 +16495,114 @@ def test_the_mission_s_clock_is_declared_where_its_name_implies(tmp_path):
     assert "sat inside its epoch's provenance until round 35" in result.stdout
 
 
+def test_the_linter_refuses_a_derivation_the_plant_reads_and_nothing_checks(tmp_path):
+    """Two readers, two spellings, and the linter read the one the plant did not.
+
+    A state's arithmetic has one home in this corpus: `provenance.derivation`, with `computes`
+    naming the field it produces and `basis` saying why the claim may be made — twenty-one states,
+    eighteen of them `algebraic`, every one of them re-derived by `check_declared_derivation` on
+    every run. The *plant* reads that key in `advance()` and again in `build_order()`, and both
+    reads used to be `state.spec.get("derivation") or (provenance or {}).get("derivation")`.
+
+    So the same quantity had a second spelling that one side of the folder accepted. Planting a
+    bare `derivation` on `bus_a_load_w` — an `algebraic` state that owes a rule, whose note already
+    says it is "the sum of the enabled loads" — composed, `exit 0`, and moved the state out of
+    *owes a rule* and into *ready now*: 33 · 68 became 34 · 67 and the first tick advanced 26
+    states instead of 25, for arithmetic no check in `check_vehicle.py` ever looked at. **The
+    worklist is the reader that makes this more than cosmetic**: it is the folder's answer to "what
+    do I implement first", and it was reporting as already-implemented a state whose rule is not
+    declared anywhere the linter can find it.
+
+    The fix is one key rather than a second check. The plant reads `provenance.derivation` only,
+    and the linter refuses the other spelling by name and says where the arithmetic belongs — so
+    the state that appeared ready goes back to owing the rule the round never wrote, and the corpus
+    is unchanged: this is a refusal added around a hole, not a value landed in one.
+    """
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, f"the unbroken corpus was refused:\n{result.stdout[-2000:]}"
+
+    definition = copy_definition(fixture_dir(tmp_path, "state-level-derivation"))
+    path = definition / "domains" / "power" / "components.yaml"
+    text = path.read_text()
+    anchor = "  - id: bus_a_load_w\n    method: algebraic\n    node: internal\n    unit: W\n"
+    assert anchor in text, "the fixture no longer matches the load sum's state entry"
+    path.write_text(
+        text.replace(
+            anchor,
+            anchor
+            + "    derivation:\n"
+            "      expression: csm_sband_transceiver + csm_sband_power_amplifier\n"
+            "      inputs:\n"
+            "        csm_sband_transceiver: domains/power/components.yaml:loads.csm_sband_transceiver.demand_w\n"
+            "        csm_sband_power_amplifier: domains/power/components.yaml:loads.csm_sband_power_amplifier.demand_w\n",
+            1,
+        )
+    )
+    result = run_linter(definition)
+    assert result.returncode == 1
+    assert "is a derivation at the state level, which nothing here evaluates" in result.stdout, (
+        result.stdout[-1200:]
+    )
+    # The sentence that sends the author to the key the plant actually reads, which is the half
+    # that makes the refusal actionable rather than merely correct.
+    assert "provenance` with `basis: derived` and `computes: <field>`" in result.stdout, (
+        result.stdout[-1200:]
+    )
+
+    # And the other end: the same arithmetic *is* computable once it moves under `provenance` —
+    # which is what makes the refusal a statement about the spelling rather than about the sum.
+    # The load sum's own `provenance` block is already there, so the fixture rewrites *it* rather
+    # than adding a second one beside it: two `provenance:` keys in one mapping is the other
+    # refusal this file already has, and it would have masked the one under test.
+    moved = copy_definition(fixture_dir(tmp_path, "provenance-derivation"))
+    path = moved / "domains" / "power" / "components.yaml"
+    text = path.read_text()
+    old = (
+        "    note: sum of the enabled loads, recomputed every tick rather than tracked\n"
+        "    provenance:\n"
+        "      basis: chosen\n"
+        '      reason: "a derived sum recomputed each tick, never tracked: tracking it would make '
+        'the electrical network stateful and reintroduce the integration the algebraic class '
+        'exists to avoid"\n'
+    )
+    assert old in text, "the fixture no longer matches the load sum's provenance"
+    path.write_text(
+        text.replace(
+            old,
+            "    note: sum of the enabled loads, recomputed every tick rather than tracked\n"
+            "    provenance:\n"
+            "      basis: derived\n"
+            "      computes: total_w\n"
+            "      derivation:\n"
+            "        expression: csm_sband_transceiver + csm_sband_power_amplifier\n"
+            "        inputs:\n"
+            "          csm_sband_transceiver: domains/power/components.yaml:loads.csm_sband_transceiver.demand_w\n"
+            "          csm_sband_power_amplifier: domains/power/components.yaml:loads.csm_sband_power_amplifier.demand_w\n"
+            "      relation: the sum of the two loads the fixture names, over the declarations themselves\n"
+            "    total_w: 108\n",
+            1,
+        )
+    )
+    plant = _plant()
+    landed = plant.load_world(moved)
+    state = next(s for s in landed.states if s.id == "bus_a_load_w")
+    assert state.id not in {s.id for s in plant.build_order(landed)["rule"]}, (
+        "a state whose rule is declared under `provenance` is still reported as owing code"
+    )
+    values = plant.step(landed, plant.initial_values(landed), 0.02, [])
+    assert values["bus_a_load_w"] == 108.0, values.get("bus_a_load_w")
+
+    # And the value the same arithmetic declares is checked, not merely read: the *same* fixture
+    # with `total_w` moved one watt off the sum is a refusal, which is the half of "checkable" that
+    # the state-level spelling could never have — there is no field at the state level it could
+    # name. This is what the round means by the arithmetic having one home.
+    wrong = moved / "domains" / "power" / "components.yaml"
+    wrong.write_text(wrong.read_text().replace("    total_w: 108\n", "    total_w: 107\n", 1))
+    result = run_linter(moved)
+    assert result.returncode == 1
+    assert "A derived value that no longer re-derives" in result.stdout, result.stdout[-900:]
+
+
 def test_two_runs_of_one_start_produce_the_same_compare_point(tmp_path):
     """`plant.md` §6's step 7 was a comment, and the definition of done's second clause names it.
 
