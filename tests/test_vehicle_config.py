@@ -8598,9 +8598,6 @@ def test_every_stock_declares_where_it_starts():
     # six of the twenty-four declared values are the last of their key rather than a key of their
     # own. The invariant that survives is that every declared stock's *node* is a key — nothing a
     # stock declares is dropped by the map's shape — and that the sentinel is keyed by state id.
-    declared_nodes = {
-        str(s.node) for s in stocks if isinstance(s.spec.get("initial"), (int, float))
-    }
     # **Round 22 changed what the map's keys are.** They are state ids now, plus a node alias where
     # the node carries one state — so a *stock* is always addressable by its own id, and a stock on a
     # shared node is addressable *only* that way: `cabin_atm` is no longer a key at all, which is the
