@@ -5934,6 +5934,10 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
         # The fourth heat rate, which is a sum of three loads like the other three — the map names
         # the first of its inputs so the test reads the same declaration the derivation does.
         "avionics_bay_heat_w": "csm_imu",
+        # And the two loop loads, which sum the *heat rates*: the same idiom one level up, where a
+        # loop's collected load is the sum over the zones that name it.
+        "loop_primary_load_w": "cabin_heat_csm_w",
+        "loop_lm_load_w": "cabin_heat_lm_w",
     }
     seen = {}
     for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
@@ -6291,7 +6295,9 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     # `tau = m x c_p / G` over three declared fields, re-evaluated every run.
     # 16 -> 17 in round 40, with the avionics bay's heat rate: the fifth heat rate, and the first
     # derived state the corpus declares on the `internal` sentinel.
-    assert len(declared) == 17, f"{len(declared)} declared arithmetics"
+    # 17 -> 19 in round 41, with the two loops' collected loads: the sums the domain's own debt
+    # called "a sum over `heat_inputs` that nothing evaluates".
+    assert len(declared) == 19, f"{len(declared)} declared arithmetics"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
     assert subjects == [
@@ -7935,7 +7941,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # publishes it had a mass for a source, and the vehicle had no tank to read.
     # 135 -> 136 in round 40, with the avionics bay's heat rate: the one heated zone whose 360 W no
     # state carried, and the ingredient the loop's collected load was missing.
-    assert sum(len(rows) for rows in buckets.values()) == 136
+    # 136 -> 138 in round 41, with the two loops' collected loads: the sums that ingredient fed.
+    assert sum(len(rows) for rows in buckets.values()) == 138
 
     # `ready` means what it says: only the two classes the reference plant can actually advance.
     # The ready class is no longer only the plant's two integrators: round 20 taught it to evaluate
@@ -7967,7 +7974,10 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # that the plant evaluates in a real tick. The sentinel routing ran before the arithmetic test,
     # so the one rule that asks "is the rule already in the configuration?" was unreachable for
     # every state on the sentinel, and this one was filed as owing domain code that exists.
-    assert len(buckets["ready"]) == 28
+    # 28 -> 30 in round 41: `loop_primary_load_w` and `loop_lm_load_w`, the same declared-arithmetic
+    # shape one level up — the classifier fix is what lets them be counted ready rather than as
+    # owing code.
+    assert len(buckets["ready"]) == 30
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -8042,7 +8052,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "136 states, by what blocks them" in result.stdout
+    assert "138 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -8341,6 +8351,103 @@ def test_every_heated_zone_declares_the_state_that_carries_its_heat(tmp_path):
     result = run_linter(definition)
     assert result.returncode == 1
     assert "would relax toward a heat rate its equipment does not produce" in result.stdout
+
+
+def test_a_loop_s_collected_load_is_the_sum_over_the_zones_that_name_it(tmp_path):
+    """The figure the domain's own debt called "a sum over `heat_inputs` that nothing evaluates".
+
+    Every ingredient existed before this round — five zone heat rates, each held against the loads
+    `heat_inputs` assigns, and a `cooled_by` on each heated zone — and the sum did not: the heat
+    balance's rise is `load_w / (mass_flow_kg_s * c_p)`, the flow is a published reading, and the
+    numerator was a sentence. `loop_primary_load_w` and `loop_lm_load_w` are the sums now, and the
+    zones are the declaration rather than a list in the state: a zone moved to another loop moves
+    the sum instead of disagreeing with it, which is the rule the fixture below exercises.
+
+    The join is the loop's own `load_state` — the same shape as the zone's `heat_state`, and for the
+    same reason: a link found by naming convention goes quiet when the name moves. A loop that no
+    zone names is a **note** rather than a debt (`loop_secondary`: which CSM circuit serves which
+    zones is C-28's open question), and a loop whose zones do name it owes the state loudly.
+    """
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    states = {str(s["id"]): s for s in thermal["state"]}
+    zones = {str(z["id"]): z for z in vehicle["thermal"]["zones"]}
+    loops = {str(x["id"]): x for x in vehicle["thermal"]["loops"]}
+
+    served: dict[str, list[str]] = {loop_id: [] for loop_id in loops}
+    for zone in thermal["heat_inputs"]:
+        served[zones[zone]["cooled_by"]].append(zone)
+    assert sorted(served["loop_primary"]) == ["csm_avionics_bay", "csm_cabin", "csm_service_bay"]
+    assert sorted(served["loop_lm"]) == ["lm_cabin", "lm_descent_bay"]
+    assert served["loop_secondary"] == []
+    for loop_id, zones_served in served.items():
+        if not zones_served:
+            assert "load_state" not in loops[loop_id], loop_id
+            continue
+        total = sum(states[zones[zone]["heat_state"]]["total_w"] for zone in zones_served)
+        assert states[loops[loop_id]["load_state"]]["total_w"] == total, (loop_id, total)
+    assert states["loop_primary_load_w"]["total_w"] == 1723
+    assert states["loop_lm_load_w"]["total_w"] == 1007
+
+    # The note rather than a debt, in the linter's own words, and the count unmoved by it.
+    intact = run_linter(VEHICLE)
+    assert intact.returncode == 0
+    assert "COMPOSES, with 262 declared debt(s)." in intact.stdout
+    assert (
+        "vehicle.yaml#thermal.loops.loop_secondary.load_state: is not declared, and no zone names "
+        "this loop" in intact.stdout
+    ), intact.stdout[-1200:]
+
+    def fixture(name: str, relative: str, old: str, new: str) -> subprocess.CompletedProcess[str]:
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / relative
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        return run_linter(definition)
+
+    # A zone moved to the other loop: both sums are now wrong, and the message names the loop and
+    # the zones that carry it.
+    moved = fixture(
+        "moved-zone",
+        "vehicle.yaml",
+        "        cooled_by: loop_primary\n        temperature_state: zone_csm_cabin_t\n",
+        "        cooled_by: loop_lm\n        temperature_state: zone_csm_cabin_t\n",
+    )
+    assert moved.returncode == 1
+    assert "A loop's collected load is the sum over the zones it cools" in moved.stdout, (
+        moved.stdout[-1200:]
+    )
+
+    # An absent link is a debt, with the zone list and the figure in the message.
+    absent = fixture(
+        "no-loop-state",
+        "vehicle.yaml",
+        "        load_state: loop_lm_load_w\n",
+        "",
+    )
+    assert absent.returncode == 0, absent.stdout[-900:]
+    assert "names no state carrying this loop's collected load" in absent.stdout
+    assert "['lm_cabin', 'lm_descent_bay']" in absent.stdout
+
+    # A link that does not resolve is a refusal, and the total itself is held.
+    wrong = fixture(
+        "wrong-loop-state",
+        "vehicle.yaml",
+        "        load_state: loop_lm_load_w\n",
+        "        load_state: loop_lm_load_x\n",
+    )
+    assert wrong.returncode == 1
+    assert "which is not a state in domains/thermal/components.yaml" in wrong.stdout
+
+    total = fixture(
+        "loop-total",
+        "domains/thermal/components.yaml",
+        "    total_w: 1007\n",
+        "    total_w: 1000\n",
+    )
+    assert total.returncode == 1
+    assert "carry 1007 W between them" in total.stdout
 
 
 def test_the_equilibrium_check_resolves_what_the_zone_declares(tmp_path):
@@ -10247,7 +10354,7 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
     assert len(declared) == 10, f"{len(declared)} domains declare one: {[d for d, _ in declared]}"
     # 54 -> 56: the oxygen supply tank's pressure joined the sentinel, and — the same round — the
     # count it is part of is what this assertion exists to notice.
-    assert sum(len(states) for _, states in declared) == 57, "the sentinel's state count moved"
+    assert sum(len(states) for _, states in declared) == 59, "the sentinel's state count moved"
 
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
@@ -13249,7 +13356,7 @@ def test_the_linter_refuses_a_domain_paragraph_with_no_count_clause(tmp_path):
     definition = copy_definition(tmp_path / "no-clause")
     path = definition / "README.md"
     text = path.read_text()
-    old = "21 states, 17 thresholds, 5 verbs, 11 faults"
+    old = "23 states, 17 thresholds, 5 verbs, 11 faults"
     assert old in text, "the fixture no longer matches the thermal clause"
     path.write_text(
         text.replace(old, "twenty states, seventeen thresholds, five verbs, eleven faults", 1)
@@ -14904,7 +15011,9 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     advanced = {s.id for s in world.states} - {g.state.id for g in gaps}
     # 19 -> 20 in round 40, with the avionics bay's heat rate: the fifth heat rate and the first
     # state on the `internal` sentinel whose rule the corpus declares, so a real tick computes it.
-    assert len(advanced) == 20, sorted(advanced)
+    # 20 -> 22 in round 41, with the two loops' collected loads, which sum the heat rates that tick
+    # has just produced.
+    assert len(advanced) == 22, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares.
     assert values["cabin_heat_csm"] == 733.0
@@ -14936,7 +15045,18 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # published 35 cfm.
     # 11 -> 12 in round 40: `avionics_bay_heat_w` is computed on the sentinel from three dotted
     # paths, and the merge is what puts it in the sub-map without disturbing the accumulators.
+    #
+    # **The count stays 12 in round 41, and the reason is worth writing down.** `_advance_into`
+    # stages each state with a shallow `dict.update`, so `staged["internal"]` holds only the *last*
+    # sentinel state computed in a tick; the commit then merges that one entry into the previous
+    # sub-map. So the sub-map grows by at most one computed state per tick — 11 seeded accumulators
+    # plus whichever sentinel state runs last (`loop_lm_load_w` in `internal_order`; it was
+    # `avionics_bay_heat_w` before that state was added). Nothing is lost: every state's value is
+    # also written at the top level under its own id, and `state_level` prefers that key, which is
+    # what keeps the plant right. A round that wants the sub-map complete has to make the staged
+    # merge deep, and that is a finding of its own rather than a line in this one.
     assert len(values["internal"]) == 12
+    assert values["loop_primary_load_w"] == 1723.0 and values["loop_lm_load_w"] == 1007.0
 
 
 def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes():
