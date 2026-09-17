@@ -14254,8 +14254,12 @@ def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     world = plant.load_world(VEHICLE)
     gaps: list = []
     plant.step(world, plant.initial_values(world), 1.0 / 50.0, gaps)
-    assert len(gaps) == len(world.states), "a tick advanced something again"
+    # **Round 20 changed this figure from "nothing advances" to "seventeen advance", and the two this
+    # test is about are still among the refusals.** The claim being asserted is about *these two*,
+    # not about the tick's total: whatever else the plant learns to advance, a driver in the wrong
+    # quantity must stay refused.
     reasons = {g.state.id: (g.where, g.owed) for g in gaps}
+    assert "crew_workload" in reasons and "thrust_main_n" in reasons, sorted(reasons)[:8]
     assert "coupling.yaml:edge E-CREW-WATER" in reasons["crew_workload"][0], reasons["crew_workload"]
     assert "coupling.yaml:edge E-PROP-ENG" in reasons["thrust_main_n"][0], reasons["thrust_main_n"]
     for state_id in ("crew_workload", "thrust_main_n"):
