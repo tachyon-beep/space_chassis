@@ -14424,7 +14424,41 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
                 unnameable += 1
     assert published == 142, published
     assert unnameable == 33, unnameable
+
+    # The plant's half of the debt is closed: a frame's `values` keys are channel ids the registry
+    # declares, and a channel that is *derived* from its source (a different unit) is omitted rather
+    # than filled with the source's number.
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    world = plant.load_world(VEHICLE)
+    frame = plant.emit_frame(
+        world,
+        tick=0,
+        seq=0,
+        boot_id="0" * 32,
+        met_s=0.0,
+        sensor_time_s=0.0,
+        values=plant.initial_values(world),
+        quality={},
+        phase="translunar_coast",
+        vehicle="csm",
+        state_revision=0,
+    )
+    registry_channels = {
+        str(row["channel"])
+        for path in sorted((VEHICLE / "domains").glob("*/points.yaml"))
+        for row in (yaml.safe_load(path.read_text()) or {}).get("points") or []
+        if isinstance(row, dict) and row.get("channel")
+    }
+    assert set(frame["values"]) <= registry_channels, sorted(set(frame["values"]) - registry_channels)[:5]
+    # Every key is a channel id with a dot in it, never a node or a state id.
+    assert all("." in key for key in frame["values"]), sorted(frame["values"])[:5]
+    assert "cabin_atm" not in frame["values"] and "csm_cabin_o2_kg" not in frame["values"]
     # And the debt states both figures, because a number in prose with no reader is the next round's
     # finding — this is that reader.
-    entry = next(d for d in presentation["open_debts"] if "channel_id" in d)
-    assert "142 published points" in entry and "Round 22 keyed the plant's value space" in entry
+    entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
+    assert "142 published points" in entry and "71 are *derived*" in entry
