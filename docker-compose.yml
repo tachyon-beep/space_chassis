@@ -630,6 +630,59 @@ services:
     security_opt: ["no-new-privileges:true"]
     mem_limit: 512m
 
+  # ---------------------------------------------------------------------------
+  # The vehicle: the reference console, serving into the *same* diode volume the
+  # fleet reads. `diode` above is the slot for whatever implementation the
+  # operator brings; this is the one this repository carries, and the two are
+  # alternatives rather than neighbours -- start one or the other, because two
+  # publishers into one `<slug>` is two vehicles wearing one name.
+  #
+  # It is on `worknet` alone. The agents are the only thing that reads a window,
+  # and a vehicle with a route to the model network would be a vehicle that could
+  # reach the fleet's mind -- the one hard rule in AGENTS.md is that agents join
+  # `worknet` and nothing else, and this side of the wall obeys it too.
+  # ---------------------------------------------------------------------------
+  vehicle:
+    image: space-chassis-agent
+    entrypoint: ["/usr/local/bin/serve_vehicle.sh"]
+    restart: unless-stopped
+    profiles: ["vehicle"]
+    hostname: vehicle
+    networks: [worknet]
+    environment:
+      DIODE_DIR: /diode
+      VEHICLE_DIR: /opt/vehicle
+      # **Which windows to serve.** The fleet's agents are each given their own slug by the roster
+      # (`scripts/roster.py` draws them into `.env`, which is where `FLEET_SLUGS` comes from; agent
+      # *n* is handed `DIODE_DUTY_DIR=/diode/$FLEET_N_SLUG`), so a vehicle publishing into one
+      # directory of its own name would be a vehicle every agent reads as silent. `FLEET_SLUGS` is
+      # the roster's whole list, so an empty variable here still serves every agent the stack has.
+      # `vehicle` is always added by the script, because that is the window a hand-run probe points
+      # at.
+      VEHICLE_SLUGS: ${VEHICLE_SLUGS:-${FLEET_SLUGS:-vehicle}}
+      # The run's own identity, recorded in the window's `state.json` and in the
+      # vehicle's `pending.json`: a scenario is a posture and a seed, and those
+      # two are what make a run replayable.
+      VEHICLE_SCENARIO: ${VEHICLE_SCENARIO:-nominal}
+      VEHICLE_SEED: ${VEHICLE_SEED:-0}
+      # Seconds between cycles. The window's own cadence is the frame rate; this
+      # is how often the loop turns, and the reference value is deliberately slow
+      # because a console cycle rewrites `state.json` and appends a frame.
+      DIODE_POLL_SECONDS: ${DIODE_POLL_SECONDS:-5}
+      VEHICLE_RING_SLOTS: ${VEHICLE_RING_SLOTS:-300}
+    volumes:
+      # The same bind the agents have, so the window appears inside *their*
+      # mount rather than beside it.
+      - ./volumes/diode:/diode
+    # The image is read-only and the volume is not: the console writes the six
+    # files into /diode and nothing else, which is the smallest writable surface
+    # a publisher can have.
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+
 networks:
   # No gateway. Members can reach each other and nothing else.
   worknet:

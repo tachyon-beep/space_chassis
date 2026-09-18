@@ -7,6 +7,14 @@ tests/
 docs/
 site/
 
+# **Except the vehicle.** `docs/deep_research/vehicle/` is the configuration the reference console
+# serves, and the `vehicle` compose service bakes it into the image at `/opt/vehicle`. The rest of
+# `docs/` stays out on purpose: it is the corpus and the design record -- sixteen thousand lines of
+# prose that no container needs, and the one folder in this repository that is *evidence* rather than
+# runtime. An `!` line has to follow the pattern it un-ignores, and re-including a subdirectory of an
+# ignored one is the only way to say "this part of `docs/` is program".
+!docs/deep_research/vehicle/
+
 .git/
 .github/
 .scratch/

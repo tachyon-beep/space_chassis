@@ -54,13 +54,26 @@ COPY --chown=agent:agent brief/ /opt/brief/
 # container as its entrypoint too.
 COPY --chown=agent:agent services/ /opt/services/
 
+# **The vehicle, which is the far side of the window.** `docs/deep_research/vehicle/` is the
+# configuration the reference console serves: it is baked here rather than mounted, for the same
+# reason the services are -- the image is self-contained and the copy is read-only, so the thing
+# serving the window cannot be edited by anything reading it. It lives under `docs/` in the
+# repository because the separate repository `simulator-design.md` section 2 decides on does not
+# exist yet; nothing here imports it, and nothing here needs to.
+COPY --chown=agent:agent docs/deep_research/vehicle/ /opt/vehicle/
+
 # The entrypoint and the world's constants. Both are read by every process in
 # the container, so their modes are stated rather than inherited: COPY preserves
 # whatever the host file happened to be, and a mode of 0600 here produces a
 # container that cannot read its own environment.
 COPY containers/entrypoint.sh /usr/local/bin/entrypoint.sh
+# The vehicle's half of the window: the console loop, as a service. It is a script rather than a
+# compose `command:` because the container is read-only and the loop needs no shell features --
+# see the script's own header for what it decides and what it deliberately leaves to the operator.
+COPY containers/serve_vehicle.sh /usr/local/bin/serve_vehicle.sh
 COPY containers/agent.env /etc/agent.env
-RUN chmod 0755 /usr/local/bin/entrypoint.sh && chmod 0644 /etc/agent.env \
+RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/serve_vehicle.sh \
+    && chmod 0644 /etc/agent.env \
     && find /opt -name __pycache__ -type d -prune -exec rm -rf {} +
 
 ENV AGENT_USER=agent \

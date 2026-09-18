@@ -14,6 +14,7 @@ this must not become a reason the suite cannot run.
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import itertools
 import json
 import math
@@ -17887,3 +17888,206 @@ def test_the_determinism_view_runs_two_runs_and_says_so(tmp_path):
     result = run_linter(ungrounded)
     assert result.returncode == 1
     assert "provenance basis 'probably' is not one of" in result.stdout, result.stdout[-900:]
+
+
+def _docker_ignores(relative: str) -> str | None:
+    """The last `.dockerignore` line that decides `relative`, or None for "nothing does".
+
+    Docker's rule is last-match-wins over ordered patterns, with a leading `!` re-including. This
+    reads the file the way the builder does rather than searching it for a substring, which is the
+    difference between testing the exclusion and testing that someone typed the path.
+    """
+    verdict = None
+    parts = Path(relative).parts
+    for raw in (REPO / ".dockerignore").read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        negated = line.startswith("!")
+        pattern = line.lstrip("!").rstrip("/")
+        if not pattern:
+            continue
+        # A pattern matches the path itself or any directory above it: `docs/` excludes everything
+        # under `docs`, and `!docs/deep_research/vehicle/` is the only way back in.
+        candidates = ["/".join(parts[: i + 1]) for i in range(len(parts))]
+        if any(
+            fnmatch.fnmatchcase(candidate, pattern)
+            or fnmatch.fnmatchcase(candidate, pattern + "/**")
+            for candidate in candidates
+        ):
+            verdict = "excluded" if not negated else "included"
+    return verdict
+
+
+def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
+    """Criterion 3d: the far side of the window has to be a thing the stack can actually run.
+
+    `docker-compose.yml`'s `diode` service is a *slot* — "the implementation is mounted in by
+    whoever builds the vehicle" — and for fifty-five rounds nobody built one, so the reference stack
+    served nothing and every agent read its own empty directory. This round adds a `vehicle` service
+    carrying the console this repository has, and this test is the referee for the four ways that can
+    be a working implementation of nothing:
+
+      1. the service is declared but the image cannot contain the vehicle, because `.dockerignore`
+         excludes `docs/` and the `COPY` therefore fails — which it did, on the first build;
+      2. the window lands beside the agents' mount instead of inside it, so everything works and
+         nobody can read it;
+      3. the service gets a route to the model network, which is the one hard rule in AGENTS.md;
+      4. it serves one slug of its own name while the fleet's ten agents were each handed a
+         different one, which is the failure the roster sweep exists to prevent.
+
+    The fourth is checked by *running the script* against a stub vehicle rather than by reading it.
+    A grep for `FLEET_` in a shell script proves a string is present and nothing about which
+    directories get created; the run above produces exactly the set of windows the fleet would find.
+    """
+    import os
+
+    compose = yaml.safe_load((REPO / "docker-compose.yml").read_text())
+    assert "vehicle" in compose["services"], "the vehicle has no service to run it"
+    service = compose["services"]["vehicle"]
+    reference = compose["services"]["diode"]
+
+    # **The image can carry it.** Both halves are needed and neither is sufficient: `!docs/...` in
+    # the ignore file, and a `COPY` that names the same path. A build that fails is better than a
+    # service that runs without a vehicle, but only if somebody runs it.
+    assert _docker_ignores("docs/deep_research/vehicle/tools/console.py") != "excluded", (
+        "`.dockerignore` keeps the vehicle out of the build context, so the image's COPY fails"
+    )
+    assert _docker_ignores("docs/deep_research/integration/review-findings.md") == "excluded", (
+        "the rest of the corpus is evidence, not runtime, and does not belong in an image"
+    )
+    dockerfile = (REPO / "Dockerfile.agent").read_text()
+    assert "COPY --chown=agent:agent docs/deep_research/vehicle/ /opt/vehicle/" in dockerfile
+    assert "containers/serve_vehicle.sh /usr/local/bin/serve_vehicle.sh" in dockerfile
+    assert service["entrypoint"] == ["/usr/local/bin/serve_vehicle.sh"], service.get("entrypoint")
+    assert service["image"] == reference["image"], "a second image is a second vehicle"
+    assert service["profiles"] == ["vehicle"], (
+        "a bare `docker compose up` is the cheap one-agent stack; the window must not join it"
+    )
+
+    # **The same directory the agents read, and nothing else.** `diode` is the slot and this is the
+    # implementation, so the mount list is identical on purpose; the comparison is to the file rather
+    # than to a literal, because an agent's own mount moving is exactly the change that would leave
+    # this service publishing into an orphan.
+    assert service["volumes"] == reference["volumes"], (
+        "the window must appear inside the agents' own diode mount, not beside it"
+    )
+    assert [v for v in service["volumes"] if v.endswith(":/diode")], service["volumes"]
+    assert service["networks"] == ["worknet"], (
+        "agents join worknet and nothing else; the vehicle obeys the same rule"
+    )
+    assert service["read_only"] is True
+    assert service["cap_drop"] == ["ALL"]
+    assert service["security_opt"] == ["no-new-privileges:true"]
+
+    # **The scenario, the seed, and the fallback to the roster.** The service's own environment is
+    # where a compose file states a default, and the two that matter are the run's identity and the
+    # slug list. `FLEET_SLUGS` rather than one `FLEET_N_SLUG`, because a service that picked agent
+    # 1's name would serve exactly one of the ten.
+    env = service["environment"]
+    assert "nominal" in env["VEHICLE_SCENARIO"] and "VEHICLE_SCENARIO" in env["VEHICLE_SCENARIO"]
+    assert env["VEHICLE_SEED"].endswith("-0}")
+    assert "FLEET_SLUGS" in env["VEHICLE_SLUGS"], (
+        "the default must be the roster, or nine of ten agents read an empty directory"
+    )
+    assert env["VEHICLE_DIR"] == "/opt/vehicle" and env["DIODE_DIR"] == "/diode"
+    assert "restart" in service and service["restart"] == "unless-stopped", (
+        "a publisher that exits takes the window down with it"
+    )
+
+    # **And the script, run.** A stub vehicle stands in for `/opt/vehicle`: the real console needs
+    # PyYAML and the whole corpus, and neither is what is under test here. The stub records its own
+    # arguments and then *waits*, because the script's last line is `wait` and a console that exited
+    # immediately would make this test prove the opposite of what it claims — that the service
+    # returns as soon as its children do.
+    vehicle = tmp_path / "opt" / "vehicle"
+    (vehicle / "tools").mkdir(parents=True)
+    (vehicle / "tools" / "console.py").write_text(
+        "import json, os, sys, time\n"
+        "argv = sys.argv[1:]\n"
+        "slug = argv[argv.index('--slug') + 1]\n"
+        "diode = argv[argv.index('--diode-dir') + 1]\n"
+        "with open(os.path.join(diode, slug, 'args.json'), 'w') as handle:\n"
+        "    json.dump(argv, handle)\n"
+        "time.sleep(2)\n"
+    )
+    diode = tmp_path / "diode"
+    (diode / "mackerel").mkdir(parents=True)
+    (diode / "not_a_directory").write_text("")
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("DIODE_", "VEHICLE_", "FLEET_"))
+    }
+    env.update(
+        DIODE_DIR=str(diode),
+        VEHICLE_DIR=str(vehicle),
+        VEHICLE_SCENARIO="crisis",
+        VEHICLE_SEED="7",
+        DIODE_POLL_SECONDS="0.05",
+        VEHICLE_RING_SLOTS="12",
+        FLEET_1_SLUG="mackerel",
+        FLEET_2_SLUG="cinnabar",
+        FLEET_10_SLUG="scabious",
+    )
+    process = subprocess.Popen(
+        ["sh", str(REPO / "containers" / "serve_vehicle.sh")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    try:
+        deadline = time.time() + 20
+        served = set()
+        while time.time() < deadline:
+            served = {path.parent.name for path in diode.glob("*/args.json")}
+            if len(served) >= 4:
+                break
+            time.sleep(0.05)
+        # The roster's ten names are swept from the environment, the directory that already exists
+        # is swept from the mount, and a file in the diode directory is not an agent.
+        assert served == {"mackerel", "cinnabar", "scabious", "vehicle"}, (
+            f"the sweep served {sorted(served)} for a roster of three and one live directory"
+        )
+    finally:
+        process.terminate()
+        process.communicate(timeout=10)
+    assert process.returncode is not None
+
+    # Every window's arguments, and the scenario reaching each of them: one console per slug with
+    # the run's identity and the ring bound the operator set.
+    for slug in ("mackerel", "scabious", "vehicle"):
+        argv = json.loads((diode / slug / "args.json").read_text())
+        assert argv[argv.index("--slug") + 1] == slug
+        assert argv[argv.index("--scenario") + 1] == "crisis", argv
+        assert argv[argv.index("--seed") + 1] == "7", argv
+        assert argv[argv.index("--ring-slots") + 1] == "12", argv
+        assert argv[argv.index("--poll") + 1] == "0.05", argv
+        assert argv[argv.index("--cycles") + 1] == "0", (
+            "the service must not exit after a fixed number of cycles"
+        )
+
+    # An explicit list wins over the roster, which is how an operator serves one window on purpose.
+    for path in diode.glob("*/args.json"):
+        path.unlink()
+    env["VEHICLE_SLUGS"] = "pelican"
+    started = time.time()
+    served = subprocess.run(
+        ["sh", str(REPO / "containers" / "serve_vehicle.sh")],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    elapsed = time.time() - started
+    # And it *waited*. The stub holds its window open for two seconds, which is the only reason this
+    # can tell `wait` from a fork: "a service that forked and returned would be a service whose
+    # container exits while its workers keep running", and that is exactly what a script ending in
+    # `console.py … &` without the `wait` would do -- return 0 in a tenth of a second with two
+    # orphaned consoles still publishing into a volume nothing supervises.
+    assert served.returncode == 0, served.stderr
+    assert elapsed >= 1.5, f"the script returned in {elapsed:.2f}s without waiting on its consoles"
+    assert {path.parent.name for path in diode.glob("*/args.json")} == {"pelican", "vehicle"}, (
+        "VEHICLE_SLUGS is an explicit answer and must not be widened by the roster"
+    )
