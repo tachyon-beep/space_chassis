@@ -5494,8 +5494,6 @@ def test_the_vehicle_passes_the_contract_probe(tmp_path):
             str(diode),
             "--slug",
             "probe_target",
-            "--cycles",
-            "600",
             "--poll",
             "0.05",
         ],
@@ -5503,6 +5501,14 @@ def test_the_vehicle_passes_the_contract_probe(tmp_path):
         stderr=subprocess.DEVNULL,
     )
     try:
+        # **Unbounded, and killed in the `finally`, because a cycle count is a clock and this test
+        # needs a vehicle.** The first version ran `--cycles 600`, which is a race: the probe takes
+        # about a minute, each cycle costs a fraction of a second, and a console that finishes first
+        # leaves the probe doctoring a `state.json` nothing will rewrite and waiting for a result file
+        # nothing will write. That is the shape of the one failure this test has ever reported —
+        # *"an unknown verb is refused with a result file"* — and it is a test that cannot run rather
+        # than a window that is wrong.
+        #
         # Wait for everything the window is supposed to contain, because the probe reads the
         # vocabulary from `state.json` and the gates from `HELP.md` *and* `state.json` — and the
         # console announces itself by writing `console.json` **last**, so that a reader attaching
@@ -8994,6 +9000,108 @@ def test_the_telemetry_ring_is_bounded_and_accounts_for_its_losses(tmp_path):
     # claim; the run's own frame count is a consequence of `initialise` publishing as well.
     ring_one = json.loads((diode / "one-slot" / "state.json").read_text())["ring"]
     assert len(frames) == 1 and frames[0] == f"{ring_one['newest_seq'] + 1:03d}.json", (frames, ring_one)
+
+
+def test_the_window_s_sixth_file_is_generated_from_the_configuration(tmp_path):
+    """`docs/diode-contract.md` lists six files and the console made five of them.
+
+    The missing one is `README.md` — *"the protocol, in the vehicle's words"* — and §8 says what it
+    is for: `HELP.md`, `state.json` and `README.md` "are the vehicle's documentation of itself …
+    and **they are the only place a verb name can appear**". Five of six is a window whose protocol a
+    fleet has to infer from a verb list, and `HELP.md` answers *what may I ask for* rather than *how
+    does this work*.
+
+    **The test is the drift detector rather than a golden file**, which is the decision worth
+    recording. A committed copy of the generated text would be a second declaration of the
+    configuration — and this folder's oldest finding is that a declaration no tool reads has already
+    drifted. What is asserted instead is that the file the *window* gets is byte-identical to what
+    the generator produces from the configuration **now**, so moving a cadence class, withdrawing a
+    channel or adding a refusal code fails here until the file follows.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    from generate_readme import generate as generate_readme
+
+    text = generate_readme(VEHICLE)
+    # It carries the configuration's own facts rather than a second copy of them.
+    presentation = yaml.safe_load((VEHICLE / "presentation.yaml").read_text())
+    channels = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
+    rows = [
+        row
+        for section, value in channels.items()
+        if isinstance(value, list) and section not in ("open_debts", "crew_positions")
+        for row in value
+        if isinstance(row, dict) and row.get("id")
+    ]
+    assert f"{len(rows)} channels are published" in text, len(rows)
+    for entry in presentation["ring"]["cadence_classes"]:
+        assert f"| `{entry['class']}` | {entry['rule']} | {entry['members']} |" in text, entry
+    for code, _meaning in __import__("generate_help").REFUSAL_VOCABULARY:
+        assert f"| `{code}` |" in text, code
+    # And it says what the vehicle withholds, which is part of the protocol rather than a leak.
+    assert "not published" in text and "named channels" in text
+
+    # No verb list and no thresholds: `HELP.md` owns the vocabulary and design.md §8's boundary is
+    # that the vehicle publishes what it concluded and never what it suspects about itself.
+    help_text = (VEHICLE / "tools" / "generate_help.py").read_text()
+    assert "thresholds" not in text.lower() or "the thresholds" not in text
+    assert "failure chain" not in text.lower()
+    assert "HELP.md" in text  # it points at the file that does carry the verbs
+
+    # The console writes it, at boot and every cycle, from that same generator.
+    diode = tmp_path / "diode"
+    window = diode / "protocol"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(VEHICLE / "tools" / "console.py"),
+            "--diode-dir",
+            str(diode),
+            "--slug",
+            "protocol",
+            "--cycles",
+            "2",
+            "--poll",
+            "0.02",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr[-600:]
+    written = (window / "README.md").read_text()
+    assert written == text, "the window's README is not what the generator produces"
+    # All six files, which is the contract's list and not five of it.
+    for name in ("console.json", "state.json", "HELP.md", "README.md", "pending.json"):
+        assert (window / name).exists(), name
+    assert (window / "telemetry").is_dir() and (window / "output").is_dir()
+
+    # A hand-edit does not survive a cycle, which is the difference between a generated file and a
+    # written one.
+    (window / "README.md").write_text("# doctored\n")
+    again = subprocess.run(
+        [
+            sys.executable,
+            str(VEHICLE / "tools" / "console.py"),
+            "--diode-dir",
+            str(diode),
+            "--slug",
+            "protocol",
+            "--cycles",
+            "1",
+            "--poll",
+            "0.02",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert again.returncode == 0, again.stderr[-600:]
+    assert (window / "README.md").read_text() == text, "a hand-edit survived a cycle"
+    # `HELP.md` is where the verbs are, and nothing in the README is one.
+    assert "zzz_definitely_not_a_verb" not in help_text
 
 
 def test_the_plant_reports_the_build_order():
