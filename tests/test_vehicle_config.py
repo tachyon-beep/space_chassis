@@ -14938,6 +14938,112 @@ def test_the_linter_refuses_a_tool_docstring_whose_fault_counts_have_drifted(tmp
     assert "states 118 declared faults" in result.stdout, result.stdout[-900:]
 
 
+def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp_path):
+    """Two more figures in prose, and both had drifted while the sentences explained real rules.
+
+    The fault figures and the schedule size got readers in earlier rounds. What was left was every
+    *other* count a tool's prose states about the corpus it walks, and two of them were wrong.
+    `plant._refuse_shared_node` put the number of shared nodes at twelve while the vehicle has
+    eleven, and `plant.initial_values` set the sentinel's population at forty-eight while fifty-nine
+    states live there. Both were right when written; the vehicle moved and the sentences did not.
+
+    **The sentinel one is the worse of the two**, because the shape of the whole value map is
+    explained by it — a reader who believed that figure would size `values["internal"]` from a number
+    that had been wrong for most of the folder's life. `state_values`' docstring carried the same
+    figure a third time, which is what a claim with no reader does: it gets copied.
+
+    Both are spelled out as words, so the reader needs a word table — and that is the point rather
+    than an inconvenience. `NODE_COUNT_FIGURES` records the opposite choice for its own figures
+    ("A spelled-out size would slip past this, which is named as the gap it is"), and for *these* two
+    a digits-only reader would have caught neither. The table covers one to ninety-nine, which is
+    every count this corpus has ever stated in words.
+
+    **One drifted figure next door is deliberately not patrolled**, and the test states the boundary
+    so a later round does not read the silence as an oversight: the ratio in
+    `plant.resolve_declared_states` describes what a *removed line* would cost, not what the vehicle
+    is, and checking it would mean running the plant inside the linter.
+    """
+    # The corpus at rest: both claims are true and the check is silent about them.
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-1500:]
+
+    # A shared-node count that has drifted, in the tool the reader was written for.
+    definition = copy_definition(fixture_dir(tmp_path, "stale-shared"))
+    path = definition / "tools" / "faults.py"
+    text = path.read_text()
+    anchor = '"""'
+    assert anchor in text
+    path.write_text(
+        text.replace(anchor, anchor + "\nA fixture's claim: twelve nodes carry more than one state.\n", 1)
+    )
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "states 'twelve nodes carry more than one state'" in result.stdout, result.stdout[-900:]
+    assert "this vehicle has 11 multi-state nodes" in result.stdout, result.stdout[-900:]
+
+    # And the sentinel form, which is the other noun and the other claim.
+    other = copy_definition(fixture_dir(tmp_path, "stale-sentinel"))
+    path = other / "tools" / "faults.py"
+    text = path.read_text()
+    path.write_text(
+        text.replace(
+            anchor, anchor + "\nA fixture's claim: forty-eight states live on it.\n", 1
+        )
+    )
+    result = run_linter(other)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "states 'forty-eight states live on it'" in result.stdout, result.stdout[-900:]
+    assert "this vehicle has 59 states on the sentinel" in result.stdout, result.stdout[-900:]
+
+    # A *digits* figure is read too, so the reader is not tied to the spelling the corpus happens
+    # to use today.
+    digits = copy_definition(fixture_dir(tmp_path, "stale-digits"))
+    path = digits / "tools" / "faults.py"
+    text = path.read_text()
+    path.write_text(
+        text.replace(anchor, anchor + "\nA fixture's claim: 12 nodes carry more than one state.\n", 1)
+    )
+    result = run_linter(digits)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "states '12 nodes carry more than one state'" in result.stdout, result.stdout[-900:]
+
+    # And the check's own explanatory prose must not trip it. The first version of the comment above
+    # `MULTI_STATE_NODE_FIGURES` wrote both stale figures out in the form the patterns read, and
+    # `check_vehicle.py` refused itself — one of the two faults on the first run was the paragraph
+    # explaining the check. The corpus composing above is the assertion that it does not.
+    #
+    # The re-assertion here is deliberately narrower than "the phrase appears nowhere": the patterns
+    # themselves are live lines that contain it, and a grep would refuse the reader for existing.
+    # What matters is that no **docstring** — the thing a reader believes — carries a count the
+    # check would contradict, so this walks the real docstrings with `ast` rather than the text.
+    import ast as _ast
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as _cv
+
+    live = {
+        "multi-state nodes": _cv.MULTI_STATE_NODE_FIGURES,
+        "states on the sentinel": _cv.SENTINEL_STATE_FIGURES,
+    }
+    expected = {"multi-state nodes": 11, "states on the sentinel": 59}
+    for tool in sorted((VEHICLE / "tools").glob("*.py")):
+        tree = _ast.parse(tool.read_text())
+        for node in _ast.walk(tree):
+            if not isinstance(node, (_ast.Module, _ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+                continue
+            doc = _ast.get_docstring(node)
+            if not doc:
+                continue
+            for label, pattern in live.items():
+                for match in pattern.finditer(doc):
+                    assert _cv._counted_number(match.group(1)) == expected[label], (
+                        f"{tool.name} docstring states {match.group(0)!r}, and the vehicle has "
+                        f"{expected[label]} {label}"
+                    )
+
+
 def test_the_linter_refuses_a_node_count_three_files_state_differently(tmp_path):
     """One schedule, four figures, and no two of them in the same file agreed.
 
