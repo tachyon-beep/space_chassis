@@ -7783,7 +7783,7 @@ def test_the_stock_integrator_reads_its_driver():
     pascals-per-kelvin to kilograms-per-hour and calling the result a mass is not an approximation;
     it is a dimension error wearing a number.
 
-    That stop is gone: a tick now walks all 134 states and records what it cannot advance, so the
+    That stop is gone: a tick now walks all 139 states and records what it cannot advance, so the
     integrator is reached by the order rather than only by a hand-written call. It still cannot be
     *exercised* from the live corpus, because every stock's driver is itself gapped — the tick
     reaches `lm_cabin_o2_kg` and gives up on it for a reason that belongs to the other state. The
@@ -15303,10 +15303,122 @@ def test_the_linter_refuses_a_registry_census_that_has_drifted_from_the_registry
     assert "states the `range_kind` census as 57 channels" in result.stdout, result.stdout[-900:]
 
 
+def test_the_gate_s_own_prose_states_the_vehicle_it_tests():
+    """This file's docstrings are read by the next round, and three of them described another vehicle.
+
+    Round 61 gave the linter readers for count claims in `tools/` and `plant.md`; this round found the
+    same defect one file over, in the gate. Three docstrings here said **134 states**, one of them
+    while quoting the status line that says 139, and one said **57 scheduled nodes** where the
+    schedule has 58. They are not decorative: a test docstring is the paragraph that says what the
+    test is for, and several of these quote the figures the test is *about* — so a reader checking
+    whether the assertion still matches its subject reads a number that has been wrong for rounds.
+
+    **The linter cannot do this one.** `tests/` is not under the vehicle root, so `check_tool_docstrings`
+    never sees this file, and it has no world to ask for a state count anyway. So the figures come
+    from the two instruments that do have them: the linter's `CHANNEL_DERIVATION_COUNTS`, which
+    publishes the state and schedule totals it counts while validating the frame's debt, and the
+    plant's own world. The claim patterns are the linter's, imported rather than restated — a fourth
+    copy of the rule would be the defect this test exists to remove.
+    """
+    import ast as _ast
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as _cv
+    import plant as _plant
+
+    world = _plant.load_world(VEHICLE)
+    live = {
+        "states": len(world.states),
+        "scheduled_nodes": len(world.schedule),
+        "multi-state nodes": sum(
+            1
+            for node in {s.node for s in world.states if s.node != "internal"}
+            if len(world.states_on(node)) > 1
+        ),
+        "states on the sentinel": sum(1 for s in world.states if s.node == "internal"),
+    }
+    # The two instruments agree, and that agreement is worth asserting: the linter counts states by
+    # walking `domains/*/components.yaml`, the plant by building a world, and a disagreement would be
+    # a finding in its own right rather than something this test should paper over.
+    report = _cv.Report()
+    _cv.check_channel_derivations(
+        VEHICLE,
+        _cv.load_documents(
+            VEHICLE,
+            _cv.load(VEHICLE / "vehicle.yaml", _cv.Report()),
+            _cv.load(VEHICLE / "coupling.yaml", _cv.Report()),
+            _cv.load(VEHICLE / "mission.yaml", _cv.Report()),
+            _cv.load(VEHICLE / "channels.yaml", _cv.Report()),
+        ),
+        report,
+    )
+    counts = _cv.CHANNEL_DERIVATION_COUNTS
+    assert counts["states"] == live["states"], (counts, live)
+    assert counts["scheduled_nodes"] == live["scheduled_nodes"], (counts, live)
+
+    # The claims this file makes, in the forms it makes them. **The patterns have to read a claim
+    # rather than a number near one, and the first version did not**: `\b(\d+) states\b` matched
+    # "two states", "four states" and "twenty-one states" — every sentence about *some* states — and
+    # the walk refused thirteen docstrings that were all correct. A count is a claim about the whole
+    # only when the sentence says so, which in this file means `all N states` or `N states over M
+    # scheduled nodes` (the status-line clause it quotes). Everything else is a count of something
+    # else and belongs to the docstring that makes it.
+    claims = re.compile(
+        r"\ball (?P<all_states>\d+|[A-Za-z]+(?:-[A-Za-z]+)?) states\b"
+        r"|\b(?P<over_states>\d+|[A-Za-z]+(?:-[A-Za-z]+)?) states over "
+        r"(?P<over_nodes>\d+) scheduled nodes\b"
+        r"|\b(?P<shared>[A-Za-z]+(?:-[A-Za-z]+)?) nodes carry more than one state\b"
+        r"|\b(?P<sentinel>[A-Za-z]+(?:-[A-Za-z]+)?) states live on it\b"
+        r"|\bthe vehicle's (?P<possessive>\d+) states\b"
+    )
+    # Group name -> the figure it is a claim about. `states over N scheduled nodes` contributes two.
+    figure_of = {
+        "all_states": "states",
+        "over_states": "states",
+        "over_nodes": "scheduled_nodes",
+        "shared": "multi-state nodes",
+        "sentinel": "states on the sentinel",
+        "possessive": "states",
+    }
+
+    tree = _ast.parse((REPO / "tests" / "test_vehicle_config.py").read_text())
+    checked = 0
+    wrong: list[str] = []
+    for node in _ast.walk(tree):
+        if not isinstance(node, (_ast.Module, _ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+            continue
+        doc = _ast.get_docstring(node)
+        if not doc:
+            continue
+        where = node.name if hasattr(node, "name") else "<module>"
+        for match in claims.finditer(doc):
+            for name, token in match.groupdict().items():
+                if token is None:
+                    continue
+                stated = _cv._counted_number(token)
+                if stated is None:
+                    continue
+                checked += 1
+                label = figure_of[name]
+                if stated != live[label]:
+                    wrong.append(f"{where}: {token!r} in {match.group(0)!r} != {live[label]} {label}")
+    assert not wrong, "this file's docstrings describe another vehicle:\n  " + "\n  ".join(wrong)
+    # The reader has to have read something, or it is a check that cannot run — the shape this
+    # folder's own traps list opens with. **Three is the whole of the surface, not a threshold picked
+    # to pass**: this file makes total-state claims in exactly three places, and every other "N
+    # states" in it counts *some* states ("two states", "the four states that ..."), which belongs to
+    # the docstring making it. A later round that adds a claim raises this deliberately, which is the
+    # intended friction — the alternative is a pattern broad enough to refuse the thirteen correct
+    # docstrings it refused on the first run of this test.
+    assert checked >= 3, f"the walk matched only {checked} claims, and this file makes three"
+
+
 def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     """The status line's own sentence, held whole rather than in the three figures a test read.
 
-    The sentence is "148 channels, 134 states over 57 scheduled nodes, 142 thresholds, 58 verbs and
+    The sentence is "148 channels, 139 states over 58 scheduled nodes, 142 thresholds, 58 verbs and
     128 classified events". `test_the_readme_status_matches_the_tools` reads the first three; the
     last three were read by nothing, which is the same defect one clause further along in the same
     line. The fixture moves the threshold count by one, because that is the smallest change the
@@ -16564,7 +16676,7 @@ def test_the_battery_s_smallest_flow_is_its_smallest_load_and_its_quantum_is_fin
 def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     """The lag integrator applies no conversion, and nothing said so — so both were dimensional errors.
 
-    A real tick advanced exactly two of the 134 states, and both numbers were nonsense: `crew_workload`
+    A real tick advanced exactly two of the vehicle's 139 states, and both numbers were nonsense: `crew_workload`
     is an `enum-level` and was relaxed toward `water_potable`'s 14 kg of water; `thrust_main_n` is in
     newtons and was relaxed toward `prop_main`'s 18,508 kg of propellant. Neither is a crash — both
     are plausible numbers — which is why the rule has to exist rather than the values being watched.
@@ -16890,7 +17002,7 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
 
 
 def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
-    """Sixty-three of 134 channels are their own source state; the other 71 are a sentence.
+    """Sixty-four of 135 channels are their own source state; the other 71 are a sentence.
 
     Round 23 found that by *refusing* to publish a channel whose unit is not its source state's — the
     registry's `derivation` is prose, so a derived channel cannot be filled — and the two figures went
@@ -16909,7 +17021,43 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     in the debt's sentence now, the check holds the sentence to it, and this fixture proves the join
     by moving the count with a *reading* binding — the bare state id round 27 decided on — because
     that is the input form the conversion uses and the linter had never had to resolve one.
+
+    **And this docstring carried the stale copy, which is round 61's finding arriving here.** It said
+    "sixty-three of 134" while the sentence it validates said 64 and the registry has 135 — two
+    files stating one quantity and disagreeing, with the stale copy in the paragraph that says what
+    the check is *for*. The **total** was the figure neither file held to anything: the sentence
+    gives the two halves ("only N have the state's own unit … the other M are derived") and never
+    their sum, so 134 was the one place the whole was written down and no reader could contradict it.
+    Both are checked now: the sentence's total against the counters, and the check's own docstring
+    against the same counters, so the paragraph and the declaration cannot drift apart again.
     """
+    # The check's docstring and the counters it computes are one claim, read from the linter's own
+    # module rather than re-derived here — a second count in the gate would be a third copy.
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import check_vehicle as _cv
+
+    # The counts are filled by the function that computes them, so the linter has to have run. A
+    # direct call is what the gate uses everywhere else for a tool's own function.
+    report = _cv.Report()
+    _cv.check_channel_derivations(VEHICLE, _cv.load_documents(
+        VEHICLE,
+        _cv.load(VEHICLE / "vehicle.yaml", _cv.Report()),
+        _cv.load(VEHICLE / "coupling.yaml", _cv.Report()),
+        _cv.load(VEHICLE / "mission.yaml", _cv.Report()),
+        _cv.load(VEHICLE / "channels.yaml", _cv.Report()),
+    ), report)
+    counts = _cv.CHANNEL_DERIVATION_COUNTS
+    assert counts["same"] == 64, counts
+    assert counts["derived"] == 71, counts
+    assert counts["total"] == 135, counts
+    assert not [r for r in report.refusals if "channels read from a state" in r], report.refusals
+    doc = _cv.CHANNEL_DERIVATION_FIGURES.search(_cv.inspect.getdoc(_cv.check_channel_derivations) or "")
+    assert doc is not None, "the docstring no longer states the figures this check computes"
+    assert (int(doc.group(1)), int(doc.group(2))) == (counts["same"], counts["total"]), doc.group(0)
+
     points = (VEHICLE / "domains" / "thermal" / "points.yaml").read_text()
     definition = copy_definition(fixture_dir(tmp_path, "derived-count"))
     path = definition / "domains" / "thermal" / "points.yaml"
@@ -16941,12 +17089,27 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
         "now has 16" in result.stdout
     ), result.stdout[-900:]
 
-    # And the corpus's own sentence carries all three figures, which is what makes it a declaration.
+    # And the total, which was the figure nothing read. Move it and the sentence is refused on its
+    # own — this is the assertion that would have caught `134` before round 61 corrected it.
+    total_fixture = copy_definition(fixture_dir(tmp_path, "total-count"))
+    path = total_fixture / "presentation.yaml"
+    text = path.read_text()
+    assert "of the 135 channels read from a state" in text
+    path.write_text(text.replace("of the 135 channels read from a state", "of the 134 channels read from a state", 1))
+    result = run_linter(total_fixture)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert (
+        "states that 134 channels read from a state, and the registry now has 135" in result.stdout
+    ), result.stdout[-900:]
+
+    # And the corpus's own sentence carries all the figures, which is what makes it a declaration.
     presentation = yaml.safe_load((VEHICLE / "presentation.yaml").read_text())
     entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
     # 63 -> 64 in round 32: `eclss.o2_supply_pressure_psi` moved from the node-sourced set to the
-    # state-sourced one, where its unit is its source's.
+    # state-sourced one, where its unit is its source's. 134 -> 135 in round 61, when the total was
+    # given a reader and the sentence it was read from turned out to be the stale copy.
     assert "only 64 have the state's own unit" in entry
+    assert "of the 135 channels read from a state" in entry
     assert "The other 71 are *derived*" in entry
     assert "15 of the 71 now carry an evaluable `derivation`" in entry
 
