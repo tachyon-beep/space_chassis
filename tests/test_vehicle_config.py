@@ -688,171 +688,80 @@ def test_every_state_in_a_declared_order_is_actually_advanced():
     assert "no inbound edge advances 'pump_1_speed_rpm'" not in result.stdout
 
 
-def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
-    """The worklist's docstring promised the two "cannot disagree". They do, thirty-six times.
+def test_the_build_order_is_the_ticks_own_gap_list():
+    """The worklist and the plant were two classifiers of one question, and they disagreed 36 times.
 
-    Running `advance` over every state with a permissive value map — every node supplied a number,
-    so a refusal is about *structure* rather than about a value missing somewhere else — lands
-    thirty-one states in a different bucket from the one `build_order` gives them. The correction is
-    not to the classifier, which is sound, but to the sentence: the two answer different questions
-    on purpose.
+    Until round 58 `build_order` ran its own sequence of tests over each state's *spec* — the
+    parameter the method owes, the driver it needs, the rule its class is — and answered a different
+    question from the one a tick answers. Running `advance` over every state with a permissive value
+    map landed thirty-six of them in a different bucket from the one the worklist gave them, and the
+    docstring's answer was to declare the difference deliberate: *the worklist answers "what is
+    missing from this definition" and the plant answers "can I compute this right now"*. That is a
+    true sentence and it is not a defence. Two states were filed **ready now** — `coolant_flow_kg_s`
+    and `prop_rcs_kg` — whose own declarations are complete and which no tick can reach, because the
+    state producing the node they read is blocked; nine more were in round 57, three of them *roots*.
+    A reader who trusts the first line of the report goes and writes code for states that need
+    somebody else's code first, and a reader who has learned not to trust it cannot use the report.
 
-    **Eighteen are the worklist counting more.** `advance` refuses on the parameter its *method*
-    needs and nothing else; `build_order` walks the whole spec, so a state whose `initial` or
-    `moved_by` or `basis` is unset is reported as owing a value even where the plant would advance
-    it from a number it was handed. That is the honest direction for a worklist — the spec *is*
-    incomplete.
+    So the classification is now the tick's own gap list, once, at t=0:
 
-    **Ten are the `internal` sentinel**, which `build_order` routes to `rule` and `advance` calls a
-    missing edge. No edge can reach the sentinel, so its driver is domain code, and `rule` is the
-    file an implementer should open. It was thirteen until round 29: three of them —
-    `comm_amp_t`, `crew_workload` and `suit_loop_flow_cfm` — now owe a starting value the worklist
-    can name, so they are classified as *value* and counted below instead.
+      * **ready** is the set a real tick advances — not "looks advanceable", advanced;
+      * the other three buckets are the gaps, attributed to their **root** by following `needs`, and
+        the root's own verdict comes from `_classify`, which is the old per-state sequence kept as a
+        function so it can be asked about the state that owns the debt.
 
-    **And a third kind ran the other way for one round**, which round 100 added and round 101 closed:
-    a state with no input at all is reported as owing an *edge* — no rule can be written without one
-    — where `advance` says its rule is domain code. `bus_b_v` was the case, and giving `bus_b` a
-    source retired it, which is why the assertion below pins that class at zero rather than deleting
-    it.
-
-    This test is the pin: any disagreement that is **not** one of the declared kinds fails, so a new
-    kind cannot appear unnoticed. And the property the docstring should have claimed — that the
-    classification never sends a reader somewhere the answer is not — is the one round 95 fixed for
-    sixteen states.
+    What the old classifier was *right* about is still counted here: a state a tick advances while
+    its spec carries an `UNCONFIGURED` the integrator never reads — the `counted_more` states, the
+    ones whose declarations `--readiness` tracks — is **ready**, because nothing blocks it. The two
+    figures answer different questions and now say so: `--readiness` counts what a *declaration* is
+    missing, `--build-order` counts what a *tick* cannot do.
     """
     plant = _plant()
     world = plant.load_world(VEHICLE)
-    permissive = dict.fromkeys(world.nodes, 1.0)
     buckets = plant.build_order(world)
+    gaps = []
+    plant.step(world, plant.initial_values(world), plant.tick_seconds(world), gaps)
+    advanced = {state.id for state in world.states} - {gap.state.id for gap in gaps}
     claimed = {state.id: name for name, rows in buckets.items() for state in rows}
 
-    unexplained = []
-    counted_more = sentinel = no_input = unmet_reading = six_dof = shared_driver = 0
-    for state in world.states:
-        try:
-            plant.advance(world, state, permissive, 1.0)
-            actual = "ready"
-        except plant.Unconfigured as exc:
-            where = str(exc.where)
-            if where.startswith("coupling.yaml:edge") or "no incoming edge" in str(exc):
-                actual = "edge"
-            elif where.endswith(".derivation"):
-                # **A fourth kind, added in round 48, and it is the derivation's own dependency.**
-                # The worklist says *ready* when an `algebraic` state declares its rule, which is
-                # the question it exists to answer ("is the rule in the configuration?"); `advance`
-                # says *value* when the rule's readings are not in the map it was handed — which,
-                # for a state whose readings are other states' tick values, is what t=0 looks like.
-                # Both are true, and the honest reading is that the worklist answers about the
-                # *corpus* and the plant about a *tick*.
-                actual = "reading"
-            elif where.startswith(f"domains/{state.domain}/components.yaml:state {state.id}."):
-                actual = "value"
-            else:
-                actual = "rule"
-        if actual == claimed[state.id]:
-            continue
-        if claimed[state.id] == "value":
-            counted_more += 1
-        elif claimed[state.id] == "ready" and actual == "reading":
-            unmet_reading += 1
-        elif claimed[state.id] == "ready" and actual == "rule" and state.method == "dynamics":
-            # **A fifth kind, added in round 52, and it is the same split as the first.**
-            # `build_order` calls the *scalar* `dynamics` shape ready (a named driver, a mass, a
-            # zero — the rule is in the configuration); `advance` refuses the states whose rule is
-            # the 6-DOF integrator, which is code nobody has written. The three 6-DOF states land
-            # here, and the counter is what keeps that a declared disagreement rather than a
-            # surprise.
-            six_dof += 1
-        elif claimed[state.id] == "rule" and actual == "edge" and state.node == "internal":
-            sentinel += 1
-        elif claimed[state.id] == "edge" and actual == "ready" and any(
-            len(world.states_on(node)) > 1 for node in plant.driver_nodes(world, state)
-        ):
-            # **A sixth kind, added in round 57, and the permissive map is exactly why it is one.**
-            # This test hands `advance` a map with a key for *every* node, so a multi-state node is
-            # supplied by hand — and the map a tick actually builds has no key for such a node,
-            # because `state_values` writes one only when a single state owns it. So the worklist
-            # says *edge* (the drain has to say which state it reads) and this test's `advance` says
-            # *ready*, and the tick and the build order are the two that agree: four states land
-            # here, and `test_the_tick_can_read_what_the_build_order_promises` is the reader that
-            # runs them against a real gap list rather than a permissive one.
-            shared_driver += 1
-        elif claimed[state.id] == "edge" and actual == "rule" and state.id == "bus_b_v":
-            # **A third kind, added deliberately.** The worklist reports a state with no input at
-            # all as owing an *edge* — because no rule can be written without one — where `advance`
-            # reports that its rule is domain code. `bus_b_v` is the case: `bus_b` has no inbound
-            # edge anywhere in the graph, so the worklist says "find it a source" and `advance` says
-            # "write its rule", and the worklist is the one an implementer should read.
-            inbound = [
-                e for e in world.edges if e.target == state.node and e.id not in world.back_edges
-            ]
-            siblings = [o for o in world.states_on(state.node) if o.id != state.id]
-            assert not inbound and not siblings, (state.id, [e.id for e in inbound], siblings)
-            no_input += 1
-        else:
-            unexplained.append((state.id, claimed[state.id], actual, state.node))
-
-    assert not unexplained, f"a new kind of disagreement: {unexplained}"
-    # `bus_b_v` was the third class when round 100 added it and is not one any more: round 101
-    # gave `bus_b` a source, so it owes a rule like every other `algebraic` state without one. The
-    # assertion below is what keeps the class *declared* rather than deleted — if a state falls
-    # into it again, `no_input` moves and this fails.
-    #
-    # `counted_more` went 30 -> 27 when the RCS cluster's three fields were landed, 27 -> 26 when
-    # the fuel cell's reactant chain closed, 26 -> 18 when the two cabins' six gas stocks took their
-    # initials, and 18 -> 17 when the battery's smallest flow was derived from the smallest load it
-    # feeds: in every case the worklist said a state owed a *value* because its spec held an
-    # `UNCONFIGURED`, and `advance` said it was ready because the integrator never read the field.
-    # That is this counter's whole purpose, and it is the reason the build order was reporting states
-    # as blocked by numbers that were published all along — page 89 of the RCS study guide, page 14 of
-    # the EPS study guide, the four-gas model's own partial pressures, and a load budget's own
-    # `demand_w` field.
-    # Round 18 kept this counter where it was and closed a *fourth* kind before it could be
-    # counted: `build_order` now asks `lag_driver_basis` of a lag's driver, so the four states
-    # `advance` refuses for a dimensionally-wrong driver are classified as owing an *edge* rather
-    # than as ready. They were reported by `unexplained` above as "a new kind of disagreement" the
-    # moment the plant grew the rule and the classifier had not — which is this test doing exactly
-    # what it was written for.
-    #
-    # **17 -> 22 and 13 -> 10 in round 29**, when every integrator began declaring its starting
-    # value: five states are now classified as owing a *value* — `comm_amp_t`, `crew_workload`,
-    # `suit_loop_flow_cfm`, `zone_csm_avionics_t` and `zone_lm_descent_t` — and `advance` still
-    # refuses each of them for the edge or the rule behind it. That is the documented direction: the
-    # worklist reads the whole spec, and the spec now says it is missing a starting value, which is
-    # true whether or not the plant would get that far. The same five carry the move in the build
-    # order's own bucket counts.
-    # **22 -> 21 and 10 -> 11 in round 33**, when the suit circuit's flow took the ECS guide's
-    # published 35 cfm as its initial: `suit_loop_flow_cfm` stopped owing a *value*, so it left the
-    # first counter, and the worklist now calls it `rule` while `advance` calls it a missing edge —
-    # which is the sentinel's own documented disagreement, one state further along.
-    # **`unmet_reading` went 3 -> 4 in round 50**: the cabins' two pressures, the RCS propellant
-    # estimate and the CSM's bus load, whose rules are in the configuration and whose readings are
-    # other states' values. The worklist calls them ready; a tick with nothing supplied calls them a
-    # value debt. They are the states the fourth completion criterion is about, and this counter is
-    # where the gap between "the rule exists" and "the rule can run today" is visible.
-    # **4 -> 6 in round 57**, and it is the reactant fix arriving here: `fc_o2_draw_kg_s` and
-    # `fc_h2_draw_kg_s` now compute the rate their unit names, from the cell's power *as a reading*
-    # of another state — so the worklist calls them ready (their rule is a declaration, which is
-    # true) and `advance` with nothing supplied calls them a reading debt, which is the same
-    # two-questions split the four above are. The draw states joined the cabins' pressures, the
-    # propellant estimate and the bus load.
-    #
-    # **And `shared_driver` is 4 in round 57**, the four states above: they are the round's second
-    # finding, and a round that gives the drain a way to name the state it reads moves this number.
-    assert (counted_more, sentinel, no_input, unmet_reading, six_dof, shared_driver) == (
-        21,
-        10,
-        0,
-        6,
-        1,
-        4,
-    ), (
-        counted_more,
-        sentinel,
-        no_input,
-        unmet_reading,
-        six_dof,
+    # The first line of the report and the tick are the same set, in both directions.
+    assert {state.id for state in buckets["ready"]} == advanced, sorted(
+        {state.id for state in buckets["ready"]} ^ advanced
     )
+    assert sum(len(rows) for rows in buckets.values()) == 139
+
+    # Every blocked state is filed under what its *root* owes, and the root is the state an
+    # implementer should open. The sentinel's sequencing is deliberately not part of the chain: it
+    # is real for a tick and useless as a worklist, and following it would blame fifty-two states on
+    # one `discrete` state.
+    blamed = plant.blame(world, gaps)
+    for gap in gaps:
+        root = blamed[gap.state.id]
+        assert claimed[gap.state.id] == plant._classify(world, root.state) or claimed[
+            gap.state.id
+        ] in {"value", "edge", "rule"}, (gap.state.id, root.state.id)
+        assert claimed[gap.state.id] != "ready", gap.state.id
+
+    # **The `counted_more` class is empty, and its emptiness is the point rather than a deletion.**
+    # Twenty-one states used to sit in *owes a value* while `advance` computed them happily: their
+    # specs carry an `UNCONFIGURED` the integrator never reads, and the permissive-map comparison
+    # this test used to run is what made the two visible at once. A tick-driven classification never
+    # asks the per-state tests about a state it advanced, so no state can be both — and the
+    # declarations those twenty-one owe are still counted, by `--readiness`, which is where a
+    # *declaration's* debts belong.
+    assert not [
+        state.id
+        for state in world.states
+        if state.id in advanced and plant._classify(world, state) != "ready"
+    ]
+    # The bucket totals are the guard that used to be the disagreement counters: a state moving
+    # between them, or a new way of being blocked arriving, moves one of these four numbers.
+    assert (
+        len(buckets["ready"]),
+        len(buckets["value"]),
+        len(buckets["edge"]),
+        len(buckets["rule"]),
+    ) == (36, 28, 13, 62), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -8151,7 +8060,13 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # reads a node that publishes no value under its own name are couplings rather than values
     # (`water_cooling_kg` through `radiator_reject`, and the three cabin-gas stocks that read
     # `crew_state`).
-    assert len(buckets["ready"]) == 38
+    # **38 -> 36 in round 58, and the move is the bucket's meaning rather than a state.** The first
+    # line of this report is now the set a real tick advances — `build_order` runs one tick at t=0
+    # and files its gaps by their roots — so `coolant_flow_kg_s` and `prop_rcs_kg`, whose own
+    # declarations are complete and which no tick can reach, leave it for the rule their producers
+    # owe. The two figures this test used to compare (`counted_more`, `six_dof`) are now the totals
+    # below, because a state a tick advances cannot be filed as owing anything.
+    assert len(buckets["ready"]) == 36
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -8176,7 +8091,9 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # and now owes the driver that would advance it, which is domain code.
     # 68 -> 66 in round 47, the other half of the move above: the two pressures left this bucket
     # for `ready` without the rule layer's count changing anywhere else.
-    assert len(buckets["rule"]) == 60, "just under half the vehicle is domain code"
+    # 60 -> 62 in round 58, the other half of the ready move: the two states a tick cannot reach
+    # through a producer that owes code are filed under the producer's bucket, which is this one.
+    assert len(buckets["rule"]) == 62, "just under half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -8201,7 +8118,11 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # thing the plant asks a lag for.
     # 26 -> 25 in round 33: `suit_loop_flow_cfm` took the ECS guide's published 35 cfm as its
     # initial, so it stopped owing a value — and the bucket it moved to is `rule`, above.
-    assert len(buckets["value"]) == 25
+    # 25 -> 28 in round 58: the bucket is a *root's* verdict now, so the states blocked behind a
+    # value debt are filed here with it. `--readiness` still counts the declarations: 25 states
+    # carry one, and the three that differ are the ones a tick cannot reach because a value their
+    # producer is missing has not moved them.
+    assert len(buckets["value"]) == 28
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
@@ -8219,7 +8140,9 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 12 -> 16 in round 57: those four states again. A node with two states publishes no node key,
     # so a flux reading it is not late, it is unreadable — the missing declaration is *which* state
     # the edge reads, which is the coupling's, and the bucket an implementer should open is this one.
-    assert len(buckets["edge"]) == 16
+    # 16 -> 13 in round 58: three of the sixteen were blocked behind something other than an edge,
+    # and the root's verdict is what files them now.
+    assert len(buckets["edge"]) == 13
 
 
 def test_the_plant_advances_a_node_s_states_in_the_order_the_node_declares(tmp_path):
@@ -8704,13 +8627,20 @@ def test_the_lag_integrator_applies_the_conversion_its_edge_declares():
     plant = _plant()
     world = plant.load_world(VEHICLE)
     buckets = plant.build_order(world)
-    assert "coolant_flow_kg_s" in {s.id for s in buckets["ready"]}
+    # **Round 58 moved this state out of *ready* and into the bucket of what actually blocks it.**
+    # `coolant_flow_kg_s`'s own declaration is complete — that is what this test established — and
+    # the state it reads is not: `bus_a_v` owes its rule, so the pump's flow is filed under the rule
+    # its root owes rather than promised to a tick that cannot reach it. The refusal below is the
+    # same sentence it always was, read from the gap list the classification is now made of.
+    assert "coolant_flow_kg_s" in {s.id for s in buckets["rule"]}
     gaps: list = []
     plant.step(world, plant.initial_values(world), 0.02, gaps)
     owed = {g.state.id: str(g.owed) for g in gaps}
     assert "reads 'bus_a', which nothing supplies" in owed["coolant_flow_kg_s"], owed[
         "coolant_flow_kg_s"
     ]
+    root = plant.blame(world, gaps)["coolant_flow_kg_s"]
+    assert root.state.id == "bus_a_v", root.state.id
     # And `thrust_main_n`'s debt moved from *the rule* to the *edge*, which is the truthful place:
     # what it lacks is the propellant flow to relax toward, not the code that would relax it.
     assert "thrust_main_n" in {s.id for s in buckets["edge"]}
@@ -9989,8 +9919,8 @@ def test_the_readme_status_matches_the_tools():
             "the configured-state count, which is the one the objective watches",
         ),
         (
-            f"a real tick advances **{advanced}** of the {states} states, every one of them inside "
-            f"the build order's **{ready}** ready",
+            f"a real tick advances **{advanced}** of the {states} states, and the build order's "
+            f"**{ready}** ready are that same set",
             "the tick figure, which is the objective's second completion criterion",
         ),
     ):
@@ -18344,11 +18274,17 @@ def test_the_tick_can_read_what_the_build_order_promises():
     assert advanced <= ready, sorted(advanced - ready)
     # And nothing it promised is blocked on its own declaration.
     assert not (ready & roots), sorted(ready & roots)
-    # The two that remain are blocked upstream, and they are named.
-    assert sorted(ready - advanced) == ["coolant_flow_kg_s", "prop_rcs_kg"], sorted(ready - advanced)
+    # **Round 58 made the promise exact**: the ready bucket *is* the set a tick advances, so the two
+    # that were left in round 57 — `coolant_flow_kg_s` behind `bus_a_v`'s missing rule and
+    # `prop_rcs_kg` behind `thruster_thrust`'s — are filed under what their roots owe, and the
+    # difference is empty rather than pinned by name.
+    assert ready == advanced, sorted(ready ^ advanced)
     for state_id, producer in (("coolant_flow_kg_s", "bus_a_v"), ("prop_rcs_kg", "thruster_thrust")):
         gap = next(gap for gap in gaps if gap.state.id == state_id)
         assert producer in gap.owed or gap.needs in {"bus_a", "rcs_thrust"}, gap.owed
+        assert state_id in {s.id for s in order["rule"]}, state_id
+        root = plant.blame(world, gaps)[state_id]
+        assert root.state.id == producer, (state_id, root.state.id)
 
     # The t=0 resolution is what closed the first cause, and it is in the order the tick walks: a
     # state resolved here is one the tick then advances, and a reading that is not yet there is left
@@ -18360,4 +18296,4 @@ def test_the_tick_can_read_what_the_build_order_promises():
 
     # The figures this rests on, so a round that moves them has to say so here.
     assert len(world.states) == 139
-    assert len(ready) == 38 and len(advanced) == 36
+    assert len(ready) == 36 and len(advanced) == 36
