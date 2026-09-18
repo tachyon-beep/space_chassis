@@ -8764,6 +8764,127 @@ def test_the_delay_integrator_hands_back_what_entered_one_pipe_ago(tmp_path):
     assert len(values["loop_transport_t__delay"]["slots"]) == 52100
 
 
+def test_a_run_can_say_which_scenario_it_is(tmp_path):
+    """Criterion 3's runner, at its smallest honest size: a run's identity, recorded and replayable.
+
+    `mission.yaml` has declared three scenario postures since it was written — hazard ×1/×5/×10 and
+    demand failure ×1/×5/×20, plus a selector over which faults are *placed* rather than left to
+    chance — and `tools/faults.py` has scaled by them since the round that found the difficulty knob
+    doing nothing. What no tool had was a run's identity: two `crisis` runs were indistinguishable
+    in the record and neither could be replayed.
+
+    **A scenario is a posture and a seed, and nothing else is recorded**, which is the decision this
+    test holds. `mission.yaml`'s own debt says why: *"the pool is a set of faults, the guaranteed
+    seed is drawn from it, and the chain that results is whichever one that fault realises — so a
+    `crisis` run is a crisis, and not necessarily the crisis a chain names."* Naming a chain in the
+    runner would answer a question the vehicle deliberately leaves to the experiment.
+    """
+    postures = yaml.safe_load((VEHICLE / "mission.yaml").read_text())["scenario_postures"]
+    ids = [str(row["id"]) for row in postures]
+    assert ids == ["nominal", "degraded", "crisis"], ids
+
+    def run_console(*argv: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(VEHICLE / "tools" / "console.py"), *argv],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    root = fixture_dir(tmp_path, "scenario")
+    result = run_console(
+        "--diode-dir", str(root), "--slug", "vehicle", "--scenario", "crisis", "--seed", "42",
+        "--cycles", "2", "--poll", "0.05",
+    )
+    assert result.returncode == 0, result.stderr[-600:]
+    assert "scenario=crisis seed=42" in result.stdout, result.stdout[-400:]
+    window = root / "vehicle"
+    published = json.loads((window / "state.json").read_text())
+    check = json.loads((window / "pending.json").read_text())
+    # The mirror says which scenario the vehicle is in, beside the phase.
+    assert published["vehicle"]["scenario"] == "crisis", published["vehicle"]
+    # And the vehicle's own record carries the pair, because `state.json` is never read back as
+    # input — the same rule that puts `ticks` and `seq` there.
+    assert check["scenario"] == "crisis" and check["seed"] == 42, (check.get("scenario"), check.get("seed"))
+
+    # A restart without the flags keeps the scenario: the record describes the run, and a second
+    # half that reset itself to `nominal` would make a crisis run report itself as a nominal one.
+    resumed = run_console(
+        "--diode-dir", str(root), "--slug", "vehicle", "--cycles", "1", "--poll", "0.05"
+    )
+    assert resumed.returncode == 0, resumed.stderr[-400:]
+    assert "scenario=crisis seed=42" in resumed.stdout, resumed.stdout[-400:]
+    assert json.loads((window / "pending.json").read_text())["scenario"] == "crisis"
+
+    # A scenario the vehicle does not declare is refused, with the list — which is the failure the
+    # difficulty knob's own history is about: a name nothing resolves reads exactly like a name
+    # that did nothing.
+    refused = run_console(
+        "--diode-dir", str(root), "--slug", "v2", "--scenario", "phantom", "--cycles", "1"
+    )
+    assert refused.returncode == 3, refused.returncode
+    assert "is not one of the vehicle's" in refused.stderr, refused.stderr
+    assert "crisis" in refused.stderr and "nominal" in refused.stderr
+
+
+def test_a_scenario_plan_is_what_that_scenario_decides(tmp_path):
+    """The plan a run announces and the plan it flies are one computation, not two that agree.
+
+    `--plan` returns what the posture and the seed decide: the rates the posture scales, the faults
+    the posture *places* rather than leaves to hazard, and every spontaneous event over the mission.
+    It reads the same `scenario_report` the scheduler's own `--json` does, which is the property
+    worth testing — a second implementation is a second answer.
+    """
+    def plan(*argv: str) -> dict:
+        result = subprocess.run(
+            [sys.executable, str(VEHICLE / "tools" / "console.py"), "--plan-json", *argv],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr[-600:]
+        return json.loads(result.stdout)
+
+    nominal = plan("--scenario", "nominal", "--seed", "42")
+    crisis = plan("--scenario", "crisis", "--seed", "42")
+    assert nominal["hazard_factor"] == 1.0 and crisis["hazard_factor"] == 10.0
+    assert nominal["on_demand_factor"] == 1.0 and crisis["on_demand_factor"] == 20.0
+    assert nominal["seeded_faults"] == "none"
+    assert crisis["seeded_faults"].startswith("one guaranteed major primary")
+    # A crisis run schedules strictly more, and it *places* one.
+    assert len(crisis["events"]) > len(nominal["events"]), (
+        len(crisis["events"]),
+        len(nominal["events"]),
+    )
+    assert any(e.get("scaled_by") == "crisis" for e in crisis["events"]), (
+        "the crisis posture places a guaranteed seed, and the plan does not show it"
+    )
+
+    # The same scenario and seed are the same plan, twice — which is what makes a run replayable.
+    again = plan("--scenario", "crisis", "--seed", "42")
+    assert again == crisis
+
+    # And a different seed is a different plan, so the seed is doing something.
+    other = plan("--scenario", "crisis", "--seed", "43")
+    assert [e["met_h"] for e in other["events"]] != [e["met_h"] for e in crisis["events"]]
+
+    # The scheduler's own `--json` is the same report, because there is one implementation of it.
+    faults_json = subprocess.run(
+        [
+            sys.executable, str(VEHICLE / "tools" / "faults.py"),
+            "--seed", "42", "--posture", "crisis", "--json",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert faults_json.returncode == 0, faults_json.stderr[-600:]
+    from_faults = json.loads(faults_json.stdout)
+    for key in ("posture", "master_seed", "hazard_factor", "on_demand_factor", "seeded_faults"):
+        assert from_faults[key] == crisis[key], key
+    assert [e["fault"] for e in from_faults["events"]] == [e["fault"] for e in crisis["events"]]
+
+
 def test_the_plant_reports_the_build_order():
     """The view is a CLI contract, not an internal function."""
     result = subprocess.run(
