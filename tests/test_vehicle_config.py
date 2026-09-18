@@ -4104,6 +4104,101 @@ def test_an_argument_a_fleet_can_send_names_something_the_vehicle_has(tmp_path):
     assert "loop_secondary" in empty[0]
 
 
+def test_the_linter_refuses_a_keyed_state_on_a_node_that_does_not_declare_its_key_space(tmp_path):
+    """A keyed state's value is a map, and nothing said which level a writer should use.
+
+    `plant.state_values` gave the value map three shapes and declared two of them: a state's value
+    goes under its own id, a node carrying exactly one state also keeps its node key, and the
+    `internal` sentinel is a key space of its own. The third — a state whose `unit` is a
+    `map[...]`, so its *value* is a map — was written down nowhere, and the two writers of a keyed
+    element disagreed about it. `state_values` nests; the command path did not, and wrote a keyed
+    state's elements *bare* into `values[node]`.
+
+    On `structure_config` that is a collision rather than a curiosity. The node carries `pyro_fired`
+    (`map[device_id,bool]`) beside three scalars, so `execute_event(event='lm_undocking')` staged
+    `values['structure_config'] = {'lm_undocking': True}` — an event name in the slot
+    `lm_separation_state` holds `docked` in, and one of the four values `execute_event` can take
+    hits each of the four states on the node. `crew_state` and `alert_state` have the same mix.
+
+    **The sentinel is why this hid for so long.** Every keyed state a command could write —
+    `hatch_state`, `breaker_panel`, `thruster_valve`, `rcs.mode` and the rest — lives on `internal`,
+    where the nesting was correct and exercised. The broken copy of the rule sat on a node no
+    command reached until `structure_config`, and the fix is `plant._stage_element`, one writer for
+    both containers so the two copies cannot drift again.
+
+    This check is the corpus half of the same claim: a node carrying a state whose value is a map
+    declares `key_space: by_state`, so the level is readable off the corpus instead of inferable
+    from a state's `unit` by whoever happens to be writing.
+    """
+    coupling = "coupling.yaml"
+    structure = "domains/structure/components.yaml"
+    declared = "    key_space: by_state\n    state_order: [pyro_fired, lm_separation_state"
+
+    # The live corpus declares it on every node that carries one, and the count is the claim.
+    # Anchored to the token after a line start or a `,`/`{`, because two of the five are inline flow
+    # mappings (`rcs_valves: {..., key_space: by_state}`) and their line does not *begin* with it.
+    # The header and the per-node comments name the field in prose, and a mention is not a
+    # declaration — which is this folder's oldest finding, so the assertion is written to see the
+    # difference rather than to count a substring.
+    text = (VEHICLE / coupling).read_text()
+    on_nodes = re.findall(r"(?:^[ ]+|[,{][ ]*)key_space: by_state\b", text, re.M)
+    assert len(on_nodes) == 5, (
+        f"{len(on_nodes)} nodes declare a key space; a keyed node lost its declaration, or gained "
+        "one it does not need"
+    )
+
+    def refusal(name: str, edits: list[tuple[str, str, str]], needle: str) -> None:
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        for rel, old, new in edits:
+            path = definition / rel
+            body = path.read_text()
+            assert old in body, f"the fixture no longer matches {old!r}"
+            path.write_text(body.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, f"{needle!r} did not fire:\n{out[-1500:]}"
+
+    # The declaration removed: the node carries a keyed state and does not say so.
+    refusal(
+        "key_space_off",
+        [(coupling, declared, "    state_order: [pyro_fired, lm_separation_state")],
+        "carries ['pyro_fired'], whose `unit` is a `map[...]`, and does not declare "
+        "`key_space: by_state`",
+    )
+    # A fourth keyed state arriving on a node that has never carried one, which is the case the
+    # declaration exists to catch before a writer reaches it rather than after. The anchor carries
+    # the state's own id, so it names `lm_separation_state` rather than whichever of the three
+    # machines happens to be written first.
+    # The converse, because a `key_space` nothing contradicts is a claim rather than a fact:
+    # `coolant_flow` carries two scalars — a pump speed and a flow — so a node annotated for a keyed
+    # state it does not carry is annotating nothing.
+    refusal(
+        "key_space_stale",
+        [(coupling, "  coolant_flow:", "  coolant_flow:\n    key_space: by_state")],
+        "declares `key_space: by_state` and carries no state whose `unit` is a `map[...]`",
+    )
+    # And a new keyed state arriving on a node whose declaration has gone, which is the same rule
+    # seen from the state's side: the bucket then names *both* of `structure_config`'s keyed states,
+    # because the nodes are walked in order and the bucket is built per node rather than per state.
+    #
+    # **This case was written wrong first, and the way it was wrong is worth keeping.** The first
+    # version keyed `lm_separation_state` alone and expected the refusal — and the linter composed,
+    # because the fixture's `coupling.yaml` still declared `key_space: by_state` on the node. That
+    # is the check behaving correctly and the *expectation* being the false claim: with the
+    # declaration present there is nothing to refuse, so a test that demands one is asking the tool
+    # to be inconsistent. It was found by logging the check's own view of the fixture (the node
+    # arrived with `ks='by_state'`) rather than by re-reading the test, which looked right twice.
+    refusal(
+        "key_space_gone_with_two",
+        [(coupling, "    key_space: by_state\n    state_order: [pyro_fired, lm_separation_state",
+          "    state_order: [pyro_fired, lm_separation_state"),
+         (structure, 'id: lm_separation_state\n    node: structure_config\n    method: discrete\n'
+                     '    unit: "enum[docked,undocked,separated]"',
+          'id: lm_separation_state\n    node: structure_config\n    method: discrete\n'
+          '    unit: "map[device_id,enum[docked,undocked,separated]]"')],
+        "carries ['lm_separation_state', 'pyro_fired'], whose `unit` is a `map[...]`",
+    )
+
+
 def test_a_keyed_state_says_which_article_it_is_about(tmp_path):
     """One value stood for two hatches, and the corpus's own gate text said "any hatch".
 
@@ -13442,6 +13537,89 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     staged = plant.apply_command(world, values, "select_antenna", {"antenna": "high_gain"})
     assert staged["internal"]["antenna_selection"] == "high_gain", staged
     assert "link" not in staged, "the computed state was assigned a value the plant invented"
+
+
+def test_a_command_puts_a_keyed_state_beside_its_siblings_never_on_top_of_them():
+    """The command path wrote a keyed state's elements into the node's key space, bare.
+
+    `plant.state_values` says what the value map's shape is: a state's value goes under its own id,
+    a node carrying exactly one state also keeps its node key, and the `internal` sentinel is a key
+    space of its own. A state whose `unit` is a `map[...]` is a fourth case — its value is itself a
+    map, so its elements sit one level below the value a scalar sibling occupies — and **the two
+    writers of a keyed element disagreed about that level.** `state_values` nests. `apply_command`
+    wrote `staged[state.node][element] = value` with no state id in the path, which is the same key
+    space a scalar state's whole value lives in.
+
+    `pyro_fired` is the state that shows it, because `structure_config` carries it *beside* three
+    scalars rather than alone on a node. Before the fix, with `values['structure_config']` holding
+    `lm_separation_state` as `docked`:
+
+        execute_event(event='lm_undocking')  ->  {'structure_config': {'lm_undocking': True}}
+
+    which is an event name in the slot a mode belongs in. Every value `execute_event` can take
+    collided with something: three of the four `one_way_events` share their id with a scalar
+    sibling, and the fourth, `pyro_fire`, shares the *state's* own node key.
+
+    **Why nothing caught it.** Every keyed state a command could write — `hatch_state`,
+    `breaker_panel`, `thruster_valve`, `rcs.mode` and the rest — lives on the `internal` sentinel,
+    where `apply_command` nested correctly. The broken copy of the rule sat on a node no command
+    reached until `structure_config`. And the state it writes is `discrete`, which `advance` refuses,
+    so `state_values` — the writer that does nest on a node — was never reached for one. A latent
+    collision is still a collision: the first tick that could advance `lm_separation_state` would
+    have read `'lm_undocking'` and published it as a configuration.
+
+    The fix is `plant._stage_element`, one writer for both containers, because the duplication is
+    what let two halves of one sentence drift apart. This is the half of the finding the corpus
+    cannot hold: `key_space` says which level a value lives at, and this asserts the writer obeys it.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    world = plant.load_world(VEHICLE)
+    values = plant.initial_values(world)
+    siblings = sorted(s.id for s in world.states_on("structure_config"))
+    assert siblings == ["configuration", "descent_stage_state", "lm_separation_state", "pyro_fired"], (
+        f"the node this asserts about changed shape: {siblings}"
+    )
+
+    # A scalar sibling's slot, seeded the way `advance` writes one.
+    values["structure_config"] = {"lm_separation_state": "docked", "configuration": "docked"}
+    staged = plant.apply_command(world, values, "execute_event",
+                                 {"event": "lm_undocking", "arm_token": "token"})
+
+    # **One level down, under the state's own id.** The helper reads the node's existing map first
+    # — that is what lets a second event accumulate — so the siblings come through *unchanged*,
+    # which is the other half of the claim: the element is added beside them and not over them.
+    assert staged["structure_config"] == {
+        "lm_separation_state": "docked",
+        "configuration": "docked",
+        "pyro_fired": {"lm_undocking": True},
+    }, staged
+    # The three assertions the flat write would have broken, one per sibling shape. The flat form
+    # staged `{'lm_undocking': True}` and *dropped both scalars*, because it built the map from the
+    # element rather than from the node's own values.
+    assert "lm_undocking" not in staged["structure_config"], (
+        "the element took the key space a sibling state's value lives in"
+    )
+    assert staged["structure_config"]["lm_separation_state"] == "docked"
+    assert staged["structure_config"]["configuration"] == "docked"
+    # And a second event accumulates rather than replacing the first, which the flat form could
+    # never do: it wrote to `values[node]` and the caller's commit is a shallow update.
+    merged = {**values, **staged}
+    again = plant.apply_command(world, merged, "execute_event",
+                                {"event": "pyro_fire", "arm_token": "token"})
+    assert again["structure_config"]["pyro_fired"] == {
+        "lm_undocking": True, "pyro_fire": True,
+    }, again
+    assert again["structure_config"]["lm_separation_state"] == "docked"
+    # The sentinel still nests, and the helper did not change that: the two containers differ in
+    # which map holds the state and in nothing else.
+    hatched = plant.apply_command(world, values, "set_hatch_valve",
+                                  {"vehicle": "csm", "hatch": "hatch_crew_lm", "state": "open"})
+    assert hatched["internal"]["hatch_state"] == {"hatch_crew_lm": "open"}, hatched
 
 
 def test_the_console_applies_the_effect_and_says_what_changed(tmp_path):
