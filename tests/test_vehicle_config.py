@@ -761,7 +761,76 @@ def test_the_build_order_is_the_ticks_own_gap_list():
         len(buckets["value"]),
         len(buckets["edge"]),
         len(buckets["rule"]),
-    ) == (36, 28, 13, 62), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
+    ) == (36, 23, 16, 64), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
+
+
+def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
+    """`blame` followed `needs` into a node with no key, and blamed whichever sibling sorted first.
+
+    A node carrying more than one state publishes **no key in the value map** — `state_values` writes
+    the node key only when one state owns the node. So a gap whose refusal says *"reads `crew_state`,
+    which carries 3 states … and therefore publishes no value under its own name"* cannot be fixed by
+    any state on `crew_state`: none of them holds what the edge wanted. Two rounds of the worklist
+    sent an implementer to `crew_location`:
+
+        csm_cabin_co2_kg → crew_state → crew_location
+
+    Writing the crew's movement rule would have left all three stocks refusing for exactly the same
+    reason. This is the `driver_nodes` trap arriving in the *attribution* rather than in the
+    integrator: a declaration nothing reads is bad, and a name that cannot be a link is worse,
+    because the worklist acts on it.
+
+    The test is written on the relation rather than on the three names, so a fourth state that reads
+    a crowded node is caught the day it is written.
+    """
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    world = plant.load_world(VEHICLE)
+    gaps: list = []
+    plant.step(world, plant.initial_values(world), plant.tick_seconds(world), gaps)
+    blamed = plant.blame(world, gaps)
+    crowded = {
+        node
+        for node in {s.node for s in world.states if s.node != "internal"}
+        if len(world.states_on(node)) > 1
+    }
+    assert len(crowded) == 11, sorted(crowded)
+
+    # No blocked state is filed under a state that lives on a node with no value key.
+    offenders = [
+        f"{gap.state.id} -> {blamed[gap.state.id].state.id}"
+        for gap in gaps
+        if blamed[gap.state.id].state.id != gap.state.id
+        and blamed[gap.state.id].state.node in crowded
+    ]
+    assert not offenders, offenders
+
+    # And the three that were filed that way are their own roots now, in the edge bucket, because
+    # the thing to fix is which state their edge advances.
+    buckets = plant.build_order(world)
+    for sid in ("csm_cabin_co2_kg", "lm_cabin_co2_kg", "water_potable_kg"):
+        assert blamed[sid].state.id == sid, (sid, blamed[sid].state.id)
+        assert next(s for s in world.states if s.id == sid) in buckets["edge"], sid
+        # The refusal that would have misled names the shared node, so the reader can see that the
+        # fix is not a state on it.
+        gap = next(g for g in gaps if g.state.id == sid)
+        assert gap.needs in crowded, (sid, gap.needs)
+        assert "publishes no value under its own name" in str(blamed[sid].owed)
+
+    # And the guard is a *stop*, not a fallback: the chain keeps the state it had already reached
+    # rather than dropping back to the crowded node's first occupant. Written the wrong way first —
+    # `assert blamed[sid].state.node not in crowded` — which is false for a reason that has nothing
+    # to do with the guard: `csm_cabin_co2_kg`'s *own* node, `cabin_atm`, carries five states, and a
+    # state is allowed to live on a crowded node. What the guard is about is the node it declined to
+    # *follow into*.
+    for sid in ("csm_cabin_co2_kg", "water_potable_kg"):
+        gap = next(g for g in gaps if g.state.id == sid)
+        assert blamed[sid].state.id == sid
+        assert blamed[sid].state.node != gap.needs, (sid, gap.needs)
 
 
 def test_a_delay_state_owes_its_delay(tmp_path):
@@ -8267,7 +8336,10 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # for `ready` without the rule layer's count changing anywhere else.
     # 60 -> 62 in round 58, the other half of the ready move: the two states a tick cannot reach
     # through a producer that owes code are filed under the producer's bucket, which is this one.
-    assert len(buckets["rule"]) == 62, "just under half the vehicle is domain code"
+    # 62 -> 64 in round 63, and this one is not a recount: `crew_location` and `crew_availability`
+    # were in *owes a value* because `moved_by: UNCONFIGURED` is an unset key, and what they owe is
+    # the mover rule — the cheapest-to-close bucket had a state in it with no value to write.
+    assert len(buckets["rule"]) == 64, "just under half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -8296,7 +8368,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # value debt are filed here with it. `--readiness` still counts the declarations: 25 states
     # carry one, and the three that differ are the ones a tick cannot reach because a value their
     # producer is missing has not moved them.
-    assert len(buckets["value"]) == 28
+    assert len(buckets["value"]) == 23
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
@@ -8316,7 +8388,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # the edge reads, which is the coupling's, and the bucket an implementer should open is this one.
     # 16 -> 13 in round 58: three of the sixteen were blocked behind something other than an edge,
     # and the root's verdict is what files them now.
-    assert len(buckets["edge"]) == 13
+    assert len(buckets["edge"]) == 16
 
 
 def test_the_plant_advances_a_node_s_states_in_the_order_the_node_declares(tmp_path):
