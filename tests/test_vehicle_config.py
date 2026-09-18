@@ -905,6 +905,58 @@ def test_the_linter_refuses_a_crew_position_nobody_can_be_located_at(tmp_path):
     assert "state crew_location" in result.stdout, result.stdout
 
 
+def test_the_linter_refuses_two_crew_members_with_one_id(tmp_path):
+    """An id is a key, and two people cannot share one — and this one diverged silently.
+
+    `crew.crew_location` is `map[crew_id,...]`. The id is not a label on a person: it is the
+    namespace the vehicle holds *where this person is* in, and `crew.location_[id]` publishes one
+    value per key. So two positions with one id are two people the vehicle cannot tell apart.
+
+    **What made this worth a check of its own is that the failure is silent and partial.** On a
+    fixture that gives the LM pilot the commander's id and leaves their stations alone, the linter
+    composed — exit 0 — while `plant.crew_placement` held **two** people for a vehicle that declares
+    three, because it builds `placement[id]` and the second person overwrites the first. `size`,
+    `surface_party` and `crew_aboard` all went on agreeing, since none of them counts ids.
+
+    There *is* a check that catches a duplicate, and it is not this one: `seats` refuses two crew at
+    one station, because one station means one perception bound. That is a true and different claim,
+    and it fires only when the duplicate also stands where somebody else is. Give the duplicate an
+    unoccupied station and nothing in the file objects. `fault_policy.yaml`'s fault ids have had
+    exactly this rule for rounds — they key the randomness — and the crew ids key the location map.
+    """
+    definition = copy_definition(tmp_path / "vehicle")
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    anchor = "    - id: lm_pilot\n"
+    assert anchor in text, "the fixture no longer matches mission.yaml"
+    # The id only. Their stations stay their own, which is the case `seats` cannot see.
+    path.write_text(text.replace(anchor, "    - id: commander\n", 1))
+
+    result = run_linter(definition)
+    assert result.returncode == 1, result.stdout[-900:]
+    assert "is declared twice" in result.stdout, result.stdout[-900:]
+    assert "commanders" not in result.stdout  # the message names the id, not a plural
+    # And it says *why* the id is a key rather than merely that it repeats, because the author's
+    # next question is which of the two names to change.
+    assert "crew.crew_location" in result.stdout, result.stdout[-900:]
+
+    # The same mutation through the plant's own reader, which is the silent half: two people
+    # declared, one entry held.
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    rows = plant.crew_placement(definition)
+    docked = next(r for r in rows if r["configuration"] == "csm_lm_docked")
+    declared = plant.load_yaml(definition / "mission.yaml")["crew"]["positions"]
+    assert len(declared) == 3 and len(docked["placement"]) == 2, (
+        f"the duplicate no longer collapses two people into one entry: "
+        f"{len(declared)} declared, {len(docked['placement'])} placed"
+    )
+
+
 def test_the_linter_refuses_a_raw_thruster_verb(tmp_path):
     """`rcs_dode.md:369`'s forbidden list has to be a build refusal, not a paragraph.
 
@@ -2479,7 +2531,12 @@ def test_every_crew_member_has_a_station_in_every_vehicle_they_can_board():
     correct. But `ask_crew`'s perception bound is computed per **station**, and
     `domains/crew/components.yaml#display_contract` gives the CSM's three stations three different
     panel sets and three different `cannot_see` lists — so a question asked from "csm" is a question
-    asked from nowhere. The corpus named three crew and three stations and never said who sat where.
+    asked from nowhere.
+
+    **This docstring said "the corpus named three crew and three stations and never said who sat
+    where", and by round 60 that sentence was false**: the map is declared, on every position, under
+    `stations`. Corrected here rather than left, because a test whose prose describes a gap the test
+    itself closes is the same defect one level down — a reader trusts the sentence and stops.
 
     The map is `chosen`, with its reasoning in the file, and these assertions are the parts of it
     that are not a matter of choice: the vocabulary, the surface party, and that no two people are
@@ -2514,6 +2571,28 @@ def test_every_crew_member_has_a_station_in_every_vehicle_they_can_board():
     for vehicle in ("csm", "lm"):
         seated = [p["stations"][vehicle] for p in people if vehicle in p.get("stations", {})]
         assert len(seated) == len(set(seated)), f"two crew share a {vehicle} seat: {seated}"
+
+    # **And no two crew share an id**, which is a different claim from sharing a seat and was the
+    # unguarded one. The id is the *key* `crew.crew_location` holds a person's position under, so a
+    # duplicate is two people in one map entry: `plant.crew_placement` builds `placement[id]` and the
+    # second person overwrites the first. The `seats` assertion above catches a duplicate only when
+    # the duplicate also stands at an occupied station — the real rule is about the id.
+    ids = [p["id"] for p in people]
+    assert len(ids) == len(set(ids)), f"two crew share an id: {ids}"
+    # And the vehicle can place every person it declares, which is the property the duplicate broke.
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    rows = plant.crew_placement(VEHICLE)
+    docked = next(r for r in rows if r["configuration"] == "csm_lm_docked")
+    assert len(docked["placement"]) == len(people), (
+        f"the vehicle places {len(docked['placement'])} of {len(people)} declared crew: "
+        f"{sorted(docked['placement'])}"
+    )
+    assert sorted(docked["placement"]) == sorted(ids)
 
 
 def test_the_plant_reports_where_each_crew_member_is_and_where_it_cannot():
@@ -2654,8 +2733,8 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "declares 148 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
     assert "derived here as 20 unperturbed, 15 of them `service`" in result.stdout
-    # One block deleted is one debt added: the corpus stands at 262, so the ablation is 263.
-    assert "COMPOSES, with 262 declared debt(s)." in result.stdout
+    # One block deleted is one debt added: the corpus stands at 260, so the ablation is 261.
+    assert "COMPOSES, with 261 declared debt(s)." in result.stdout
 
     # The failure chains, which are owed *and* refused: the README's front table names fifteen.
     definition = copy_definition(fixture_dir(tmp_path, "no-chains"))
@@ -2677,7 +2756,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "declares no coverage block. The domain publishes 15 channel(s)" in result.stdout
     assert "no fault perturbs 1 of them" in result.stdout
-    assert "COMPOSES, with 262 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 261 declared debt(s)." in result.stdout
 
     # The filter's rates. The block is nested rather than top level, and the obligation is C-07's
     # rather than this check's — which is why the first reading of it in this round was wrong.
@@ -2691,7 +2770,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "domains/gnc/components.yaml:estimator.sub_stepping: is not declared" in result.stdout
     assert "C-07's resolution requires the interface" in result.stdout
-    assert "COMPOSES, with 262 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 261 declared debt(s)." in result.stdout
 
 
 def test_the_readme_s_chain_count_is_held_against_the_file(tmp_path):
@@ -6351,8 +6430,8 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    # The corpus stands at 262; removing the obligation takes the headline back to 261.
-    assert "with 260 declared debt(s)" in result.stdout
+    # The corpus stands at 260; removing this file's prose obligations takes the headline to 259.
+    assert "with 259 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6763,7 +6842,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 262 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 261 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -6869,7 +6948,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 262 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 261 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -9451,7 +9530,7 @@ def test_every_heated_zone_declares_the_state_that_carries_its_heat(tmp_path):
     # The debt is closed, and the check still reports an absent link when one comes back.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 261 declared debt(s)." in intact.stdout
+    assert "COMPOSES, with 260 declared debt(s)." in intact.stdout
     assert "names no heat-rate state" not in intact.stdout
 
     def fixture(name: str, old: str, new: str) -> subprocess.CompletedProcess[str]:
@@ -9547,7 +9626,7 @@ def test_a_loop_s_collected_load_is_the_sum_over_the_zones_that_name_it(tmp_path
     # The note rather than a debt, in the linter's own words, and the count unmoved by it.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 261 declared debt(s)." in intact.stdout
+    assert "COMPOSES, with 260 declared debt(s)." in intact.stdout
     assert (
         "vehicle.yaml#thermal.loops.loop_secondary.load_state: is not declared, and no zone names "
         "this loop" in intact.stdout
@@ -12417,7 +12496,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 261 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 260 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -12568,7 +12647,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     # the one heated zone that has none: its 360 W is assigned to a compartment and carried by
     # nothing.
 
-    assert owed == "261", "the view must agree with the headline count"
+    assert owed == "260", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -14242,7 +14321,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 261 declared debt(s)",
+        "COMPOSES, with 260 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -14250,7 +14329,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 261 declared debt(s)",
+        "COMPOSES, with 260 declared debt(s)",
         composes=True,
     )
 
@@ -14265,7 +14344,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 262 declared debt(s)" in out, out[-300:]
+    assert "with 261 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -14424,7 +14503,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 262 declared debt(s)" in out, out[-400:]
+    assert "with 261 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -14571,7 +14650,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 262 declared debt(s)" in out, out[-400:]
+    assert "with 261 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -14581,7 +14660,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 261 declared debt(s)",
+        "COMPOSES, with 260 declared debt(s)",
         composes=True,
     )
 
@@ -14723,7 +14802,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 261 declared debt(s)",
+        "COMPOSES, with 260 declared debt(s)",
         composes=True,
     )
 
