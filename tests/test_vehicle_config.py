@@ -2802,8 +2802,8 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "declares 148 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
     assert "derived here as 20 unperturbed, 15 of them `service`" in result.stdout
-    # One block deleted is one debt added: the corpus stands at 260, so the ablation is 261.
-    assert "COMPOSES, with 261 declared debt(s)." in result.stdout
+    # One block deleted is one debt added: the corpus stands at 273, so the ablation is 274.
+    assert "COMPOSES, with 274 declared debt(s)." in result.stdout
 
     # The failure chains, which are owed *and* refused: the README's front table names fifteen.
     definition = copy_definition(fixture_dir(tmp_path, "no-chains"))
@@ -2825,7 +2825,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "declares no coverage block. The domain publishes 15 channel(s)" in result.stdout
     assert "no fault perturbs 1 of them" in result.stdout
-    assert "COMPOSES, with 261 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 274 declared debt(s)." in result.stdout
 
     # The filter's rates. The block is nested rather than top level, and the obligation is C-07's
     # rather than this check's — which is why the first reading of it in this round was wrong.
@@ -2839,7 +2839,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "domains/gnc/components.yaml:estimator.sub_stepping: is not declared" in result.stdout
     assert "C-07's resolution requires the interface" in result.stdout
-    assert "COMPOSES, with 261 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 274 declared debt(s)." in result.stdout
 
 
 def test_the_readme_s_chain_count_is_held_against_the_file(tmp_path):
@@ -4958,7 +4958,15 @@ def test_the_derived_order_puts_transmit_power_before_the_link_budget(tmp_path):
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    section = result.stdout.split("32. link")[1] if "32. link" in result.stdout else result.stdout
+    # **The marker is the node's line, not its number.** This read `"32. link"`, and a round that
+    # added debt text mentioning `link` made the substring test true while the number had moved to
+    # 35 — so the split produced the whole report and the assertion below searched the *debts* for a
+    # transmit power. A node's position in the order is derived and moves; the line's shape does not.
+    import re as _re
+
+    marker = _re.search(r"^\s*\d+\. link\b.*$", result.stdout, _re.M)
+    assert marker is not None, result.stdout[-2000:]
+    section = result.stdout[marker.start() :]
     assert "tx_power" in section and "link_snr" in section, result.stdout[-2000:]
     assert section.index("tx_power") < section.index("link_snr"), (
         "transmit power has to advance before the link budget it is a term of"
@@ -6404,6 +6412,81 @@ def test_an_engine_cannot_run_where_it_says_it_cannot(tmp_path):
     ).stdout
 
 
+def test_an_edge_reading_a_node_that_publishes_no_value_is_a_counted_debt():
+    """A node carrying more than one state has no key in the value map, so its edges have no driver.
+
+    `state_values` writes a node key only when one state owns the node — and `plant.stock_flux` says
+    the same thing in its own refusal: *"a node that carries two states publishes no value under its
+    own name … this is not a value that is late, it is a driver that was never declared."* What no
+    check asked was the question at the **source** end. `drains` asks the outbound half for stocks;
+    `advances` asks the inbound half which state a flux is integrated into; neither asks whether the
+    number the sensitivity multiplies by exists at all.
+
+    Eleven edges are in that position, across five domains, and three of them (`E-CREW-ATM`,
+    `E-LM-CREW-ATM`, `E-RAD-THERM`) have targets already blocked for it. **The rest were latent**,
+    which is why this is worth a check rather than a repair: an edge that has not yet failed because
+    the state it lands on is already blocked upstream is a defect nothing was counting, and the build
+    order would have gone on reporting the *target's* blocker until the day the target was fixed and
+    the driver turned out to be missing.
+
+    `E-FC-DRAW-O2` is the trap inside the family, and it is why the check tests the *source* rather
+    than `advances`: that edge declares `advances: fc_o2_draw_kg_s`, which is the name of a real
+    state — on the edge's **target** node. It reads like a driver declaration and is not one, and a
+    check written on the field would have passed it.
+    """
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-900:]
+    # `coupling.yaml:edge` only: the crew domain's own `open_debts` sentence names this family in the
+    # same words, and a filter on the phrase alone counts the paragraph explaining the check — which
+    # is the trap the round-61 patterns hit from the other side.
+    debts = [
+        line
+        for line in result.stdout.splitlines()
+        if line.strip().startswith("- coupling.yaml:edge")
+        and "publishes no value under its own name" in line
+    ]
+    assert len(debts) == 11, len(debts)
+    for eid in ("E-FC-BUS", "E-FC-HEAT", "E-AMP-LOAD", "E-DYN-GNC", "E-CABIN-CO2-REMOVAL"):
+        assert any(eid in line for line in debts), eid
+    # **And the count does not move with the corpus's other debts**, which is what makes it a family
+    # rather than an accident: the same eleven edges are the ones whose source node carries more than
+    # one state, checked here against the graph rather than against a list.
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import plant
+
+    world = plant.load_world(VEHICLE)
+    crowded = {
+        node
+        for node in {s.node for s in world.states if s.node != "internal"}
+        if len(world.states_on(node)) > 1
+    }
+    from_graph = {
+        e.id
+        for e in world.edges
+        if e.source in crowded
+        and e.kind != "limit"
+        and isinstance(e.sensitivity, dict)
+        and e.sensitivity.get("value") not in (None, "UNCONFIGURED")
+    }
+    # **Two of the thirteen are not named by it, and the reason is not that they are already
+    # counted.** `--debts` gives each edge one entry, and `E-CREW-ATM` and `E-LM-CREW-ATM` have
+    # theirs spoken for by the target's blocker — the crew's CO2 stocks are refused first, so the
+    # worklist reports that. They are named in the family's `open_debts` sentence instead, which is
+    # where the count comes from: eleven entries plus two sentences is thirteen.
+    named = {
+        m.group(1)
+        for line in debts
+        for m in [re.match(r"- coupling\.yaml:edge (E-[A-Z0-9-]+): ", line.strip())]
+        if m
+    }
+    assert len(from_graph) == 13, sorted(from_graph)
+    assert len(named) == 11, sorted(named)
+    assert set(from_graph) - named == {"E-CREW-ATM", "E-LM-CREW-ATM"}, sorted(set(from_graph) - named)
+
+
 def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     """The resource taxonomy is the most-read block in the corpus that no tool had read.
 
@@ -6499,8 +6582,9 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # And the obligation is what the count is counting: remove it and the headline falls back.
     result = broken(lambda d: d.__setitem__("open_debts", []))
     assert result.returncode == 0, result.stdout[-800:]
-    # The corpus stands at 260; removing this file's prose obligations takes the headline to 259.
-    assert "with 259 declared debt(s)" in result.stdout
+    # The corpus stands at 273; removing this file's own prose obligations takes the headline down
+    # by the number of entries that file carries, which is one here.
+    assert "with 272 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -6911,7 +6995,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 261 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 274 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -7017,7 +7101,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 261 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 274 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -9602,7 +9686,7 @@ def test_every_heated_zone_declares_the_state_that_carries_its_heat(tmp_path):
     # The debt is closed, and the check still reports an absent link when one comes back.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 260 declared debt(s)." in intact.stdout
+    assert "COMPOSES, with 273 declared debt(s)." in intact.stdout
     assert "names no heat-rate state" not in intact.stdout
 
     def fixture(name: str, old: str, new: str) -> subprocess.CompletedProcess[str]:
@@ -9698,7 +9782,7 @@ def test_a_loop_s_collected_load_is_the_sum_over_the_zones_that_name_it(tmp_path
     # The note rather than a debt, in the linter's own words, and the count unmoved by it.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 260 declared debt(s)." in intact.stdout
+    assert "COMPOSES, with 273 declared debt(s)." in intact.stdout
     assert (
         "vehicle.yaml#thermal.loops.loop_secondary.load_state: is not declared, and no zone names "
         "this loop" in intact.stdout
@@ -12568,7 +12652,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 260 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 273 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -12719,7 +12803,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     # the one heated zone that has none: its 360 W is assigned to a compartment and carried by
     # nothing.
 
-    assert owed == "260", "the view must agree with the headline count"
+    assert owed == "273", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -14393,7 +14477,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 260 declared debt(s)",
+        "COMPOSES, with 273 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -14401,7 +14485,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 260 declared debt(s)",
+        "COMPOSES, with 273 declared debt(s)",
         composes=True,
     )
 
@@ -14416,7 +14500,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 261 declared debt(s)" in out, out[-300:]
+    assert "with 274 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -14575,7 +14659,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 261 declared debt(s)" in out, out[-400:]
+    assert "with 274 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -14722,7 +14806,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 261 declared debt(s)" in out, out[-400:]
+    assert "with 274 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -14732,7 +14816,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 260 declared debt(s)",
+        "COMPOSES, with 273 declared debt(s)",
         composes=True,
     )
 
@@ -14874,7 +14958,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 260 declared debt(s)",
+        "COMPOSES, with 273 declared debt(s)",
         composes=True,
     )
 
