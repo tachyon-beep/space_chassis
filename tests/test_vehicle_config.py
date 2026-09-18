@@ -717,7 +717,7 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     claimed = {state.id: name for name, rows in buckets.items() for state in rows}
 
     unexplained = []
-    counted_more = sentinel = no_input = unmet_reading = 0
+    counted_more = sentinel = no_input = unmet_reading = six_dof = 0
     for state in world.states:
         try:
             plant.advance(world, state, permissive, 1.0)
@@ -745,6 +745,14 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
             counted_more += 1
         elif claimed[state.id] == "ready" and actual == "reading":
             unmet_reading += 1
+        elif claimed[state.id] == "ready" and actual == "rule" and state.method == "dynamics":
+            # **A fifth kind, added in round 52, and it is the same split as the first.**
+            # `build_order` calls the *scalar* `dynamics` shape ready (a named driver, a mass, a
+            # zero — the rule is in the configuration); `advance` refuses the states whose rule is
+            # the 6-DOF integrator, which is code nobody has written. The three 6-DOF states land
+            # here, and the counter is what keeps that a declared disagreement rather than a
+            # surprise.
+            six_dof += 1
         elif claimed[state.id] == "rule" and actual == "edge" and state.node == "internal":
             sentinel += 1
         elif claimed[state.id] == "edge" and actual == "rule" and state.id == "bus_b_v":
@@ -800,11 +808,12 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # other states' values. The worklist calls them ready; a tick with nothing supplied calls them a
     # value debt. They are the states the fourth completion criterion is about, and this counter is
     # where the gap between "the rule exists" and "the rule can run today" is visible.
-    assert (counted_more, sentinel, no_input, unmet_reading) == (21, 11, 0, 4), (
+    assert (counted_more, sentinel, no_input, unmet_reading, six_dof) == (21, 10, 0, 4, 1), (
         counted_more,
         sentinel,
         no_input,
         unmet_reading,
+        six_dof,
     )
 
 
@@ -8035,8 +8044,9 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # `algebraic` state's declared `derivation`, so a relation the corpus already states is ready,
     # and round 49 taught it the **`delay`** ring, so a state whose rule is a `delay_s` is ready too.
     # The sentence the bucket prints changed with the first of those: "the two classes" became "the
-    # classes". `dynamics` is the one class left, and it is four states.
-    assert {s.method for s in buckets["ready"]} <= {"lag", "stock", "algebraic", "delay"}
+    # classes". `dynamics` is in it now, for the one state whose shape is a scalar accumulator;
+    # the 6-DOF half of that class is what is left.
+    assert {s.method for s in buckets["ready"]} <= {"lag", "stock", "algebraic", "delay", "dynamics"}
     # And a state that owes a rule is never also counted as ready.
     assert not ({s.id for s in buckets["rule"]} & {s.id for s in buckets["ready"]})
 
@@ -8069,7 +8079,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # over the four gas stocks and the zone's temperature *as a reading* — the first derivations
     # in the corpus that read another state's value this tick, and the first whose `computes`
     # field is the state's own id rather than a parameter of it.
-    assert len(buckets["ready"]) == 41
+    assert len(buckets["ready"]) == 42
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -8094,7 +8104,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # and now owes the driver that would advance it, which is domain code.
     # 68 -> 66 in round 47, the other half of the move above: the two pressures left this bucket
     # for `ready` without the rule layer's count changing anywhere else.
-    assert len(buckets["rule"]) == 61, "just under half the vehicle is domain code"
+    assert len(buckets["rule"]) == 60, "just under half the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -8415,6 +8425,78 @@ def test_the_cells_output_is_the_load_read_the_other_way(tmp_path):
     assert "bus_a_load_w.provenance.derivation" in result.stdout, (
         "the load and the generation are one quantity, so a moved load has to refuse both"
     )
+
+
+def test_the_plant_integrates_the_scalar_dynamics_state(tmp_path):
+    """The sixth method class, and the one state of it the corpus can actually advance.
+
+    `plant.md` §3's `dynamics` row is rigid-body 6-DOF — "semi-implicit/Verlet in coast, RK4 in
+    burns", with the argument measured rather than preferred: forward Euler accumulates +1.06 % in
+    semi-major axis over eight days, 2,000× the published 0.01 km precision. **That is not what this
+    round implemented, and the difference is the finding.** Three of the four `dynamics` states are
+    that family and none of them can advance — a state vector nobody supplied, an inertia tensor
+    `E-RCS-DYN` owes, a process-noise model that is not declared. The fourth is a `dynamics` state
+    for a different reason and the corpus says which: *"an integrated state that is not conserved,
+    which is what the `dynamics` class is for: position and velocity are the same kind of thing."*
+
+    So the rule is the **scalar** half: `dv/dt = F/m`, with the driver in newtons and the mass
+    declared on the state. The test holds three things — that the state advances at all, that it
+    accumulates rather than jumping (explicit Euler, so a newton held for one tick is `F·dt/m`), and
+    that the state's own `mass_kg` and `E-ENG-DYN`'s derived `1/mass_kg` are the same figure, because
+    a corpus that moved one without the other would integrate with two different masses.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    state = next(s for s in world.states if s.id == "accumulated_dv_m_s")
+    assert state.method == "dynamics"
+    assert state.spec["driven_by"] == "thrust_main_n"
+    assert state.spec["initial"] == 0
+    mass = state.spec["mass_kg"]
+    assert mass == 44085
+
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    edge = next(e for e in coupling["edges"] if e["id"] == "E-ENG-DYN")
+    assert edge["sensitivity"]["derivation"]["inputs"]["mass_kg"] == (
+        "vehicle.yaml:configurations.csm_lm_docked.mass_kg"
+    )
+    assert edge["sensitivity"]["value"] == pytest.approx(1.0 / mass, rel=1e-4)
+
+    # The driver advances before the sentinel, so the reading is this tick's.
+    gaps: list = []
+    values = plant.step(world, plant.initial_values(world), 0.02, gaps)
+    assert values["accumulated_dv_m_s"] == 0.0, (
+        "no engine is firing at MET 0, so the accumulator has nothing to add"
+    )
+    # Held thrust, one tick: F·dt/m, which is what explicit Euler means and what a jump would not do.
+    # **The division is the state's `mass_kg` and never the edge's transfer.** A named driver has no
+    # edge sensitivity to read, which is the case the branch falls to `transfer = 1.0` for — and the
+    # first version of this branch left the `1/mass_kg` in place from the edge path, so a newton held
+    # for one tick accumulated 0.02 m/s and the assertion below caught it. The mass the state
+    # declares is the mass the integration divides by; `E-ENG-DYN`'s derived sensitivity is a
+    # *separate* declaration of the same ratio, held against it here rather than applied twice.
+    held = {"thrust_main_n": 44500.0, "accumulated_dv_m_s": 0.0}
+    tick = plant.advance(world, state, held, 0.02)
+    assert tick["accumulated_dv_m_s"] == pytest.approx(44500.0 * 0.02 / mass, rel=1e-9)
+    # And it accumulates rather than replacing.
+    tick2 = plant.advance(world, state, {**held, "accumulated_dv_m_s": 1.0}, 0.02)
+    assert tick2["accumulated_dv_m_s"] == pytest.approx(1.0 + 44500.0 * 0.02 / mass, rel=1e-9)
+
+    # The two refusals of the shape: no mass, and a driver that is not a force.
+    definition = copy_definition(fixture_dir(tmp_path, "dv-no-mass"))
+    path = definition / "domains" / "propulsion" / "components.yaml"
+    document = yaml.safe_load(path.read_text())
+    dv = next(s for s in document["state"] if s["id"] == "accumulated_dv_m_s")
+    del dv["mass_kg"]
+    path.write_text(yaml.safe_dump(document, sort_keys=False, width=100))
+    gaps = []
+    plant.step(plant.load_world(definition), plant.initial_values(plant.load_world(definition)), 0.02, gaps)
+    owed = {g.state.id: str(g.owed) for g in gaps}
+    assert "mass_kg" in owed["accumulated_dv_m_s"] or "mass" in owed["accumulated_dv_m_s"], owed[
+        "accumulated_dv_m_s"
+    ]
+
+    # And the worklist counts it ready, because the rule is in the configuration.
+    assert "accumulated_dv_m_s" in {s.id for s in plant.build_order(world)["ready"]}
 
 
 def test_the_two_cabins_compute_their_pressure_by_one_law():
@@ -10004,8 +10086,8 @@ def test_every_stock_declares_where_it_starts():
     # state id that is not the sentinel's own name.
     # 53 -> 54 in round 33: `suit_loop_flow_cfm` is seeded at the ECS guide's 35 cfm, so its own id
     # joins this map beside the sentinel's sub-map.
-    assert len(on_nodes) == 54, f"{len(on_nodes)} node keys carry a value"
-    assert len(seeded["internal"]) == 11, sorted(seeded["internal"])
+    assert len(on_nodes) == 55, f"{len(on_nodes)} node keys carry a value"
+    assert len(seeded["internal"]) == 12, sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
     # six of the twenty-four declared values are the last of their key rather than a key of their
@@ -10059,6 +10141,10 @@ def test_every_stock_declares_where_it_starts():
         "suit_loop_flow_cfm",
         "dps_throttle_pct",
         "chamber_pressure_pct",
+        # Round 52: the first `dynamics` state the seeder seeds. It is a third *kind* of sentinel
+        # value — not an accumulator's origin and not a published constant, but the zero an
+        # integrator has to start from — and it is listed here rather than folded into either.
+        "accumulated_dv_m_s",
     }, sorted(seeded["internal"])
     # Zero everywhere except the supply tank's pressure, which is the one seeded sentinel value that
     # is not an accumulator's origin.
@@ -15915,7 +16001,9 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # 31 -> 32 in round 51, when `fuel_cell_power_w`'s became the same sum read the other way: the
     # cell generates what the bus draws, and its own note had said "a function of … and load" all
     # along.
-    assert len(advanced) == 32, sorted(advanced)
+    # 32 -> 33 in round 52, with `accumulated_dv_m_s`: the plant's first `dynamics` integrator, and
+    # the sixth of the seven method classes to have one.
+    assert len(advanced) == 33, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares.
     assert values["cabin_heat_csm"] == 733.0
@@ -15965,7 +16053,9 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # also written at the top level under its own id, and `state_level` prefers that key, which is
     # what keeps the plant right. A round that wants the sub-map complete has to make the staged
     # merge deep, and that is a finding of its own rather than a line in this one.
-    assert len(values["internal"]) == 12
+    # 12 -> 13 in round 52: `accumulated_dv_m_s` is the first `dynamics` state the seeder seeds,
+    # and it is on the sentinel like the accumulators.
+    assert len(values["internal"]) == 13
     assert values["loop_primary_load_w"] == 1723.0 and values["loop_lm_load_w"] == 1007.0
 
 
