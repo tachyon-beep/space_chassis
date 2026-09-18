@@ -592,8 +592,17 @@ def test_a_transport_delay_carries_its_temperature_rather_than_transforming_it()
     power = yaml.safe_load((VEHICLE / "domains" / "power" / "components.yaml").read_text())
     draw = next(s for s in power["state"] if s["id"] == "fc_o2_draw_kg_s")
     assert draw["provenance"]["basis"] == "derived"
-    assert draw["provenance"]["derivation"]["inputs"]["output_v"] == (
+    # **The operating point moved one file over in round 57**, and it is the same one place: three
+    # published numbers, one division. The state's unit is `kg O2/s` and the arithmetic that divides
+    # them produces kilograms per *joule* — so the coefficient belongs to `E-FC-DRAW-O2`, whose unit
+    # is exactly `kg/s per W`, and the state computes the rate from it. A per-joule figure under a
+    # per-second unit is what the round's new rule refuses.
+    o2_edge = next(e for e in coupling["edges"] if e["id"] == "E-FC-DRAW-O2")
+    assert o2_edge["sensitivity"]["derivation"]["inputs"]["output_v"] == (
         "vehicle.yaml:electrical.fuel_cells.output_v"
+    )
+    assert draw["provenance"]["derivation"]["inputs"]["per_joule_kg"] == (
+        "coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value"
     )
 
     # And the corpus composes with the edge valued — the id still appears in `open_debts` prose
@@ -718,7 +727,7 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     claimed = {state.id: name for name, rows in buckets.items() for state in rows}
 
     unexplained = []
-    counted_more = sentinel = no_input = unmet_reading = six_dof = 0
+    counted_more = sentinel = no_input = unmet_reading = six_dof = shared_driver = 0
     for state in world.states:
         try:
             plant.advance(world, state, permissive, 1.0)
@@ -756,6 +765,18 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
             six_dof += 1
         elif claimed[state.id] == "rule" and actual == "edge" and state.node == "internal":
             sentinel += 1
+        elif claimed[state.id] == "edge" and actual == "ready" and any(
+            len(world.states_on(node)) > 1 for node in plant.driver_nodes(world, state)
+        ):
+            # **A sixth kind, added in round 57, and the permissive map is exactly why it is one.**
+            # This test hands `advance` a map with a key for *every* node, so a multi-state node is
+            # supplied by hand — and the map a tick actually builds has no key for such a node,
+            # because `state_values` writes one only when a single state owns it. So the worklist
+            # says *edge* (the drain has to say which state it reads) and this test's `advance` says
+            # *ready*, and the tick and the build order are the two that agree: four states land
+            # here, and `test_the_tick_can_read_what_the_build_order_promises` is the reader that
+            # runs them against a real gap list rather than a permissive one.
+            shared_driver += 1
         elif claimed[state.id] == "edge" and actual == "rule" and state.id == "bus_b_v":
             # **A third kind, added deliberately.** The worklist reports a state with no input at
             # all as owing an *edge* — because no rule can be written without one — where `advance`
@@ -809,7 +830,23 @@ def test_the_build_order_and_advance_disagree_only_the_two_documented_ways():
     # other states' values. The worklist calls them ready; a tick with nothing supplied calls them a
     # value debt. They are the states the fourth completion criterion is about, and this counter is
     # where the gap between "the rule exists" and "the rule can run today" is visible.
-    assert (counted_more, sentinel, no_input, unmet_reading, six_dof) == (21, 10, 0, 4, 1), (
+    # **4 -> 6 in round 57**, and it is the reactant fix arriving here: `fc_o2_draw_kg_s` and
+    # `fc_h2_draw_kg_s` now compute the rate their unit names, from the cell's power *as a reading*
+    # of another state — so the worklist calls them ready (their rule is a declaration, which is
+    # true) and `advance` with nothing supplied calls them a reading debt, which is the same
+    # two-questions split the four above are. The draw states joined the cabins' pressures, the
+    # propellant estimate and the bus load.
+    #
+    # **And `shared_driver` is 4 in round 57**, the four states above: they are the round's second
+    # finding, and a round that gives the drain a way to name the state it reads moves this number.
+    assert (counted_more, sentinel, no_input, unmet_reading, six_dof, shared_driver) == (
+        21,
+        10,
+        0,
+        6,
+        1,
+        4,
+    ), (
         counted_more,
         sentinel,
         no_input,
@@ -6370,6 +6407,11 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     # derived state the corpus declares on the `internal` sentinel.
     # 17 -> 19 in round 41, with the two loops' collected loads: the sums the domain's own debt
     # called "a sum over `heat_inputs` that nothing evaluates".
+    # **`per_joule_kg` and `ratio_of_o2_draw` became `draw_kg_s` in round 57**, and the count of
+    # declared arithmetics did not move: the two reactant states still declare theirs, and what
+    # changed is that the field they produce is the rate their unit names. A coefficient under a
+    # rate's unit was the round's finding; the subject list is where the two spellings met.
+    #
     # 21 -> 25 across rounds 47, 48 and 50, with four states whose `computes` field is **their own
     # id**: the two cabins' pressures (one gas law over four stocks and a zone temperature read
     # live), the RCS propellant estimate (`100 * (1 - impulse_total / capacity)`) and the CSM's
@@ -6383,12 +6425,11 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
         "bus_a_load_w",
         "cabin_dp_psi",
         "csm_cabin_pressure_pa",
+        "draw_kg_s",
         "fuel_cell_power_w",
         "lm_cabin_pressure_pa",
         "nominal_kg_s",
-        "per_joule_kg",
         "propellant_estimate",
-        "ratio_of_o2_draw",
         "tau_s",
         "total_k",
         "total_w",
@@ -6423,17 +6464,21 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
         path.write_text(yaml.safe_dump(document, sort_keys=False, width=100))
 
     # The one the list never reached. It composed before that round. The break adds one to the
-    # expression rather than replacing it: a break that dropped the identifier would leave
-    # `h2_per_o2` bound and unused, which the derivation rule refuses first and for a different
-    # reason — so the case would pass while testing the wrong rule.
-    break_an_expression("power", "fc_h2_draw_kg_s", "h2_per_o2 + 1")
+    # expression rather than replacing it: a break that dropped an identifier would leave it bound
+    # and unused, which the derivation rule refuses first and for a different reason — so the case
+    # would pass while testing the wrong rule.
+    #
+    # **The expression moved in round 57**, when the hydrogen draw stopped computing a mass ratio
+    # under a rate's unit and started computing the rate from the cell's power and the edge's own
+    # per-joule figure. The break keeps its shape: one term added, the field renamed with it.
+    break_an_expression("power", "fc_h2_draw_kg_s", "fuel_cell_power_w * per_joule_kg + 1")
     result = run_linter(fixture)
     assert result.returncode == 1, result.stdout[-1200:]
-    assert "fc_h2_draw_kg_s.ratio_of_o2_draw" in result.stdout, (
+    assert "fc_h2_draw_kg_s.draw_kg_s" in result.stdout, (
         "the refusal names the field the arithmetic produces"
     )
     assert "no longer re-derives" in result.stdout
-    break_an_expression("power", "fc_h2_draw_kg_s", "h2_per_o2")
+    break_an_expression("power", "fc_h2_draw_kg_s", "fuel_cell_power_w * per_joule_kg")
 
     # And one the list did hold, refused once rather than twice.
     break_an_expression(
@@ -6481,7 +6526,9 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     result = run_linter(fixture)
     assert result.returncode == 1, result.stdout[-800:]
     assert "does not declare as a number" in result.stdout
-    set_computes("ratio_of_o2_draw")
+    # The field this state produces since round 57 is the rate its unit names; the old spelling,
+    # `ratio_of_o2_draw`, is what the round's new rule refuses.
+    set_computes("draw_kg_s")
     assert run_linter(fixture).returncode == 0, "the fixture did not come back"
 
 
@@ -7703,8 +7750,18 @@ def test_the_stock_integrator_refuses_a_missing_driver():
     world = plant.load_world(VEHICLE)
     edge = next(e for e in world.edges if e.id == "E-CREW-ATM")
 
+    # **A driver that no tick can supply is not a value that is late, and round 57 made the refusal
+    # say which of the two it is.** `crew_state` carries three states, so `state_values` never writes
+    # a node key for it: the flux is unreadable on *every* tick, and the message names the states
+    # rather than the missing number. The single-state case below keeps the other sentence alive.
     with pytest.raises(plant.Unconfigured) as caught:
         plant.stock_flux(world, edge, {}, 0.02)
+    assert "which carries 3 states" in caught.value.what
+    assert "a driver that was never declared" in caught.value.what
+
+    single = next(e for e in world.edges if e.id == "E-H2-DRAW")
+    with pytest.raises(plant.Unconfigured) as caught:
+        plant.stock_flux(world, single, {}, 0.02)
     assert "which nothing supplies this tick" in caught.value.what
 
     with pytest.raises(plant.Unconfigured) as caught:
@@ -8086,7 +8143,15 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # over the four gas stocks and the zone's temperature *as a reading* — the first derivations
     # in the corpus that read another state's value this tick, and the first whose `computes`
     # field is the state's own id rather than a parameter of it.
-    assert len(buckets["ready"]) == 42
+    # 35 -> 39 in round 52 and 39 -> 42 in rounds 53-56: the `dynamics` scalar shape, the scenario
+    # and the window's own states. **42 -> 38 in round 57**, and both halves of that move are the
+    # same defect seen from two sides: a tank scheduled before the node whose rate drains it had no
+    # value on the first tick (`h2_csm_kg`, `o2_csm_kg`, `o2_lm_kg` — the plant resolves declared
+    # arithmetic at t=0 now, so they are ready *and* advanced), and four states whose discharge
+    # reads a node that publishes no value under its own name are couplings rather than values
+    # (`water_cooling_kg` through `radiator_reject`, and the three cabin-gas stocks that read
+    # `crew_state`).
+    assert len(buckets["ready"]) == 38
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -8151,7 +8216,10 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 16 -> 14 in round 29, the other half of the value move above: the two zones whose driver edge
     # carries no sensitivity were being reported as an edge debt, and the starting value they also
     # owe is now named first.
-    assert len(buckets["edge"]) == 12
+    # 12 -> 16 in round 57: those four states again. A node with two states publishes no node key,
+    # so a flux reading it is not late, it is unreadable — the missing declaration is *which* state
+    # the edge reads, which is the coupling's, and the bucket an implementer should open is this one.
+    assert len(buckets["edge"]) == 16
 
 
 def test_the_plant_advances_a_node_s_states_in_the_order_the_node_declares(tmp_path):
@@ -9921,8 +9989,8 @@ def test_the_readme_status_matches_the_tools():
             "the configured-state count, which is the one the objective watches",
         ),
         (
-            f"a real tick advances **{advanced}** of the {states} states against the build order's "
-            f"**{ready}** ready",
+            f"a real tick advances **{advanced}** of the {states} states, every one of them inside "
+            f"the build order's **{ready}** ready",
             "the tick figure, which is the objective's second completion criterion",
         ),
     ):
@@ -10388,6 +10456,17 @@ def test_every_stock_declares_where_it_starts():
     assert len(stocks) == 25, f"{len(stocks)} stocks"
 
     seeded = plant.initial_values(world)
+    # **The map a tick starts from is no longer only what the integrators seed**, and this test is
+    # about what they seed. Round 57 resolves the `algebraic` states whose rule is a declaration at
+    # t=0 as well (`plant.resolve_declared_states`), so the map it returns grew by every derivable
+    # state; the count below is about the *integrators* declaring where they start, so the
+    # resolution is taken back out for it rather than absorbed into a stock pin. The superset is
+    # asserted at the end, so a resolution that stopped happening would fail here too.
+    resolver, plant.resolve_declared_states = plant.resolve_declared_states, lambda world, values: []
+    try:
+        seeded_integrators = plant.initial_values(world)
+    finally:
+        plant.resolve_declared_states = resolver
     # Sixteen stocks declare a value. **All sixteen now reach the map**, and the six that did not
     # until round 32 are the accumulators on the `internal` sentinel — `bias_accumulator`,
     # `sensor_bus_errors`, `frame_loss`, `recorder`, `pulse_residual`, `impulse_total`. They are six
@@ -10405,7 +10484,7 @@ def test_every_stock_declares_where_it_starts():
     # helium charge landed from the Operational Data Book's loading table (round 13), which is the
     # last stock in the corpus whose `initial` was owed to a document nobody had opened.
     assert len(declared) == 25, f"{len(declared)} stocks declare a numeric initial"
-    on_nodes = {k: v for k, v in seeded.items() if k != "internal"}
+    on_nodes = {k: v for k, v in seeded_integrators.items() if k != "internal"}
     # 10 -> 12 with `prop_main` and `prop_rcs`: the two stocks whose `initial` was owed because
     # nothing said which tanks the nodes were. Both carry their loads now. **The six cabin gases
     # round 8 landed do not move this count**, which is the map's own shape showing: `cabin_atm` and
@@ -10428,7 +10507,17 @@ def test_every_stock_declares_where_it_starts():
     # 53 -> 54 in round 33: `suit_loop_flow_cfm` is seeded at the ECS guide's 35 cfm, so its own id
     # joins this map beside the sentinel's sub-map.
     assert len(on_nodes) == 55, f"{len(on_nodes)} node keys carry a value"
-    assert len(seeded["internal"]) == 12, sorted(seeded["internal"])
+    # And the map a tick actually starts from is that seed plus the declared arithmetic, so the
+    # resolved states are a strict superset and every one of them is `algebraic`.
+    assert seeded_integrators.keys() < seeded.keys(), "the resolution added nothing to the seed"
+    resolved = set(seeded) - set(seeded_integrators)
+    assert all(s.method == "algebraic" for s in world.states if s.id in resolved), sorted(resolved)
+    assert "fc_o2_draw_kg_s" in resolved and "fc_h2_draw_kg_s" in resolved
+    assert len(seeded_integrators["internal"]) == 12, sorted(seeded_integrators["internal"])
+    # Six of the sentinel's `algebraic` states resolve at t=0 as well — the bus load, the bay heat,
+    # the cabin pressure differential and three more — so the sentinel's sub-map is the same map the
+    # tick commits, merged rather than replaced.
+    assert len(seeded["internal"]) == 18, sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
     # six of the twenty-four declared values are the last of their key rather than a key of their
@@ -10470,7 +10559,7 @@ def test_every_stock_declares_where_it_starts():
     # apart — an accumulator starts at zero because that is what an accumulator is; a supply pressure
     # starts at 900 because `csm_ecs_study_guide.pdf` p. 12 says so; and a suit loop starts at 35
     # because p. 39 says so. Which is which is the *declaration's* business, and this is the map's.
-    assert set(seeded["internal"]) == {
+    assert set(seeded_integrators["internal"]) == {
         "bias_accumulator",
         "sensor_bus_errors",
         "frame_loss",
@@ -10486,10 +10575,22 @@ def test_every_stock_declares_where_it_starts():
         # value — not an accumulator's origin and not a published constant, but the zero an
         # integrator has to start from — and it is listed here rather than folded into either.
         "accumulated_dv_m_s",
-    }, sorted(seeded["internal"])
+    }, sorted(seeded_integrators["internal"])
+    # **And the six `algebraic` states the resolver adds**, the sentinel's half of the declared
+    # arithmetic: the bus load, the bay heat rate, the cabin pressure differential, the two loops'
+    # collected loads and the RCS propellant estimate. They are values a tick computes and a seed
+    # cannot, which is why the map a tick starts from is a strict superset of what it seeds.
+    assert set(seeded["internal"]) == set(seeded_integrators["internal"]) | {
+        "bus_a_load_w",
+        "avionics_bay_heat_w",
+        "cabin_dp_psi",
+        "loop_primary_load_w",
+        "loop_lm_load_w",
+        "propellant_estimate",
+    }
     # Zero everywhere except the supply tank's pressure, which is the one seeded sentinel value that
     # is not an accumulator's origin.
-    assert set(seeded["internal"].values()) == {0.0, 35.0, 900.0}
+    assert set(seeded_integrators["internal"].values()) == {0.0, 35.0, 900.0}
     assert seeded["internal"]["o2_supply_pressure_psi"] == 900.0
     assert seeded["internal"]["suit_loop_flow_cfm"] == 35.0
 
@@ -15077,17 +15178,26 @@ def test_the_fuel_cells_reactant_chain_re_derives_from_the_operating_point():
     states = {state["id"]: state for state in power["state"]}
     o2 = states["fc_o2_draw_kg_s"]
     assert o2["provenance"]["basis"] == "derived"
-    assert o2["provenance"]["computes"] == "per_joule_kg"
-    assert o2["provenance"]["derivation"]["inputs"]["output_v"] == (
-        "vehicle.yaml:electrical.fuel_cells.output_v"
+    # **The state computes the rate its unit names and the coefficient lives on the edge**, which is
+    # where a `kg/s per W` figure belongs: round 57 found the two the other way round, with a
+    # per-joule figure under a `kg O2/s` unit and a tank that would have read it as a flow.
+    assert o2["provenance"]["computes"] == "draw_kg_s"
+    assert o2["provenance"]["derivation"]["inputs"]["per_joule_kg"] == (
+        "coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value"
     )
+    assert o2["provenance"]["derivation"]["inputs"]["fuel_cell_power_w"] == "fuel_cell_power_w"
 
     # The three consequences, each carrying the state's figure rather than restating it — which is
     # what makes the chain one number in four places instead of four numbers that agree by hand.
     coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
     edges = {edge["id"]: edge for edge in coupling["edges"]}
     for edge_id, expression in (
-        ("E-FC-DRAW-O2", "per_joule_kg"),
+        # The operating point is here now rather than on the state: three published numbers, one
+        # division, and the denominator is the module's rated output.
+        (
+            "E-FC-DRAW-O2",
+            "h2_lb_per_h_per_a * lb_to_kg / seconds_per_hour / output_v / h2_per_o2",
+        ),
         ("E-FC-DRAW-H2", "per_joule_kg * h2_per_o2"),
         (
             "E-FC-HEAT",
@@ -16344,7 +16454,12 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # along.
     # 32 -> 33 in round 52, with `accumulated_dv_m_s`: the plant's first `dynamics` integrator, and
     # the sixth of the seven method classes to have one.
-    assert len(advanced) == 33, sorted(advanced)
+    # 33 -> 36 in round 57: the two reactant tanks and the LM's oxygen tank, which were the *first*
+    # tick's casualties rather than the plant's. `initial_values` now resolves the `algebraic`
+    # states whose rule is a declaration, in the tick's own order, so the node a tank drains against
+    # has a value before the tick that reads it — `resolve_declared_states`, and the three states it
+    # unblocked are the whole of this move.
+    assert len(advanced) == 36, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares.
     assert values["cabin_heat_csm"] == 733.0
@@ -16396,7 +16511,13 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # merge deep, and that is a finding of its own rather than a line in this one.
     # 12 -> 13 in round 52: `accumulated_dv_m_s` is the first `dynamics` state the seeder seeds,
     # and it is on the sentinel like the accumulators.
-    assert len(values["internal"]) == 13
+    # **13 -> 18 in round 57, and it is the round above arriving through the other door.** The
+    # sub-map is complete at t=0 now, because `resolve_declared_states` merges the sentinel the way
+    # the commit does: the five `algebraic` states that live here (`bus_a_load_w`,
+    # `avionics_bay_heat_w`, `cabin_dp_psi`, the two loops' loads) join the eleven seeded values and
+    # `accumulated_dv_m_s`. The staged merge inside a tick is still shallow — this is a *seed*, not a
+    # deeper stage — so a sentinel state that cannot resolve at t=0 still lands by the old path.
+    assert len(values["internal"]) == 18, sorted(values["internal"])
     assert values["loop_primary_load_w"] == 1723.0 and values["loop_lm_load_w"] == 1007.0
 
 
@@ -17610,9 +17731,18 @@ def test_the_mechanical_conversions_land_on_the_declarations_that_sized_them():
     # supply coolant — and both are the state in Celsius rather than the kelvin it holds.
     assert frame["thermal.coolant_supply_c"] == pytest.approx(280.35 - 273.15, abs=1e-9)
     assert frame["thermal.loop_transport_c"] == pytest.approx(280.35 - 273.15, abs=1e-9)
-    # And the two that are *not* the loop's supply are absent rather than filled with it.
-    assert "thermal.coolant_return_c" not in frame
-    assert "thermal.radiator_inlet_c" not in frame
+    # **And the two that are *not* the loop's supply are computed rather than filled with it.**
+    # Until round 57 they were absent at t=0, because the loop's collected load — the input both
+    # derivations read — had no value until the first tick had run. Resolving declared arithmetic at
+    # t=0 gives the load a value before the tick, and the two channels follow: 7.199 C against the
+    # supply's 7.200 and the radiator inlet's 26.06, which are the loop's own rise and the
+    # radiator's own law rather than the supply's number wearing their names.
+    assert frame["thermal.coolant_return_c"] == pytest.approx(7.198785, abs=1e-5)
+    assert frame["thermal.radiator_inlet_c"] == pytest.approx(26.056117, abs=1e-5)
+    assert frame["thermal.coolant_return_c"] != frame["thermal.coolant_supply_c"]
+    # And a channel whose derivation is still prose is omitted rather than filled with its source's
+    # number, which is the property those two used to demonstrate.
+    assert "avionics.computer_mode" not in frame
 
     # The nine, by the registry's own count of evaluable derivations.
     lint = run_linter(VEHICLE)
@@ -18091,3 +18221,143 @@ def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
     assert {path.parent.name for path in diode.glob("*/args.json")} == {"pelican", "vehicle"}, (
         "VEHICLE_SLUGS is an explicit answer and must not be widened by the roster"
     )
+
+
+def test_a_state_whose_unit_is_a_rate_computes_a_rate(tmp_path):
+    """Two states computed a coefficient under a rate's unit, and the tank that drains read it.
+
+    `fc_o2_draw_kg_s` declares `unit: kg O2/s` and its arithmetic produced `per_joule_kg` —
+    8.8619e-8 kilograms per *joule*. `fc_h2_draw_kg_s` declares `kg H2/s` and produced
+    `ratio_of_o2_draw`, 0.126 kilograms of hydrogen per kilogram of oxygen. Neither number is wrong;
+    each is the wrong *quantity* for the node it is the value of, and nothing compared the two,
+    because the unit string and the field name were the only places either quantity was written and
+    no check read either one.
+
+    The consequence is not academic, and it is why the rule is a refusal rather than a note:
+    `E-O2-DRAW` and `E-H2-DRAW` are the tanks' discharges (`kg O2 per kg O2`, one for one) and the
+    plant reads the **target node** as the rate a discharge runs at. A coefficient in that slot
+    drains the hydrogen tank at 0.126 kg/s — six thousand times the true draw, from the 24.5 kg the
+    vehicle loads and the 13.2 kg the mission spends — and every figure in that sentence is declared
+    somewhere in this corpus.
+
+    A method's own parameter is exempt: `tau_s` is a *lag*'s, three thermal zones derive theirs
+    under a `unit: K`, and a parameter says how the state integrates rather than what it carries.
+    """
+    linter = _linter()
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+
+    # The corpus's own answer: both draw states compute the rate their unit names, from the cell's
+    # power and the coefficient the coupling edge already carries in `kg/s per W`.
+    for state_id, edge in (("fc_o2_draw_kg_s", "E-FC-DRAW-O2"), ("fc_h2_draw_kg_s", "E-FC-DRAW-H2")):
+        state = next(s for s in world.states if s.id == state_id)
+        provenance = state.spec["provenance"]
+        assert state.spec["unit"].endswith("/s"), state.spec["unit"]
+        assert linter._named_as_a_rate(str(provenance["computes"])), provenance["computes"]
+        assert provenance["derivation"]["inputs"]["per_joule_kg"] == (
+            f"coupling.yaml:edges.{edge}.sensitivity.value"
+        ), provenance["derivation"]["inputs"]
+
+    # And the four declarations agree at the declared demand, which is the check the old shape could
+    # not pass: the state's live rate, the consumer's budget rate, and the edge's coefficient times
+    # the cell's power are one number.
+    values = plant.initial_values(world)
+    demand = values["fuel_cell_power_w"]
+    assert demand == 1723, demand
+    consumers = yaml.safe_load(
+        (VEHICLE / "domains" / "consumables" / "components.yaml").read_text()
+    )["consumers"]
+    for state_id, consumer in (("fc_o2_draw_kg_s", "fuel_cell_o2"), ("fc_h2_draw_kg_s", "fuel_cell_h2")):
+        entry = next(c for c in consumers if c["id"] == consumer)
+        assert abs(values[state_id] - float(entry["rate_kg_s"])) <= 1e-9 * float(entry["rate_kg_s"]), (
+            f"{state_id} is {values[state_id]} and {consumer} budgets {entry['rate_kg_s']}"
+        )
+
+    # The hydrogen draw is the oxygen draw over the reaction's own ratio — the corpus's 0.126.
+    assert abs(values["fc_h2_draw_kg_s"] * 7.9365 - values["fc_o2_draw_kg_s"]) < 1e-9
+
+    # A copy that puts the coefficient back is refused by name, with both halves in the message.
+    definition = copy_definition(fixture_dir(tmp_path, "coefficient"))
+    path = definition / "domains" / "power" / "components.yaml"
+    text = path.read_text()
+    old = """    draw_kg_s: 0.000152690537
+    provenance:
+      basis: derived
+      computes: draw_kg_s"""
+    new = """    per_joule_kg: 8.8619e-08
+    provenance:
+      basis: derived
+      computes: per_joule_kg"""
+    assert text.count(old) == 1, "the fixture's target is not where the test expects it"
+    path.write_text(text.replace(old, new, 1))
+    result = run_linter(definition)
+    assert result.returncode == 1, "the linter composed on a state whose unit and field disagree"
+    assert "fc_o2_draw_kg_s.provenance.computes" in result.stdout
+    assert "'per_joule_kg'" in result.stdout and "'kg O2/s'" in result.stdout, result.stdout[-600:]
+
+    # And the reader the two views share: the same predicate the rule uses, exercised both ways.
+    assert linter._reads_as_a_rate("kg O2/s") and linter._reads_as_a_rate("kg/h per crew")
+    assert not linter._reads_as_a_rate("K") and not linter._reads_as_a_rate("W")
+    assert linter._named_as_a_rate("draw_kg_s") and linter._named_as_a_rate("nominal_kg_s")
+    assert not linter._named_as_a_rate("total_w")
+    # `tau_s` reads as a rate by name and is exempt because it is the *lag*'s own parameter — how
+    # the state integrates rather than what it carries — which is the one exemption the rule makes.
+    assert linter._named_as_a_rate("tau_s") and "tau_s" in linter.METHOD_PARAMETERS
+
+
+def test_the_tick_can_read_what_the_build_order_promises():
+    """A state in the ready bucket must not be blocked on its own declaration, and now is not.
+
+    Nine states the build order called **ready now** were refused by the very first tick, and three
+    of them — `h2_csm_kg`, `o2_csm_kg`, `o2_lm_kg` — were *roots* in `plant.roots()`' own sense: the
+    debt that stopped them was their own missing value, not a consequence of somebody else's. The
+    build order's answer to "can the reference plant advance this" was yes and a real tick's answer
+    was no, about the same state, in the same repository, on the same day.
+
+    Two causes, and this round closed both. The first is that the plant computes an `algebraic`
+    state's declared rule only *during* a tick, in the frozen order, so a tank scheduled before the
+    node whose rate drains it found nothing on tick one — `resolve_declared_states` now resolves
+    every declaration-only derivation at t=0 in that same order, so the map a tick starts from is
+    the one its own first step would produce. The second is that a node carrying more than one state
+    publishes no value under its own name, so a discharge against such a node is unreadable on every
+    tick rather than late on this one; those are couplings rather than values, and the build order
+    files them under the edge.
+
+    What is left is a *consequence*, and the difference is the whole point of `roots()`: two states
+    in the ready bucket (`coolant_flow_kg_s`, `prop_rcs_kg`) are gapped because the state producing
+    the node they read is itself gapped — `bus_a_v` owes an `algebraic` rule and `thruster_thrust` a
+    `dynamics` one. They are pinned here by name so that closing either one moves this test rather
+    than passing quietly through it.
+    """
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    order = plant.build_order(world)
+    ready = {state.id for state in order["ready"]}
+
+    values = plant.initial_values(world)
+    gaps = []
+    plant.step(world, values, 1.0 / 50.0, gaps)
+    advanced = {state.id for state in world.states} - {gap.state.id for gap in gaps}
+    roots = {gap.state.id for gap in plant.roots(world, gaps)}
+
+    # Every state a tick advances is one the build order promised.
+    assert advanced <= ready, sorted(advanced - ready)
+    # And nothing it promised is blocked on its own declaration.
+    assert not (ready & roots), sorted(ready & roots)
+    # The two that remain are blocked upstream, and they are named.
+    assert sorted(ready - advanced) == ["coolant_flow_kg_s", "prop_rcs_kg"], sorted(ready - advanced)
+    for state_id, producer in (("coolant_flow_kg_s", "bus_a_v"), ("prop_rcs_kg", "thruster_thrust")):
+        gap = next(gap for gap in gaps if gap.state.id == state_id)
+        assert producer in gap.owed or gap.needs in {"bus_a", "rcs_thrust"}, gap.owed
+
+    # The t=0 resolution is what closed the first cause, and it is in the order the tick walks: a
+    # state resolved here is one the tick then advances, and a reading that is not yet there is left
+    # absent rather than filled with a declaration's own copy.
+    resolved = plant.resolve_declared_states(world, dict(values))
+    assert "fc_o2_draw_kg_s" in resolved and "fc_h2_draw_kg_s" in resolved
+    assert set(resolved) <= ready, sorted(set(resolved) - ready)
+    assert set(resolved) <= advanced, sorted(set(resolved) - advanced)
+
+    # The figures this rests on, so a round that moves them has to say so here.
+    assert len(world.states) == 139
+    assert len(ready) == 38 and len(advanced) == 36
