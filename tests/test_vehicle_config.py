@@ -8885,6 +8885,117 @@ def test_a_scenario_plan_is_what_that_scenario_decides(tmp_path):
     assert [e["fault"] for e in from_faults["events"]] == [e["fault"] for e in crisis["events"]]
 
 
+def test_the_telemetry_ring_is_bounded_and_accounts_for_its_losses(tmp_path):
+    """The contract asks for a ring "self-describing about its own cadence and its own losses".
+
+    `docs/diode-contract.md:183-189` is emphatic about why: *"An agent that was blocked inside one
+    long conversation turn wakes up blind if all it has is the latest frame: it cannot distinguish a
+    stall from a shut-down, or a trend from a transient."* And the file that was supposed to be that
+    ring was unbounded — `write_frame` wrote `NNN.json` and removed none — so "losses" was a field
+    with no possible value and the directory grew for the length of the mission.
+
+    Two properties, and the second is the one the contract is really asking for. The ring is
+    **bounded**, and a frame that falls out of the far end is **counted** rather than forgotten:
+    `held + losses` is exactly what the vehicle has produced, which is what makes a reader able to
+    reason about the frames it did not see.
+    """
+    diode = tmp_path / "diode"
+    window = diode / "bounded"
+    console = [
+        sys.executable,
+        str(VEHICLE / "tools" / "console.py"),
+        "--diode-dir",
+        str(diode),
+        "--slug",
+        "bounded",
+        "--ring-slots",
+        "5",
+        "--cycles",
+        "14",
+        "--poll",
+        "0.02",
+    ]
+    first = subprocess.run(console, capture_output=True, text=True, check=False)
+    assert first.returncode == 0, first.stderr[-600:]
+    assert "ring=5" in first.stdout, first.stdout[-300:]
+
+    frames = sorted(path.name for path in (window / "telemetry").glob("*.json"))
+    assert len(frames) == 5, frames
+    # Names are *sequence numbers*, so a new frame is never a rewritten one. A ring that reused
+    # names would make "a frame arrived" and "a frame was overwritten" the same observation.
+    assert frames == ["010.json", "011.json", "012.json", "013.json", "014.json"], frames
+
+    published = json.loads((window / "state.json").read_text())
+    record = json.loads((window / "pending.json").read_text())
+    ring = published["ring"]
+    assert ring["slots"] == 5 and ring["held"] == 5 and ring["losses"] == 9, ring
+    assert ring["newest_seq"] == 13, ring
+    assert ring["held"] + ring["losses"] == record["seq"] == 14, (ring, record["seq"])
+    # The accounting is *derived* from the files rather than kept beside them, so a reader that
+    # counts the directory and a reader that trusts the mirror agree — which is what "self-describing"
+    # has to mean if it is to mean anything.
+    on_disk = len(list((window / "telemetry").glob("*.json")))
+    assert on_disk == ring["held"]
+
+    # A restart keeps the bound and continues the sequence: the ring is the vehicle's, not the
+    # process's, and a resumed run that renumbered would collide with the frames already on disk.
+    again = subprocess.run(
+        [
+            sys.executable,
+            str(VEHICLE / "tools" / "console.py"),
+            "--diode-dir",
+            str(diode),
+            "--slug",
+            "bounded",
+            "--cycles",
+            "3",
+            "--poll",
+            "0.02",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert again.returncode == 0, again.stderr[-600:]
+    assert "ring=5" in again.stdout, again.stdout[-300:]
+    frames = sorted(path.name for path in (window / "telemetry").glob("*.json"))
+    assert frames == ["013.json", "014.json", "015.json", "016.json", "017.json"], frames
+    ring = json.loads((window / "state.json").read_text())["ring"]
+    # **Seventeen, and the count is a consequence rather than a target.** A run writes a frame at
+    # `initialise` time as well as one per cycle, so the first run produced 15 where `--cycles`
+    # asked for 14 and the second produced 3 more. The assertion is the *accounting*, which is
+    # the claim: `held + losses` is what the vehicle produced, whichever way it got there.
+    resumed_seq = json.loads((window / "pending.json").read_text())["seq"]
+    assert ring["held"] + ring["losses"] == resumed_seq == 17, (ring, resumed_seq)
+
+    # And a bound of one is a ring, not a crash: the newest frame is all that is left.
+    one = subprocess.run(
+        [
+            sys.executable,
+            str(VEHICLE / "tools" / "console.py"),
+            "--diode-dir",
+            str(diode),
+            "--slug",
+            "one-slot",
+            "--ring-slots",
+            "1",
+            "--cycles",
+            "4",
+            "--poll",
+            "0.02",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert one.returncode == 0, one.stderr[-600:]
+    frames = sorted(path.name for path in (diode / "one-slot" / "telemetry").glob("*.json"))
+    # That the directory holds exactly one frame, and that it is the newest the record names, is the
+    # claim; the run's own frame count is a consequence of `initialise` publishing as well.
+    ring_one = json.loads((diode / "one-slot" / "state.json").read_text())["ring"]
+    assert len(frames) == 1 and frames[0] == f"{ring_one['newest_seq'] + 1:03d}.json", (frames, ring_one)
+
+
 def test_the_plant_reports_the_build_order():
     """The view is a CLI contract, not an internal function."""
     result = subprocess.run(
