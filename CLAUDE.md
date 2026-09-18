@@ -5,9 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```sh
+git submodule update --init --recursive                # the vehicle is a submodule; do this first
 python3 -m pytest -q                                   # whole suite, no Docker needed
 python3 -m pytest tests/test_chassis.py -q             # one file
 python3 -m pytest tests/test_chassis.py::test_a_conversation_round_trips -q
+python3 -m pytest docs/deep_research/vehicle/tests/test_vehicle_config.py -q   # the vehicle's referee
 
 uvx ruff check . --no-cache                            # ruff is not installed here; uvx fetches it
 uvx ruff format --check . --no-cache
@@ -35,9 +37,11 @@ by someone else; the only thing the two halves share is `docs/diode-contract.md`
 sounds like "add a thruster command" belongs on the far side of the window, not here.
 
 `docs/deep_research/` (~16.4k lines) specifies that far side. Don't read it unless the work is
-on the contract itself; `docs/deep_research/integration/corpus-review.md` is the map, and
-`docs/deep_research/vehicle/` is the seed of the vehicle. `docs/design.md` is the rationale for
-every decision below; read it
+on the contract itself; `docs/deep_research/integration/corpus-review.md` is the map.
+**The vehicle is its own repository** (`tachyon-beep/space_vehicle`), vendored here as a git
+submodule at `docs/deep_research/vehicle/` so a checkout of the chassis has a vehicle to run; a
+second vehicle would be a second submodule beside it. Work on the vehicle belongs in that
+repository, and `docs/design.md` is the rationale for every decision below; read it
 before arguing with one.
 
 ## Operator side vs. fleet side

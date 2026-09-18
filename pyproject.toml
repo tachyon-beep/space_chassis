@@ -18,6 +18,9 @@ select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 ignore = ["E501", "B008"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# The vehicle's referee lives in its own repository, mounted here as a git submodule. The suite is
+# still one suite: `pytest -q` at this root runs the operator side, the assertions about this
+# repository's own files, and the vehicle's 312 tests.
+testpaths = ["tests", "docs/deep_research/vehicle/tests"]
 addopts = "-q"
 filterwarnings = ["error::DeprecationWarning"]

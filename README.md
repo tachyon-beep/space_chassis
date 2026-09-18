@@ -144,6 +144,7 @@ written by the supervisor. They can read all of it and change none of it.
 | `brief/` | What they are told. |
 | `docs/diode-contract.md` | The interface the vehicle's builder implements. Read this one. |
 | `docs/deep_research/` | The vehicle study (`apollo_diode.md`) and the eleven subsystem studies — power, ECLSS, thermal, GNC, propulsion, RCS, comms, consumables, avionics, structural/sequential events, crew C&W — that specify the far side of that window. `integration/corpus-review.md` says what is in them. |
+| `docs/deep_research/vehicle/` | **The vehicle itself, as a git submodule** of [`tachyon-beep/space_vehicle`](https://github.com/tachyon-beep/space_vehicle): its configuration, its reference plant, its linter and its referee. `git submodule update --init` after cloning; a second vehicle would be a second submodule beside it. |
 | `docs/design.md` | Why the world is shaped this way. |
 | `docs/example-run-report.md` | What an endurance verdict looks like. |
 | `contract/diode_probe.py` | Walks an implementation through the contract and reports. |
@@ -151,7 +152,7 @@ written by the supervisor. They can read all of it and change none of it.
 | `contract/fake_diode.py` | A fixture that satisfies the contract. Models nothing. |
 | `docker-compose.override.example.yml` | The smoke configuration above. Rename it to `docker-compose.override.yml` to use it. |
 | `endurance/` | The harness: a stub model, a local world, fault injection, a verdict. |
-| `tests/` | 62 tests, no Docker required. |
+| `tests/` | The operator-side tests and the assertions about this repository's own files (the frozen corpus, the probe, the compose service, the reconciliation rows). `pytest -q` also runs the vehicle's 312, which live in the submodule. No Docker required. |
 
 ## Trying it without a credential
 
