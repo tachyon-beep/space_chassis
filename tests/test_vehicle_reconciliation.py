@@ -89,8 +89,14 @@ def copy_definition(destination: Path) -> Path:
     fault policies (`check_tool_docstrings`). A fixture that copied only the YAML would make every
     one of those checks refuse for absence in every test in this file — which is the same defect
     the domains clause above records, arriving in the fixture that clause was written for. So the
-    fixture copies what the linter reads and nothing else: the two prose files and the one tool
-    whose docstring makes a claim, not the 750 KB `check_vehicle.py` the fixture is *running*.
+    fixture copies what the linter reads and nothing else: the two prose files and the tools whose
+    own text makes a claim — the fault scheduler's docstring and the console's parser, which the
+    linter holds against `pending.json` (`check_console_flags`) — not the 750 KB
+    `check_vehicle.py` the fixture is *running*.
+
+    **The console joined that list the round it gained a reader, and this fixture is where the
+    omission showed.** A linter that reads a file the fixture did not copy refuses for absence in
+    every test in this file, which is exactly how `tools/faults.py` got here.
     """
     destination.mkdir(parents=True, exist_ok=True)
     for name in FILES:
@@ -98,7 +104,8 @@ def copy_definition(destination: Path) -> Path:
     for name in ("README.md", "plant.md"):
         shutil.copy(VEHICLE / name, destination / name)
     (destination / "tools").mkdir(exist_ok=True)
-    shutil.copy(VEHICLE / "tools" / "faults.py", destination / "tools" / "faults.py")
+    for name in ("faults.py", "console.py"):
+        shutil.copy(VEHICLE / "tools" / name, destination / "tools" / name)
     domains = VEHICLE / "domains"
     if domains.is_dir():
         shutil.copytree(domains, destination / "domains")
