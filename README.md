@@ -78,7 +78,7 @@ flag.
 It needs `PyYAML`. It is deliberately *not* wired into the operator-side services, which are
 standard library only.
 
-Current state: **composes, with 273 declared debts.** A debt is reported and is fatal under
+Current state: **composes, with 276 declared debts.** A debt is reported and is fatal under
 `--strict`; a refusal is fatal always. The linter refuses a build, it does not warn:
 
 **The direction of travel, because the headline alone reads the wrong way.** The count went
@@ -211,8 +211,8 @@ ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.m
 pricing is now derived from a phase list rather than assumed.
 
 **All eleven domains have landed** — 148 channels, 139 states over 59 scheduled nodes, 142
-thresholds, 58 verbs and 128 classified events across the eleven directories, with 273 declared debts
-and every one of them named. **107 of the 139 states are fully configured and 32 carry a debt**, and
+thresholds, 58 verbs and 128 classified events across the eleven directories, with 276 declared debts
+and every one of them named. **106 of the 139 states are fully configured and 33 carry a debt**, and
 a real tick advances **50** of the 139 states, and the build order's **50** ready are that same set
 — the second of those figures is the objective's own second completion criterion, and both
 are read out of `tools/plant.py`'s output by `test_the_readme_status_matches_the_tools`. Since round
@@ -226,16 +226,11 @@ recurring finding arriving at its own status section. That completes the design'
 asks for the dictionary and linter, then a spike on electrical, thermal and consumables) and goes
 well past it: what remains is not a domain but the **plant**, and the debts are its shopping list.
 
-Two counts, and the difference is deliberate. The **273** is every obligation the linter can name:
-**195** literal `UNCONFIGURED` scalars and **78** prose obligations — the sentences in the
-`open_debts` lists and the per-edge records (thermal time constants, loop transit, the throttle
-law, the inertia tensor, the crisis gains, the source resistance, the missing pack-voltage state,
-the missing charging efficiency, the pump-speed conversion). The **195** the plant
-reports is a *different* count rather than a smaller one, and the difference is which files are
-walked: the plant counts every literal `UNCONFIGURED` reachable from the five top-level documents,
-`coupling.yaml` included, so its 197 is the linter's 197 **plus** the graph's unset edge
-sensitivities, which the linter reports against the edge they belong to instead of against a
-top-level path. The headline number is the debt count, and until round 46 the left-hand number was
+Two counts describe different questions. The linter's **276** is every obligation it can name:
+literal `UNCONFIGURED` values and prose obligations in `open_debts` and edge records. The **198** the plant
+reports are `UNCONFIGURED` scalars across the definition it loads, including graph
+sensitivities; its count asks which numeric or state values a tick still lacks. The headline number
+is the debt count, and until round 46 the left-hand number was
 itself incomplete: the domain files were walked for unset values by `check_domain` and the coupling
 graph by its edge walk, so every literal `UNCONFIGURED` was counted *except the eleven in the two
 files nothing walks*. `mission.yaml`'s initial position, velocity and
@@ -369,22 +364,15 @@ sixteen thousand lines and its central claim is architectural (`:9`): **expose R
 trusted attitude-and-wrench execution service, not as a remote thruster-firing bus.** It declares
 13 states, 11 thresholds, 9 verbs, 11 faults, and three things in it are worth reading:
 
-- **The constant the folder called unpublished is published, and the residual bounds what is
-  left.** This paragraph used to say that no source gives a minimum firing time for the 100 lbf
-  thruster — and the thruster's own qualification block has been in the manifest since the folder
-  began: `lm_propulsion_rcs_study_guide.pdf` PDF p. 89 says "in pulse mode operation the total
-  command 'on' time may be as low as 10 milliseconds". So `t_min_on` is 10 ms, the two life limits
-  are 500 s each with a 1,000 s total and 10,000 restarts, and the rise and tailoff are 40 ms and
-  50 ms. What the same page says next is what the residual accumulator is still for: "the full 100
-  pounds of thrust will not be achieved" in a minimum pulse, so the **impulse** of that pulse is
-  not 445 N x 10 ms and no source gives the curve that would compute it. `rcs_dode.md:800-825`'s
-  accumulator carries unexecuted impulse in `r_i` until it exceeds the qualified threshold, so the
-  **mean** delivered impulse is preserved whatever the bit is and the error is unbounded in *phase*
-  rather than in magnitude. RCS-11 is the case that is not benign — the accumulator grows, every
-  pulse is refused as illegally short, and the thruster stops complying with no valve fault, no
-  switch disagreement and no health conclusion. It is why `rcs.thruster_[n]_residual_ns` is a
-  published channel: without it, an unknown constant produces a silent failure instead of a
-  bounded one.
+- **RCS command times are source-scoped.** The LM propulsion guide PDF p. 89 gives a 10 ms
+  pulse-mode electrical command ON time. The CSM Operations Handbook subsection 2.5 PDF p. 17
+  gives 12 ms as the earliest SM automatic-controller OFF command. Neither is a qualified time for
+  every jet; the CM hardware minimum is owed. `capability.minimum_command_on_s` records each system
+  and command path, while the per-thruster pulse floor remains `UNCONFIGURED` until thruster
+  membership and command path select it. Group enable/inhibit has a chosen zero policy dwell so
+  inhibit and deliberate re-enable stay available. The engine keeps producing
+  thrust after electrical OFF, so neither 445 N × command time nor the command time alone gives a
+  delivered impulse bit. The residual channel can show RCS-11's growing unexecuted request.
 - **Two questions apollo's RCS channels cannot answer.** apollo's seven points all say what the
   thrusters are *doing*. They cannot say whether the vehicle can still do what it is about to be
   asked, which is what `rcs_dode.md:722-727` requires be published — the allocation residual, the
@@ -473,14 +461,13 @@ LM descent-engine Isp of 311 s traces only to Wikipedia where NASA's design requ
   and the thermal domain cannot be integrated. This is the largest single debt, and it is the
   next thing the manifest's §0.5 worklist sends a round after: the LM-3 thermal analysis, the
   Apollo 15 thermal simulation and the ECS study guides are all named and none is opened yet.
-- **RCS minimum impulse bit, for all three systems.** The *firing time* half of this entry was
-  false and is closed: the 100 lbf thruster's minimum is **10 ms**, published on PDF p. 89 of the
-  LM Propulsion and RCS study guide, with the two life limits, the restart capability and the rise
-  and tailoff on the same page and the next. What stays owed is the **impulse** of a
-  minimum-width pulse, and it is bounded rather than unknown: the same page says the full 100 lbf
-  is not achieved in 10 ms, so the bit is below 445 N × 10 ms = 4.45 N·s, and the curve that would
-  integrate it is Figure 54, which is a graph. The residual accumulator keeps the mean right
-  either way, and RCS-11 names the case that is not benign.
+- **RCS minimum delivered impulse bit, for all three systems.** The LM guide publishes 10 ms
+  electrical command ON in pulse mode, and the SM handbook publishes a 12 ms earliest OFF command
+  from its automatic controller. The handbook says total SM impulse is the integral under the
+  entire thrust curve, including thrust after electrical OFF. No delivered bit follows by
+  multiplying 445 N by either command time. The CM hardware command minimum, per-thruster binding,
+  and all three delivered bits remain owed. RCS-11 names the case where unexecuted requested
+  impulse accumulates.
 - **Fuel-cell reactant consumption per kWh.** Closed, and the claim was false in the same way:
   three published numbers — 0.00257 lb of hydrogen per hour per ampere, the module's rated
   29 ± 2 VDC, and the reaction's mass ratio — give the per-joule figure by one division, and
@@ -1633,7 +1620,7 @@ The reference plant's `advance()` implements two of `plant.md` §3's seven integ
 this was written, and the split is worth stating plainly: **`algebraic`, `discrete` and `dynamics`
 are rules the configuration deliberately does not carry** — `delay` *is* carried, as a `delay_s` and
 a ring, and the vehicle's one delay state is in *ready now* — and counting them together with the
-states a tick cannot reach because a coupling is missing, so 46 of the 139 states need code.
+states a tick cannot reach because a coupling is missing, so 45 of the 139 states need code.
 (This said *before the plant can walk a whole tick*, which was true when it was written and is not
 now: a tick walks all 139 of them and records what it cannot advance. See *The tick stopped at its
 first debt* below.)
@@ -1825,17 +1812,17 @@ implementer should open first. That is round 58's change, and it replaced a seco
 worklist used to run its own sequence of tests over each state's spec and answer a different question
 from the one a tick answers, which left nine states filed *ready now* and refused by the first tick
 in round 57 and two more still after it. `test_the_build_order_is_the_ticks_own_gap_list` holds the
-two sets equal, and `--readiness` still counts what a *declaration* is missing: 34 states carry a
-debt and 29 of them are in this bucket — the five that differ are debts a tick walks past, which is
+two sets equal, and `--readiness` still counts what a *declaration* is missing: 33 states carry a
+debt and 29 of them are in this bucket — the four that differ are debts a tick walks past, which is
 the distinction between a value nobody has written down and a state nothing can reach.
 
 ```
 139 states, by what blocks them:
 
     50   36 %  ready now — the states a real tick advances
-    28   20 %  owes a value — the cheapest to close, and the debt count already tracks them
+    29   21 %  owes a value — the cheapest to close, and the debt count already tracks them
     15   11 %  owes an edge — a coupling with no sensitivity, or a state nothing drives
-    46   33 %  owes a rule — `algebraic`, `discrete`, `dynamics` or `hazard`: domain code
+    45   32 %  owes a rule — `algebraic`, `discrete`, `dynamics` or `hazard`: domain code
 ```
 
 **Just under half the vehicle owes a rule, and that is by construction.** `plant.md` §3's four rule classes are
@@ -18322,6 +18309,37 @@ from 337 to 338 tests.
 The Apollo 17 CSM Launch Checklist (Basic), 4 September 1972, changes `MN BUS TIE (2)` to OFF on PDF p. 33 and verifies it on p. 36; selects `PCM BIT RATE - LOW` on p. 35 and repeats LOW after docking and LM ejection on pp. 57 and 59; selects `S BD ANT OMNI - HI GAIN` on p. 56 before docking. The earlier ON, HI and omni B positions on pp. 10–11 describe the pad. `bus_tie_closed` is now `open`, `telemetry_rate` is 1,600 bit/s, `comm_mode` derives `sband_low`, and `antenna_selection` is `high_gain`. The main regulator's documented primary position remains. The four launch debts remain named; the post-docking hatch procedure on p. 58 means a launch hatch assumption cannot settle them.
 
 `check_launch_state` now refuses a disagreement between the discrete-state event, the initial-state event, the MET 0 osculating epoch and the first phase's docked configuration after extraction. Broken-copy tests change the launch event to `pad` and the first configuration to an undocked one, proving both refusals. The source-position tests hold the four corrected values. This fixes a temporal misapplication of published settings; it does not pay the remaining physical and rule debts or advance a new state. The referee grows from 338 to 339 tests.
+
+## One LM pulse command time was being applied to all three RCS systems
+
+`domains/rcs/components.yaml#capability.minimum_firing_time.value` held **0.01 s** from the LM
+Propulsion/RCS Study Guide, PDF p. 89 (printed p. 77), and both
+`state.pulse_width.t_min_on_s` and `state.thruster_valve.dwell.min_on_s` copied it. The guide says
+the LM engine's *electrical command ON* time in pulse mode may be as low as 10 ms. It does not say
+that every CSM jet is qualified to the same duration, nor that a group enable/inhibit command has
+that dwell. This was a source-scope defect in a value the plant used.
+
+| System | Published fact | Model entry after this round |
+|---|---|---|
+| SM | *Apollo Operations Handbook*, SM2A-03-BLOCK II-(1), Vol. 1, subsection 2.5, PDF p. 17 (printed 2.5-18), Figure 2.5-9 discussion: the automatic controller can first send electrical OFF after 12 ms, with 12–18 ms elapsed in its sequence. [Primary PDF](https://www.ibiblio.org/apollo/ApolloProjectOnline/Documents/SMA2A-03-BLOCK%20II%20Volume%201%2019691015/aoh-v1-2-05-rcs.pdf) | `minimum_command_on_s.rcs_sm.value: 0.012`, path `automatic_controller` |
+| CM | The same handbook, PDF pp. 31–32, says CM pulse operation is similar and gives valve response times, but no CM minimum electrical command duration. R-577 Section 6 Rev. 1 PDF p. 58 gives 14 ms in a **simulator**. [R-577 PDF](https://www.ibiblio.org/apollo/NARA-SW/R-577-sec6-rev1.pdf) | `minimum_command_on_s.rcs_cm.value: UNCONFIGURED` |
+| LM | *LM Propulsion/RCS Study Guide*, PDF p. 89 (printed 77): total pulse-mode command ON may be 10 ms. [Primary PDF](https://www.ibiblio.org/apollo/Documents/lm_propulsion_rcs_study_guide.pdf) | `minimum_command_on_s.rcs_lm.value: 0.01`, path `engine_pulse_mode` |
+
+The first mistake was treating a command duration as a delivered impulse bit. The SM handbook's
+Figure 2.5-9 and its discussion say thrust continues after electrical OFF and total impulse is the
+integral under the entire thrust curve. The old `445 N × 10 ms = 4.45 N·s` ceiling was therefore
+not a defensible bound. The second mistake was binding the source to `set_rcs_quad`'s group
+enable/inhibit dwell. That is a different command from an injector-coil pulse. The per-thruster
+pulse floor is `UNCONFIGURED` until thruster membership and command path select an applicable
+system entry; the CM hardware limit itself remains owed. The group command has a separately chosen
+zero dwell in both directions, preserving its promise of immediate inhibit and deliberate re-enable.
+
+The broken-copy test restored the global 10 ms capability and failed before the new refusal was
+added. `check_rcs_command_on_scope` now refuses a universal minimum, holds the three source scopes,
+and prevents the pulse floor or group dwell from reusing one as a scalar. The baseline at ed94bc9 had
+273 obligations, 107 fully configured states and 339 referee tests. This round has 276 debts,
+106 fully configured states and 340 tests; a tick still advances 50 states. The extra obligations
+name the CM hardware limit and per-thruster pulse floor rather than silently qualifying them.
 
 ## The invariants, and which of them are enforced
 
