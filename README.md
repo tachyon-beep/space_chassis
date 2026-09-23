@@ -78,7 +78,7 @@ flag.
 It needs `PyYAML`. It is deliberately *not* wired into the operator-side services, which are
 standard library only.
 
-Current state: **composes, with 274 declared debts.** A debt is reported and is fatal under
+Current state: **composes, with 275 declared debts.** A debt is reported and is fatal under
 `--strict`; a refusal is fatal always. The linter refuses a build, it does not warn:
 
 **The direction of travel, because the headline alone reads the wrong way.** The count went
@@ -211,7 +211,7 @@ ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.m
 pricing is now derived from a phase list rather than assumed.
 
 **All eleven domains have landed** — 148 channels, 139 states over 59 scheduled nodes, 142
-thresholds, 58 verbs and 128 classified events across the eleven directories, with 274 declared debts
+thresholds, 58 verbs and 128 classified events across the eleven directories, with 275 declared debts
 and every one of them named. **106 of the 139 states are fully configured and 33 carry a debt**, and
 a real tick advances **50** of the 139 states, and the build order's **50** ready are that same set
 — the second of those figures is the objective's own second completion criterion, and both
@@ -227,8 +227,8 @@ asks for the dictionary and linter, then a spike on electrical, thermal and cons
 well past it: what remains is not a domain but the **plant**, and the debts are its shopping list.
 
 Two counts, and the difference is deliberate. The **274** is every obligation the linter can name:
-**196** literal `UNCONFIGURED` scalars and **78** prose obligations in `open_debts` and edge records.
-The plant independently reports **196** literal unset scalars, matching that subtotal; the linter
+**197** literal `UNCONFIGURED` scalars and **78** prose obligations in `open_debts` and edge records.
+The plant independently reports **197** literal unset scalars, matching that subtotal; the linter
 also names the **78** prose obligations. Graph sensitivities are reported against their owning
 edges rather than added a second time. Until round 46 the scalar subtotal was
 itself incomplete: the domain files were walked for unset values by `check_domain` and the coupling
@@ -18349,6 +18349,62 @@ and prevents the pulse floor or group dwell from reusing one as a scalar. The ba
 271 obligations, 107 fully configured states and 340 referee tests. This round has 274 debts,
 106 fully configured states and 341 tests; a tick still advances 50 states. The extra obligations
 name the CM hardware limit and per-thruster pulse floor rather than silently qualifying them.
+
+## The docked LM station axis was reversed in the figure
+
+The earlier sections **“The inertia tensor was ‘not reachable’”**, **“Three more tables”** and
+**“The frame offset between two vehicles is a property of the configuration”** remain as a record
+of those rounds. Their shared claim that the LM-to-Apollo transform is a translation with the
+same +X direction is superseded here. In particular, the `+797.75 in` docked offset and the
+9.2% centre-of-mass mismatch derived from it were wrong. The LM-only Tables 3.2-25 and 3.2-26
+remain in LM coordinates; this round does not change their transcribed rows.
+
+The local primary scan `ODB-Vol3-MassProperties.pdf` has mixed revisions. **SNA-8-D-027(III)
+Rev 2** Figure 2-16, PDF p. 41 (printed 2-17), depicts the *launch* station system with +X_A
+and +X_E both upward: `X_LV = X_A + 2756.555 in` and `X_LV = X_E + 3156.055 in`, hence
+`X_A = X_E + 399.5 in`. **Rev 2** Figure 2-17, PDF p. 42 (printed 2-18), depicts the
+*docked* station system with +X_A downward and +X_E upward: `X_A = 4578.805 - X_LV`
+and `X_E = X_LV - 3156.055`, hence **`X_A = 1422.75 - X_E`** (inches). At the mated
+interface, `X_E = 312.5 in` maps to `X_A = 1110.25 in`. The discarded `X_A = X_E + 797.75`
+passes that one-point check but maps the LM origin to 797.75 in instead of 1422.75 in and
+reverses the direction at every other station. The [Rev 2 primary scan](https://www.ibiblio.org/apollo/Documents/SNA-8-D-027III-Rev2-CsmLmSpacecraftOperationalDataBook-Volume3-MassProperties.pdf)
+provides the visual axis arrows as well as the station labels.
+
+The mass rows are **SNA-8-D-027(III) Rev 3, Amendment 114, 15 September 1971**, mission J-2
+CSM-113/LM-11: Table 3.2-21 at PDF p. 351 (printed 3.2-115), Table 3.2-22 at p. 353,
+Table 3.2-25 at p. 359, and Table 3.2-26 at p. 361. The Rev 2 station drawing establishes
+the axial sign and station origin, but it does not establish J-2 lateral docking clocking or
+make separate weight-indexed rows a matched-epoch stack. R-577 Section 6 Rev 1 (December
+1968), §6.4.2, [PDF p. 17](https://www.ibiblio.org/apollo/NARA-SW/R-577-sec6-rev1.pdf),
+places the LM origin at Apollo `(1422.75, 0, 0)` in its CSM-103/LM-3 simulator transform.
+That independently supports the axial origin; its model effectivity does not authorize a
+J-2 LM-11 lateral rotation.
+
+`vehicle.yaml#mass_properties.frames.LM_XE` now declares the two affine axial relations as
+`scale` and `origin_in`. The docked `lateral_rotation` is `UNCONFIGURED`, so there is no full
+mixed-frame tensor or thruster effectiveness matrix to infer from a station figure. The
+LM-only tables explicitly remain in their native frame. As a diagnostic only, composing the
+separate CSM and LM descent *X* centres with the corrected docked axial relation gives
+1037.65 in versus Table 3.2-21's 1046.44 in at 44,085 kg, a 0.84% difference. This does
+not validate a physical tensor composition: the mass epochs and J-2 lateral orientation
+remain owed for `csm_lm_ascent_docked`.
+
+`check_mass_properties` refuses a missing/duplicate axial transform, the old positive
+`+797.75 in` docked mapping, a claimed J-2 lateral rotation, or an LM table with no native
+frame/transform disposition. A broken-copy test restores the old mapping and observes the
+refusal. The independent `.scratch/r92/verify_frame_axis.py` copies the five top-level
+configuration files plus `domains/` into each fixture and checks the intact and broken
+corpora against the linter's own result.
+
+| figure | before | after |
+|---|---:|---:|
+| declared debts | 274 | **275** |
+| literal `UNCONFIGURED` scalars | 196 | **197** |
+| fully configured states | 106 / 139 | 106 / 139 |
+| referee tests | 341 | **342** |
+
+The added debt is the explicit J-2 lateral rotation; no state was advanced by this source
+correction.
 
 ## The invariants, and which of them are enforced
 
