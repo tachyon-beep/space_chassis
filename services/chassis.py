@@ -83,6 +83,15 @@ SOCKET_WAIT_SECONDS = 60
 RECAP_LINE_CHARS = 400
 RECAP_MAX_BYTES = 96 * 1024
 
+# How the recap is framed when it is sent. It is a constant because two places
+# have to agree on it: `prepared_view` builds the frame, and
+# `drop_stored_recap_frames` recognises -- and drops -- a frame an older run
+# wrote into the conversation itself, which is where it never belonged.
+RECAP_FRAME_PREFIX = (
+    "Recap of conversation that has fallen out of the context window. "
+    "It is a lossy record, kept because the window is not a memory:\n\n"
+)
+
 
 class EnvironmentFailure(Exception):
     """The recorder or the upstream is unusable; nothing about the run is at fault."""
@@ -164,6 +173,43 @@ class Carried:
 
     def save_meta(self, meta: dict) -> None:
         write_json_atomic(self.meta_path, meta)
+
+
+def drop_stored_recap_frames(messages: list[dict], folded: int) -> tuple[list[dict], int]:
+    """Drop recap frames an older run wrote into the conversation, and re-anchor the fold.
+
+    Until round 84, `resume()` inserted the recap into `messages` as a
+    `role="system"` message and the checkpoint wrote it back, so a lineage
+    accumulated one copy per resume. `selection()` pins every system message and
+    sends pinned material whatever the budget says, so no copy could ever be
+    evicted: one real lineage reached 84 copies, 99% of a 5.4 MB checkpoint, and
+    1.33 M estimated tokens against a 200 000-token window.
+
+    The recap is not part of the conversation -- `prepared_view()` builds the
+    frame at send time from `recap.md` -- so a stored frame is dropped here, as
+    the conversation is adopted. `folded` is the index the recap has already
+    folded up to; it moves back by the number of frames dropped in front of it,
+    so the next fold does not re-record material that is already in the recap.
+
+    A legacy handoff note is a real message and stays where it is: this repairs
+    the frames, not the agent's transcript. The forward path keeps the list
+    chronological from here on.
+    """
+    kept: list[dict] = []
+    dropped_before_fold = 0
+    for index, message in enumerate(messages):
+        content = message.get("content")
+        is_frame = (
+            message.get("role") == "system"
+            and isinstance(content, str)
+            and content.startswith(RECAP_FRAME_PREFIX)
+        )
+        if is_frame:
+            if index < folded:
+                dropped_before_fold += 1
+            continue
+        kept.append(message)
+    return kept, max(0, folded - dropped_before_fold)
 
 
 # ---------------------------------------------------------------------------
@@ -617,6 +663,14 @@ class Chassis:
         lines = []
         for message in self.messages[self.recap_folded : kept_start]:
             role = message.get("role", "?")
+            if role == "system":
+                # Pinned material is never evicted, so folding it would record
+                # something the run can still read. It is also how the recap
+                # used to fold *itself*: every resume stored another recap frame
+                # as a system message and the fold range ran straight across
+                # them (round 84). `drop_stored_recap_frames` removes the frames
+                # already in the file; this keeps a new one from starting.
+                continue
             body = render_message(message)
             if not body:
                 continue
@@ -828,34 +882,51 @@ class Chassis:
         supervisor restart would make endurance impossible. A duty that wants a
         clean slate deletes the file; one that wants to steer its own opening
         writes its own.
+
+        **The conversation is chronological, and this method is what keeps it
+        that way.** `selection()` reads the end of the list as *now* and the
+        beginning as what the window drops first, so everything added here is
+        appended. Two things used to be inserted at the front, and both were
+        defects:
+
+        * **The recap is not part of the conversation.** It is a view of what
+          the window dropped, and `prepared_view()` pins it into every request.
+          Stored here it was written to the checkpoint and re-sent forever -- a
+          `role="system"` message is pinned, so nothing could evict it. One real
+          lineage accumulated 84 copies and 1.33 M estimated tokens against a
+          200 000-token window, and `fold_recap_if_needed` then folded the
+          copies back into the recap.
+        * **The handoff note is the newest thing a run has to read, not the
+          oldest.** Inserted at the front it took the pinned "opening problem"
+          slot that `selection()` reserves for the first user message -- the one
+          message the pin exists to protect.
+
+        A conversation an older run left behind may still hold stored recap
+        frames; they are dropped as it is adopted, and the fold point moves back
+        with them.
         """
-        carried = self.carried.conversation()
+        loaded = self.carried.conversation() or []
+        folded = int(previous.get("recap_folded", 0) or 0)
+        carried, folded = drop_stored_recap_frames(loaded, folded)
+        if len(carried) != len(loaded):
+            # A repair, not a silent edit: the record says how many frames went.
+            self.record(
+                "conversation_repaired",
+                dropped=len(loaded) - len(carried),
+                kept=len(carried),
+            )
         seeded_by_duty = False
         if carried:
             self.messages.extend(carried)
-            self.recap_folded = int(previous.get("recap_folded", 0) or 0)
-
-        recap = self.carried.recap()
-        if recap:
-            self.messages.insert(
-                0,
-                {
-                    "role": "system",
-                    "content": (
-                        "Recap of conversation that has fallen out of the context window. "
-                        "It is a lossy record, kept because the window is not a memory:\n\n" + recap
-                    ),
-                },
-            )
+            self.recap_folded = folded
 
         handoff = self.carried.handoff()
         if handoff:
-            self.messages.insert(
-                1 if recap else 0,
+            self.messages.append(
                 {
                     "role": "user",
                     "content": "A previous run of you left this handoff note:\n\n" + handoff,
-                },
+                }
             )
             seeded_by_duty = True
 
@@ -1007,13 +1078,7 @@ def prepared_view(
     recap = carried.recap()
     if not recap:
         return kept
-    framed = {
-        "role": "system",
-        "content": (
-            "Recap of conversation that has fallen out of the context window. "
-            "It is a lossy record, kept because the window is not a memory:\n\n" + recap
-        ),
-    }
+    framed = {"role": "system", "content": RECAP_FRAME_PREFIX + recap}
     if any(message.get("content") == framed["content"] for message in kept):
         return kept
     return [framed, *kept]

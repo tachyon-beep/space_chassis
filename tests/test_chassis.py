@@ -24,6 +24,25 @@ def message(role: str, text: str) -> dict:
     return {"role": role, "content": text}
 
 
+def resumable(tmp_path, conversation=None, recap=None, handoff=None):
+    """A chassis-shaped object carrying exactly what `resume` reads and writes."""
+    carried = chassis.Carried(tmp_path / "session", tmp_path / "home")
+    if conversation:
+        carried.save_conversation(conversation)
+    if recap:
+        carried.append_recap([f"- [assistant] {line}" for line in recap])
+    if handoff:
+        carried.handoff_path.parent.mkdir(parents=True, exist_ok=True)
+        carried.handoff_path.write_text(handoff, encoding="utf-8")
+    instance = object.__new__(chassis.Chassis)
+    instance.carried = carried
+    instance.messages = []
+    instance.recap_folded = 0
+    instance.events = []
+    instance.record = lambda kind, **fields: instance.events.append({"event": kind, **fields})
+    return instance
+
+
 def test_window_keeps_the_opening_and_the_system_message(tmp_path):
     """A run's standing instructions and its opening problem are never dropped.
 
@@ -141,6 +160,124 @@ def test_the_recap_is_not_duplicated_when_it_is_already_in_the_conversation(tmp_
     messages = [pinned, message("system", "sys"), message("user", "go")]
     sent = chassis.prepared_view(messages, budget_tokens=100_000, chunk_tokens=10, carried=carried)
     assert sum(1 for m in sent if m.get("content") == pinned["content"]) == 1
+
+
+def test_a_resumed_conversation_appends_the_handoff_rather_than_prepending_it(tmp_path):
+    """The list is chronological: the end is now, and `selection()` reads it that way.
+
+    A handoff inserted at the front takes the pinned "opening problem" slot --
+    the one message that pin exists to protect -- and makes the newest material
+    the first thing the window drops.
+    """
+    opened = [message("user", "the opening problem"), message("assistant", "working on it")]
+    instance = resumable(tmp_path, conversation=opened, handoff="try the thermal loop first")
+
+    assert chassis.Chassis.resume(instance, {}) is True
+
+    assert [m["content"] for m in instance.messages[:2]] == ["the opening problem", "working on it"]
+    assert "thermal loop" in instance.messages[-1]["content"], "the handoff is not the newest message"
+    pinned, _ = chassis.selection(instance.messages, budget_tokens=1, chunk_tokens=1)
+    assert 0 in pinned, "the opening problem lost the pin it is supposed to have"
+
+
+def test_the_recap_is_sent_without_being_stored_in_the_conversation(tmp_path):
+    """The recap is a view of the window, not a message in it.
+
+    Stored, it is pinned and re-sent on every request forever; not sent, it is
+    not a memory. Both halves of that matter.
+    """
+    instance = resumable(
+        tmp_path, conversation=[message("user", "go")], recap=["we chose the backup console"]
+    )
+
+    chassis.Chassis.resume(instance, {})
+
+    assert not [
+        m
+        for m in instance.messages
+        if str(m.get("content", "")).startswith(chassis.RECAP_FRAME_PREFIX)
+    ], "the recap was stored in the conversation"
+    sent = chassis.prepared_view(instance.messages, 100_000, 100, instance.carried)
+    frames = [
+        m for m in sent if str(m.get("content", "")).startswith(chassis.RECAP_FRAME_PREFIX)
+    ]
+    assert len(frames) == 1, f"the recap was sent {len(frames)} time(s)"
+    assert "backup console" in frames[0]["content"]
+
+
+def test_resuming_repeatedly_adds_the_handoff_and_no_pinned_recap(tmp_path):
+    """One stored recap per resume is how a real lineage reached 1.33 M tokens.
+
+    A stored frame is `role="system"`, and `selection()` sends pinned material
+    whatever the budget says, so a lineage that resumed often could not fit in
+    any window. Each resume may add the handoff note; it may not add a frame.
+    """
+    instance = resumable(tmp_path, conversation=[message("user", "go")], recap=["a decision"])
+    counts: list[int] = []
+    pinned: list[int] = []
+    for index in range(5):
+        instance.messages = []
+        instance.carried.handoff_path.parent.mkdir(parents=True, exist_ok=True)
+        instance.carried.handoff_path.write_text(f"handoff {index}", encoding="utf-8")
+        chassis.Chassis.resume(instance, {"recap_folded": instance.recap_folded})
+        instance.carried.save_conversation(instance.messages)
+        counts.append(len(instance.messages))
+        pinned.append(sum(1 for m in instance.messages if m.get("role") == "system"))
+
+    assert pinned == [0, 0, 0, 0, 0], f"a resume stored pinned material: {pinned}"
+    assert counts == [2, 3, 4, 5, 6], f"a resume added more than its handoff note: {counts}"
+
+
+def test_a_conversation_holding_stored_recap_frames_is_repaired_as_it_is_adopted(tmp_path):
+    """An older run wrote its recap into the conversation, where nothing could evict it.
+
+    The frames are `role="system"` and therefore pinned, and they are redundant:
+    `prepared_view` rebuilds the frame from `recap.md` at send time. The repair is
+    recorded rather than silent, and the fold point moves back with the frames so
+    the next fold does not re-record material the recap already holds.
+    """
+    frame = {
+        "role": "system",
+        "content": chassis.RECAP_FRAME_PREFIX + "- [assistant] old material",
+    }
+    note = {"role": "user", "content": "A previous run of you left this handoff note:\n\ncarry on"}
+    legacy = [frame, note, frame, note, message("user", "the opening problem")]
+    instance = resumable(tmp_path, conversation=legacy)
+
+    chassis.Chassis.resume(instance, {"recap_folded": 3})
+
+    assert not [
+        m
+        for m in instance.messages
+        if str(m.get("content", "")).startswith(chassis.RECAP_FRAME_PREFIX)
+    ], "a stored frame survived the repair"
+    assert instance.messages[-1]["content"] == "the opening problem", (
+        "the repair reordered the transcript instead of dropping the frames"
+    )
+    assert instance.recap_folded == 1, f"the fold point was not re-anchored: {instance.recap_folded}"
+    assert {"event": "conversation_repaired", "dropped": 2, "kept": 3} in instance.events
+
+
+def test_folding_never_records_the_pinned_material(tmp_path):
+    """Pinned material is never evicted, so a recap line about it describes a window that is not real.
+
+    It is also the shape of the self-folding recap: stored frames were system
+    messages sitting inside the fold range.
+    """
+    instance = resumable(tmp_path)
+    instance.context_window = 200
+    instance.eviction_chunk = 50
+    instance.messages = [message("system", "you are"), message("user", "go")]
+    instance.messages += [
+        message("assistant", f"the answer is {index} " + "z" * 300) for index in range(40)
+    ]
+
+    chassis.Chassis.fold_recap_if_needed(instance)
+
+    recap = instance.carried.recap()
+    assert "- [system]" not in recap, "the pinned message was recorded as dropped"
+    assert "you are" not in recap, "pinned material reached the recap"
+    assert "the answer is 0" in recap, "the evicted material was not recorded"
 
 
 # ---------------------------------------------------------------------------

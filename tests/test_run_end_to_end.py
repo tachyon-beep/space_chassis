@@ -18,6 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import chassis
 import pytest
 from conftest import Reply, Stack, ToolCall, World  # noqa: E402
 
@@ -124,6 +125,41 @@ def test_a_designed_handoff_carries_the_conversation_forward(world, stack_of):
     assert again.returncode in (0, 42)
     resumed = [record for record in stack.lifecycle() if record.get("event") == "run_resumed"]
     assert resumed, f"the second run did not resume: {stack.lifecycle()[-3:]}"
+
+
+def test_a_second_run_appends_to_the_conversation_rather_than_inverting_it(world, stack_of):
+    """A resumed lineage keeps its transcript in order and stores no recap frames.
+
+    One stored recap per resume, pinned and re-sent, is how a real lineage
+    reached 1.33 M estimated tokens against a 200 000-token window; and a handoff
+    inserted at the front is how the newest material ended up where the window
+    drops first.
+    """
+    stack = stack_of(deliberate_script())
+    first = stack.run_chassis()
+    assert first.returncode == 42, first.stderr[-500:]
+    second = stack.run_chassis()
+    assert second.returncode in (0, 42), second.stderr[-500:]
+
+    conversation = stack.conversation()
+    assert conversation, "the second run left no conversation"
+    frames = [
+        message
+        for message in conversation
+        if str(message.get("content", "")).startswith(chassis.RECAP_FRAME_PREFIX)
+    ]
+    assert frames == [], f"{len(frames)} stored recap frame(s) in the conversation"
+
+    notes = [
+        index
+        for index, message in enumerate(conversation)
+        if "left this handoff note" in str(message.get("content", ""))
+    ]
+    first_assistant = next(
+        index for index, message in enumerate(conversation) if message.get("role") == "assistant"
+    )
+    assert notes, "the second run did not open on the first run's handoff note"
+    assert min(notes) > first_assistant, "the handoff note was placed in front of the transcript"
 
 
 def test_a_turn_limit_ends_a_run_without_ending_the_lineage(world, stack_of):
