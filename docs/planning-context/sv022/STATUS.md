@@ -1,6 +1,18 @@
 # SV-022 status
 
+**Correction 1 committed; awaiting independent re-review.** Runtime/tests `53c5c44b167f73e7aefb326fdeacfdced5839835`, correcting SV022-01 and SV022-02 from the initial review. Six pre-fix regression failures; final selected set 563 passes across 11 bounded commands. No acceptance, merge, deployment or real-session collection is claimed.
+
+
 **Implementation and bounded validation complete after resumption; runtime/tests at `efc6c03a9b205132f334c3b00eb95d3605e8a61c`, awaiting independent review. Not accepted.** Final tree: 557 selected passes across 11 bounded commands, no failures (RECEIPT.md §1). Base: accepted `630623a4af30a8d08e90f5d9b0d2ef626af20f13` (runtime `f3812dc9d351a231a0f0879f86c9807f0a6a6634`). Package: checkpoint-safe collection (K-F1 GC) with post-collection recovery and a recorder-in-loop correlation slice. No Git call is made by the worker; the coordinator checkpoints after the worker stops.
+
+## Correction 1 (Astra SV022-01, SV022-02) — awaiting coordinator checkpoint and re-review
+
+Review: `SV-022-Astra-initial-review.md` (head `6a2e504`, runtime/tests `efc6c03`): changes needed. Both findings fixed, each with regressions written first and run alone on the unmodified reviewed runtime — six nodes, all failing as traced (SV022-01's mixed trace stopped `ledger_prefix_missing`; the gate-failure node did not raise; skipping lists were accepted, executed at startup and published live). Final corrected tree: 563 selected passes across 11 bounded commands, no failures. Map, pre-fix outcomes and limits: `checkpoint-001-astra-corrections.md`.
+
+- SV022-01: restart fsyncs the pending intent's own segment before its first unlink (`chassis_gc.sync_intent`); a failed gate is a PersistenceFailure with zero unlinks.
+- SV022-02: `intent_problem` requires the segment list to cover a prefix of the surviving segments (`segment prefix`); already-removed leading items remain valid.
+
+Files: `services/chassis_gc.py`, `services/chassis_startup.py`, `tests/test_chassis_gc.py` (harness watermark + 6 nodes; no assertion changed); docs. No Git call. SV-022 remains unaccepted.
 
 ## Checkpoint 0 — design fixed, nothing active
 
@@ -44,3 +56,5 @@ New: `services/chassis_gc.py`, `tests/test_chassis_gc.py`, `tests/test_chassis_c
 ## Coordinator final checkpoint
 
 Resumed worker completed with exit 0 at 2026-10-07 22:00:33 UTC. The final runtime/test bytes equal the interrupted WIP commit `efc6c03a9b205132f334c3b00eb95d3605e8a61c`; only STATUS and RECEIPT documentation changed after the final validation. No additional source/test edits or redundant validation run were needed to assign the documentation checkpoint. The package remains unaccepted until independent Astra review.
+
+Coordinator committed the stopped correction worker's source/test bytes unchanged at `53c5c44b167f73e7aefb326fdeacfdced5839835`. Exact correction mapping and tests: `checkpoint-001-astra-corrections.md`.
