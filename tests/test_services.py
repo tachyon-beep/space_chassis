@@ -353,10 +353,16 @@ def test_an_environment_failure_pauses_without_climbing():
 
 
 def test_repeated_clean_exits_are_treated_as_a_loop():
-    """A run that exits cleanly three times in two minutes is not idling; it is stuck."""
+    """A run that exits cleanly three times in two minutes is not idling; it is stuck.
+
+    The loop is counted as a failure -- that is what treating it as a loop
+    means -- and answered with a resume: since SV-019 (SV-013 2.2.7, SV-015 v2
+    3.8) no flap moves the conversation away.
+    """
     supervisor = supervisor_module.Supervisor()
     actions = [supervisor.decide(supervisor_module.EXIT_OK)[0] for _ in range(3)]
-    assert actions == ["resume", "resume", "resume_without_session"]
+    assert actions == ["resume", "resume", "resume"]
+    assert len(supervisor.failures) == 1, "the loop was not counted"
 
 
 def test_the_floor_restore_touches_only_the_duty(tmp_path, monkeypatch):

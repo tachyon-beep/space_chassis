@@ -83,7 +83,6 @@ TERMINATE_GRACE = 10
 # seed's codebase, which is where the fleet's own libraries and tools live.
 DUTY_SEED = SEED_DIR / "duty.py"
 CHASSIS = SERVICES_DIR / "chassis.py"
-SESSION_FILES = ("conversation.json",)
 
 
 def normalise_exit(code: int) -> int:
@@ -218,13 +217,19 @@ class Supervisor:
             self.clean_exits.append(now)
             if len(self.clean_exits) >= FLAP_COUNT:
                 # Exiting cleanly three times in two minutes is not a clean
-                # exit; it is a loop, and the conversation is the likeliest
-                # thing driving it.
+                # exit; it is a loop. It is counted as a failure, so genuine
+                # failures that follow climb the ladder sooner, and recorded.
+                # It is answered with a resume and nothing else: no rung moves
+                # the conversation away (that was forgetting, not repair), and
+                # a flap never restores shared work, which belongs to every
+                # agent. A flap does not give up either, even at tier 4: the
+                # tier is diagnostic, and a loop of clean exits is bounded by
+                # each run's own budgets and the recorder's request limit.
                 self.clean_exits.clear()
                 self.failures.append(now)
                 tier = self.tier_for(len(self.failures))
-                self.record("flap", exit=code, tier=tier, action="resume_without_session")
-                return "resume_without_session", tier
+                self.record("flap", exit=code, tier=tier, action="resume")
+                return "resume", tier
             return "resume", 0
 
         self.failures.append(now)
@@ -251,21 +256,6 @@ class Supervisor:
     # -- repairs ------------------------------------------------------------
     def resume(self) -> None:
         return
-
-    def resume_without_session(self) -> None:
-        """Start fresh, keeping everything the agent wrote except the conversation.
-
-        The conversation is moved rather than deleted: an agent that wants to
-        know what the run that flapped was thinking can still read it.
-        """
-        stamps = HOME_DIR / "session" / "abandoned"
-        stamps.mkdir(parents=True, exist_ok=True)
-        for name in SESSION_FILES:
-            source = SESSION_DIR / name
-            if source.exists():
-                target = stamps / f"{int(time.time())}-{name}"
-                with contextlib.suppress(OSError):
-                    shutil.move(str(source), str(target))
 
     def restore_floor(self) -> None:
         """Put the duty back from the image's pristine copy.
@@ -364,9 +354,6 @@ class Supervisor:
             if action == "pause":
                 self.mirror()
                 time.sleep(ENVIRONMENT_PAUSE)
-                continue
-            if action == "resume_without_session":
-                self.resume_without_session()
                 continue
             if action == "restore_floor":
                 self.restore_floor()
