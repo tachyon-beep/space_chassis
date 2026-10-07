@@ -30,7 +30,8 @@ that makes the transcription idempotent) at the next start, before any effect.
 **A pending collection** (SV-022). A valid `GC_INTENT` in P with no `GC_DONE`
 is finished here, whatever the session's `collect` setting: re-validated
 against the retained records (`chassis_gc.intent_problem`; invalid -> stop
-`gc_intent_invalid`, nothing removed), its *fixed* list re-run before this
+`gc_intent_invalid`, nothing removed), its own segment fsynced (a readable
+intent may never have been synced), its *fixed* list re-run before this
 start writes any blob -- a blob it names could otherwise be recreated by this
 start and then removed -- and `GC_DONE` is the first record of the recovery
 core. A torn or damaged intent is in T, not P, and is never authority. A
@@ -527,7 +528,9 @@ class _Context:
         if collecting is not None and not extra:
             # The intent's own fixed list, re-run idempotently -- never a fresh
             # scan -- before this start can write a blob. (With `extra`, its
-            # GC_DONE, compared above, is already durable.)
+            # GC_DONE, compared above, is already durable.) First its own
+            # segment is synced (SV022-01): readable is not durable.
+            gc.sync_intent(session_dir, collecting, ops)
             gc.unlink_intent(session_dir, collecting.payload, ops)
         session = Session(
             session_dir, self.home_dir, writer, replay, ops=ops, lifecycle=self.lifecycle,

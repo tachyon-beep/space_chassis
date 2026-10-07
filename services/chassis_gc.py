@@ -47,6 +47,8 @@ collection never checkpoints, so it cannot recurse.
 
 from __future__ import annotations
 
+import contextlib
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -243,6 +245,27 @@ def structure_problem(payload) -> str | None:
     return None
 
 
+def segments_form_prefix(listed, present) -> bool:
+    """Whether deleting `listed` (ascending) leaves the surviving segments contiguous (SV022-02).
+
+    The fenced oldest-first order keeps the ledger contiguous only if the
+    list covers a prefix of the surviving segments: no listed segment may be
+    deleted while an older surviving one is omitted. Listed segments already
+    gone must lie below every survivor -- the leading items an interrupted
+    run of this same fixed list removed.
+    """
+    present = set(present)
+    oldest = min(present) if present else None
+    surviving = [number for number in listed if number in present]
+    if any(number not in present and oldest is not None and number > oldest for number in listed):
+        return False
+    if surviving:
+        listed_set = set(listed)
+        if any(number < surviving[-1] and number not in listed_set for number in present):
+            return False
+    return True
+
+
 def intent_problem(payload, records, *, intent_seq: int | None = None, active_segment: int | None = None) -> str | None:
     """Why `payload` is not deletion authority over `records`, or None.
 
@@ -251,7 +274,8 @@ def intent_problem(payload, records, *, intent_seq: int | None = None, active_se
     the last record. The intent must immediately follow the checkpoint it
     names; its cover must be that checkpoint's actual previous base; every
     segment must lie below the first retained record's segment (and so below
-    the intent's own and the active one); no blob may be retained by that
+    the intent's own and the active one) and the list must cover a prefix of
+    the surviving segments (SV022-02); no blob may be retained by that
     checkpoint, nor named by any record after the intent.
     """
     problem = structure_problem(payload)
@@ -278,6 +302,8 @@ def intent_problem(payload, records, *, intent_seq: int | None = None, active_se
     limit = basis.keep_segment if active_segment is None else min(basis.keep_segment, active_segment)
     if any(number >= limit for number in payload["segments"]):
         return "protected segment"
+    if not segments_form_prefix(payload["segments"], {record.segment for record in records}):
+        return "segment prefix"
     if basis.retained & set(payload["blobs"]):
         return "retained blob"
     try:
@@ -297,6 +323,28 @@ def _unlink(ops: cp.DurableOps, path: Path) -> None:
         ops.unlink(str(path))
     except FileNotFoundError:
         pass  # already gone: re-running an intent is idempotent
+
+
+def sync_intent(session_dir: Path, intent: cp.Record, ops: cp.DurableOps) -> None:
+    """fsync the segment file holding `intent`'s frame: the restart's deletion gate (SV022-01).
+
+    A complete intent readable after a process death may be an append whose
+    fsync never returned; directory fences do not make its bytes durable, and
+    syncing any other (newer) segment does not cover it. So before a restart
+    removes anything under it, the intent's own segment is synced. A failure
+    is a PersistenceFailure, before any unlink.
+    """
+    path = Path(session_dir) / "ledger" / cp.segment_name(intent.segment)
+    fd = None
+    try:
+        fd = ops.open(str(path), os.O_RDONLY | os.O_CLOEXEC)
+        ops.fsync(fd)
+    except OSError as error:
+        raise cp.PersistenceFailure(f"the pending intent could not be made durable: {type(error).__name__}: {error}") from error
+    finally:
+        if fd is not None:
+            with contextlib.suppress(OSError):
+                ops.close(fd)
 
 
 def unlink_intent(session_dir: Path, payload: dict, ops: cp.DurableOps) -> None:

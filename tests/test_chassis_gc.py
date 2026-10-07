@@ -126,14 +126,16 @@ class CutOps(cp.DurableOps):
     their directory (`lose_unsynced` applies that).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, durable: dict | None = None) -> None:
+        # `durable`: another process's watermark, carried across a process death
+        # (SV022-01) -- readable bytes are not promoted to durable by reopening.
         self.paths: dict[int, str] = {}
         self.armed = False
         self.log: list[tuple] = []  # (call, file name, frame type) while armed
         self.crash_at: int | None = None  # process death before armed call number n
         self.crash_when = None  # or before the first armed call matching (call, path, frame)
         self.fail_when = None  # (call, path, frame) -> OSError to raise instead, or None
-        self.durable: dict[str, int] = {}
+        self.durable: dict[str, int] = {} if durable is None else durable
         self.unfenced: dict[str, list] = {}
 
     def _step(self, call, path, frame=None) -> None:
@@ -614,7 +616,7 @@ def test_o2_4_a_second_interruption_while_finishing_the_same_intent_converges(tm
         collect_with(session, ops)
     session.close()
     assert payload["segments"][0] not in segments(root) and payload["segments"][1] in segments(root)
-    restart = CutOps()
+    restart = CutOps(durable=ops.durable)  # the first process's watermark (SV022-01)
     real = gc.unlink_intent
 
     def armed(session_dir, intent, ops):
@@ -1104,3 +1106,116 @@ def test_the_planner_bounds_a_long_backlog_to_one_batch(tmp_path):
     assert len(cp.canonical_body(plan.payload)) < cp.MAX_LEDGER_BODY
     assert plan.payload["blobs"] == sorted(plan.payload["blobs"]) and plan.payload["blobs"][0] == names[0]
     assert gc.intent_problem(plan.payload, records) is None
+
+
+# ---------------------------------------------------------------------------
+# Astra SV022-01: a readable intent is made durable before a restart unlinks
+# ---------------------------------------------------------------------------
+def readable_unsynced_intent(tmp_path):
+    """GC_INTENT fully written, its fsync never returned, then process death (M-1): readable, not durable."""
+    first = CutOps()
+    root, session, _ = collection_ready(tmp_path, first)
+    first.crash_when = lambda call, path, frame: call == "fsync" and frame == "11"
+    with pytest.raises(Crash):
+        collect_with(session, first)
+    session.close()
+    intent = of_type(root, "GC_INTENT")[-1]
+    assert first.durable[str(root.session_dir / "ledger" / cp.segment_name(intent.segment))] < intent.offset + intent.length
+    return root, first, intent
+
+
+def test_sv022_01_a_restart_syncs_the_readable_intent_before_its_first_unlink(tmp_path):
+    """Astra's trace: unsynced intent -> process death -> restart unlinks one fenced segment -> crash -> host loss."""
+    root, first, intent = readable_unsynced_intent(tmp_path)
+    before = inventory(root)
+    restart = CutOps(durable=first.durable)  # syncs that returned in either process, nothing else
+    restart.armed = True
+    restart.crash_when = lambda call, path, frame: call == "unlink" and any(e[0] == "unlink" for e in restart.log)
+    with pytest.raises(Crash):
+        start(root, ops=restart)  # dies after the first segment unlink and its ledger/ fence, before GC_DONE
+    assert intent.payload["segments"][0] not in segments(root)
+    lose_unsynced(restart, "all")
+    after = converge(root)
+    assert_converged(root, intent.payload, before, after, first.kept, "SV022-01")
+    assert our_intent(root, intent.payload) is not None, "the deletion's authority survived the host loss"
+    log = restart.log
+    first_unlink = next(i for i, entry in enumerate(log) if entry[0] == "unlink")
+    gate = [i for i, entry in enumerate(log) if entry == ("fsync", cp.segment_name(intent.segment), "11")]
+    assert gate and gate[0] < first_unlink, "the intent's own segment is synced before the first unlink"
+    assert log[first_unlink + 1][:2] == ("sync_dir", "ledger")
+
+
+def test_sv022_01_a_failed_restart_intent_sync_removes_nothing(tmp_path):
+    root, first, intent = readable_unsynced_intent(tmp_path)
+    before = inventory(root)
+    restart = CutOps(durable=first.durable)
+    restart.armed = True
+    hits = []
+
+    def fail(call, path, frame):
+        if not hits and call == "fsync" and frame == "11":
+            hits.append(path)
+            return OSError(errno.EIO, "injected EIO")
+        return None
+
+    restart.fail_when = fail
+    with pytest.raises(cp.PersistenceFailure):
+        start(root, ops=restart)
+    assert hits == [str(root.session_dir / "ledger" / cp.segment_name(intent.segment))]
+    assert not [e for e in restart.log if e[0] == "unlink"], "no unlink after a failed gate"
+    assert not [e for e in restart.log if e[2] == "12"], "no GC_DONE"
+    assert inventory(root) == before
+    assert (root.session_dir / "FSYNC_FAILED").exists(), "the persistence boundary attempted its marker"
+    assert start(root).classification == "A1"
+
+
+# ---------------------------------------------------------------------------
+# Astra SV022-02: an intent's segments must be a prefix of the surviving ones
+# ---------------------------------------------------------------------------
+def skipping(payload, how):
+    segments_ = payload["segments"]
+    return {**payload, "segments": segments_[1:] if how == "front" else [segments_[0], *segments_[2:]]}
+
+
+def test_sv022_02_a_list_skipping_a_surviving_segment_is_refused_and_a_partial_prefix_is_not(tmp_path):
+    root, session, records, payload, _basis = planned(tmp_path)
+    assert len(payload["segments"]) >= 3
+    for how in ("front", "interior"):
+        assert gc.intent_problem(skipping(payload, how), records, active_segment=session.writer.segment_no) == "segment prefix", how
+    # A restart after a partial prefix deletion: the leading listed segments are already gone.
+    removed = set(payload["segments"][:2])
+    remaining = [r for r in records if r.segment not in removed]
+    assert gc.intent_problem(payload, remaining, active_segment=session.writer.segment_no) is None
+
+
+@pytest.mark.parametrize("how", ["front", "interior"])
+def test_sv022_02_startup_refuses_a_pending_intent_that_would_leave_a_gap(tmp_path, how):
+    root, _bad = write_intent(tmp_path, lambda payload, basis, records: skipping(payload, how))
+    before = root.snapshot()
+    opening = start(root)
+    assert (opening.stop, opening.session) == ("gc_intent_invalid", None), opening
+    assert opening.detail["problem"] == "segment prefix"
+    after = root.snapshot()
+    stopped = str((root.session_dir / "STOPPED").relative_to(root.path))
+    assert json.loads(after.pop(stopped))["reason"] == "gc_intent_invalid"
+    assert after == before, "nothing removed, copied or written but STOPPED"
+
+
+def test_sv022_02_the_live_owner_refuses_a_skipping_plan_before_publishing_it(tmp_path, monkeypatch):
+    root, session, _ = collection_ready(tmp_path)
+    events = []
+    session.lifecycle = lambda event, **fields: events.append((event, fields))
+    real = gc.plan_collection
+
+    def front_skipping(records, **kwargs):
+        plan = real(records, **kwargs)
+        return gc.Plan(skipping(plan.payload, "front"), 0)
+
+    monkeypatch.setattr(gc, "plan_collection", front_skipping)
+    before = inventory(root)
+    intents = len(of_type(root, "GC_INTENT"))
+    session.checkpoint()
+    assert ("gc_refused", {"reason": "segment prefix"}) in events
+    assert len(of_type(root, "GC_INTENT")) == intents, "no GC_INTENT was published"
+    after = inventory(root)
+    assert before["segments"] <= after["segments"] and after["blobs"] == before["blobs"], "nothing was removed"
