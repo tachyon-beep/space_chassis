@@ -37,6 +37,22 @@ start and then removed -- and `GC_DONE` is the first record of the recovery
 core. A torn or damaged intent is in T, not P, and is never authority. A
 missing segment prefix that no retained intent names stops as damage
 (`ledger_prefix_missing`).
+
+**Witnessed file-repair resolutions** (SV-023). `continue-from-bound` for
+`conversation_unreadable_unbound` (A14) and `run_json_unreadable` (CK5) is
+permitted only when the stop carries a checked *witness*. The witness is
+captured from the ledger and IDENTITY at the moment of the stop, never from
+the damaged file, and only when the ledger end is strictly clean and no
+transaction of its own is open. Acknowledgement verifies that every witnessed
+fact is unchanged and that the externally repaired file is exactly the newest
+checkpoint's (conversation bytes, or run.json by its recorded hash). It then
+makes a sealed carrier durable before removing STOPPED. The start that
+consumes the carrier verifies it again before it changes anything. That start
+fences session/, writes RECOVERY_ACK first and only once, and only then
+finishes the ordinary TC0 closure. A carrier whose evidence no longer holds
+stops (`acknowledgement_unverified`) and grants nothing. Nothing here repairs
+a file, chooses an older checkpoint or resets an epoch, lineage, note
+watermark or request identity.
 """
 
 from __future__ import annotations
@@ -44,7 +60,9 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
 import re
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -53,7 +71,7 @@ import chassis_gc as gc
 import chassis_persistence as cp
 import chassis_replay as rp
 from chassis_replay import Replay, ReplayMismatch, SessionState
-from chassis_session import BLOB_READ_MAX, Session, checkpoint_tuple, read_identity
+from chassis_session import BLOB_READ_MAX, Session, SessionInvariant, checkpoint_tuple, read_identity
 
 STOPPED = "STOPPED"
 FSYNC_FAILED = "FSYNC_FAILED"
@@ -69,11 +87,20 @@ MESSAGE_RECORDS = ("TURN_RESPONSE", "RESPONSE_REFUSED", "DONE", "UNRUN", "SYNTH"
 
 # Resolutions this runtime can carry out. The others named by SV-013/v2
 # (bootstrap-preserving; continue-from-bound for a damaged or missing ledger)
-# are refused rather than half-performed: they remain deferred.
+# are refused rather than half-performed: they remain deferred. The
+# persistence layer's generic resolution names authorize nothing by themselves.
+# SV-023: the two file-repair pairs, each only for a stop with a valid witness
+# whose evidence still verifies (see "Witnessed file-repair resolutions").
+WITNESSED_RESOLUTIONS = {
+    ("conversation_unreadable_unbound", "continue-from-bound"),
+    ("run_json_unreadable", "continue-from-bound"),
+}
+WITNESSED_REASONS = frozenset(reason for reason, _resolution in WITNESSED_RESOLUTIONS)
 IMPLEMENTED_RESOLUTIONS = {
     ("ledger_tail_ambiguous", "continue-conservative"),
     ("fsync_failed_previous_run", "continue-from-bound"),
     ("corrupt_quarantine_full", "continue-from-bound"),
+    *WITNESSED_RESOLUTIONS,
 }
 
 A14_NOTICE = (
@@ -207,11 +234,17 @@ def acknowledge(session_dir: Path, reason: str, resolution: str, *, ops: cp.Dura
     still stops every start (A0) until it is removed last, so no crash cut
     grants permission that was not durably given. Repeating the command is
     harmless. It adds no evidence about what any damaged bytes held.
+
+    The two witnessed pairs (SV-023) go through `_acknowledge_witnessed`:
+    the same order, after a pure verification of the stop's witness against
+    the repaired store, with the verified evidence sealed into the carrier.
     """
     ops = ops or cp.DurableOps()
     session_dir = Path(session_dir)
     if (reason, resolution) not in IMPLEMENTED_RESOLUTIONS:
         raise cp.LedgerError(f"{resolution!r} for {reason!r} is not implemented by this runtime; nothing was changed")
+    if (reason, resolution) in WITNESSED_RESOLUTIONS:
+        return _acknowledge_witnessed(session_dir, reason, resolution, ops)
     ack = cp.acknowledge_stop(session_dir, reason, resolution, ops=ops)
     stopped = ops.read(str(session_dir / STOPPED), cp.MAX_MARKER_READ)
     ack["ack_id"] = sha256(stopped + f"\n{reason}\n{resolution}".encode())[:32]
@@ -243,6 +276,386 @@ def _remove(session_dir: Path, name: str, ops) -> None:
             ops.sync_dir(str(session_dir))
     except OSError as error:
         raise cp.PersistenceFailure(f"{name} could not be removed durably: {error}") from error
+
+
+def _fence_session(session_dir: Path, ops) -> None:
+    """fsync(session/): the carrier's name and STOPPED's removal are durable before anything depends on them."""
+    try:
+        ops.sync_dir(str(session_dir))
+    except OSError as error:
+        raise cp.PersistenceFailure(f"session/ could not be fenced: {error}") from error
+
+
+def _sync_record(session_dir: Path, record: cp.Record, ops) -> None:
+    """fsync the segment holding `record`, which a previous process wrote but may never have synced.
+
+    Readable is not durable (the SV022-01 rule): a receipt found after a
+    process death is made durable before the carrier it retires is removed.
+    """
+    path = Path(session_dir) / "ledger" / cp.segment_name(record.segment)
+    fd = None
+    try:
+        fd = ops.open(str(path), os.O_RDONLY | os.O_CLOEXEC)
+        ops.fsync(fd)
+    except OSError as error:
+        raise cp.PersistenceFailure(f"the acknowledgement receipt could not be made durable: {type(error).__name__}: {error}") from error
+    finally:
+        if fd is not None:
+            with contextlib.suppress(OSError):
+                ops.close(fd)
+
+
+# ---------------------------------------------------------------------------
+# Witnessed file-repair resolutions (SV-023; engineering schema, not canonical fields)
+# ---------------------------------------------------------------------------
+WITNESS_VERSION = 1
+WITNESS_KEYS = frozenset({"version", "reason", "stop_id", "lineage_id", "ledger", "checkpoint", "identity_reserved", "check"})
+WITNESS_LEDGER_KEYS = frozenset({"first_seq", "last_seq", "last_chain", "last_segment", "end_segment", "end_offset"})
+WITNESS_CHECKPOINT_KEYS = frozenset({"checkpoint_seq", "covers_seq", "conv_sha256", "conv_bytes", "chain", "run_sha256"})
+CARRIER_KEYS = frozenset({"reason", "resolution", "ack_id", "witness", "evidence", "check"})
+HEX32 = re.compile(r"[0-9a-f]{32}")
+# A witness is never taken over an open transaction or another resolution's
+# carrier; FSYNC_FAILED keeps A1's authority over every later step.
+WITNESS_BLOCKERS = (RECOVERING, ACKNOWLEDGED, FSYNC_FAILED)
+# Records that bind the file to something other than the newest checkpoint.
+SWITCH_RECORDS = (*SWITCH_TYPES, "EXTERNAL_DELETE")
+
+
+class AcknowledgementRefused(cp.LedgerError):
+    """A witnessed resolution whose evidence does not verify. Nothing was changed."""
+
+
+def _refuse(why: str):
+    raise AcknowledgementRefused(f"{why}; nothing was changed")
+
+
+def _sealed(body: dict) -> dict:
+    return {**body, "check": _intent_check(body)}
+
+
+def _check_ok(value: dict) -> bool:
+    body = {key: item for key, item in value.items() if key != "check"}
+    try:
+        return value["check"] == _intent_check(body)
+    except (TypeError, ValueError):
+        return False
+
+
+def stop_witness(session_dir: Path, reason: str, scan: cp.LedgerScan | None, lineage: str | None, ops) -> dict | None:
+    """The checked witness of a qualifying file-repair stop, or None: the stop is then recorded as before, ineligible.
+
+    Taken from the ledger and IDENTITY only, never from the damaged file, and
+    only over a strictly clean end (TC0, no A2) with no transaction of its own
+    open: no RECOVERING, carrier or FSYNC_FAILED, no pending or unauthorized
+    collection. The newest checkpoint's state must validate and the checked
+    reservation must cover every turn the records show. Sealed by a SHA-256
+    over every field (M-3); `stop_id` makes each stop distinct.
+    """
+    session_dir = Path(session_dir)
+    if reason not in WITNESSED_REASONS or lineage is None or scan is None or scan.stop or scan.tail or not scan.records:
+        return None
+    if any((session_dir / name).exists() for name in WITNESS_BLOCKERS):
+        return None
+    records = scan.records
+    try:
+        if gc.unauthorized_prefix(records) is not None or gc.pending_intent(records) is not None:
+            return None
+    except gc.GCRefused:
+        return None
+    checkpoints = [record for record in records if record.type_name == "CHECKPOINT"]
+    if not checkpoints:
+        return None
+    newest = checkpoints[-1]
+    try:
+        state = SessionState.from_wire(newest.payload["state"])
+    except rp.StateError:
+        return None
+    reserved = read_identity(session_dir, lineage, ops)
+    used = [record.payload["turn_seq"] for record in records if record.type_name == "REQUEST_SENT"]
+    if state.requests_last is not None:
+        used.append(state.requests_last["turn_seq"])
+    if state.lineage_id != lineage or reserved is None or reserved < max(used, default=0):
+        return None
+    last = records[-1]
+    witness = _sealed({
+        "version": WITNESS_VERSION, "reason": reason, "stop_id": secrets.token_hex(16), "lineage_id": lineage,
+        "ledger": {
+            "first_seq": records[0].seq, "last_seq": last.seq, "last_chain": last.chain, "last_segment": last.segment,
+            "end_segment": scan.tail_segment, "end_offset": scan.tail_offset,
+        },
+        "checkpoint": {**checkpoint_tuple(newest), "chain": newest.chain, "run_sha256": newest.payload["run_sha256"]},
+        "identity_reserved": reserved,
+    })
+    return witness if witness_problem(witness, reason) is None else None
+
+
+def witness_problem(witness, reason: str | None = None) -> str | None:
+    """Why `witness` is not a valid stop witness (for `reason`, if given), or None."""
+    if not isinstance(witness, dict) or set(witness) != WITNESS_KEYS:
+        return "keys"
+    if not _check_ok(witness):
+        return "check"
+    if witness["version"] != WITNESS_VERSION:
+        return "version"
+    if witness["reason"] not in WITNESSED_REASONS or (reason is not None and witness["reason"] != reason):
+        return "reason"
+    if not (isinstance(witness["stop_id"], str) and HEX32.fullmatch(witness["stop_id"])):
+        return "stop_id"
+    if not (isinstance(witness["lineage_id"], str) and LINEAGE_ID.fullmatch(witness["lineage_id"])):
+        return "lineage_id"
+    ledger, checkpoint = witness["ledger"], witness["checkpoint"]
+    if not (isinstance(ledger, dict) and set(ledger) == WITNESS_LEDGER_KEYS):
+        return "ledger"
+    if not (
+        rp.counter(ledger["first_seq"], minimum=1)
+        and rp.counter(ledger["last_seq"], minimum=1)
+        and ledger["first_seq"] <= ledger["last_seq"]
+        and rp.is_hex64(ledger["last_chain"])
+        and all(rp.counter(ledger[key]) and ledger[key] <= cp.MAX_SEGMENT_NO for key in ("last_segment", "end_segment"))
+        and ledger["last_segment"] <= ledger["end_segment"]
+        and rp.counter(ledger["end_offset"])
+    ):
+        return "ledger"
+    if not (isinstance(checkpoint, dict) and set(checkpoint) == WITNESS_CHECKPOINT_KEYS):
+        return "checkpoint"
+    if not (
+        rp.counter(checkpoint["checkpoint_seq"], minimum=1)
+        and rp.counter(checkpoint["covers_seq"])
+        and rp.counter(checkpoint["conv_bytes"])
+        and checkpoint["covers_seq"] < checkpoint["checkpoint_seq"]
+        and ledger["first_seq"] <= checkpoint["checkpoint_seq"] <= ledger["last_seq"]
+        and all(rp.is_hex64(checkpoint[key]) for key in ("conv_sha256", "chain", "run_sha256"))
+    ):
+        return "checkpoint"
+    if not rp.counter(witness["identity_reserved"]):
+        return "identity_reserved"
+    return None
+
+
+def carrier_problem(carrier) -> str | None:
+    """Why ACKNOWLEDGED's content is not a sealed witnessed carrier, or None."""
+    if not isinstance(carrier, dict) or set(carrier) != CARRIER_KEYS:
+        return "keys"
+    if not _check_ok(carrier):
+        return "check"
+    if (carrier["reason"], carrier["resolution"]) not in WITNESSED_RESOLUTIONS:
+        return "pair"
+    if not (isinstance(carrier["ack_id"], str) and HEX32.fullmatch(carrier["ack_id"])):
+        return "ack_id"
+    problem = witness_problem(carrier["witness"], carrier["reason"])
+    if problem:
+        return f"witness {problem}"
+    if not isinstance(carrier["evidence"], dict) or carrier["evidence"].get("witness_check") != carrier["witness"]["check"]:
+        return "evidence"
+    return None
+
+
+def receipt_payload(carrier: dict) -> dict:
+    """The RECOVERY_ACK this carrier's consumption writes, first and once."""
+    return {
+        "reason": carrier["reason"], "resolution": carrier["resolution"], "ack_id": carrier["ack_id"],
+        "stop_id": carrier["witness"]["stop_id"], "evidence_sha256": sha256(cp.canonical_body(carrier["evidence"])),
+    }
+
+
+@dataclass(frozen=True)
+class Verified:
+    evidence: dict
+    written: tuple = ()  # at consumption: this transaction's own records after the witnessed end, receipt first
+
+
+@dataclass(frozen=True)
+class Witnessed:
+    carrier: dict
+    receipt: dict
+    written: tuple  # this transaction's records already in the ledger (receipt first), or ()
+
+
+def witnessed_evidence(session_dir: Path, witness: dict, ops=None, *, receipt: dict | None = None) -> Verified:
+    """Verify a witnessed stop against the store as it is now. Pure: it only reads.
+
+    Every witnessed fact must be unchanged: the lineage, the strictly clean
+    ledger (same first and last record, chain and physical end), no missing
+    prefix or pending collection, IDENTITY exactly as witnessed, the same
+    newest checkpoint. Its conversation must be directly bound: no switch
+    after it, the latest binding is its own hash, and conversation.json is
+    its bytes. run.json must be the metadata that checkpoint recorded (by
+    `run_sha256`) and agree with it field by field. Its state, the blobs that
+    state needs and the suffix replay must verify, and the TC0 closure must
+    be derivable. No FSYNC_FAILED or RECOVERING may be present.
+
+    `receipt`: at the start that consumes the acknowledgement. Bytes after
+    the witnessed end are then allowed only as this transaction's own:
+    segment headers, this receipt, then exactly the closure derived here, in
+    order (returned as `written`), optionally followed by a strict byte prefix
+    of its next frame -- an append a process death cut short (M-1), which the
+    ordinary TC1 rule then sets aside. A RECOVERING is allowed only if
+    anchored at or after the witnessed end; what follows its anchor is that
+    intent's to check. Otherwise nothing may follow the witnessed end.
+    Raises AcknowledgementRefused.
+    """
+    ops = ops or cp.DurableOps()
+    session_dir = Path(session_dir)
+    problem = witness_problem(witness)
+    if problem:
+        _refuse(f"the stop witness is not valid ({problem})")
+    if (session_dir / FSYNC_FAILED).exists():
+        _refuse(f"{FSYNC_FAILED} is present and is resolved first")
+    lineage, ledger, wanted = witness["lineage_id"], witness["ledger"], witness["checkpoint"]
+    try:
+        segments = cp.read_segments(session_dir / "ledger", ops=ops) if (session_dir / "ledger").is_dir() else []
+    except OSError as error:
+        _refuse(f"the ledger cannot be read ({type(error).__name__})")
+    if _segment_lineage(segments) != lineage:
+        _refuse("the ledger is not the witnessed lineage's")
+    scan = cp.scan_segments(segments, lineage)
+    if scan.stop or (scan.tail and receipt is None):
+        _refuse("the ledger does not end cleanly (TC0)")
+    head = tuple(record for record in scan.records if record.seq <= ledger["last_seq"])
+    after = [record for record in scan.records if record.seq > ledger["last_seq"]]
+    anchor = (head[0].seq, head[-1].seq, head[-1].chain, head[-1].segment) if head else None
+    if anchor != (ledger["first_seq"], ledger["last_seq"], ledger["last_chain"], ledger["last_segment"]):
+        _refuse("the ledger is not the witnessed ledger")
+    if after and receipt is None:
+        _refuse("records were written after the witnessed end")
+    if not after and not scan.tail and (scan.tail_segment, scan.tail_offset) != (ledger["end_segment"], ledger["end_offset"]):
+        _refuse("the ledger does not end where the witness says")
+    intent_status, intent = _read_json_object(ops, session_dir / RECOVERING, cp.MAX_MARKER_READ)
+    intent_seq = None
+    if intent_status != "absent":
+        if receipt is None:
+            _refuse(f"{RECOVERING} is present and is resolved first")
+        last_seq = intent.get("last_seq") if intent_status == "ok" else None
+        found = next((r for r in scan.records if r.seq == last_seq), None) if rp.counter(last_seq, minimum=1) else None
+        if found is None or found.seq < ledger["last_seq"] or found.chain != intent.get("chain"):
+            _refuse("a recovery is open that is not this acknowledgement's own")
+        intent_seq = found.seq
+    own = [record for record in after if intent_seq is None or record.seq <= intent_seq]
+    try:
+        if gc.unauthorized_prefix(head) is not None:
+            _refuse("segments below the ledger are missing")
+        if gc.pending_intent(head) is not None:
+            _refuse("a collection is pending")
+    except gc.GCRefused as refusal:
+        _refuse(f"the collection records are invalid ({refusal.reason})")
+    reserved = read_identity(session_dir, lineage, ops)
+    if reserved != witness["identity_reserved"]:
+        _refuse("IDENTITY is not the witnessed reservation")
+    checkpoints = [record for record in head if record.type_name == "CHECKPOINT"]
+    newest = checkpoints[-1] if checkpoints else None
+    if newest is None or {**checkpoint_tuple(newest), "chain": newest.chain, "run_sha256": newest.payload["run_sha256"]} != wanted:
+        _refuse("the newest checkpoint is not the witnessed one")
+    try:
+        state_n = SessionState.from_wire(newest.payload["state"])
+    except rp.StateError as error:
+        _refuse(f"the checkpoint state is invalid ({str(error)[:200]})")
+    suffix = [record for record in head if record.seq > newest.payload["covers_seq"]]
+    if any(
+        record.type_name in SWITCH_RECORDS or (record.type_name == "RECOVERY" and record.payload.get("kind") == "conversation_adopted")
+        for record in suffix
+    ):
+        _refuse("the conversation was switched after the newest checkpoint")
+    kind, bound, _binder = _binding(head, newest)
+    if kind not in ("checkpoint", "restored") or bound != wanted["conv_sha256"]:
+        _refuse("the conversation file is not bound to the newest checkpoint")
+    conv = read_conversation(session_dir / "conversation.json", ops)
+    if conv.status != "ok" or conv.sha != wanted["conv_sha256"] or len(conv.data) != wanted["conv_bytes"]:
+        _refuse("conversation.json is not the newest checkpoint's bytes")
+    status, run_bytes = _read(ops, session_dir / "run.json", META_READ_MAX)
+    if status != "ok" or sha256(run_bytes) != wanted["run_sha256"]:
+        _refuse("run.json is not the metadata the newest checkpoint recorded")
+    try:
+        meta = json.loads(run_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        meta = None
+    recorded = meta.get("checkpoint") if isinstance(meta, dict) else None
+    if not (
+        isinstance(recorded, dict)
+        and meta.get("format") == 2
+        and meta.get("lineage_id") == lineage
+        and recorded.get("covers_seq") == wanted["covers_seq"]
+        and recorded.get("conv") == {"sha256": wanted["conv_sha256"], "bytes": wanted["conv_bytes"]}
+    ):
+        _refuse("run.json does not agree with the newest checkpoint")
+    blobs = cp.BlobStore(session_dir / "blobs", ops=ops)
+    read_blob = lambda sha: blobs.get(sha, BLOB_READ_MAX)  # noqa: E731
+    if any(read_blob(sha) is None for sha in state_n.blobs_live()):
+        _refuse("a blob the checkpoint state needs is missing or damaged")
+    last = head[-1]
+    head_scan = cp.LedgerScan(head, last.seq, last.chain, b"", last.segment, last.offset + last.length)
+    try:
+        replay = _replay(json.loads(conv.data), state_n.copy(), suffix, read_blob)
+        tail = cp.classify_tail(head_scan)
+        plan = cp.plan_recovery(head_scan, tail, read_blob=read_blob)
+        core = derive_core(replay, plan, tail, head_scan, None, lineage, identity_reserved=reserved)
+    except ReplayMismatch as error:
+        _refuse(f"the bound replay does not verify ({str(error)[:200]})")
+    if plan.action != "continue" or tail.kind != "TC0":
+        _refuse("the ledger end does not continue as TC0")
+    evidence = {
+        "witness_check": witness["check"],
+        "conv_sha256": conv.sha,
+        "run_sha256": sha256(run_bytes),
+        "replay_sha256": sha256(rp.conversation_bytes(replay.messages)),
+        "state_sha256": sha256(cp.canonical_body(replay.state.to_wire(next_seq=last.seq + 1))),
+        "open_group": None if replay.group is None else [replay.group.turn_seq, replay.group.answered],
+        "closure_sha256": sha256(cp.canonical_body({"core": [[name, payload] for name, payload in core]})),
+    }
+    written = tuple(record for record in own if record.type_name != "LEDGER_HEADER")
+    planned = [("RECOVERY_ACK", receipt), *core] if receipt is not None else []
+    if len(written) > len(planned) or not all(_same_record(record, item) for record, item in zip(written, planned)):
+        _refuse("records after the witnessed end are not this acknowledgement's own")
+    if scan.tail and intent_seq is None:
+        expected = _next_own_frame((*head, *own)[-1], planned, len(written), lineage, scan.tail_segment)
+        if expected is None or len(scan.tail) >= len(expected) or not expected.startswith(scan.tail):
+            _refuse("the bytes after the witnessed end are not this acknowledgement's own")
+    return Verified(evidence, written)
+
+
+def _next_own_frame(last: cp.Record, planned: list, written: int, lineage: str, tail_segment) -> bytes | None:
+    """The exact frame this transaction appends next after `last`, or None if it appends none there."""
+    if tail_segment != last.segment:
+        if tail_segment != last.segment + 1:
+            return None
+        payload = {"lineage_id": lineage, "segment_no": tail_segment, "first_seq": last.seq + 1, "prev_chain": last.chain}
+        return cp.encode_frame(last.seq + 1, "LEDGER_HEADER", payload, last.chain)[0]
+    if written >= len(planned):
+        return None
+    name, payload = planned[written]
+    return cp.encode_frame(last.seq + 1, name, payload, last.chain)[0]
+
+
+def _acknowledge_witnessed(session_dir: Path, reason: str, resolution: str, ops) -> dict:
+    """SV-023: verify the witnessed stop, make the sealed carrier durable, then remove STOPPED.
+
+    Refusals happen before any write. The same command repeated is
+    idempotent: with STOPPED still present it rewrites the identical carrier
+    (its fences again) and removes STOPPED; after STOPPED's removal it only
+    repeats the session/ fence. Any other pending carrier is refused rather
+    than replaced.
+    """
+    status, stopped = _read(ops, session_dir / STOPPED, cp.MAX_MARKER_READ)
+    held_status, held = _read_json_object(ops, session_dir / ACKNOWLEDGED, cp.MAX_MARKER_READ)
+    held_ok = held_status == "ok" and carrier_problem(held) is None
+    if status == "absent" and held_ok and (held["reason"], held["resolution"]) == (reason, resolution):
+        _fence_session(session_dir, ops)
+        return held
+    cp.acknowledge_stop(session_dir, reason, resolution, ops=ops)  # STOPPED readable, this reason: else LedgerError
+    detail = json.loads(stopped.decode("utf-8")).get("detail")
+    witness = detail.get("witness") if isinstance(detail, dict) else None
+    problem = witness_problem(witness, reason)
+    if problem:
+        _refuse(f"the {reason} stop carries no valid witness ({problem}); a stop without one is not eligible")
+    ack_id = sha256(stopped + f"\n{reason}\n{resolution}".encode())[:32]
+    if held_status != "absent" and not (held_ok and held["ack_id"] == ack_id):
+        _refuse("another acknowledgement is pending")
+    verified = witnessed_evidence(session_dir, witness, ops)
+    carrier = _sealed({"reason": reason, "resolution": resolution, "ack_id": ack_id, "witness": witness, "evidence": verified.evidence})
+    if held_status != "absent" and held != carrier:
+        _refuse("the pending acknowledgement of this stop was made on other evidence")
+    cp.write_bytes_durable(session_dir / ACKNOWLEDGED, json.dumps(carrier, sort_keys=True).encode(), ops=ops)
+    cp.clear_stop(session_dir, ops=ops)
+    return carrier
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +725,11 @@ class _Context:
         if (session_dir / FSYNC_FAILED).exists():
             raise StartupStop("fsync_failed_previous_run", None, "A1")
         self.ack = _read_ack(session_dir, self.ops)
+        self.witnessed = None
+        self.clean_end = None
+        if self.ack is not None and (self.ack["reason"], self.ack["resolution"]) in WITNESSED_RESOLUTIONS:
+            # SV-023: verified before this start changes anything at all.
+            self.witnessed = self._verify_carrier(self.ack)
         meta_status, meta = _read_json_object(self.ops, session_dir / "run.json")
         self.meta = meta if meta_status == "ok" else None
         self.meta_unreadable = meta_status == "unreadable"
@@ -334,7 +752,8 @@ class _Context:
                 raise StartupStop("ledger_missing", None, "A7")
             return self._start_legacy()
         if self.meta_unreadable:
-            raise StartupStop("run_json_unreadable", None, "CK5")
+            # The lineage and scan here come from the ledger itself, never from run.json.
+            raise StartupStop("run_json_unreadable", self._witness("run_json_unreadable", scan, lineage), "CK5")
         checkpointed = any(record.type_name == "CHECKPOINT" for record in scan.records)
         if format2:
             authority = "format2"
@@ -361,6 +780,33 @@ class _Context:
             result = cp.quarantine_tail(self.session_dir, scan, plan, self.quarantine, ops=self.ops)
             if not result.applied:
                 raise StartupStop(result.stop_reason, {"bytes": len(scan.tail)}, write=False)
+
+    def _verify_carrier(self, carrier: dict) -> Witnessed:
+        """SV-023: a witnessed carrier grants nothing unless the store is still what was acknowledged.
+
+        Verified over the records up to the witnessed end; anything after it
+        must be this same transaction's own prefix. Otherwise stop
+        `acknowledgement_unverified` (no resolution), with only STOPPED
+        written. On success session/ is fenced: the carrier's name and
+        STOPPED's removal are durable before any record depends on them.
+        """
+        problem = carrier_problem(carrier)
+        if problem:
+            raise StartupStop("acknowledgement_unverified", {"problem": f"carrier: {problem}"}, "ACK")
+        receipt = receipt_payload(carrier)
+        try:
+            verified = witnessed_evidence(self.session_dir, carrier["witness"], self.ops, receipt=receipt)
+        except AcknowledgementRefused as refusal:
+            raise StartupStop("acknowledgement_unverified", {"ack_id": carrier["ack_id"], "problem": str(refusal)[:300]}, "ACK") from refusal
+        if verified.evidence != carrier["evidence"]:
+            raise StartupStop("acknowledgement_unverified", {"ack_id": carrier["ack_id"], "problem": "the evidence changed"}, "ACK")
+        _fence_session(self.session_dir, self.ops)
+        return Witnessed(carrier, receipt, verified.written)
+
+    def _witness(self, reason: str, scan, lineage) -> dict | None:
+        """A stop's detail carrying its witness, or None (the stop as before, ineligible)."""
+        witness = stop_witness(self.session_dir, reason, scan, lineage, self.ops)
+        return {"witness": witness} if witness is not None else None
 
     def _new_session(self, lineage: str) -> Session:
         return Session.start_fresh(self.session_dir, self.home_dir, lineage, ops=self.ops, lifecycle=self.lifecycle, **self.session_kwargs)
@@ -475,8 +921,12 @@ class _Context:
         if missing is not None:
             raise StartupStop("ledger_prefix_missing", {"oldest_segment": missing}, "A2")
         collecting = self._pending_collection(p0)
+        # SV-023: only a strictly clean end with no transaction of its own can witness an A14 stop.
+        self.clean_end = scan0 if intent is None and tail.kind == "TC0" and collecting is None else None
 
         decision = self._classify_base(p0, extra, format2, lineage, read_blob)
+        if self.witnessed is not None and decision.case not in ("A9", "A9t"):
+            raise StartupStop("acknowledgement_unverified", {"problem": f"classified {decision.case}"}, "ACK")
         try:
             core = derive_core(decision.replay, plan, tail, scan0, tail_ack, lineage, identity_reserved=identity)
         except ReplayMismatch as error:
@@ -488,6 +938,9 @@ class _Context:
             # The pending collection completes first: GC_DONE immediately
             # follows its intent, before any record (or blob) of this start.
             core = [("GC_DONE", {"intent_seq": collecting.seq}), *core]
+        if self.witnessed is not None and not self.witnessed.written:
+            # SV-023: the receipt is this start's first record, before any closure.
+            core = [("RECOVERY_ACK", self.witnessed.receipt), *core]
 
         # Set the tail aside only under a durable intent (see the module docstring).
         if scan0.tail and intent is None:
@@ -675,7 +1128,8 @@ class _Context:
                 decision.case = "A12"
         else:
             if strict is None or (newest is not None and newest_bytes is None):
-                raise StartupStop("conversation_unreadable_unbound", None, "A14")
+                witness = self._witness("conversation_unreadable_unbound", self.clean_end, lineage)
+                raise StartupStop("conversation_unreadable_unbound", witness, "A14")
             decision.case = "A14"
             # SV021-02: put the newest checkpoint's own (verified) bytes back,
             # so the file is bound again and .prev.json keeps its base; before
@@ -781,6 +1235,18 @@ class _Context:
         """Transcribe a non-tail acknowledgement as RECOVERY_ACK once; then remove ACKNOWLEDGED."""
         ack = self.ack
         if ack is None:
+            return
+        if self.witnessed is not None:
+            # SV-023: exactly one receipt, made durable here -- it may be an
+            # earlier start's append that is readable but was never synced --
+            # before the carrier, removed last, can no longer re-create it.
+            wanted = _wire(self.witnessed.receipt)
+            ledger = cp.scan_segments(cp.read_segments(self.session_dir / "ledger", ops=self.ops), session.lineage_id).records
+            found = [r for r in ledger if r.type_name == "RECOVERY_ACK" and r.payload == wanted]
+            if len(found) != 1:
+                raise SessionInvariant(f"the acknowledgement receipt is recorded {len(found)} times, not once")
+            _sync_record(self.session_dir, found[0], self.ops)
+            _remove(self.session_dir, ACKNOWLEDGED, self.ops)
             return
         done = any(r.type_name == "RECOVERY_ACK" and r.payload.get("ack_id") == ack["ack_id"] for r in records)
         done = done or any(
