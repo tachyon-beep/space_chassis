@@ -1613,6 +1613,22 @@ def make_handler(recorder: Recorder):
             self.response_started = True
             super().send_response_only(code, message)
 
+        def parse_request(self):
+            """The stdlib's parse, unless the header deadline cut the input short.
+
+            A shut read side looks like the end of the request line or of the
+            headers; parsing that fragment would answer a timeout with a 400
+            about syntax, or treat a half-sent request as complete.
+            """
+            if self.header_watch.fired:
+                self.close_connection = True
+                return False
+            parsed = super().parse_request()
+            if parsed and self.header_watch.fired:
+                self.close_connection = True
+                return False
+            return parsed
+
         def _begin(self) -> tuple[Exchange, bool]:
             """Headers are complete: end their phase and start the request's bookkeeping."""
             self.header_done = now()

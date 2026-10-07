@@ -48,6 +48,9 @@ x-env: &env
   # only when it ends itself, or dies.
   RUN_MAX_TURNS: ${RUN_MAX_TURNS:-}
   RUN_MAX_SECONDS: ${RUN_MAX_SECONDS:-}
+  # The chassis client's read timeout. The recorder reads the same variable and
+  # finishes every request inside it (its upstream cutoff is this minus 60 s);
+  # raise it here and the recorder follows. Keep the two sites on one value.
   RECORDER_TIMEOUT_SECONDS: ${RECORDER_TIMEOUT_SECONDS:-600}
   SUPERVISOR_INACTIVITY_SECONDS: ${SUPERVISOR_INACTIVITY_SECONDS:-86400}
   PUMP_MAX_ENTRIES: ${PUMP_MAX_ENTRIES:-64}
@@ -511,7 +514,13 @@ services:
       RECORDER_HOURLY_MAX: ${RECORDER_HOURLY_MAX:-2400}
       RECORDER_TOKEN_HOURLY_MAX: ${RECORDER_TOKEN_HOURLY_MAX:-200000000}
       RECORDER_TOKEN_GLOBAL_HOURLY_MAX: ${RECORDER_TOKEN_GLOBAL_HOURLY_MAX:-2000000000}
-      REQUEST_MAX_BYTES: ${REQUEST_MAX_BYTES:-16777216}
+      # 2 MiB: about twice a full 200,000-token window as JSON. The recorder's
+      # memory reservation (768 MiB, five worst-case requests) is sized from it.
+      REQUEST_MAX_BYTES: ${REQUEST_MAX_BYTES:-2097152}
+      # The same client timeout the agents use (see the shared block above): the
+      # recorder anchors its deadlines on it and refuses to start if they cannot
+      # fit. Must equal the agents' value.
+      RECORDER_TIMEOUT_SECONDS: ${RECORDER_TIMEOUT_SECONDS:-600}
       TRANSCRIPTS_DIR: /transcripts
       SOCKET_DIR: /llm/sock
     volumes:

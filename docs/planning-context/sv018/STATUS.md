@@ -9,6 +9,8 @@ Contract: SV-015 v2 §2.1 (t0-anchored deadlines, forward check, watchdog diagno
 | Mechanisms: `Timing`/`timing_problems`/`CLOCK`/`Deadlines`, `Watchdog` (heap, owned/pending entries, shutdown under its lock, diag deque + writer thread), connection cap before thread spawn, `prescan`, `MemoryBudget`, `sse_usage`, `view_response` | done (checkpoint commit 1) | `services/recorder.py` |
 | Handler integration: header phase + canned 408, slots before body, body deadline, pre-scan → 400 structure_limit, memory → 429 memory, forward check → 503 deadline_insufficient, absolute upstream deadline, capped response read, response_cap_exceeded, SSE usage, transcript usage/usage_class, close elapsed_s/custody_s/deadline_overrun, Connection: close | done (checkpoint commit 1) | `services/recorder.py` |
 | Existing coverage after integration | `test_recorder_requests.py` 46 passed (2 expected SystemExit warnings); `test_recorder_custody.py` 33 passed | — |
-| New regressions `tests/test_recorder_bounds.py`, `tests/test_recorder_deadlines.py` | next | — |
-| compose: 2 MiB body default, RECORDER_TIMEOUT_SECONDS wiring | next | — |
-| Receipt | not started | — |
+| Header-phase fix: `parse_request` refuses a fired header phase (a fragment is never parsed as a request) | done (part 2) | `services/recorder.py` |
+| New regressions `tests/test_recorder_bounds.py` (22), `tests/test_recorder_deadlines.py` (16) | done (part 2) | — |
+| compose: 2 MiB body default, RECORDER_TIMEOUT_SECONDS wiring | done (part 2) | `docker-compose.yml` |
+| Complete selected run | 159 passed, 3 expected SystemExit warnings | `RECEIPT.md` §3 |
+| Receipt | done | `RECEIPT.md` |
