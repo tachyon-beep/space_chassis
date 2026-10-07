@@ -6,7 +6,7 @@ This branch is a durability checkpoint, not a merge or deployment approval. John
 
 - SV016 accounting, strict parsing and outbound transport/header boundary: accepted at `afec0a8aab81237c6c09ef55ecf9cd205494d3f6`; independent final review is `sv016/ASTRA-ACCEPTANCE.md`.
 - SV017 transcript custody: accepted at `11e0e26fd5e3e78f2b05f383a2493ef8cd8f1547`; independent final review is `sv017/ASTRA-ACCEPTANCE.md`. Final selected set at that point: 121 passed.
-- SV018 deadline/resource bounds: implementation commits `6b758cc872e6bbd5c103c951609bef434e510c55` and `e6ade17ad4f955675d015de3c5d6e7f28383fd57`; receipt/status at `93d22bfa5e2ed285c4c0e7da38c4262e2bda7ed6`. Implementer reports 159 selected checks passing. Independent Astra review is pending at this checkpoint; the package is WIP until that review and its corrections finish.
+- SV018 deadline/resource bounds: accepted after corrections at `055345d1cd3d13845ffc12b9834787b17d67d23d`; independent final review is `sv018/ASTRA-ACCEPTANCE.md`. Final selected recorder set: **209 passed**, with three deliberate SystemExit warnings. All four Astra findings are closed. Acceptance remains conditional on the documented commissioning assumptions.
 
 The implementer's earlier 'nothing pushed' statements describe actions by that worker. The coordinator separately pushed and verified checkpoint `6b758cc` on the dedicated WIP branch. This document is prepared for the next fast-forward backup; its creation does not itself claim the next remote verification completed.
 
