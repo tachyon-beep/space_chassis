@@ -355,3 +355,63 @@ def test_a_ledger_header_inside_a_segment_is_invalid():
     scan = cp.scan_segments([cp.Segment(0, first + second)], LINEAGE)
     assert [r.seq for r in scan.records] == [1]
     assert scan.tail == second
+
+
+# -- SV020-03: every accepted encoding is readable by this scanner ------------
+# The specified body encoding (UTF-8 with backslashreplace) is not injective:
+# a high surrogate code unit followed by a low one is written as two JSON
+# escapes, which JSON decoding joins into one scalar whose canonical bytes
+# differ. Such a payload is refused before any byte is written; everything
+# accepted must decode to exactly its bytes.
+PAIR = chr(0xD83D) + chr(0xDE00)  # two surrogate code units, not the scalar U+1F600
+REPRESENTATIONS = [
+    ("pair", {"kind": "notice", "epoch": 0, "text": PAIR}, False),  # the review's input
+    ("pair-in-key", {"kind": "notice", "epoch": 0, "text": "x", PAIR: 1}, False),
+    ("pair-inside-text", {"kind": "notice", "epoch": 0, "text": "a" + PAIR + "b"}, False),
+    ("lone-high", {"kind": "notice", "epoch": 0, "text": "a\ud83db"}, True),
+    ("lone-low", {"kind": "notice", "epoch": 0, "text": "a\ude00b"}, True),
+    ("low-then-high", {"kind": "notice", "epoch": 0, "text": "\ude00\ud83d"}, True),
+    ("non-bmp-scalar", {"kind": "notice", "epoch": 0, "text": "\U0001F600"}, True),
+]
+REPRESENTATION_IDS = [r[0] for r in REPRESENTATIONS]
+REPRESENTATION_CASES = [r[1:] for r in REPRESENTATIONS]
+
+
+def test_sv020_03_the_pair_fixture_is_two_code_units():
+    assert len(PAIR) == 2 and PAIR != "\U0001F600"
+
+
+@pytest.mark.parametrize("payload, accepted", REPRESENTATION_CASES, ids=REPRESENTATION_IDS)
+def test_sv020_03_an_encodable_payload_parses_to_its_own_bytes(payload, accepted):
+    if not accepted:
+        with pytest.raises(cp.LedgerError, match="unsupported representation"):
+            cp.encode_frame(23, "MSG_APPEND", payload, CHAIN_22)
+        return
+    frame, chain = cp.encode_frame(23, "MSG_APPEND", payload, CHAIN_22)
+    parsed = cp.parse_record(frame, 0, 23, CHAIN_22, 0)
+    assert isinstance(parsed, cp.Record), parsed
+    assert parsed.payload == payload and parsed.chain == chain
+
+
+@pytest.mark.parametrize("payload, accepted", REPRESENTATION_CASES, ids=REPRESENTATION_IDS)
+def test_sv020_03_every_accepted_append_scans_and_a_refusal_changes_nothing(tmp_path, payload, accepted):
+    session, writer = new_ledger(tmp_path)
+    before = (segment_path(session).read_bytes(), writer.next_seq, writer.chain)
+    if accepted:
+        writer.append("MSG_APPEND", payload)
+    else:
+        with pytest.raises(cp.LedgerError):
+            writer.append("MSG_APPEND", payload)
+        assert (segment_path(session).read_bytes(), writer.next_seq, writer.chain) == before
+        assert not writer.broken
+    writer.append("MSG_APPEND", message("after"))  # a later valid frame
+    scan = scan_dir(session)
+    assert scan.stop is None and scan.tail == b"" and cp.classify_tail(scan).kind == "TC0"
+    texts = [r.payload.get("text") for r in scan.records[1:]]
+    assert texts == ([payload["text"], "after"] if accepted else ["after"])
+
+
+def test_sv020_03_escaped_pair_bytes_from_elsewhere_are_still_invalid_not_normalized():
+    body = b'{"epoch":0,"kind":"notice","text":"\\ud83d\\ude00"}'
+    result = cp.parse_record(raw_frame(23, 0x0A, body, CHAIN_22), 0, 23, CHAIN_22, 0)
+    assert isinstance(result, cp.Invalid) and result.reason == "body is not canonical"

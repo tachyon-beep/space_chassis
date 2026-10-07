@@ -262,8 +262,42 @@ def encode_header(seq: int, type_id: int, plen: int) -> bytes:
     return prefix + header_check(prefix).encode("ascii") + b" "
 
 
+def decode_body(type_name: str, body: bytes) -> tuple[dict | None, str | None]:
+    """The payload a body's bytes mean, or why the scanner rejects them.
+
+    The one rule for both directions: the encoder refuses exactly what this
+    rejects, so every frame it produces is readable as written.
+    """
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        return None, "body is not JSON"
+    problem = validate_payload(type_name, payload)
+    if problem:
+        return None, f"body: {problem}"
+    # The body must be exactly what the writer would produce for this payload:
+    # json.loads alone accepts NaN, duplicate keys and other spellings, which
+    # would make the decoded payload differ from what the bytes were meant to say.
+    try:
+        canonical = canonical_body(payload)
+    except LedgerError:
+        canonical = None
+    if canonical != body:
+        return None, "body is not canonical"
+    return payload, None
+
+
 def encode_frame(seq: int, type_name: str, payload: dict, prev_chain: str) -> tuple[bytes, str]:
-    """One complete frame and its chain value. Refuses before anything is written."""
+    """One complete frame and its chain value. Refuses before anything is written.
+
+    Unsupported representation (SV020-03): the specified body encoding (UTF-8
+    with backslashreplace) is not injective. A payload whose body would not
+    decode back to the same bytes and a valid payload is refused rather than
+    written as a frame the scanner rejects. For this encoder that is exactly
+    a string (key or value) containing a high surrogate code unit immediately
+    followed by a low one: its two escapes decode as one non-BMP scalar. Lone
+    surrogates and genuine non-BMP scalars round-trip and are accepted.
+    """
     if type_name not in TYPE_IDS:
         raise LedgerError(f"unknown record type {type_name!r}")
     problem = validate_payload(type_name, payload)
@@ -273,6 +307,9 @@ def encode_frame(seq: int, type_name: str, payload: dict, prev_chain: str) -> tu
         raise LedgerError("prev_chain must be 64 lowercase hex characters")
     body = canonical_body(payload)
     header = encode_header(seq, TYPE_IDS[type_name], len(body))
+    _, problem = decode_body(type_name, body)
+    if problem:
+        raise LedgerError(f"{type_name}: unsupported representation ({problem}); the frame would not be read back as written")
     chain = hashlib.sha256(bytes.fromhex(prev_chain) + header + body).hexdigest()
     return header + body + b" " + chain.encode("ascii") + b"\n", chain
 
@@ -354,21 +391,9 @@ def parse_record(data: bytes, offset: int, expected_seq: int, prev_chain: str | 
     trailer = TRAILER_PATTERN.fullmatch(data, offset + HEADER_BYTES + header.plen, end)
     if trailer is None or b"\n" in body:
         return Invalid("trailer", header)
-    try:
-        payload = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError, RecursionError):
-        return Invalid("body is not JSON", header)
-    problem = validate_payload(header.type_name, payload)
+    payload, problem = decode_body(header.type_name, body)
     if problem:
-        return Invalid(f"body: {problem}", header)
-    # The body must be exactly what the writer would produce for this payload:
-    # json.loads alone accepts NaN, duplicate keys and other spellings, which
-    # would make the decoded payload differ from what the bytes were meant to say.
-    try:
-        if canonical_body(payload) != body:
-            return Invalid("body is not canonical", header)
-    except LedgerError:
-        return Invalid("body is not canonical", header)
+        return Invalid(problem, header)
     if prev_chain is None:
         prev_chain = payload.get("prev_chain") if header.type_name == "LEDGER_HEADER" else None
         if prev_chain is None:
@@ -762,6 +787,10 @@ def plan_recovery(scan: LedgerScan, tail: TailClass, *, read_blob, acknowledgeme
     if hidden:
         records.append({"kind": "damaged_tail_acknowledged", "detail": {"bytes": tail.length}})
         notices.append(HIDDEN_TURN_NOTICE.format(seq=scan.last_seq))
+        # v2 1.3 TC4 acknowledgement, "Notes: the HANDOFF.md mirror rule above":
+        # a hidden NOTE_WRITTEN and its mirror are reachable from any P.
+        # Recommended only; the comparison and adoption are not done here.
+        mirror_check = True
 
     spend = False
     if state.pending_request is not None:
@@ -1016,14 +1045,25 @@ class BlobStore:
     def __init__(self, blobs_dir: Path, *, ops: DurableOps | None = None) -> None:
         self.dir = Path(blobs_dir)
         self.ops = ops or DurableOps()
+        self.fenced = False  # whether this store's fsync of blobs/'s parent has returned
 
     def ensure(self) -> None:
-        if not self.dir.is_dir():
-            try:
+        """blobs/ exists and its name is durable in its parent (SV020-01).
+
+        A directory that survived a process death may still be lost by a host
+        loss until its parent's fsync returns, so the fence runs on first use
+        whether or not the directory already exists; only a returned fence is
+        cached.
+        """
+        if self.fenced:
+            return
+        try:
+            if not self.dir.is_dir():
                 self.ops.mkdir(str(self.dir))
-                self.ops.sync_dir(str(self.dir.parent))
-            except OSError as error:
-                raise PersistenceFailure(f"blobs/ could not be created durably: {error}") from error
+            self.ops.sync_dir(str(self.dir.parent))
+        except OSError as error:
+            raise PersistenceFailure(f"blobs/ could not be made durable: {error}") from error
+        self.fenced = True
 
     def put(self, data: bytes) -> str:
         sha = hashlib.sha256(data).hexdigest()
@@ -1090,6 +1130,9 @@ class LedgerWriter:
         # None until a failure; then whether the best-effort FSYNC_FAILED
         # marker write returned (v2 1.4.9). False claims nothing durable.
         self.marker_written: bool | None = None
+        # Whether this writer's fsyncs of session/ and ledger/ have returned:
+        # names this process found (ledger/, segments) are not durable until then.
+        self.namespace_fenced = False
         self.blobs = BlobStore(self.session_dir / "blobs", ops=self.ops)
 
     # -- starting -------------------------------------------------------------
@@ -1097,6 +1140,7 @@ class LedgerWriter:
     def create(cls, session_dir: Path, lineage_id: str, *, ops: DurableOps | None = None, segment_max: int = SEGMENT_MAX) -> LedgerWriter:
         """A new lineage: ledger/ (fenced in session/), segment 0 from the genesis chain.
 
+        The fence runs even when ledger/ survived an earlier attempt (SV020-01).
         An existing *empty* segment 0 (its creation's header was torn and has
         been set aside) is reused; any other existing segment 0 is refused.
         """
@@ -1104,9 +1148,9 @@ class LedgerWriter:
         if not writer.ledger_dir.is_dir():
             try:
                 writer.ops.mkdir(str(writer.ledger_dir))
-                writer.ops.sync_dir(str(writer.session_dir))
             except OSError as error:
-                raise PersistenceFailure(f"ledger/ could not be created durably: {error}") from error
+                raise PersistenceFailure(f"ledger/ could not be created: {error}") from error
+        writer._fence_namespace()
         first = writer.ledger_dir / segment_name(0)
         writer.open_segment(reuse_empty=first.exists())
         return writer
@@ -1119,6 +1163,12 @@ class LedgerWriter:
         or header was lost and the torn header quarantined), that segment
         number is reused: its LEDGER_HEADER is written with first_seq = last+1
         and fenced, exactly as a rotation would (O2-5).
+
+        Before it returns -- so before any gate can run -- the writer fsyncs
+        session/ and ledger/ (SV020-01): a complete segment found readable may
+        be one whose rotation died before its directory fsync, and its name is
+        not durable until a fence returns. A fence failure raises
+        PersistenceFailure and no writer is returned.
         """
         if scan.stop or scan.tail:
             raise LedgerError("the ledger has an unresolved tail or stop; recover first")
@@ -1126,6 +1176,7 @@ class LedgerWriter:
             raise LedgerError("an empty ledger is created, not continued")
         last = scan.records[-1]
         writer = cls(session_dir, lineage_id, next_seq=last.seq + 1, prev_chain=last.chain, segment_no=last.segment, ops=ops, segment_max=segment_max)
+        writer._fence_namespace()
         if scan.tail_segment is not None and scan.tail_segment != last.segment:
             if scan.tail_segment != last.segment + 1 or scan.tail_offset != 0:
                 raise LedgerError("the newest segment does not follow the last record's segment")
@@ -1150,6 +1201,7 @@ class LedgerWriter:
         before any byte is written.
         """
         self._usable()
+        self._fence_namespace()
         number = self.segment_no + 1
         path = self.ledger_dir / segment_name(number)
         payload = {"lineage_id": self.lineage_id, "segment_no": number, "first_seq": self.next_seq, "prev_chain": self.chain}
@@ -1184,6 +1236,7 @@ class LedgerWriter:
         if type_name == "LEDGER_HEADER":
             raise LedgerError("segment headers are written by open_segment")
         frame, chain = encode_frame(self.next_seq, type_name, payload, self.chain)
+        self._fence_namespace()
         offset = self.segment_bytes
         try:
             _write_all(self.ops, self.fd, frame)
@@ -1232,6 +1285,22 @@ class LedgerWriter:
             with contextlib.suppress(OSError):
                 self.ops.close(self.fd)
             self.fd = None
+
+    def _fence_namespace(self) -> None:
+        """fsync(session/) for the ledger/ name, then fsync(ledger/) for the segment names.
+
+        Once per writer, before its first write (SV020-01); cached only after
+        both return. session/ itself is a durable-root precondition. A failure
+        is a sync error: the writer is broken and nothing dependent runs.
+        """
+        if self.namespace_fenced:
+            return
+        try:
+            self.ops.sync_dir(str(self.session_dir))
+            self.ops.sync_dir(str(self.ledger_dir))
+        except OSError as error:
+            self._fail(None, error)
+        self.namespace_fenced = True
 
     # -- failure --------------------------------------------------------------
     def _usable(self) -> None:
@@ -1289,7 +1358,8 @@ def quarantine_tail(
     here. At capacity: no copy, **no truncation**,
     `STOPPED{corrupt_quarantine_full}`; the tail bytes stay where they are.
     The segment is re-read first, so the bytes truncated are exactly the
-    bytes copied, and the copy is durable before the truncation.
+    bytes copied, and the copy -- name, directory and parent fences -- is
+    durable before the truncation.
     """
     ops = ops or DurableOps()
     if plan.action != "continue" or not plan.quarantine_tail:
@@ -1307,12 +1377,15 @@ def quarantine_tail(
         write_stop(session_dir, "corrupt_quarantine_full", {"bytes": len(scan.tail)}, ops=ops)
         return QuarantineResult(False, "corrupt_quarantine_full", None)
     corrupt = Path(quarantine.corrupt_dir)
+    # corrupt/'s name is fenced in its parent on every call, whether it is new
+    # or survived a process death (SV020-01): truncation removes the only other
+    # copy of the tail, so it must never depend on an unfenced name.
     try:
         if not corrupt.is_dir():
             ops.mkdir(str(corrupt))
-            ops.sync_dir(str(session_dir))
+        ops.sync_dir(str(corrupt.parent))
     except OSError as error:
-        raise PersistenceFailure(f"corrupt/ could not be created durably: {error}") from error
+        raise PersistenceFailure(f"corrupt/ could not be made durable: {error}") from error
     # The name carries the content hash: a second recovery at the same offset
     # with different bytes gets its own file and never replaces earlier evidence.
     digest = hashlib.sha256(scan.tail).hexdigest()[:16]

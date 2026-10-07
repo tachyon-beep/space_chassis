@@ -253,6 +253,7 @@ def test_o1_8_both_calls_ran_behind_damaged_headers_and_stay_unknown_after_ackno
     assert cp.HIDDEN_TURN_NOTICE.format(seq=22) in plan.notices
     assert {"kind": "damaged_tail_acknowledged", "detail": {"bytes": 908}} in plan.recovery_records
     assert plan.quarantine_tail
+    assert plan.handoff_mirror_check  # SV020-02: a hidden NOTE_WRITTEN and its mirror are reachable
 
 
 def _lost_response_tail():
@@ -298,17 +299,21 @@ def test_o1_9_a_lost_response_and_invocation_give_spend_and_the_hidden_turn_noti
     assert {"kind": "possible_duplicate_spend", "detail": {"turn_seq": 8, "attempt": 2}} in plan.recovery_records
     notice = cp.HIDDEN_TURN_NOTICE.format(seq=30)
     assert notice in plan.notices and "tools may have run" in notice
+    assert plan.handoff_mirror_check  # SV020-02, P ends after REQUEST_SENT
 
 
 def test_acknowledgement_is_bound_to_the_stopped_bytes_and_resolution(tmp_path):
     tail = damage_headers(b"".join(group_7_frames()), [0, 144, 454, 598])
     scan = scan_of(p_through_22(), tail)
     stale = acknowledged(tmp_path, tail + b"x")
-    assert plan_for(scan, acknowledgement=stale)[1].action == "stop"
     unbound = {"reason": "ledger_tail_ambiguous", "resolution": "continue-conservative"}
-    assert plan_for(scan, acknowledgement=unbound)[1].action == "stop"
-    bootstrap = acknowledged(tmp_path, tail, resolution="bootstrap-preserving")
-    assert plan_for(scan, acknowledgement=bootstrap)[1].action == "stop"  # the caller's separate path
+    bootstrap = acknowledged(tmp_path, tail, resolution="bootstrap-preserving")  # the caller's separate path
+    before = _snapshot(tmp_path)
+    for acknowledgement in (None, stale, unbound, bootstrap):
+        plan = plan_for(scan, acknowledgement=acknowledgement)[1]
+        assert (plan.action, plan.quarantine_tail, plan.handoff_mirror_check) == ("stop", False, False)
+        assert plan.calls == () and plan.recovery_records == () and plan.notices == ()
+    assert _snapshot(tmp_path) == before  # planning a stop mutates nothing
     assert (tmp_path / "STOPPED").exists()  # acknowledging removes nothing
 
 
@@ -343,6 +348,7 @@ def test_acknowledged_tc4_at_a_unit_boundary_lists_no_call_but_assumes_spend():
     assert plan.calls == ()
     assert cp.HIDDEN_TURN_NOTICE.format(seq=40) in plan.notices
     assert any(r["kind"] == "possible_duplicate_spend" for r in plan.recovery_records)
+    assert plan.handoff_mirror_check  # SV020-02, P ends at a unit boundary
 
 
 # -- C-D3 and the DONE rows ---------------------------------------------------

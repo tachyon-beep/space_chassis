@@ -75,6 +75,15 @@ class FaultOps(cp.DurableOps):
     def sync_dir(self, path):
         self._check("sync_dir", path)
         super().sync_dir(path)
+        self.events.append(("fenced", str(path)))  # the directory fsync returned
+
+    def calls(self):
+        """The attempted operations, without the 'fenced' returns."""
+        return [event for event in self.events if event[0] != "fenced"]
+
+    def before(self, first, second):
+        """Whether event `first` occurs, and occurs before event `second` (which must occur)."""
+        return first in self.events and self.events.index(first) < self.events.index(second)
 
 
 def eio():
@@ -211,7 +220,7 @@ def test_write_bytes_durable_fences_and_a_failure_leaves_the_old_file(tmp_path):
     ops = FaultOps()
     target = tmp_path / "run.json"
     cp.write_bytes_durable(target, b"one", ops=ops)
-    kinds = [e[0] for e in ops.events]
+    kinds = [e[0] for e in ops.calls()]
     assert kinds == ["open", "write", "fsync", "rename", "sync_dir"]
     ops.faults.append(("fsync", anything, eio()))
     with pytest.raises(cp.PersistenceFailure):
@@ -281,6 +290,108 @@ def test_o2_5_a_torn_segment_header_is_set_aside_then_the_segment_reused(tmp_pat
     result = cp.quarantine_tail(session, scan, plan, cp.Quarantine(session / "corrupt"))
     assert result.applied and segment_path(session, 1).stat().st_size == 0
     _continue_and_append(session)
+
+
+# -- SV020-01: a new process fences surviving names before depending on them ---
+# Visibility after process death is not durability (M-1/M-2): a name that is
+# readable may still be lost by a later host loss until its parent directory's
+# fsync returns. The session root itself is a durable-root precondition.
+def _first(ops, operation, prefix):
+    return next(e for e in ops.events if e[0] == operation and e[1].startswith(prefix))
+
+
+def test_sv020_01_a_complete_surviving_segment_is_fenced_before_any_effect(tmp_path):
+    session = _rotate_and_die(tmp_path)  # header written and fsynced; fsync(ledger/) never ran
+    scan = scan_dir(session)
+    assert [r.segment for r in scan.records] == [0, 0, 1] and cp.classify_tail(scan).kind == "TC0"
+    ops = FaultOps()
+    writer = cp.LedgerWriter.continue_after(session, LINEAGE, scan, ops=ops, segment_max=100)
+    seen = []
+    writer.gate("REQUEST_SENT", {"turn_seq": 1, "attempt": 1, "label": "0f1e:1:1"}, lambda: seen.append(list(ops.events)))
+    events = seen[0]
+    ledger = str(session / "ledger")
+    assert ("fenced", ledger) in events and ("fenced", str(session)) in events
+    assert events.index(("fenced", ledger)) < events.index(("write", str(segment_path(session, 1))))
+
+
+def test_sv020_01_a_failed_restart_fence_permits_no_effect(tmp_path):
+    session = _rotate_and_die(tmp_path)
+    scan = scan_dir(session)
+    before = segment_path(session, 1).read_bytes()
+    ops = FaultOps()
+    ops.faults.append(("sync_dir", lambda path: path == str(session / "ledger"), eio()))
+    started = []
+    with pytest.raises(cp.PersistenceFailure):
+        writer = cp.LedgerWriter.continue_after(session, LINEAGE, scan, ops=ops, segment_max=100)
+        writer.gate("REQUEST_SENT", {"turn_seq": 1, "attempt": 1, "label": "0f1e:1:1"}, lambda: started.append(1))
+    assert started == []
+    assert segment_path(session, 1).read_bytes() == before
+
+
+def test_sv020_01_a_surviving_ledger_directory_is_fenced_in_session_before_its_first_segment(tmp_path):
+    session = tmp_path / "session"
+    session.mkdir()
+    dying = FaultOps()
+    dying.faults.append(("sync_dir", lambda path: path == str(session), Crash()))
+    with pytest.raises(Crash):
+        cp.LedgerWriter.create(session, LINEAGE, ops=dying)
+    assert (session / "ledger").is_dir() and not segment_path(session).exists()
+
+    failing = FaultOps()
+    failing.faults.append(("sync_dir", lambda path: path == str(session), eio()))
+    with pytest.raises(cp.PersistenceFailure):
+        cp.LedgerWriter.create(session, LINEAGE, ops=failing)
+    assert not segment_path(session).exists()
+
+    ops = FaultOps()
+    cp.LedgerWriter.create(session, LINEAGE, ops=ops).close()
+    assert ops.before(("fenced", str(session)), ("open", str(segment_path(session))))
+
+
+def test_sv020_01_a_surviving_blobs_directory_is_fenced_before_a_blob_is_written(tmp_path):
+    session = tmp_path / "session"
+    session.mkdir()
+    dying = FaultOps()
+    dying.faults.append(("sync_dir", lambda path: path == str(session), Crash()))
+    with pytest.raises(Crash):
+        cp.BlobStore(session / "blobs", ops=dying).put(b"result")
+    assert (session / "blobs").is_dir()
+
+    failing = FaultOps()
+    failing.faults.append(("sync_dir", lambda path: path == str(session), eio()))
+    with pytest.raises(cp.PersistenceFailure):
+        cp.BlobStore(session / "blobs", ops=failing).put(b"result")
+    assert list((session / "blobs").iterdir()) == []  # nothing a record could reference
+
+    ops = FaultOps()
+    store = cp.BlobStore(session / "blobs", ops=ops)
+    store.put(b"result")
+    assert ops.before(("fenced", str(session)), _first(ops, "open", str(session / "blobs")))
+    store.put(b"another")
+    assert ops.events.count(("fenced", str(session))) == 1  # cached by the owning store
+
+
+def test_sv020_01_a_surviving_corrupt_directory_is_fenced_before_copy_and_truncation(tmp_path):
+    session, scan, plan = _torn_tail(tmp_path)
+    original = segment_path(session).read_bytes()
+    dying = FaultOps()
+    dying.faults.append(("sync_dir", lambda path: path == str(session), Crash()))
+    with pytest.raises(Crash):
+        cp.quarantine_tail(session, scan, plan, cp.Quarantine(session / "corrupt"), ops=dying)
+    assert (session / "corrupt").is_dir() and segment_path(session).read_bytes() == original
+
+    failing = FaultOps()
+    failing.faults.append(("sync_dir", lambda path: path == str(session), eio()))
+    with pytest.raises(cp.PersistenceFailure):
+        cp.quarantine_tail(session, scan, plan, cp.Quarantine(session / "corrupt"), ops=failing)
+    assert segment_path(session).read_bytes() == original  # the only copy of the tail stays put
+    assert list((session / "corrupt").iterdir()) == []
+
+    ops = FaultOps()
+    assert cp.quarantine_tail(session, scan, plan, cp.Quarantine(session / "corrupt"), ops=ops).applied
+    fence = ("fenced", str(session))
+    assert ops.before(fence, _first(ops, "open", str(session / "corrupt")))
+    assert ops.before(fence, ("truncate", str(segment_path(session))))
 
 
 def test_segment_0_can_be_recreated_only_when_empty(tmp_path):
@@ -392,7 +503,7 @@ def test_installing_keeps_the_previous_file_and_fences_the_directory(tmp_path):
     cp.install_conversation(tmp_path, second, ops=ops)
     assert (tmp_path / "conversation.json").read_bytes() == second
     assert (tmp_path / "conversation.prev.json").read_bytes() == first
-    kinds = [e[0] for e in ops.events[mark:]]
+    kinds = [e[0] for e in ops.events[mark:] if e[0] != "fenced"]
     assert kinds.index("link") < kinds.index("rename") and kinds[-1] == "sync_dir"
     ops.faults.append(("fsync", anything, eio()))
     with pytest.raises(cp.PersistenceFailure):
