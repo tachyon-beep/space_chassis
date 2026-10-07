@@ -2331,8 +2331,17 @@ class WatchedConnection:
         addresses = RESOLVE(self.host, self.port, 0, socket.SOCK_STREAM)
         failure: OSError | None = None
         for family, kind, proto, _canonical, address in addresses:
-            timeout = self._attempt_timeout()  # raises once the phase has no time left
-            sock = NEW_SOCKET(family, kind, proto)
+            # Outside the per-address boundary on purpose: once the phase has
+            # no time left this raises and no further address is tried.
+            timeout = self._attempt_timeout()
+            try:
+                sock = NEW_SOCKET(family, kind, proto)
+            except OSError as error:
+                # This family or protocol cannot be created here (for
+                # example IPv6 on an IPv4-only host). Nothing exists to watch
+                # or close; the next address is tried if time remains.
+                failure = error
+                continue
             self.sock = sock
             self._tell(sock)  # watched before it can block
             try:

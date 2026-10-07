@@ -14,7 +14,7 @@ Date: 2026-10-08. Branch `sv016/recorder-cleared`, from clean base `ff8819eff7a2
 
 ## Found while writing the socket-double test
 
-`Watchdog._shutdown` suppressed only `OSError`/`ValueError` around `socket.socket.shutdown(sock, how)`. Any other exception (here a `TypeError` for a non-socket) would have escaped into the watchdog thread's loop and ended deadline enforcement process-wide. Fixed: real sockets use the base-class method, others their own `shutdown`, and every exception is contained. Pre-fix: `TypeError` raised from `fire_due`.
+`Watchdog._shutdown` suppressed only `OSError`/`ValueError` around `socket.socket.shutdown(sock, how)`. Any other ordinary exception (here a `TypeError` for a non-socket) would have escaped into the watchdog thread's loop and ended deadline enforcement process-wide. Fixed: real sockets use the base-class method, others their own `shutdown`, and ordinary exceptions (`contextlib.suppress(Exception)`) are contained. Control exceptions (`BaseException` subclasses such as `SystemExit`, `KeyboardInterrupt`) are deliberately **not** suppressed, and nothing here claims the watchdog survives them. (Wording corrected in checkpoint 003; the earlier text said "every exception".) Pre-fix: `TypeError` raised from `fire_due`.
 
 ## Commands and results (bounded runner, `--cpu 23`, one at a time; `SC_SCRATCH=/tmp/sv018-integration-check`)
 

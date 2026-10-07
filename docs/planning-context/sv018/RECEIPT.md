@@ -88,7 +88,14 @@ Base `ff8819e`. Full finding → change → test map, pre-fix results and limits
 - **SV018-01:** TCP and TLS share `WatchedConnection._tcp_connect`: one resolution (DNS, not interruptible), then per address an owned socket watched before its blocking connect, timeout `min(IO_TIMEOUT, time left)` recomputed, no attempt once the time is gone, a failed attempt's watch cancelled before its close; TLS rebinds the watch before the handshake; the time left is rechecked after connect, before any request byte. Connect-before-`begin_forward`, no reconnect, no-send refund and verified TLS defaults unchanged.
 - **SV018-02:** SSE extraction strips the same leading whitespace detection accepts, and nothing else.
 - **SV018-03:** every timing field must be a finite positive number before any arithmetic; a malformed set value is refused, **not** replaced by the default (behaviour change from part 1); the watchdog refuses non-finite deadlines.
-- **Also fixed:** the watchdog's socket shutdown contains every exception, so one bad socket cannot end enforcement.
+- **Also fixed:** the watchdog's socket shutdown contains ordinary exceptions (`Exception`), so one bad socket cannot end enforcement. Control exceptions (`BaseException`) are not suppressed, and no claim is made that the watchdog survives them. (Corrected wording; this line first said "every exception".)
+
+## 7. Correction pass 2 (Astra correction-1 review, SV018-04)
+
+Base `8b24b4908fdb84a7efab5a228874bc5f30107c1d`. Details: `checkpoint-003-astra-corrections-2.md`.
+
+- **SV018-04:** in `_tcp_connect`, socket creation is now inside the per-address failure boundary: an `OSError` creating one address's socket (e.g. `EAFNOSUPPORT`, `EPROTONOSUPPORT`) records the failure and moves to the next address. Only sockets actually created are owned, watched and released (watch cancelled before close). The time-left check stays before every attempt and outside that boundary, so an exhausted deadline ends the attempts instead of being retried. The last failure is raised if no address works.
+- **Selected bounded run:** **209 passed**, 3 expected `SystemExit` warnings.
 - **Docs:** compose comments state a conditional plan, not a guarantee; the tautological FD-reuse assertion is gone.
 - **Selected bounded run:** **201 passed**, 3 expected `SystemExit` warnings.
 - **Evidence limits added:** the connect fixtures are fake resolution and socket doubles on a fake clock (control flow and accounting), not kernel connect behaviour, DNS latency or a real TLS handshake.

@@ -17,4 +17,5 @@ Contract: SV-015 v2 §2.1 (t0-anchored deadlines, forward check, watchdog diagno
 
 Commits: part 1 `6b758cc872e6bbd5c103c951609bef434e510c55` (mechanisms + integration checkpoint); part 2 `e6ade17ad4f955675d015de3c5d6e7f28383fd57` (header-fragment fix, regressions, compose, receipt). Revert units: part 2's tests depend on part 1; part 1 alone passes the pre-existing suites (46 + 33 at checkpoint). Next: independent Astra review.
 
-| Astra initial-review corrections (SV018-01…03, compose wording, FD-reuse fixture, watchdog shutdown containment) | done; 201 passed, 3 expected warnings | `checkpoint-002-astra-corrections.md`, `RECEIPT.md` §6 |
+| Astra initial-review corrections (SV018-01…03, compose wording, FD-reuse fixture, watchdog shutdown containment) | done `8b24b49`; 201 passed, 3 expected warnings | `checkpoint-002-astra-corrections.md`, `RECEIPT.md` §6 |
+| Correction pass 2 (SV018-04 socket-creation fallback; "ordinary exceptions" wording) | done; 209 passed, 3 expected warnings | `checkpoint-003-astra-corrections-2.md`, `RECEIPT.md` §7 |

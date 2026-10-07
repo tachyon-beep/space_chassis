@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import errno
 import json
+import os
 import socket
 import threading
 import time
@@ -576,11 +577,18 @@ def attempts(monkeypatch):
     monkeypatch.setattr(recorder_module, "CLOCK", clock)
     monkeypatch.setattr(recorder_module, "UPSTREAM_SOCKET", "")
     monkeypatch.setattr(recorder_module, "RESOLVE", lambda *args, **kwargs: list(TWO_ADDRESSES))
-    plan: list[tuple[float, bool]] = []
+    plan: list[tuple] = []
     made: list[AttemptSocket] = []
 
     def new_socket(family, type_, proto):
-        cost, succeeds = plan.pop(0)
+        step = plan.pop(0)
+        if step[0] == "create_fails":
+            # The family or protocol cannot be created here; `spend` is fake
+            # time the failed creation is made to take.
+            _tag, number, spend = step
+            clock.advance(spend)
+            raise OSError(number, os.strerror(number))
+        cost, succeeds = step
         sock = AttemptSocket(clock, cost, succeeds)
         made.append(sock)
         return sock
@@ -651,6 +659,89 @@ def test_a_connect_that_runs_out_of_time_is_refunded_and_sends_nothing(make_rig,
         assert len(made) == 1 and made[0].sent == 0 and made[0].closed
         assert recorder_module.WATCHDOG.counts()["active"] == before
         assert rig.upstream.requests == []
+    finally:
+        store.close()
+
+
+IPV6_THEN_IPV4 = [
+    (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:db8::1", 443, 0, 0)),
+    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.1", 443)),
+]
+
+
+@pytest.mark.parametrize("unavailable", [errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT])
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_an_address_whose_socket_cannot_be_created_falls_back_to_the_next(
+    attempts, monkeypatch, scheme, unavailable
+):
+    """SV018-04: IPv6 cannot be created on this host; IPv4 is tried while time remains.
+
+    For HTTPS the shared TCP path is shown up to the connected IPv4 socket;
+    the TLS wrap of a socket double then fails, which is not a handshake test.
+    """
+    clock, plan, made = attempts
+    monkeypatch.setattr(recorder_module, "RESOLVE", lambda *args, **kwargs: list(IPV6_THEN_IPV4))
+    monkeypatch.setenv("LLM_BASE_URL", f"{scheme}://upstream.test/v1")
+    plan.extend([("create_fails", unavailable, 0.0), (1.0, True)])
+    clock.set(480.0)
+    before = recorder_module.WATCHDOG.counts()["active"]
+    upstream = recorder_module.Upstream(540.0, "r1")
+    try:
+        if scheme == "http":
+            upstream.connect()
+            assert upstream.connection.sock is made[0]
+            assert recorder_module.WATCHDOG.counts()["active"] == before + 1, "only the live socket"
+        else:
+            with pytest.raises(Exception):
+                upstream.connect()
+        assert len(made) == 1 and made[0].connected == ("192.0.2.1", 443)
+        assert made[0].timeouts[0] == 60.0 and made[0].sent == 0
+    finally:
+        upstream.close()
+    assert recorder_module.WATCHDOG.counts()["active"] == before
+    assert made[0].closed
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_when_no_address_can_be_created_nothing_is_sent_and_the_request_is_refunded(
+    make_rig, attempts, monkeypatch, scheme
+):
+    clock, plan, made = attempts
+    rig = make_rig(tk=10_000, g=10_000)
+    monkeypatch.setattr(recorder_module, "UPSTREAM_SOCKET", "")
+    monkeypatch.setattr(recorder_module, "RESOLVE", lambda *args, **kwargs: list(IPV6_THEN_IPV4))
+    monkeypatch.setenv("LLM_BASE_URL", f"{scheme}://upstream.test/v1")
+    plan.extend([("create_fails", errno.EAFNOSUPPORT, 0.0), ("create_fails", errno.EPROTONOSUPPORT, 0.0)])
+    before = recorder_module.WATCHDOG.counts()["active"]
+    status, _headers, payload = rig.post(chat())
+    assert status == 502 and json.loads(payload)["error"]["code"] == "upstream_connect"
+    (close,) = rig.closes()
+    assert close["usage_class"] == "none" and close["charged_tokens"] == 0
+    assert rig.budget.snapshot(SLUG)["requests_used"] == 0
+    assert made == [] and plan == [], "both addresses were tried; neither made a socket"
+    assert recorder_module.WATCHDOG.counts()["active"] == before
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_a_failed_creation_that_uses_up_the_time_ends_the_attempts(make_rig, attempts, monkeypatch, scheme):
+    """Open at 480; the first creation fails at 540: no second socket, nothing sent, refunded."""
+    clock, plan, made = attempts
+    rig = make_rig(tk=10_000, g=10_000)
+    store = RecordStore(rig.root / "transcripts", ops=ClockOps(clock, {"events.jsonl": 480.0}, {}))
+    rig.recorder.state.store = store
+    monkeypatch.setattr(recorder_module, "UPSTREAM_SOCKET", "")
+    monkeypatch.setattr(recorder_module, "RESOLVE", lambda *args, **kwargs: list(IPV6_THEN_IPV4))
+    monkeypatch.setenv("LLM_BASE_URL", f"{scheme}://upstream.test/v1")
+    plan.extend([("create_fails", errno.EAFNOSUPPORT, 60.0), (1.0, True)])
+    before = recorder_module.WATCHDOG.counts()["active"]
+    try:
+        status, _headers, payload = rig.post(chat())
+        assert status == 502 and json.loads(payload)["error"]["code"] == "upstream_connect"
+        (close,) = rig.closes()
+        assert close["usage_class"] == "none" and close["charged_tokens"] == 0
+        assert rig.budget.snapshot(SLUG)["requests_used"] == 0
+        assert made == [] and len(plan) == 1, "no second socket was created after the cutoff"
+        assert recorder_module.WATCHDOG.counts()["active"] == before
     finally:
         store.close()
 
