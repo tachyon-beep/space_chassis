@@ -12,6 +12,7 @@ Contracts: SV-013 §2.2.2/2.2.4 and §4.1 (K-A1), §2.2.7 first paragraph with S
 | K-A1 metadata + K-B1 termination | done `1f9f1d7` | `tests/test_chassis_termination.py`, `tests/test_chassis_metadata.py`; seed handoff docstring |
 | Complete selected set | 126 passed, no warnings | `RECEIPT.md` §2 |
 | Receipt | done | `RECEIPT.md` |
+| Correction 1: SV019-G1-01, B1-01, B1-02, B1-03 + CH1/repair wording | done `2f0567c`; 161 passed + 5 integration passed, no warnings | `checkpoint-002-astra-corrections.md`, `RECEIPT.md` §3a |
 
 Full run log, the contract → test map, staged exclusions and limits: `RECEIPT.md`. A denied `git stash` meant K-B1/K-A1 pre-fix evidence is by source, not by run (receipt §2).
 

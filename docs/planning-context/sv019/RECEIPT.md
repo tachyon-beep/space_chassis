@@ -81,14 +81,19 @@ Not run: the full repository suite, ruff, the vehicle referee, pump, live superv
 - **Durable repair (K-G2):** repair applies to the outgoing view only; persisted histories are never rewritten.
 - **Supervisor:** no new give-up, pause, reset or restore policy; the flap tier stays diagnostic.
 
+## 3a. Correction 1 (Astra initial + K-G1 reviews)
+
+Commit `2f0567c1e1aaa0ca900adfa5f4ce1eaa40a783a9`; details, pre-fix results and runs in `checkpoint-002-astra-corrections.md`. SV019-G1-01 (newest group kept whole; group-atomic indices and fold boundary), SV019-B1-01 (queue stores the normalized text it measured), SV019-B1-02 (script mode binds `sys.modules["chassis"]` before duty code), SV019-B1-03 (`SystemExit(int n)` → n again). Final: **161 passed** (selected set), **5 passed** (integration nodes), no warnings. Statements below that the correction made false are corrected in place and marked.
+
 ## 4. Behaviour changes for review
 
 - `close`-style exit reasons now appear in `run_end` (`reason`) and `run.json.ended`.
 - A tool's `DutyFault`, `EnvironmentFailure`, budget or `PersistenceFailure` now ends the run (with its owner's exit code) instead of becoming text.
-- `SystemExit` with a bool, an int outside 0–255, or a non-str/non-int payload exits 43 `invalid_exit_payload` (an int like 300 used to be passed on and wrap).
+- ~~`SystemExit` with a bool, an int outside 0–255, … exits 43~~ (withdrawn by correction 1, SV019-B1-03): `SystemExit(int n)` exits n (a bool as its int); only a non-int, non-str, non-None payload exits 43 `invalid_exit_payload`.
 - During a tool group `ask`/`set_history` raise and `say`/`note` queue; queued text over 16 messages or 64 Ki escaped units raises `ValueError`.
 - A failed checkpoint is exit 44 `persistence_failure` (mid-run, or at the end unless already 44); an unserializable final checkpoint is 43 `checkpoint_failed`.
-- The outgoing request is the repaired view (synthesized unknown results, moved system messages, orphan notices); the window never starts inside a group.
+- The outgoing request is the repaired view (synthesized unknown results, moved system messages, orphan notices) — ordering and pairing only; provider schema and id acceptance are unvalidated. The window never starts inside a group, and the newest group is kept whole even over budget — **true only from correction 1** (`2f0567c`); at `5788a1e`/`1f9f1d7` the newest group could be split at its final result (SV019-G1-01).
+- (correction 1) A queued message is stored normalized (lone surrogates as `?`). A script-launched runtime is `sys.modules["chassis"]`, so a duty's `import chassis` shares its classes.
 - Flaps resume at every tier; `session/abandoned/` is never written.
 
 ## 5. Evidence limits
