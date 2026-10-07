@@ -492,6 +492,10 @@ def handoff(note: str) -> str:
     what you did, what you chose not to do, and what you would tell yourself to
     do next -- the version of you that reads it will have none of your context.
 
+    The run ends here. This call is answered "handoff accepted; run ending";
+    any later tool calls in the same reply are answered "not run" and are not
+    run. (It raises the runtime's typed RunTermination, a SystemExit.)
+
     Args:
         note: What to leave behind.
     """

@@ -47,6 +47,7 @@ import re
 import sys
 import time
 import traceback
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,10 @@ EXIT_ENVIRONMENT = 44
 # way out -- a duty that calls a turn limit an error must not cost the lineage
 # its conversation.
 RESUMING_EXITS = frozenset({EXIT_HANDOFF, EXIT_ENVIRONMENT})
+
+# A lineage id names one agent's chain of runs; it is created once and carried
+# in run.json. Anything else found there is replaced, and the record says so.
+LINEAGE_ID = re.compile(r"[A-Za-z0-9._:-]{1,64}")
 
 SOCKET_WAIT_SECONDS = 60
 
@@ -113,6 +118,80 @@ class TurnLimitReached(BudgetReached):
 
 class WallLimitReached(BudgetReached):
     pass
+
+
+class PersistenceFailure(Exception):
+    """A checkpoint could not be written. The environment's failure, not the run's: exit 44."""
+
+
+class RunTermination(SystemExit):
+    """A run ended on purpose through `context.handoff()` or `context.finish()`.
+
+    A SystemExit subclass, so a duty that wraps a handoff in `except SystemExit`
+    keeps working as it always has -- and if it swallows the termination, the
+    run simply continues: nothing records a termination until the exception
+    reaches the runtime's own catcher. Its code is the familiar one (42 for a
+    handoff, 0 for a finish); its `kind` is what tells a typed end from a bare
+    `sys.exit(42)`.
+    """
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(EXIT_HANDOFF if kind == "handoff" else EXIT_OK)
+        self.kind = kind
+
+
+class NestedTurnRefused(RuntimeError):
+    """`ask()` from inside a tool. An ordinary exception: the tool's error text."""
+
+
+# Exceptions a tool may raise that end the run rather than becoming the tool's
+# result text. Everything that is not an `Exception` (KeyboardInterrupt, a
+# bare BaseException) also passes through; these are the `Exception`s that do.
+CONTROL_EXCEPTIONS = (SystemExit, KeyboardInterrupt, BudgetReached, EnvironmentFailure, DutyFault, PersistenceFailure)
+
+# During a tool group, say() and note() are queued and appended after the
+# group's last tool result, so a group is never interrupted by a message. The
+# queue is bounded (SV-015 v2 section 1.4.6): a message over these limits is
+# refused with an ordinary error, never dropped or shortened.
+MAX_QUEUED_MESSAGES = 16
+MAX_QUEUED_UNITS = 64 * 1024  # escaped units of the normalized text
+
+# What a run's last call is told, by cause; the later calls are told they did
+# not run. A call that was running when the process was interrupted has an
+# outcome nobody can know.
+UNKNOWN_CALL_OUTCOME = (
+    "outcome unknown: the run ended while this call was running; "
+    "its effects may or may not have happened"
+)
+
+
+def ended_call_text(stop: BaseException) -> str:
+    """The result recorded for the call in which the run ended."""
+    if isinstance(stop, RunTermination):
+        return f"{stop.kind} accepted; run ending"
+    if isinstance(stop, KeyboardInterrupt):
+        return UNKNOWN_CALL_OUTCOME
+    if isinstance(stop, SystemExit):
+        return f"the call raised SystemExit({stop.code!r}); the run ended"
+    detail = str(stop)
+    return f"the call raised {type(stop).__name__}{': ' + detail if detail else ''}; the run ended"
+
+
+def classify_exit(code) -> tuple[int, str, str]:
+    """A bare SystemExit's (exit code, reason, note), never raising on an odd payload.
+
+    An int in 0-255 is honoured but labelled as having no termination record;
+    a string is a clean end whose text is the note; None is a clean end;
+    anything else -- including a bool or an out-of-range int, which a shell
+    would wrap into some other code -- is the run's own fault (43).
+    """
+    if code is None:
+        return EXIT_OK, "exit_none", ""
+    if isinstance(code, int) and not isinstance(code, bool) and 0 <= code <= 255:
+        return code, f"exit_{code}_without_termination_record", ""
+    if isinstance(code, str):
+        return EXIT_OK, "exit_str", code
+    return EXIT_DUTY_FAULT, "invalid_exit_payload", f"SystemExit({code!r})"
 
 
 # ---------------------------------------------------------------------------
@@ -383,38 +462,70 @@ class RunContext:
 
     # -- filling the conversation ------------------------------------------
     def say(self, text: str) -> None:
-        """Append a user-role message without calling the model."""
-        self._chassis.messages.append({"role": "user", "content": text})
+        """Append a user-role message without calling the model.
+
+        From inside a tool it is queued and appended after the turn's last tool
+        result (at most 16 queued, each at most 64 KiB in escaped units;
+        beyond that it raises ValueError).
+        """
+        self._chassis.add_message("user", text)
 
     def note(self, text: str) -> None:
-        """Append a system-role message -- a fact for the model, not a turn."""
-        self._chassis.messages.append({"role": "system", "content": text})
+        """Append a system-role message -- a fact for the model, not a turn.
+
+        Queued like `say` when called from inside a tool.
+        """
+        self._chassis.add_message("system", text)
 
     def history(self) -> list[dict]:
         """The conversation so far. A copy; edits here do not take effect."""
         return [dict(message) for message in self._chassis.messages]
 
     def set_history(self, messages: list[dict]) -> None:
-        """Replace the conversation. The duty owns it and may prune it."""
+        """Replace the conversation. The duty owns it and may prune it.
+
+        Not from inside a tool: a turn's tool results belong to the turn that
+        asked for them, so replacing the history under them raises RuntimeError.
+        """
+        if self._chassis.active_group is not None:
+            raise RuntimeError("history cannot be replaced during a tool call")
         if not isinstance(messages, list):
             raise ValueError("history must be a list of messages")
         self._chassis.messages[:] = messages
+        # The recap's fold point is an index into the list: it cannot point past
+        # the end of the one that replaced it.
+        self._chassis.recap_folded = min(self._chassis.recap_folded, len(messages))
 
     def ask(self, text: str, tools: bool = True) -> str:
-        """One model call with `text` as the newest user message; returns its text."""
+        """One model call with `text` as the newest user message; returns its text.
+
+        Not from inside a tool: a nested turn would interleave a second turn's
+        messages into the first one's tool group, so it raises
+        NestedTurnRefused, which the calling tool sees as an ordinary error.
+        """
+        if self._chassis.active_group is not None:
+            raise NestedTurnRefused("nested turn not supported")
         return self._chassis.turn_once(text, use_tools=tools)
 
     # -- ending the run -----------------------------------------------------
     def handoff(self, note: str) -> None:
-        """End this run on purpose, leaving `note` for the run that follows."""
+        """End this run on purpose, leaving `note` for the run that follows.
+
+        Raises RunTermination (a SystemExit): from a tool, the call is answered
+        "handoff accepted; run ending" and any later calls in the same turn are
+        answered "not run"; the run exits 42.
+        """
         self._chassis.write_handoff(note)
-        raise SystemExit(EXIT_HANDOFF)
+        raise RunTermination("handoff")
 
     def finish(self, note: str = "") -> None:
-        """End this run cleanly. The next run starts, and resumes if it can."""
+        """End this run cleanly. The next run starts, and resumes if it can.
+
+        Raises RunTermination (a SystemExit) with exit 0, as `handoff` does.
+        """
         if note:
             self._chassis.write_handoff(note)
-        raise SystemExit(EXIT_OK)
+        raise RunTermination("finish")
 
 
 def estimate_tokens(messages: list[dict]) -> int:
@@ -588,6 +699,15 @@ class Chassis:
         self.tools = ToolRegistry()
         self.context: RunContext | None = None
         self.recap_folded = 0
+        # The tool group in progress (the turn number), or None. While it is set
+        # nothing may land between a call and its result: ask() and
+        # set_history() are refused and say()/note() wait in `queued`.
+        self.active_group: int | None = None
+        self.queued: list[dict] = []
+        # What the previous run left in run.json, read once at the start; the
+        # file is rewritten by every checkpoint of this run.
+        self.previous_meta: dict | None = None
+        self.lineage_id: str | None = None
         self.started_at = utc_now()
         self.usage_totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.last_handoff = ""
@@ -698,6 +818,8 @@ class Chassis:
         and their results appended as tool messages, which is what keeps a duty
         from having to implement the calling convention itself.
         """
+        if self.active_group is not None:
+            raise NestedTurnRefused("nested turn not supported")
         client = self._client
         if text is not None:
             self.messages.append({"role": "user", "content": text})
@@ -724,27 +846,86 @@ class Chassis:
         self.messages.append(assistant)
         self.last_had_tools = bool(tool_calls)
         self.turn += 1
-        for call in tool_calls:
-            result = self.invoke(call.function.name, call.function.arguments)
-            self.messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "name": call.function.name,
-                    "content": result,
-                }
-            )
+        if tool_calls:
+            # Every stored call gets exactly one result, in memory, whatever
+            # ends the run: the call it ended in is told why, and every later
+            # call is told it did not run -- and is not invoked.
+            self.active_group = self.turn
+            try:
+                for position, call in enumerate(tool_calls):
+                    try:
+                        result = self.invoke(call.function.name, call.function.arguments)
+                    except BaseException as stop:
+                        self.messages.append(self.tool_message(call, ended_call_text(stop)))
+                        how = f"by {stop.kind} " if isinstance(stop, RunTermination) else ""
+                        for later in tool_calls[position + 1 :]:
+                            self.messages.append(
+                                self.tool_message(later, f"not run: the run ended {how}in call {call.id}")
+                            )
+                        raise
+                    self.messages.append(self.tool_message(call, result))
+            finally:
+                self.close_group()
         self.checkpoint()
         self.record("turn", tools=len(tool_calls), usage=dict(self.usage_totals))
         self.check_budgets()
         return content
 
-    def invoke(self, name: str, arguments: str) -> str:
-        """Run one registered tool by name. Every failure becomes text.
+    @staticmethod
+    def tool_message(call, content: str) -> dict:
+        return {
+            "role": "tool",
+            "tool_call_id": call.id,
+            "name": call.function.name,
+            "content": content,
+        }
 
-        A tool that raises is information the model can act on, so the error is
-        handed back rather than ending the run -- except for the two ends the
-        duty can ask for, which travel as SystemExit.
+    # -- messages a duty adds -------------------------------------------------
+    def add_message(self, role: str, text) -> None:
+        """Append now, or queue until the tool group in progress has all its results."""
+        if self.active_group is None:
+            self.messages.append({"role": role, "content": text})
+            return
+        self.queue_message(role, text)
+
+    def queue_message(self, role: str, text) -> None:
+        """Hold a message until the group closes, within the queue's bounds.
+
+        Refusal is an ordinary ValueError, which a tool sees as its error text:
+        nothing is dropped, shortened or reordered behind the duty's back. The
+        size is measured on the normalized text in escaped units, the same
+        measure every stored string is capped in.
+        """
+        if not isinstance(text, str):
+            raise ValueError("a message queued during a tool call must be text")
+        if len(self.queued) >= MAX_QUEUED_MESSAGES:
+            raise ValueError(
+                f"at most {MAX_QUEUED_MESSAGES} messages can be queued during one tool call group"
+            )
+        units = escaped_units(normalize_text(text)[0])
+        if units > MAX_QUEUED_UNITS:
+            raise ValueError(
+                f"a message queued during a tool call is at most {MAX_QUEUED_UNITS} escaped "
+                f"units; this one is {units}"
+            )
+        self.queued.append({"role": role, "content": text})
+
+    def close_group(self) -> None:
+        """End the tool group in progress and append what it queued, in order."""
+        self.active_group = None
+        if self.queued:
+            self.messages.extend(self.queued)
+            self.queued = []
+
+    def invoke(self, name: str, arguments: str) -> str:
+        """Run one registered tool by name. Every ordinary failure becomes text.
+
+        A tool that raises an ordinary exception is information the model can
+        act on, so the error is handed back rather than ending the run. What
+        passes through instead are the ends of a run: SystemExit (including a
+        typed handoff or finish), KeyboardInterrupt, a budget, an environment
+        failure, a duty fault, a persistence failure, and anything that is not
+        an `Exception` at all.
         """
         import inspect
 
@@ -774,7 +955,7 @@ class Chassis:
             return f"error: {name} does not take {', '.join(sorted(unknown))}"
         try:
             result = func(**kwargs)
-        except SystemExit:
+        except CONTROL_EXCEPTIONS:
             raise
         except Exception as error:  # noqa: BLE001 -- the model is told, not the log
             self.operation("tool_error", tool=name, error=f"{type(error).__name__}: {error}")
@@ -827,22 +1008,43 @@ class Chassis:
                 raise WallLimitReached(f"run reached {self.max_seconds} seconds")
 
     # -- state --------------------------------------------------------------
-    def checkpoint(self) -> None:
-        self.carried.save_conversation(self.messages)
-        self.carried.save_meta(
-            {
-                "agent": self.slug,
-                "name": self.name,
-                "run": self.run_id,
-                "turn": self.turn,
-                "model": self.model,
-                "updated": iso(),
-                "context_tokens": estimate_tokens(self.messages),
-                "context_window": self.context_window,
-                "usage": dict(self.usage_totals),
-                "entry": str(self.entry),
-            }
-        )
+    def checkpoint(self, ended: dict | None = None) -> None:
+        """Write the conversation (a plain list, as always) and run.json.
+
+        run.json gains three additive keys: `lineage_id` (stable across runs),
+        `recap_folded` (how far the recap has folded, so a resumed run does not
+        fold the same messages again) and, on the final checkpoint, `ended`
+        (`{exit, reason, at, run}`). It deliberately does **not** gain
+        `format`, `writer` or `checkpoint`: those mark the ledger's authority
+        (SV-013 2.2.2), and publishing them before the ledger exists would make
+        a later ledger-aware runtime read this file as a lost ledger.
+
+        A filesystem error becomes PersistenceFailure (exit 44); anything else,
+        such as a message a duty made unserializable, propagates as it is.
+        """
+        meta = {
+            "agent": self.slug,
+            "name": self.name,
+            "run": self.run_id,
+            "turn": self.turn,
+            "model": self.model,
+            "updated": iso(),
+            "context_tokens": estimate_tokens(self.messages),
+            "context_window": self.context_window,
+            "usage": dict(self.usage_totals),
+            "entry": str(self.entry),
+            "lineage_id": self.lineage_id,
+            "recap_folded": self.recap_folded,
+        }
+        if ended is not None:
+            meta["ended"] = ended
+        try:
+            self.carried.save_conversation(self.messages)
+            self.carried.save_meta(meta)
+        except OSError as error:
+            raise PersistenceFailure(
+                f"the checkpoint could not be written: {type(error).__name__}: {error}"
+            ) from error
 
     def write_handoff(self, note: str) -> None:
         self.home_dir.mkdir(parents=True, exist_ok=True)
@@ -858,7 +1060,9 @@ class Chassis:
         self.record("handoff", chars=len(note))
 
     def status(self) -> dict:
-        meta = self.carried.meta()
+        # The previous run's facts as they were when this run started; this
+        # run's own checkpoints have rewritten run.json since.
+        meta = self.previous_meta if getattr(self, "previous_meta", None) is not None else self.carried.meta()
         return {
             "agent": self.slug,
             "name": self.name,
@@ -868,6 +1072,7 @@ class Chassis:
             "turn_this_run": self.turn,
             "turns_before_this_run": meta.get("turn"),
             "previous_run_ended": meta.get("ended"),
+            "lineage_id": getattr(self, "lineage_id", None) or meta.get("lineage_id"),
             "context_window_tokens": self.context_window,
             "context_tokens_now": estimate_tokens(self.messages),
             "context_tokens_left": max(0, self.context_window - estimate_tokens(self.messages)),
@@ -916,11 +1121,33 @@ class Chassis:
 
     # -- the run ------------------------------------------------------------
     def run(self) -> int:
+        """Start, run the duty's main, and end -- with the end recorded on every path main reaches.
+
+        What the terminal `finally` covers, stated exactly: everything from the
+        moment `main(context)` is called. Failures before that -- creating the
+        session and home directories, reading run.json, connecting to the
+        recorder, loading the duty, binding its tools, and `resume` (including
+        a duty's `bootstrap`) -- leave the process through `main()`'s handlers
+        or a traceback with no `ended` metadata and no `run_end` record, and,
+        deliberately, no checkpoint: nothing has been loaded that could be
+        written back without risking the saved conversation.
+        """
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.home_dir.mkdir(parents=True, exist_ok=True)
         previous = self.carried.meta()
+        self.previous_meta = previous
+        lineage = previous.get("lineage_id")
+        if isinstance(lineage, str) and LINEAGE_ID.fullmatch(lineage):
+            self.lineage_id = lineage
+        else:
+            self.lineage_id = uuid.uuid4().hex[:16]
+            self.record("lineage_started", lineage_id=self.lineage_id)
         self.record(
-            "run_start", entry=str(self.entry), model=self.model, window=self.context_window
+            "run_start",
+            entry=str(self.entry),
+            model=self.model,
+            window=self.context_window,
+            lineage_id=self.lineage_id,
         )
 
         self._client = self.client()
@@ -958,40 +1185,57 @@ class Chassis:
         self.record("run_resumed" if resumed else "run_fresh", messages=len(self.messages))
 
         exit_code = EXIT_OK
+        reason = "main_returned"
         note = ""
         try:
             main(self.context)
             note = "the run's main() returned without ending the run"
+        except RunTermination as stop:
+            # Typed, and distinct from a bare sys.exit(42): this is the only
+            # path that records a handoff or a finish as the reason.
+            exit_code, reason, note = stop.code, stop.kind, self.last_handoff
         except SystemExit as stop:
-            if isinstance(stop.code, str):
-                exit_code, note = EXIT_OK, stop.code
-            else:
-                exit_code = int(stop.code or EXIT_OK)
+            exit_code, reason, note = classify_exit(stop.code)
             if not note:
                 note = self.last_handoff
         except TurnLimitReached as reached:
-            exit_code, note = EXIT_HANDOFF, str(reached)
+            exit_code, reason, note = EXIT_HANDOFF, "turn_limit", str(reached)
         except WallLimitReached as reached:
-            exit_code, note = EXIT_HANDOFF, str(reached)
+            exit_code, reason, note = EXIT_HANDOFF, "wall_limit", str(reached)
+        except BudgetReached as reached:
+            exit_code, reason, note = EXIT_HANDOFF, "budget", str(reached)
         except DutyFault as fault:
-            exit_code = EXIT_DUTY_FAULT
-            note = str(fault)
+            exit_code, reason, note = EXIT_DUTY_FAULT, "duty_fault", str(fault)
         except EnvironmentFailure as failure:
-            exit_code = EXIT_ENVIRONMENT
-            note = str(failure)
+            exit_code, reason, note = EXIT_ENVIRONMENT, "environment", str(failure)
+        except PersistenceFailure as failure:
+            exit_code, reason, note = EXIT_ENVIRONMENT, "persistence_failure", str(failure)
         except KeyboardInterrupt:
-            exit_code = EXIT_ENVIRONMENT
-            note = "interrupted"
+            exit_code, reason, note = EXIT_ENVIRONMENT, "interrupted", "interrupted"
         except BaseException as error:  # noqa: BLE001 -- the run ends; the record survives
-            exit_code = EXIT_DUTY_FAULT
+            exit_code, reason = EXIT_DUTY_FAULT, "run_traceback"
             note = f"{type(error).__name__}: {error}"
             self.record(
                 "run_traceback",
                 traceback="".join(traceback.format_exception(error))[-8000:],
             )
         finally:
-            with contextlib.suppress(Exception):
-                self.checkpoint()
+            # End-of-run order: anything still queued is appended, then the
+            # final checkpoint records how the run ended, then the record.
+            self.close_group()
+            ended = {"exit": exit_code, "reason": reason, "at": iso(), "run": self.run_id}
+            try:
+                self.checkpoint(ended=ended)
+            except PersistenceFailure as failure:
+                # Not a hidden success: the end could not be recorded where the
+                # next run reads it, which is the environment's failure.
+                self.record("checkpoint_failed", error=str(failure)[:500])
+                if exit_code != EXIT_ENVIRONMENT:
+                    exit_code, reason = EXIT_ENVIRONMENT, "persistence_failure"
+            except Exception as error:  # noqa: BLE001 -- recorded, and the exit says so
+                self.record("checkpoint_failed", error=f"{type(error).__name__}: {error}"[:500])
+                if exit_code not in (EXIT_DUTY_FAULT, EXIT_ENVIRONMENT):
+                    exit_code, reason = EXIT_DUTY_FAULT, "checkpoint_failed"
             if resumed and exit_code not in RESUMING_EXITS:
                 # The run ended in a way that does not carry the conversation.
                 # The checkpoint stays on disk -- it is the record of what this
@@ -1001,12 +1245,14 @@ class Chassis:
             self.record(
                 "run_end",
                 exit=exit_code,
+                reason=reason,
                 note=note[:2000],
                 turns=self.turn,
                 usage=dict(self.usage_totals),
             )
             print(
-                f"[chassis] run ended: exit={exit_code} turns={self.turn} note_chars={len(note)} {note[:300]}",
+                f"[chassis] run ended: exit={exit_code} reason={reason} turns={self.turn} "
+                f"note_chars={len(note)} {note[:300]}",
                 flush=True,
             )
         return exit_code
@@ -1054,7 +1300,10 @@ class Chassis:
         seeded_by_duty = False
         if carried:
             self.messages.extend(carried)
-            self.recap_folded = folded
+            # The fold point persists in run.json, so a resumed run does not
+            # fold the same messages twice. A duty may have shortened the file
+            # between runs; the point then cannot lie past its end.
+            self.recap_folded = min(folded, len(carried))
 
         handoff = self.carried.handoff()
         if handoff:
