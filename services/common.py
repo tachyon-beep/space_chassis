@@ -318,6 +318,16 @@ class RecordStore:
         if state is None:
             return AppendResult("failed", errno=errno_module.EMFILE, detail="no_capacity")
         with state.lock:
+            # An append can get its path state before close() and its lock after
+            # close() returned. Closure is therefore checked again here, under
+            # the path lock that close() also takes: either this append finishes
+            # before close() drops the descriptor, or it sees the store closed
+            # and touches nothing. Lock order is path lock, then the paths lock,
+            # everywhere; close() never holds both at once.
+            with self._paths_lock:
+                closed = self._closed
+            if closed:
+                return AppendResult("failed", detail="closed")
             return self._append_locked(path, state, line, fsync)
 
     def _append_locked(self, path: Path, state: _PathState, line: bytes, fsync: bool) -> AppendResult:
@@ -362,13 +372,17 @@ class RecordStore:
         try:
             ops.fdatasync(fd)
         except OSError as error:
+            # This append's namespace fact is read before the descriptor is
+            # retired: retiring it resets the cache for the *next* open, and
+            # says nothing about whether this line's names were fenced.
+            fenced = state.names_durable
             state.degraded = True
             self._drop(state)
             return AppendResult(
                 "appended_fsync_failed",
                 written,
                 error.errno,
-                dir_unsynced=not state.names_durable,
+                dir_unsynced=not fenced,
                 detail="fdatasync",
             )
         if state.names_durable:

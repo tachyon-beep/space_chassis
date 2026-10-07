@@ -329,7 +329,9 @@ def test_a_torn_tail_left_by_a_dead_process_is_repaired_by_a_new_store(root):
 
 
 def test_concurrent_appends_to_one_file_never_interleave(store, root):
+    """Every append is forced through 7-byte writes: without the per-path lock they would mix."""
     path = root / "a" / "events.jsonl"
+    store.ops.chunk = 7
     barrier = threading.Barrier(8)
     results = []
 
@@ -347,6 +349,115 @@ def test_concurrent_appends_to_one_file_never_interleave(store, root):
     records = parsed(path)
     assert len(records) == 400 and len(lines(path)) == 401
     assert sorted((r["w"], r["i"]) for r in records) == [(w, i) for w in range(8) for i in range(50)]
+
+
+class ThreadedOps(FaultOps):
+    """Records which thread made each call, and holds slug syncs at a barrier."""
+
+    def __init__(self, barrier: threading.Barrier, slugs: set[str]) -> None:
+        super().__init__()
+        self.barrier = barrier
+        self.slugs = slugs
+        self.by_thread: dict[str, list[tuple]] = {}
+
+    def _note(self, call):
+        self.by_thread.setdefault(threading.current_thread().name, []).append(call)
+
+    def open(self, path, flags, mode):
+        self._note(("open", Path(path).parent.name))
+        return super().open(path, flags, mode)
+
+    def sync_dir(self, path):
+        self._note(("sync_dir", path))
+        if Path(path).name in self.slugs:
+            self.barrier.wait(10)  # both slug directories fenced before either root sync
+        super().sync_dir(path)
+
+
+def test_two_slugs_discovered_together_each_get_their_own_root_sync(root):
+    """O3-8: B and C's first appends interleave; each is durable only after its own root sync."""
+    for slug in ("b", "c"):
+        (root / slug).mkdir()
+    ops = ThreadedOps(threading.Barrier(2), {"b", "c"})
+    store = RecordStore(root, ops=ops)
+    results = {}
+
+    def first_append(slug):
+        results[slug] = store.append_record(root / slug / "events.jsonl", {"slug": slug})
+
+    threads = [threading.Thread(target=first_append, args=(s,), name=s) for s in ("b", "c")]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30)
+    finally:
+        store.close()
+    assert results["b"].status == results["c"].status == "durable"
+    for slug in ("b", "c"):
+        syncs = [c[1] for c in ops.by_thread[slug] if c[0] == "sync_dir"]
+        assert syncs == [str(root / slug), str(root)], (slug, syncs)
+
+
+class PausingStore(RecordStore):
+    """Pauses an append after it has its path state and before it takes the path lock."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.have_state = threading.Event()
+        self.resume = threading.Event()
+
+    def _state(self, path):
+        state = super()._state(path)
+        if threading.current_thread().name == "paused":
+            self.have_state.set()
+            self.resume.wait(10)
+        return state
+
+
+def test_an_append_waiting_for_its_lock_when_the_store_closes_writes_nothing(root):
+    """SV017-03: close returns first; the waiting append must not reopen or keep a descriptor."""
+    (root / "a").mkdir()
+    path = root / "a" / "events.jsonl"
+    ops = FaultOps()
+    store = PausingStore(root, ops=ops)
+    assert store.append_record(path, {"n": 1}).status == "durable"
+    result = {}
+    paused = threading.Thread(
+        target=lambda: result.setdefault("r", store.append_record(path, {"n": 2})), name="paused"
+    )
+    paused.start()
+    assert store.have_state.wait(10)
+    store.close()  # returns while the append still waits outside the path lock
+    opens_after_close = len([c for c in ops.calls if c[0] == "open"])
+    store.resume.set()
+    paused.join(10)
+    assert not paused.is_alive(), "deadlock"
+    assert result["r"].status == "failed" and result["r"].written == 0
+    assert len([c for c in ops.calls if c[0] == "open"]) == opens_after_close, "reopened after close"
+    assert all(state.fd is None for state in store._paths.values()), "a descriptor outlived close"
+    assert parsed(path) == [{"n": 1}]
+
+
+def test_a_data_sync_failure_keeps_the_namespace_fact_of_its_own_append(store, root):
+    """SV017-02: fences that returned are not unfenced by the descriptor being retired."""
+    path = root / "a" / "agent_life_transcript.jsonl"
+    store.ops.fdatasync_fail.add("agent_life_transcript.jsonl")
+    fenced = store.append_record(path, {"n": 1})
+    assert fenced.status == "appended_fsync_failed" and fenced.dir_unsynced is False
+
+    other = root / "a" / "events.jsonl"
+    store.ops.fdatasync_fail.add("events.jsonl")
+    store.ops.sync_dir_fail.add(str(root / "a"))
+    unfenced = store.append_record(other, {"n": 1})
+    assert unfenced.status == "appended_fsync_failed" and unfenced.dir_unsynced is True
+
+    store.ops.fdatasync_fail.clear()
+    store.ops.sync_dir_fail.clear()
+    store.ops.calls.clear()
+    assert store.append_record(path, {"n": 2}).status == "durable"
+    assert ("sync_dir", str(root / "a")) in store.ops.calls, "a reopened descriptor is fenced again"
+    assert store.degraded(path) and store.degraded(other)
 
 
 def test_the_path_count_is_bounded_and_a_closed_store_writes_nothing(root):
@@ -400,7 +511,7 @@ def test_a_partial_transcript_is_withheld_and_the_next_turn_is_recorded_cleanly(
     assert rig.post(chat())[0] == 502
     assert rig.post(chat())[0] == 200
     closes = rig.closes(2)
-    assert [c["recorded"] for c in closes] == ["partial", "durable"]
+    assert sorted(c["recorded"] for c in closes) == ["durable", "partial"]
     raw = (rig.dir / "agent_life_transcript.jsonl").read_bytes().split(b"\n")
     assert len(raw[0]) == 100 and json.loads(raw[1])["status"] == 200 and raw[2] == b""
 
@@ -411,7 +522,7 @@ def test_success_and_provider_errors_are_relayed_with_their_record_class(make_ri
     rig.upstream.respond = lambda request: stub_reply({"error": {"message": "busy"}}, 503)
     assert rig.post(chat())[0] == 503
     closes = rig.closes(2)
-    assert [(c["outcome"], c["recorded"], c["relayed"]) for c in closes] == [
+    assert sorted((c["outcome"], c["recorded"], c["relayed"]) for c in closes) == [
         ("ok", "durable", True),
         ("upstream_http", "durable", True),
     ]
@@ -431,6 +542,56 @@ def test_a_failed_data_sync_still_relays_and_is_reported_once(make_rig):
     diagnostics = read_jsonl(rig.root / "transcripts" / "recorder.jsonl")
     degraded = [d for d in diagnostics if d.get("event") == "durability_degraded"]
     assert degraded == [{**degraded[0], "file": f"{SLUG}/agent_life_transcript.jsonl"}]
+
+
+class BrokenStdout:
+    """stdout whose reader has gone: every write is a BrokenPipeError."""
+
+    def write(self, _text):
+        raise BrokenPipeError(errno.EPIPE, "the log reader has gone")
+
+    def flush(self):
+        raise BrokenPipeError(errno.EPIPE, "the log reader has gone")
+
+
+@pytest.mark.parametrize("broken_log", [False, True], ids=["diagnostic-fails", "log-and-diagnostic-fail"])
+def test_a_failing_degradation_report_never_withholds_a_readable_answer(make_rig, monkeypatch, broken_log):
+    """SV017-01: the transcript is readable, its data sync failed, and the reporting fails too.
+
+    The answer is relayed, the known usage stays charged, the record class is
+    kept, one close is attempted, the slot is released, and the failing
+    diagnostic is attempted once -- not retried, not recursed into.
+    """
+    rig = make_rig(rq=10, tk=1000, g=1000)
+    ops = fault_store(rig)
+    ops.fdatasync_fail.add("agent_life_transcript.jsonl")
+    attempts = []
+
+    def failing_diagnostic(record):
+        attempts.append(record)
+        raise RuntimeError("the diagnostic medium is unavailable")
+
+    monkeypatch.setattr(recorder_module, "record_diagnostic", failing_diagnostic)
+    rig.recorder.state.slots = threading.BoundedSemaphore(1)
+    real_stdout = sys.stdout
+    if broken_log:
+        sys.stdout = BrokenStdout()
+    try:
+        first = rig.post(chat())
+        second_status = rig.post(chat())[0]
+    finally:
+        sys.stdout = real_stdout
+    status, _headers, payload = first
+    assert status == 200 and json.loads(payload)["usage"]["total_tokens"] == 30
+    assert second_status == 200, "the first request kept its slot"
+    closes = rig.closes(2)
+    assert len(closes) == 2
+    assert [c["recorded"] for c in closes] == ["appended_fsync_failed"] * 2
+    assert all(c["relayed"] is True and c["status"] == 200 for c in closes)
+    assert all(c["usage_class"] == "known" and c["charged_tokens"] == 30 for c in closes)
+    assert len(attempts) == 1 and attempts[0]["event"] == "durability_degraded"
+    snap = rig.budget.snapshot(SLUG)
+    assert (snap["tokens_used"], snap["live"]) == (60, 0)
 
 
 def test_an_unsynced_slug_directory_is_recorded_as_appended_with_dir_unsynced(make_rig):
@@ -467,7 +628,8 @@ def test_low_space_refuses_before_the_open_and_before_any_spend(make_rig, monkey
     monkeypatch.setattr(recorder_module, "free_bytes", lambda path: None)
     status, _headers, payload = rig.post(chat())
     assert status == 503 and json.loads(payload)["error"]["code"] == "record_unavailable"
-    assert [c["outcome"] for c in rig.closes(2)] == ["record_capacity", "record_unavailable"]
+    # Each close follows its own reply, so the two may land in either order.
+    assert sorted(c["outcome"] for c in rig.closes(2)) == ["record_capacity", "record_unavailable"]
     assert not [e for e in rig.events() if e["event"] == "open"]
     assert rig.upstream.requests == []
     assert rig.budget.snapshot(SLUG)["requests_used"] == 0

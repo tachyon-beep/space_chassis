@@ -58,7 +58,16 @@ Not run: the full repository suite; ruff; live disk faults; power loss.
 - Free-space threshold `RECORDER_MIN_FREE_BYTES` (1 GiB) is a prediction, not a reservation: concurrent writers can still fill the disk.
 - `RECORDER_RECORD_FSYNC` on by default; every record line costs a `fdatasync` (and directory syncs on first use of each file).
 
+## 4a. Correction pass (Astra initial R-B4 review)
+
+SV017-01 (reporting failure no longer replaces a readable result), SV017-02 (`dir_unsynced` reflects the append's own fence), SV017-03 (no append after `close()`), plus O3-8 and short-write concurrency evidence. Finding → test map, pre-fix failures and run results: `checkpoint-002-astra-corrections.md`. Final selected run: **121 passed**, 2 expected `SystemExit` warnings.
+
+Degradation reports (container log line, `durability_degraded` diagnostic) and the `close` stderr fallback are **attempt-only** evidence: tried once per file per process, lost silently if their medium has failed, never retried and never reported about. Their absence proves nothing.
+
 ## 5. Evidence limits and residual risks
+
+- **The transcript is a decoded representation, not a byte-exact archive.** `response` is the parsed JSON (non-finite numbers as markers), or, for a body that is not UTF-8 JSON the parser will hold, text decoded with `errors="ignore"` and truncated at 1,000,000 characters with `raw_body_truncated`. The client receives the upstream bytes unchanged; the record does not hold them byte for byte. A response nested too deeply to re-serialize returns `failed` and is withheld as `502 record_failed`. Nothing here establishes support for every arbitrarily large or deep upstream answer, and no response cap or memory bound exists (R-B3).
+- Only cut R3 of R1–R6 is exercised with a real SIGKILL; the torn-tail fixture uses a child that writes a prefix and `_exit`s. Neither is kernel-crash or power-loss evidence.
 
 - **No power-loss or crash-consistency claim.** Syncs were mocked or real on a test filesystem; "durable" means the syscalls returned (honest-flush assumption M-2). Real filesystem behaviour after `fsync` error and per-slug directory-entry persistence are evidence gates E-K1/E-K2/E-K6.
 - **No latency claim.** Syncs and appends block under a per-file lock. Without R-B3 there is no deadline: a stalled filesystem stalls the requests writing to that file (and the `open`/`close`/transcript steps), with no watchdog.

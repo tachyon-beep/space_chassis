@@ -11,6 +11,7 @@ Ledger for SV-017 (Filigree not used; see the SV-016 STATUS for why). Branch `sv
 | Selected bounded run | 116 passed | checkpoint 001 |
 | SV-016 status-wording correction | done, docs commit | — |
 | Receipt | done | `RECEIPT.md` |
+| Astra initial-review corrections (SV017-01…03, O3-8, short-write concurrency) | done; 121 passed | checkpoint 002 |
 
 Out of scope, not implemented: R-B3 (watchdog, deadlines, connection/memory admission, SSE usage, response cap, off-path diagnostic writer); all vehicle, chassis-ledger, pump and H/T/Q work.
 

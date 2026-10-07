@@ -759,7 +759,14 @@ class Recorder(threading.Thread):
 
 
 def log(message: str) -> None:
-    print(f"{iso()} [recorder] {message}", flush=True)
+    """One line on stdout, attempted once. A log is not part of any record.
+
+    If the log's reader has gone (a broken pipe, a closed stream), the line is
+    lost and the request carries on: no outcome, status or record may depend
+    on whether a container log was being read. Control exceptions still pass.
+    """
+    with contextlib.suppress(OSError, ValueError):
+        print(f"{iso()} [recorder] {message}", flush=True)
 
 
 BOOT = os.urandom(4).hex()
@@ -825,7 +832,15 @@ def close_stores() -> None:
 
 
 def append_with_custody(store: RecordStore, path: Path, record: dict) -> AppendResult:
-    """Append one record and report a newly degraded file once, without recursing."""
+    """Append one record and report a newly degraded file once, without recursing.
+
+    The append's result is the fact; the report about it is optional. Once the
+    result exists it is always returned: an ordinary failure while reporting
+    (a closed log, a diagnostics file that cannot be written) is contained, so
+    a readable transcript is still relayed and still recorded as readable. The
+    report is attempt-only evidence -- it is tried once per file per process
+    and never retried or reported about in turn. Control exceptions propagate.
+    """
     result = store.append_record(path, record, fsync=RECORD_FSYNC)
     if result.status == "appended_fsync_failed":
         key = (store.root, Path(path))
@@ -833,10 +848,13 @@ def append_with_custody(store: RecordStore, path: Path, record: dict) -> AppendR
             first = key not in _DEGRADED_REPORTED
             _DEGRADED_REPORTED.add(key)
         if first:
-            relative = str(Path(path).relative_to(store.root))
-            log(f"durability degraded: a data sync failed on {relative}")
-            if Path(path).name != DIAGNOSTICS_NAME:
-                record_diagnostic({"event": "durability_degraded", "file": relative})
+            try:
+                relative = str(Path(path).relative_to(store.root))
+                log(f"durability degraded: a data sync failed on {relative}")
+                if Path(path).name != DIAGNOSTICS_NAME:
+                    record_diagnostic({"event": "durability_degraded", "file": relative})
+            except Exception:  # noqa: BLE001 -- reporting must not replace the result
+                pass
     return result
 
 
@@ -1018,7 +1036,9 @@ def make_handler(recorder: Recorder):
                     "transcript": exchange.recorded.status if exchange.recorded else None,
                     "close_unrecorded": unrecorded,
                 }
-                print(json.dumps(fallback), file=sys.stderr, flush=True)
+                # Attempted once; if stderr is gone too, nothing is left to tell.
+                with contextlib.suppress(OSError, ValueError):
+                    print(json.dumps(fallback), file=sys.stderr, flush=True)
 
         # -- replies ----------------------------------------------------------
         def _relay(self, status: int, headers: dict, payload: bytes) -> bool:

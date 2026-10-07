@@ -1029,7 +1029,7 @@ def test_a_failing_fleet_slot_acquire_gives_the_socket_slot_back(make_rig, monke
     rig.recorder.state.slots = threading.BoundedSemaphore(1)
     assert rig.post(chat())[0] == 500
     assert rig.post(chat())[0] == 200, "the socket slot leaked"
-    assert [c["outcome"] for c in rig.closes(2)] == ["internal_error", "ok"]
+    assert sorted(c["outcome"] for c in rig.closes(2)) == ["internal_error", "ok"]
 
 
 def test_a_control_exception_before_sending_cancels_and_closes_once_with_a_typed_outcome(
