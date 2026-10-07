@@ -213,6 +213,10 @@ def make_rig(monkeypatch):
         )
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         monkeypatch.delenv("RECORDER_FORWARD_HEADERS", raising=False)
+        # The free-space preflight is exercised on its own in
+        # tests/test_recorder_custody.py; here it must not depend on how full
+        # the test host's /tmp happens to be.
+        monkeypatch.setattr(recorder_module, "MIN_FREE_BYTES", 1)
         monkeypatch.setenv("LLM_API_KEY", RECORDER_KEY)
         monkeypatch.delenv("UPSTREAM_STREAMING", raising=False)
         budget = Budget(g)
@@ -232,6 +236,7 @@ def make_rig(monkeypatch):
         rig.recorder.stop()
         rig.recorder.join(5)
         rig.upstream.stop()
+    recorder_module.close_stores()
     for root in roots:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -315,6 +320,7 @@ def test_an_estimate_too_large_for_the_socket_is_refused_before_the_upstream(mak
     status, _headers, payload = rig.post(chat())
     assert status == 429
     assert "can never fit" in json.loads(payload)["error"]["message"]
+    rig.closes()  # the close follows the reply; wait for it rather than race it
     events = rig.events()
     assert [e["event"] for e in events] == ["open", "close"]
     assert events[1]["outcome"] == "estimate_exceeds_limit"
@@ -334,15 +340,20 @@ def test_a_closed_socket_pool_refuses_with_the_text_it_always_had(make_rig):
 
 
 def test_known_usage_is_settled_before_a_transcript_failure(make_rig):
-    """The transcript append raises; the turn was paid for, and the budget says so."""
+    """The transcript append fails; the turn was paid for, and the budget says so.
+
+    Since R-B4 (SV-017) this is the custody refusal `502 record_failed`; before
+    it, the same failure surfaced as `500 internal_error`.
+    """
     rig = make_rig(tk=1000, g=1000)
     (rig.dir / "agent_life_transcript.jsonl").mkdir()
     status, _headers, payload = rig.post(chat())
-    assert status == 500
-    assert json.loads(payload)["error"]["code"] == "internal_error"
+    assert status == 502
+    assert json.loads(payload)["error"]["code"] == "record_failed"
     assert b"choices" not in payload, "a response without a record was relayed"
     (close,) = rig.closes()
-    assert close["outcome"] == "internal_error" and close["status"] == 500
+    assert close["outcome"] == "record_failed" and close["status"] == 502
+    assert close["recorded"] == "failed"
     assert close["usage_class"] == "known" and close["charged_tokens"] == 30
     assert close["upstream_status"] == 200
     snap = rig.budget.snapshot(SLUG)
@@ -959,11 +970,11 @@ def test_relayed_means_the_upstream_response_reached_the_client(make_rig, monkey
 
 
 def test_a_completion_withheld_after_a_transcript_failure_is_not_relayed(make_rig):
-    """SV016-02 / R-C1's relay field: the provider answered 200, the client got the recorder's 500."""
+    """SV016-02 / R-C1's relay field: the provider answered 200, the client got the recorder's 502."""
     rig = make_rig(tk=1000, g=1000)
     (rig.dir / "agent_life_transcript.jsonl").mkdir()
     status, _headers, payload = rig.post(chat())
-    assert status == 500 and b"choices" not in payload
+    assert status == 502 and b"choices" not in payload
     (close,) = rig.closes()
     assert close["upstream_status"] == 200 and close["charged_tokens"] == 30
     assert close["relayed"] is False

@@ -48,6 +48,9 @@ if str(SERVICES_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICES_DIR))
 
 from common import (  # noqa: E402
+    AppendResult,
+    RecordStore,
+    env_bool,
     env_int,
     iso,
     slugs_from_env,
@@ -691,7 +694,10 @@ class AgentState:
     def __init__(self, slug: str, transcript_dir: Path) -> None:
         self.slug = slug
         self.dir = transcript_dir / slug
-        self.dir.mkdir(parents=True, exist_ok=True)
+        # Never the root: a name whose parent this process did not see exist
+        # cannot be fenced. The root is the deployment's to provide.
+        self.dir.mkdir(parents=False, exist_ok=True)
+        self.store = store_for(transcript_dir)
         self.transcript = self.dir / "agent_life_transcript.jsonl"
         self.events = self.dir / "events.jsonl"
         self.slots = threading.BoundedSemaphore(max(1, MAX_INFLIGHT_PER_SOCKET))
@@ -768,34 +774,90 @@ def next_rid() -> str:
     return f"{BOOT}-{next(_RID_COUNTER):08d}"
 
 
-def write_record_line(path: Path, record: dict) -> None:
-    """Append one record as one line of ASCII JSON. Failure is the caller's to contain.
+# ---------------------------------------------------------------------------
+# Custody
+# ---------------------------------------------------------------------------
+# Every line the recorder writes goes through one RecordStore per transcript
+# root (common.RecordStore: ASCII JSON, a lock per file, a boundary check from
+# disk before every append, per-slug name fencing, a typed result). The rules
+# that hang on those results:
+#
+# * the `open` must be readable before anything is admitted or contacted, or
+#   the request is refused 503 record_unavailable;
+# * the free-space check before the `open` is a prediction, not a reservation:
+#   below RECORDER_MIN_FREE_BYTES the request is refused 503 record_capacity
+#   before anything is spent, and other writers can still fill the disk after;
+# * the upstream response is relayed only if its transcript line is readable
+#   (appended, appended_fsync_failed or durable); failed or partial withholds
+#   it as 502 record_failed. A failed data sync lowers the evidence's quality
+#   and is recorded; it does not withhold an answer whose bytes are readable;
+# * a `close` that cannot be written leaves one bounded JSON line on stderr.
+#
+# One recorder process writes a given TRANSCRIPTS_DIR, and the directory
+# already exists when it starts: its creation and durability are the host's.
+RECORD_FSYNC = env_bool("RECORDER_RECORD_FSYNC", True)
+MIN_FREE_BYTES = env_int("RECORDER_MIN_FREE_BYTES", 1024 * 1024 * 1024)
+DIAGNOSTICS_NAME = "recorder.jsonl"
+_STORES: dict[Path, RecordStore] = {}
+_STORES_LOCK = threading.Lock()
+_DEGRADED_REPORTED: set[tuple[Path, Path]] = set()
 
-    ASCII escapes are what make every accepted request writable: a body may
-    carry a lone surrogate as a JSON escape, which is valid JSON and is
-    forwarded as such, but cannot be encoded as UTF-8. Escaped, it is the same
-    six characters it arrived as, and a reader's `json.loads` gives back the
-    same string. Readers see JSON-equal records; only non-ASCII text is now
-    spelled as escapes.
 
-    This is serialization only. It promises nothing about durability, torn
-    lines or free space -- that is the custody work (SV-013 R-B4), not done here.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps(record, ensure_ascii=True, separators=(",", ":")) + "\n"
-    with open(path, "ab") as handle:
-        handle.write(line.encode("ascii"))
+def store_for(root: Path) -> RecordStore:
+    """The one store for a transcript root, created on first use."""
+    root = Path(root)
+    with _STORES_LOCK:
+        store = _STORES.get(root)
+        if store is None:
+            # Two files per slug plus the root's diagnostics file.
+            store = _STORES[root] = RecordStore(root, max_paths=2 * max(1, MAX_SLUGS) + 1)
+        return store
 
 
-def record_diagnostic(record: dict) -> None:
+def close_stores() -> None:
+    """Close every cached descriptor: for shutdown, and for a test's teardown."""
+    with _STORES_LOCK:
+        stores = list(_STORES.values())
+        _STORES.clear()
+        _DEGRADED_REPORTED.clear()
+    for store in stores:
+        store.close()
+
+
+def append_with_custody(store: RecordStore, path: Path, record: dict) -> AppendResult:
+    """Append one record and report a newly degraded file once, without recursing."""
+    result = store.append_record(path, record, fsync=RECORD_FSYNC)
+    if result.status == "appended_fsync_failed":
+        key = (store.root, Path(path))
+        with _STORES_LOCK:
+            first = key not in _DEGRADED_REPORTED
+            _DEGRADED_REPORTED.add(key)
+        if first:
+            relative = str(Path(path).relative_to(store.root))
+            log(f"durability degraded: a data sync failed on {relative}")
+            if Path(path).name != DIAGNOSTICS_NAME:
+                record_diagnostic({"event": "durability_degraded", "file": relative})
+    return result
+
+
+def record_diagnostic(record: dict) -> AppendResult:
     """One line in TRANSCRIPTS_DIR/recorder.jsonl, the process's own record.
 
     It sits at the root beside the per-agent directories, so nothing that
     discovers agents by directory mistakes it for one, and nothing about the
-    process lands in an agent's events.
+    process lands in an agent's events. Its own failures are only logged.
     """
-    with contextlib.suppress(OSError, ValueError):
-        write_record_line(TRANSCRIPTS_DIR / "recorder.jsonl", {"at": iso(), **record})
+    path = TRANSCRIPTS_DIR / DIAGNOSTICS_NAME
+    return append_with_custody(store_for(TRANSCRIPTS_DIR), path, {"at": iso(), **record})
+
+
+def free_bytes(path: Path) -> int | None:
+    """Bytes available to this process on the record's filesystem, or None if unknowable."""
+    try:
+        stats = os.statvfs(path)
+    except OSError:
+        return None
+    return stats.f_bavail * stats.f_frsize
 
 
 class Exchange:
@@ -814,9 +876,15 @@ class Exchange:
         self.slots = False
         self.admitted = False
         self.accounted: Closed | None = None
+        # Set when a response *attempt* begins, before any byte is written.
         self.responded = False
         self.event_written = False
+        # The status selected for the client, once an attempt to send it began.
+        # It is not proof of delivery: a write can fail, or a control exception
+        # can unwind at the start of the attempt, with this already set.
         self.status: int | None = None
+        # The transcript append's result, once attempted.
+        self.recorded: AppendResult | None = None
         self.outcome: str | None = None
         self.refusal: str | None = None
         self.estimate: int | None = None
@@ -871,8 +939,8 @@ def make_handler(recorder: Recorder):
                     )
             except BaseException:
                 # A control exception (SystemExit, KeyboardInterrupt...) unwinds
-                # through here and keeps going. Its `close` gets a fixed outcome;
-                # no status is claimed for a response that was never sent.
+                # through here and keeps going. Its `close` gets a fixed outcome,
+                # and no status unless a response attempt had already begun.
                 if not exchange.responded:
                     exchange.status = None
                 exchange.outcome = "aborted"
@@ -930,15 +998,25 @@ def make_handler(recorder: Recorder):
             if exchange.upstream_status is not None:
                 record["upstream_status"] = exchange.upstream_status
             record["relayed"] = exchange.relayed
+            if exchange.recorded is not None:
+                record["recorded"] = exchange.recorded.status
+                if exchange.recorded.dir_unsynced:
+                    record["dir_unsynced"] = True
             try:
-                write_record_line(state.events, record)
+                result = append_with_custody(state.store, state.events, record)
+                unrecorded = None if result.readable else result.status
             except Exception as error:  # noqa: BLE001 -- the last resort is the container log
+                unrecorded = type(error).__name__
+            if unrecorded is not None:
+                # One bounded line, fixed keys, no request content and no header:
+                # the only evidence left when the events file cannot take it.
                 fallback = {
                     "id": exchange.rid,
                     "agent": state.slug,
                     "outcome": exchange.outcome,
                     "status": exchange.status,
-                    "close_unrecorded": type(error).__name__,
+                    "transcript": exchange.recorded.status if exchange.recorded else None,
+                    "close_unrecorded": unrecorded,
                 }
                 print(json.dumps(fallback), file=sys.stderr, flush=True)
 
@@ -1091,7 +1169,36 @@ def make_handler(recorder: Recorder):
                     opened["label_seen_before"] = True
             elif request.label_invalid is not None:
                 opened["client_label_invalid"] = request.label_invalid
-            write_record_line(state.events, opened)
+
+            # Custody before spend: a prediction that the record has room, then
+            # a readable `open`. Neither failure admits or contacts anything.
+            available = free_bytes(TRANSCRIPTS_DIR)
+            if available is None:
+                self._refuse(
+                    exchange,
+                    503,
+                    "record_unavailable",
+                    "the recorder cannot check the space for its record",
+                )
+                return
+            if available < MIN_FREE_BYTES:
+                self._refuse(
+                    exchange,
+                    503,
+                    "record_capacity",
+                    "the recorder's record is nearly out of space; nothing was sent",
+                )
+                return
+            opened_result = append_with_custody(state.store, state.events, opened)
+            if not opened_result.readable:
+                log(f"{state.slug}: {exchange.rid}: open not recorded: {opened_result.status}")
+                self._refuse(
+                    exchange,
+                    503,
+                    "record_unavailable",
+                    "the recorder could not record this request; nothing was sent",
+                )
+                return
 
             # Reserve against the ceilings before spending anything upstream.
             decision = budget.admit(exchange.rid, state.slug, exchange.estimate)
@@ -1148,7 +1255,8 @@ def make_handler(recorder: Recorder):
             exchange.status = status
             exchange.outcome = "ok" if 200 <= status < 300 else "upstream_http"
 
-            write_record_line(
+            exchange.recorded = append_with_custody(
+                state.store,
                 state.transcript,
                 {
                     "at": iso(),
@@ -1159,6 +1267,17 @@ def make_handler(recorder: Recorder):
                     "status": status,
                 },
             )
+            if not exchange.recorded.readable:
+                # Record before relay: an answer with no readable record is
+                # withheld. It was paid for; the accounting above says so.
+                log(f"{state.slug}: {exchange.rid}: transcript not recorded: {exchange.recorded.status}")
+                self._refuse(
+                    exchange,
+                    502,
+                    "record_failed",
+                    "the recorder could not record the response, so it was withheld",
+                )
+                return
             out_headers = {
                 name: value
                 for name, value in response_headers.items()
@@ -1362,17 +1481,35 @@ def extract_usage(response) -> Usage:
     return Usage(UNKNOWN, None, usage)
 
 
+def _nonfinite_marker(literal: str) -> dict:
+    return {"__nonfinite__": literal}
+
+
+def _float_or_marker(text: str):
+    value = float(text)
+    return value if math.isfinite(value) else {"__nonfinite__": text}
+
+
 def decode_payload(payload: bytes):
     """Decode an upstream body for the record, keeping an unreadable one as text.
 
     The record's job is fidelity, not prettiness: a body that is not JSON is
-    stored as what it was, marked truncated, rather than dropped.
+    stored as what it was, marked truncated, rather than dropped. A NaN or
+    Infinity literal, or a number that overflows to one, is kept as
+    `{"__nonfinite__": "<literal>"}` so the record line stays strict JSON
+    (SV-013 section 2.1.7's rule, taken here only because the custody
+    serializer refuses non-finite numbers). JSON the parser will not hold
+    (nesting or digit limits) is kept as text.
     """
     if not payload:
         return None
     try:
-        return json.loads(payload.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        return json.loads(
+            payload.decode("utf-8"),
+            parse_constant=_nonfinite_marker,
+            parse_float=_float_or_marker,
+        )
+    except (UnicodeDecodeError, ValueError, RecursionError):
         text = payload.decode("utf-8", "ignore")
         record = {"raw_body": text[:1_000_000]}
         if len(text) > 1_000_000:
@@ -1417,6 +1554,16 @@ def main() -> int:
     recorder's own sockets are swept, because a second recorder may be serving
     other agents in the same directory.
     """
+    if not TRANSCRIPTS_DIR.is_dir():
+        # The record's root is the deployment's: created and made durable on the
+        # host. A root this process created could vanish with its parent.
+        print(
+            f"[recorder] refusing to start: the transcript directory {TRANSCRIPTS_DIR} "
+            "does not exist, and the recorder does not create it",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
     shared = Budget(env_int("RECORDER_TOKEN_GLOBAL_HOURLY_MAX", 20_000_000))
     # Every allowance starts empty in a new process; this line is how a reader
     # tells one boot's request ids from the next. It is never written into an
