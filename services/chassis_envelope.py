@@ -315,7 +315,8 @@ class Adoption:
     originals: tuple[Original, ...] = ()
 
     def refusal_payload(self) -> dict:
-        return {"turn_seq": self.turn_seq, "reason": "too_many_calls", "count": self.count}
+        """RESPONSE_REFUSED, carrying the notice it owes (appended by the reducer with the record)."""
+        return {"turn_seq": self.turn_seq, "reason": "too_many_calls", "count": self.count, "notice": self.notice}
 
     def turn_response_payload(self, retained: list[dict]) -> dict:
         """The TURN_RESPONSE body. `retained`: [{sha256, bytes, kind, field}] actually stored as blobs."""
@@ -329,6 +330,8 @@ class Adoption:
         }
         if self.omitted is not None:
             payload["omitted"] = self.omitted
+            # Owed once the group's last stored call is answered (the reducer appends it).
+            payload["omitted_notice"] = self.notice
         return payload
 
 

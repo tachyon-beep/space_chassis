@@ -121,6 +121,102 @@ def test_the_retained_reference_graph_covers_every_blob_replay_reads(tmp_path):
         assert (root.session_dir / "blobs" / sha).exists()
 
 
+def crash_after_ck4(root: Root, session) -> None:
+    """Process death after CK4 installed the new file, before CK5/CK6."""
+    from test_chassis_durability import Crash  # noqa: PLC0415
+
+    ops = FaultOps()
+    session.ops = session.writer.ops = ops
+    ops.paths[session.writer.fd] = str(root.segment())
+    ops.faults.append(("sync_dir", lambda p: p.endswith("/session"), Crash()))
+    try:
+        session.checkpoint()
+    except Crash:
+        pass
+    session.close()
+
+
+def assert_prev_is_bound_and_a14_rebuilds(root: Root, session) -> None:
+    import hashlib  # noqa: PLC0415
+
+    newest = [r for r in root.records() if r.type_name == "CHECKPOINT"][-1]
+    prev = newest.payload["prev"]
+    assert prev is not None, "the newest checkpoint names no previous base"
+    retained = hashlib.sha256(root.file("conversation.prev.json")).hexdigest()
+    assert retained == prev["conv_sha256"], "conversation.prev.json is not the snapshot `prev` advertises"
+    expected = list(session.messages)
+    session.close()
+    (root.session_dir / "conversation.json").write_bytes(b"damaged")
+    opening = root.start()
+    assert opening.classification == "A14", opening
+    assert opening.session.messages[: len(expected)] == expected
+    assert opening.session.messages[-1]["content"] == st.A14_NOTICE
+    opening.session.close()
+
+
+def test_sv021_02_the_previous_base_survives_a10_and_the_next_checkpoint(tmp_path):
+    """Astra SV021-02: C(B) -> append -> crash after CK4(N) -> A10 -> next checkpoint -> A14."""
+    root = Root(tmp_path)
+    session = establish(root)
+    session.append_message("user", "appended before the interrupted checkpoint")
+    crash_after_ck4(root, session)
+    opening = root.start()
+    assert opening.classification == "A10"
+    session = opening.session
+    session.append_message("user", "after the recovery")
+    session.checkpoint()
+    assert_prev_is_bound_and_a14_rebuilds(root, session)
+
+
+def test_sv021_02_the_previous_base_survives_an_a14_repair_and_the_next_checkpoint(tmp_path):
+    root = Root(tmp_path)
+    session = establish(root)
+    partial_turn(session, 6)
+    session.checkpoint()
+    session.close()
+    (root.session_dir / "conversation.json").write_bytes(b"damaged")
+    opening = root.start()
+    assert opening.classification == "A14"
+    session = opening.session
+    session.append_message("user", "after the repair")
+    session.checkpoint()
+    assert_prev_is_bound_and_a14_rebuilds(root, session)
+
+
+def test_sv021_02_the_previous_base_survives_an_external_edit_and_the_next_checkpoint(tmp_path):
+    root = Root(tmp_path)
+    session = establish(root)
+    partial_turn(session, 6)
+    session.checkpoint()
+    session.close()
+    (root.session_dir / "conversation.json").write_text(json.dumps([{"role": "user", "content": "NEW"}], indent=2) + "\n")
+    opening = root.start()
+    assert opening.classification == "A11"
+    session = opening.session
+    session.append_message("user", "after the edit")
+    session.checkpoint()
+    assert_prev_is_bound_and_a14_rebuilds(root, session)
+
+
+def test_sv021_02_the_previous_base_survives_a_rollback_reimport_and_the_next_checkpoint(tmp_path):
+    root = Root(tmp_path)
+    session = establish(root)
+    partial_turn(session, 6)
+    session.checkpoint()
+    session.close()
+    meta = json.loads(root.file("run.json"))
+    for key in ("format", "writer", "checkpoint", "history_epoch"):
+        meta.pop(key)
+    (root.session_dir / "run.json").write_text(json.dumps(meta))
+    (root.session_dir / "conversation.json").write_text(json.dumps([{"role": "user", "content": "old runtime"}], indent=2) + "\n")
+    opening = root.start()
+    assert opening.classification == "A8"
+    session = opening.session
+    session.append_message("user", "after the reimport")
+    session.checkpoint()
+    assert_prev_is_bound_and_a14_rebuilds(root, session)
+
+
 def test_o2_2_previous_base_replay_reads_the_interval_and_the_suffix_only(tmp_path):
     root = Root(tmp_path)
     session = establish(root)  # C_p

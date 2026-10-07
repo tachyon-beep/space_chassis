@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import importlib.util
 import inspect
 import json
@@ -252,13 +253,20 @@ class Carried:
                 return None
         return data
 
-    def save_conversation(self, messages: list[dict]) -> str:
-        """CK1-CK4: the plain list, serialized as always; the old file kept as conversation.prev.json.
+    def save_conversation(self, messages: list[dict], rotate: bool = True) -> str:
+        """CK1-CK4: the plain list, serialized as always; the old file kept as conversation.prev.json
+        unless the session keeps a bound snapshot there (`rotate=False`).
 
         Returns the installed bytes' SHA-256. Raises PersistenceFailure.
         """
         self.session_dir.mkdir(parents=True, exist_ok=True)
-        return persistence.install_conversation(self.session_dir, persistence.conversation_bytes(messages))
+        return persistence.install_conversation(self.session_dir, persistence.conversation_bytes(messages), rotate=rotate)
+
+    def install(self, messages: list[dict], _data: bytes, rotate: bool) -> str:
+        """The session's install hook, through `save_conversation` (whose callers may replace it)."""
+        if rotate:
+            return self.save_conversation(messages)
+        return self.save_conversation(messages, rotate=False)
 
     def recap(self) -> str:
         raw = read_bounded(self.recap_path, RECAP_MAX_BYTES)
@@ -510,8 +518,11 @@ class RunContext:
         self._chassis.add_message("system", text)
 
     def history(self) -> list[dict]:
-        """The conversation so far. A copy; edits here do not take effect."""
-        return [dict(message) for message in self._chassis.messages]
+        """The conversation so far. A detached copy, nested values included; edits here do not take effect.
+
+        To change the conversation, pass the edited list to `set_history`.
+        """
+        return copy.deepcopy(self._chassis.messages)
 
     def set_history(self, messages: list[dict]) -> None:
         """Replace the conversation. The duty owns it and may prune it.
@@ -1133,7 +1144,8 @@ class Chassis:
                 lifecycle=self.record,
                 repair=self._repair_adopted,
                 new_lineage=lambda: uuid.uuid4().hex[:16],
-                install=lambda messages, _data: self.carried.save_conversation(messages),
+                install=self.carried.install,
+                meta_source=self._meta_fields,
             )
         except PersistenceFailure as failure:
             return self._end_before_main(EXIT_ENVIRONMENT, "persistence_failure", str(failure))

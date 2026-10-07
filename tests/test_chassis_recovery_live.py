@@ -30,6 +30,7 @@ import json
 import chassis
 import chassis_persistence as cp
 import chassis_replay as rp
+import chassis_session as cs
 import chassis_startup as st
 import pytest
 from chassis_envelope import RawCall, RawResponse, adopt_response
@@ -229,7 +230,7 @@ def test_an_interrupted_legacy_import_is_adopted_through_its_switch_not_re_impor
     (root.home / "HANDOFF.md").write_text("N0\n")
     root.start().session.close()  # LEGACY_IMPORT + NOTE_WRITTEN{legacy}, then the process stops
     opening = root.start()
-    assert opening.classification == "A10", "the legacy file is the base its own LEGACY_IMPORT names"
+    assert opening.classification == "A9t", "the legacy file is the base its own LEGACY_IMPORT binds"
     session = resume(opening)
     assert [m["content"] for m in session.messages].count(rp.NOTE_PREFIX + "N0\n") == 1
     assert root.types().count("LEGACY_IMPORT") == 1 and "LEGACY_REIMPORT" not in root.types()
@@ -277,7 +278,10 @@ def test_c_n3_c_n4_legacy_note_migration(tmp_path, in_list):
     if in_list:
         assert status == "legacy_matched_unproven" and "NOTE_WRITTEN" not in root.types()
     else:
-        assert status == "legacy_unadopted_unproven" and root.records()[2].payload["source"] == "legacy"
+        # SV021-03: the legacy generation is carried by LEGACY_IMPORT itself.
+        imported = root.records()[1].payload
+        assert status == "legacy_unadopted_unproven" and imported["note"]["gen"] == 1
+        assert "NOTE_WRITTEN" not in root.types()
     assert len(appended) == 1, "matched: not re-appended; unadopted: adopted once"
     session.close()
     again = resume(root.start())
@@ -439,6 +443,7 @@ def test_o1_4_an_ambiguous_tail_stops_without_truncation_then_continues_conserva
     session.close()
     garbage = bytes(range(256)) + bytes(44)  # 300 bytes; no valid header
     append_raw(root, garbage)
+    reserved = cs.read_identity(root.session_dir, LINEAGE)
     before = root.file(f"ledger/{root.segment().name}")
     opening = root.start()
     assert (opening.classification, opening.stop) == ("TC4", "ledger_tail_ambiguous")
@@ -453,7 +458,9 @@ def test_o1_4_an_ambiguous_tail_stops_without_truncation_then_continues_conserva
     kinds = [(r.type_name, r.payload.get("kind")) for r in root.records()]
     assert ("RECOVERY_ACK", None) in kinds and ("RECOVERY", "damaged_tail_acknowledged") in kinds
     spend = next(r for r in root.records() if r.payload.get("kind") == "possible_duplicate_spend")
-    assert spend.payload["detail"]["next"] == {"turn_seq": turn + 1 + 300 // 117 + 1, "attempt": 1}
+    # SV021-01: above every turn the durable reservation covered (it covered
+    # every request the hidden bytes could hold), not a length formula.
+    assert spend.payload["detail"]["next"] == {"turn_seq": reserved + 1, "attempt": 1} and reserved >= turn
     assert not (root.session_dir / st.ACKNOWLEDGED).exists() and not (root.session_dir / st.RECOVERING).exists()
 
 
@@ -552,8 +559,15 @@ def test_a14_o2_2_an_unreadable_file_is_rebuilt_from_the_previous_base(tmp_path)
     tail = opening.session.messages[len(turn7):]
     assert tail[1:3] == [T("call_a", "read_file", READ), T("call_b", "write_file", UNRUN)]
     assert tail[-1]["content"] == st.A14_NOTICE
-    assert json.loads(root.file("conversation.json")) == opening.session.messages, "the unreadable file was replaced"
+    # SV021-02: the unreadable file is replaced by the newest checkpoint's own
+    # (hash-verified) bytes -- bound again -- and the suffix replays on top.
+    assert json.loads(root.file("conversation.json")) == turn7, "the unreadable file was replaced by C_n"
     assert json.loads(root.file("conversation.prev.json")) == BASE, "the bound previous base is not rotated away"
+    expected = list(opening.session.messages)
+    opening.session.close()
+    again = root.start()
+    assert again.classification == "A9" and again.session.messages == expected
+    assert [m["content"] for m in expected].count(st.A14_NOTICE) == 1
     assert any(name.startswith("conversation-") for name in root.corrupt())
 
 
@@ -839,7 +853,8 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 class ScriptWorld:
     """One temporary root, one local stub, many real `chassis.py` processes."""
 
-    def __init__(self, replies, *, hold_first: bool = False) -> None:
+    def __init__(self, replies, *, hold_first: bool = False, hold_request: int | None = None) -> None:
+        hold_request = 1 if hold_first else hold_request
         import tempfile  # noqa: PLC0415
         import threading  # noqa: PLC0415
 
@@ -853,7 +868,7 @@ class ScriptWorld:
 
             def handle(inner, body):  # noqa: N805
                 inner.bodies.append(json.loads(body))
-                if hold_first and len(inner.bodies) == 1:
+                if hold_request is not None and len(inner.bodies) == hold_request:
                     inner.release.wait(60)  # the test kills the runtime meanwhile
                 return super().handle(body)
 
@@ -1025,6 +1040,8 @@ def test_script_an_ambiguous_tail_stops_until_acknowledged_then_continues_with_i
 
     world = script_world([Reply(text="fine")])
     assert world.run(ASK="1").returncode == 0
+    lineage = json.loads((world.session_dir / "run.json").read_text())["lineage_id"]
+    reserved = cs.read_identity(world.session_dir, lineage)
     segment = sorted((world.session_dir / "ledger").glob("*.svl"))[-1]
     with open(segment, "ab") as handle:
         handle.write(bytes(300))
@@ -1037,5 +1054,333 @@ def test_script_an_ambiguous_tail_stops_until_acknowledged_then_continues_with_i
     assert third.returncode == 0, third.stdout[-2000:] + third.stderr[-2000:]
     request = world.stub.bodies[1]
     assert any(str(m.get("content", "")).startswith("[runtime] records after ledger seq") for m in request["messages"])
-    lineage, turn, attempt = request[chassis.CORRELATION_KEY].rsplit(":", 2)
-    assert (int(turn), attempt) == (2 + 300 // 117 + 1, "1"), "every turn the hidden bytes could hold is skipped"
+    _lineage, turn, attempt = request[chassis.CORRELATION_KEY].rsplit(":", 2)
+    assert (int(turn), attempt) == (reserved + 1, "1"), "above every turn the durable reservation covered (SV021-01)"
+
+
+# ===========================================================================
+# SV-021 correction 1: regressions for Astra SV021-01, -04, -05, -06
+# (written and run against the reviewed code first; RECEIPT.md §6)
+# ===========================================================================
+def damage_from(path, first_seq: int, lineage: str | None = None) -> None:
+    """Corrupt the header check (byte 33) of every frame with seq >= first_seq, in place."""
+    segments = cp.read_segments(path.parent)
+    records = cp.scan_segments(segments, lineage or st._segment_lineage(segments)).records
+    data = bytearray(path.read_bytes())
+    for record in records:
+        if record.seq >= first_seq and record.segment == int(path.stem):
+            offset = record.offset + 33
+            data[offset] = ord("0") if data[offset] != ord("0") else ord("1")
+    path.write_bytes(bytes(data))
+
+
+def turn_of(label: str) -> int:
+    return int(label.rsplit(":", 2)[1])
+
+
+def test_sv021_01_a_second_smaller_ambiguous_tail_never_reuses_an_identity(tmp_path):
+    """Astra SV021-01: two TC4 recoveries, the first large, the second small, a request between them."""
+    root = Root(tmp_path)
+    session = establish(root)
+    session.close()
+    prefix_end = root.records()[-1].seq
+    append_raw(root, bytes(117_000))
+    assert root.start().stop == "ledger_tail_ambiguous"
+    st.acknowledge(root.session_dir, "ledger_tail_ambiguous", "continue-conservative")
+    session = root.start().session
+    first_label = session.next_label()
+    session.send(lambda: None)  # a request under the skipped identity; the process then dies
+    session.close()
+    assert not (root.session_dir / st.RECOVERING).exists() and root.corrupt(), "the first recovery finished normally"
+    damage_from(root.segment(), prefix_end + 1)
+    opening = root.start()
+    assert opening.stop == "ledger_tail_ambiguous"
+    st.acknowledge(root.session_dir, "ledger_tail_ambiguous", "continue-conservative")
+    opening = root.start()
+    if opening.stop is not None:
+        assert opening.stop == "identity_unproven", "only a fail-closed stop is acceptable"
+        return
+    assert turn_of(opening.session.next_label()) > turn_of(first_label), (
+        f"{opening.session.next_label()} can reuse {first_label}"
+    )
+
+
+def test_sv021_04_one_deletion_is_consumed_once_across_restarts(tmp_path):
+    """Astra SV021-04: a durable note adopted after a deletion survives restarts before any checkpoint."""
+    root = Root(tmp_path)
+    session = establish(root)
+    session.write_note("N", header="# Handoff")
+    session.checkpoint()
+    session.close()
+    (root.session_dir / "conversation.json").unlink()
+    opening = root.start()
+    assert opening.classification == "A12"
+    session = opening.session
+    session.adopt_file_edit()
+    session.adopt_notes()
+    session.append_message("user", "after the deletion")
+    session.close()  # dies before any checkpoint
+    for _restart in range(2):
+        opening = root.start()
+        contents = [m["content"] for m in opening.session.messages]
+        assert contents == [rp.NOTE_PREFIX + "# Handoff\n\nN\n", "after the deletion"], contents
+        assert opening.session.state.history_epoch == 2 and root.types().count("EXTERNAL_DELETE") == 1
+        opening.session.close()
+    session = resume(root.start())  # installs a conversation and checkpoints it
+    session.close()
+    (root.session_dir / "conversation.json").unlink()
+    opening = root.start()
+    assert opening.classification == "A12" and opening.session.state.history_epoch == 3
+    assert root.types().count("EXTERNAL_DELETE") == 2, "a later real deletion is still a deletion"
+
+
+def write_list(root: Root, contents: list[str]) -> None:
+    messages = [{"role": "user", "content": text} for text in contents]
+    (root.session_dir / "conversation.json").write_text(json.dumps(messages, indent=2) + "\n")
+
+
+def test_sv021_05_an_edit_back_to_an_earlier_source_is_still_an_edit(tmp_path):
+    """Astra SV021-05: X -> Y -> X across pre-checkpoint startups."""
+    root = Root(tmp_path)
+    establish(root).close()
+    for step, (contents, epoch) in enumerate([(["X"], 2), (["Y"], 3), (["X"], 4)]):
+        write_list(root, contents)
+        opening = root.start()
+        assert opening.classification == "A11", (step, opening.classification)
+        assert [m["content"] for m in opening.session.messages] == contents
+        assert opening.session.state.history_epoch == epoch
+        opening.session.close()
+    opening = root.start()  # the file is unchanged since the last adoption
+    assert [m["content"] for m in opening.session.messages] == ["X"]
+    assert root.types().count("EXTERNAL_EDIT") == 3, "no duplicate transition for an unchanged file"
+
+
+def start_33(root: Root):
+    session = establish(root)
+    session.send(lambda: None)
+    adoption = adopt_response(
+        RawResponse("", None, tuple(RawCall(f"c{i}", "read_file", "{}") for i in range(33))),
+        session.state.requests_last["turn_seq"],
+    )
+    session.adopt(adoption)
+    return session, adoption
+
+
+OMITTED_33 = "[runtime] the response contained 33 tool calls; calls 33–33 were not stored or run"
+
+
+def assert_one_notice(root: Root, text: str) -> None:
+    for _restart in range(2):
+        opening = root.start()
+        assert opening.session is not None, opening
+        contents = [m["content"] for m in opening.session.messages]
+        assert contents.count(text) == 1, contents[-4:]
+        opening.session.close()
+    session = resume(root.start())
+    assert [m["content"] for m in session.messages].count(text) == 1
+
+
+def test_sv021_06_an_omitted_calls_notice_survives_a_crash_after_the_last_done(tmp_path):
+    root = Root(tmp_path)
+    session, adoption = start_33(root)
+    for call in adoption.calls:
+        if call.admit == "invoke":
+            session.invoke(call, lambda: None)
+            session.record_result(call, "returned", "r")
+    session.close()  # dies before the group's flush
+    assert_one_notice(root, OMITTED_33)
+    tools = [m for m in resume(root.start()).messages if m["role"] == "tool"]
+    assert len(tools) == 32, "stored calls answered once; the omitted call gets no answer"
+
+
+def test_sv021_06_an_omitted_calls_notice_survives_a_crash_inside_a_tool(tmp_path):
+    root = Root(tmp_path)
+    session, adoption = start_33(root)
+    session.invoke(adoption.calls[0], lambda: None)
+    session.close()  # dies inside the first tool
+    assert_one_notice(root, OMITTED_33)
+    assert [r.type_name for r in root.records()].count("INVOKING") == 1, "nothing invoked again"
+
+
+def test_sv021_06_a_refusal_notice_survives_a_crash_after_response_refused(tmp_path, monkeypatch):
+    import contextlib  # noqa: PLC0415
+
+    root = Root(tmp_path)
+    session = establish(root)
+    session.send(lambda: None)
+    adoption = adopt_response(
+        RawResponse("", None, tuple(RawCall(f"c{i}", "read_file", "{}") for i in range(257))),
+        session.state.requests_last["turn_seq"],
+    )
+
+    def die(*_args, **_kwargs):
+        raise Crash()
+
+    monkeypatch.setattr(session, "_append", die)  # process death after RESPONSE_REFUSED, if a later write exists
+    with contextlib.suppress(Crash):
+        session.adopt(adoption)
+    session.close()
+    assert "RESPONSE_REFUSED" in root.types()
+    assert_one_notice(root, adoption.notice)
+
+
+def test_sv021_01_script_a_second_ambiguous_tail_never_reuses_an_observed_label(script_world):
+    """Astra SV021-01 with real processes: the first skipped label is observed by the stub, then lost."""
+    import subprocess  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    from stub_model import Reply  # noqa: PLC0415
+
+    world = script_world([Reply(text="fine")], hold_request=2)
+    assert world.run(ASK="1").returncode == 0
+    prefix_end = world.records()[-1].seq
+    segment = sorted((world.session_dir / "ledger").glob("*.svl"))[-1]
+    with open(segment, "ab") as handle:
+        handle.write(bytes(117_000))
+    assert world.run(ASK="1").returncode == 44
+    assert world.run("--acknowledge-stop", "ledger_tail_ambiguous", "--resolution", "continue-conservative").returncode == 0
+    process = subprocess.Popen(world.command(False), cwd=str(world.root / "work"), env=world.env(ASK="1"),
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    deadline = time.time() + 30
+    while len(world.stub.bodies) < 2 and time.time() < deadline:
+        time.sleep(0.05)
+    assert len(world.stub.bodies) == 2, "the request under the skipped identity never arrived"
+    process.kill()
+    process.communicate(timeout=30)
+    world.stub.release.set()
+    observed = world.stub.bodies[1][chassis.CORRELATION_KEY]
+    segment = sorted((world.session_dir / "ledger").glob("*.svl"))[-1]
+    damage_from(segment, prefix_end + 1)
+    assert world.run(ASK="1").returncode == 44 and world.last_end()["note"] == "ledger_tail_ambiguous"
+    assert world.run("--acknowledge-stop", "ledger_tail_ambiguous", "--resolution", "continue-conservative").returncode == 0
+    final = world.run(ASK="1")
+    if final.returncode == 44:
+        assert world.last_end()["note"] == "identity_unproven" and len(world.stub.bodies) == 2
+        return
+    assert final.returncode == 0, final.stdout[-2000:] + final.stderr[-2000:]
+    sent = world.stub.bodies[2][chassis.CORRELATION_KEY]
+    assert turn_of(sent) > turn_of(observed), f"{sent} can reuse the observed {observed}"
+
+
+# -- SV021-01: the reservation itself (post-fix behaviour, fail-closed cases) --
+def two_tc4(root: Root):
+    """The SV021-01 trace up to the second acknowledgement; returns the first skipped label."""
+    session = establish(root)
+    session.close()
+    prefix_end = root.records()[-1].seq
+    append_raw(root, bytes(117_000))
+    root.start()
+    st.acknowledge(root.session_dir, "ledger_tail_ambiguous", "continue-conservative")
+    session = root.start().session
+    label = session.next_label()
+    session.send(lambda: None)
+    session.close()
+    damage_from(root.segment(), prefix_end + 1)
+    root.start()
+    st.acknowledge(root.session_dir, "ledger_tail_ambiguous", "continue-conservative")
+    return label
+
+
+def test_sv021_01_with_a_valid_reservation_the_second_recovery_continues_above_it(tmp_path):
+    root = Root(tmp_path)
+    first = two_tc4(root)
+    reserved = cs.read_identity(root.session_dir, LINEAGE)
+    assert reserved >= turn_of(first), "the first skipped turn was reserved before its request"
+    opening = root.start()
+    assert opening.stop is None
+    assert opening.session.state.requests_next == {"turn_seq": reserved + 1, "attempt": 1}
+    sent = [r.payload["turn_seq"] for r in root.records() if r.type_name == "REQUEST_SENT"]
+    assert max(sent) < reserved + 1 and cs.read_identity(root.session_dir, LINEAGE) >= reserved + 1
+
+
+@pytest.mark.parametrize("damage", ["missing", "bad-check", "foreign-lineage"])
+def test_sv021_01_without_a_valid_reservation_an_ambiguous_tail_stops_and_changes_nothing(tmp_path, damage):
+    root = Root(tmp_path)
+    two_tc4(root)
+    path = root.session_dir / cs.IDENTITY
+    if damage == "missing":
+        path.unlink()
+    elif damage == "bad-check":
+        path.write_text(path.read_text().replace('"turns_reserved_through": ', '"turns_reserved_through": 1'))
+    else:
+        path.write_bytes(cs.identity_bytes("another", 10**9))
+    before = root.snapshot()
+    opening = root.start()
+    assert (opening.stop, opening.session) == ("identity_unproven", None)
+    after = root.snapshot()
+    stopped = after.pop("session/STOPPED")
+    assert json.loads(stopped)["reason"] == "identity_unproven"
+    before.pop("session/ACKNOWLEDGED", None)
+    after.pop("session/ACKNOWLEDGED", None)
+    assert after == before, "no truncation, no intent, no record, no new identity"
+
+
+def test_sv021_01_a_crash_during_the_reservation_sends_nothing(tmp_path):
+    root = Root(tmp_path)
+    session = establish(root)
+    session.identity_reserved = session.state.requests_next["turn_seq"] - 1  # force a reservation write
+    ops = FaultOps()
+    session.ops = ops
+    ops.faults.append(("rename", lambda p: p.endswith("/" + cs.IDENTITY), Crash()))
+    sent = []
+    with pytest.raises(Crash):
+        session.send(lambda: sent.append(1))
+    session.close()
+    assert sent == [] and root.types().count("REQUEST_SENT") == 1, "neither the record nor the request"
+    assert cs.read_identity(root.session_dir, LINEAGE) is not None, "the old reservation is intact"
+    opening = root.start()
+    assert opening.stop is None and opening.session.state.requests_next["turn_seq"] == 2
+
+
+def test_sv021_01_a_damaged_reservation_with_a_clean_ledger_is_rebuilt_from_it(tmp_path):
+    root = Root(tmp_path)
+    establish(root).close()
+    (root.session_dir / cs.IDENTITY).write_text("{torn")
+    opening = root.start()
+    assert opening.stop is None
+    assert cs.read_identity(root.session_dir, LINEAGE) >= opening.session.state.requests_next["turn_seq"]
+
+
+# -- SV021-05: a legacy reimport followed by an edit, and an unpublished import followed by one --
+def test_sv021_05_a_rollback_then_an_edit_is_adopted_and_then_stable(tmp_path):
+    root = Root(tmp_path)
+    establish(root).close()
+    meta = json.loads(root.file("run.json"))
+    for key in ("format", "writer", "checkpoint", "history_epoch"):
+        meta.pop(key)
+    (root.session_dir / "run.json").write_text(json.dumps(meta))
+    write_list(root, ["old runtime"])
+    assert root.start().classification == "A8"
+    write_list(root, ["edited after the reimport"])
+    opening = root.start()
+    assert opening.classification == "A8" and [m["content"] for m in opening.session.messages] == ["edited after the reimport"]
+    opening.session.close()
+    opening = root.start()
+    assert opening.classification == "A8t" and root.types().count("LEGACY_REIMPORT") == 2
+
+
+def test_sv021_05_an_edit_after_an_unpublished_import_is_an_edit(tmp_path):
+    root = Root(tmp_path)
+    write_list(root, ["legacy"])
+    root.start().session.close()  # LEGACY_IMPORT; no checkpoint yet
+    write_list(root, ["edited"])
+    opening = root.start()
+    assert opening.classification == "A11" and [m["content"] for m in opening.session.messages] == ["edited"]
+    opening.session.close()
+    assert root.start().classification == "A9t"
+
+
+# -- SV021-06: the 256-call cut right after TURN_RESPONSE --
+def test_sv021_06_a_256_call_response_owes_its_notice_from_turn_response_on(tmp_path):
+    root = Root(tmp_path)
+    session = establish(root)
+    session.send(lambda: None)
+    session.adopt(adopt_response(
+        RawResponse("", None, tuple(RawCall(f"c{i}", "read_file", "{}") for i in range(256))),
+        session.state.requests_last["turn_seq"],
+    ))
+    session.close()  # dies right after TURN_RESPONSE, before any tool
+    assert_one_notice(root, "[runtime] the response contained 256 tool calls; calls 33–256 were not stored or run")
+    assert "INVOKING" not in root.types(), "recovery invoked nothing"
+    checkpoints = [r for r in root.records() if r.type_name == "CHECKPOINT"]
+    assert checkpoints[-1].payload["state"]["active_group"] is None

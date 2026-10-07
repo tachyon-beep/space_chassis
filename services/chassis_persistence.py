@@ -1427,7 +1427,7 @@ def conversation_bytes(messages: list) -> bytes:
     return (json.dumps(messages, indent=2) + "\n").encode("ascii")
 
 
-def install_conversation(session_dir: Path, data: bytes, *, ops: DurableOps | None = None) -> str:
+def install_conversation(session_dir: Path, data: bytes, *, ops: DurableOps | None = None, rotate: bool = True) -> str:
     """CK2-CK4: temp fsync; the old file kept as conversation.prev.json; rename; fsync(session/).
 
     Returns the installed bytes' SHA-256. The name `conversation.json` is never
@@ -1445,7 +1445,9 @@ def install_conversation(session_dir: Path, data: bytes, *, ops: DurableOps | No
         ops.fsync(fd)
         ops.close(fd)
         fd = None
-        if target.exists():
+        # `rotate=False` (SV021-02): .prev.json already holds the snapshot the
+        # caller's checkpoint will name, and must not be replaced.
+        if rotate and target.exists():
             previous_temp = session_dir / ".prev.tmp"
             with contextlib.suppress(FileNotFoundError):
                 ops.unlink(str(previous_temp))

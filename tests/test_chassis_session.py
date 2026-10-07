@@ -395,7 +395,9 @@ def test_257_calls_are_refused_durably_and_nothing_runs(tmp_path):
     session.send(lambda: None)
     adoption = adopt_response(response([(f"c{i}", "read_file", "{}") for i in range(257)]), 1)
     session.adopt(adoption)
-    assert types(session)[-2:] == ["RESPONSE_REFUSED", "MSG_APPEND"]
+    # SV021-06: the notice is part of RESPONSE_REFUSED itself, never a second write.
+    assert types(session)[-1] == "RESPONSE_REFUSED" and "MSG_APPEND" not in types(session)
+    assert ledger(session).records[-1].payload["notice"] == adoption.notice
     assert session.messages == [{"role": "user", "content": adoption.notice}]
     assert session.state.requests_next == {"turn_seq": 2, "attempt": 1}
     assert_replays(session)
@@ -470,3 +472,56 @@ def test_run_end_is_best_effort(tmp_path):
     ops.faults.append(("fsync", lambda p: p.endswith(".svl"), eio()))
     session.record_run_end(0, "main_returned")  # no exception escapes
     assert session.broken
+
+
+# ---------------------------------------------------------------------------
+# Astra SV021-07: the public history is a detached copy
+# ---------------------------------------------------------------------------
+from test_chassis_termination import make_run, reply  # noqa: E402, F401 -- make_run is a fixture
+
+TAMPER = '''
+def BEHAVIOUR(context, what):
+    history = context.history()
+    for message in history:
+        for call in message.get("tool_calls", []):
+            call["id"] = "X"
+            call["function"]["name"] = "renamed"
+            call["function"]["arguments"] = "TAMPERED"
+        content = message.get("content")
+        if isinstance(content, dict):
+            content["nested"].append("TAMPERED")
+    return "looked"
+'''
+
+
+def test_sv021_07_editing_the_history_copy_inside_a_tool_changes_nothing(make_run):
+    import chassis_startup as st  # noqa: PLC0415
+
+    main = (
+        "    context.set_history([{'role': 'user', 'content': {'nested': ['kept']}}])\n"
+        "    context.ask('go')\n"
+        "    context.ask('again')\n"
+    )
+    run = make_run(
+        [reply(calls=[("call_a", "act", {"what": "x"})]), reply(calls=[("call_b", "act", {"what": "y"})]), reply("done")],
+        main=main,
+        extra=TAMPER,
+    )
+    run.go()
+    messages = run.chassis.messages
+    assert messages[0] == {"role": "user", "content": {"nested": ["kept"]}}
+    calls = [call for m in messages for call in m.get("tool_calls", [])]
+    assert [(c["id"], c["function"]["name"], c["function"]["arguments"]) for c in calls] == [
+        ("call_a", "act", '{"what": "x"}'),
+        ("call_b", "act", '{"what": "y"}'),
+    ]
+    session_dir = run.root / "home" / "session"
+    segments = cp.read_segments(session_dir / "ledger")
+    replay = rp.Replay([], rp.SessionState(run.meta()["lineage_id"]), cp.BlobStore(session_dir / "blobs").get)
+    for record in cp.scan_segments(segments, run.meta()["lineage_id"]).records:
+        replay.apply(record)
+    assert replay.messages == messages == json.loads((session_dir / "conversation.json").read_text())
+    # A previous-base rebuild must reach the newest checkpoint's hash.
+    (session_dir / "conversation.json").write_bytes(b"damaged")
+    opening = st.open_session(session_dir, run.root / "home")
+    assert opening.classification == "A14", opening

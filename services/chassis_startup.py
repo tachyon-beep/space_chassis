@@ -37,10 +37,11 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import chassis_envelope as envelope
 import chassis_persistence as cp
 import chassis_replay as rp
 from chassis_replay import Replay, ReplayMismatch, SessionState
-from chassis_session import BLOB_READ_MAX, Session
+from chassis_session import BLOB_READ_MAX, Session, checkpoint_tuple, read_identity
 
 STOPPED = "STOPPED"
 FSYNC_FAILED = "FSYNC_FAILED"
@@ -76,7 +77,9 @@ UNMERGED_CALLS_SHOWN = 32
 
 @dataclass
 class Opening:
-    classification: str  # A0..A15 (A10x/A12x: a switch this recovery already wrote)
+    # A0..A15; a "t" suffix (A9t, A12t, A8t) means the file is already bound by
+    # a recorded transition (switch, deletion, adoption) after the newest checkpoint.
+    classification: str
     session: Session | None = None
     stop: str | None = None
     detail: dict | None = None
@@ -371,13 +374,22 @@ class _Context:
             folded = min(folded, len(messages))
         legacy, note_text = self._legacy_note(messages)
         payload = {"conv_sha": conv.sha, "recap_folded": folded, "legacy": legacy}
+        if note_text is not None:
+            # SV021-03: the unadopted legacy note is a pending generation of
+            # this same record (its blob durable first), so "processed" is
+            # never durable without the obligation to adopt it.
+            stored, _info = envelope.truncate_marked(note_text, session.caps.note)
+            note_blob = stored.encode("utf-8")
+            key = session._put_blob(note_blob)
+            payload["note"] = {
+                "gen": session.state.notes_next_gen, "blob": key, "bytes": len(note_blob),
+                "sha256": key, "mirror_sha256": legacy["handoff_sha256"],
+            }
         if conv.status == "ok":
             data = rp.conversation_bytes(messages)
             session._commit("LEGACY_IMPORT", lambda blob: {**payload, "blob": blob}, blob=data, replay_bytes=len(data))
         else:
             session._commit("LEGACY_IMPORT", payload)
-        if note_text is not None:
-            session.write_legacy_note(note_text, legacy["handoff_sha256"])
         self._consume_ack(session, ())
         classification = "A5" if conv.status == "ok" else "A4"
         return Opening(classification, session, had_memory=bool(messages) or note_text is not None)
@@ -405,9 +417,13 @@ class _Context:
         if intent_status == "unreadable":
             raise StartupStop("recovery_intent_unreadable", None, "intent")
         ack = self.ack
+        identity = read_identity(session_dir, lineage, ops)
         if intent is not None:
             p0, extra, original_tail = self._from_intent(scan, intent)
             ack = intent.get("ack")
+            # The reservation this recovery's outcome was derived from, before
+            # it was raised: re-deriving must give the same records.
+            identity = intent.get("identity_reserved")
             scan0 = cp.LedgerScan(p0, p0[-1].seq, p0[-1].chain, original_tail, intent["segment"], intent["offset"])
         else:
             p0, extra, scan0 = scan.records, (), scan
@@ -425,11 +441,20 @@ class _Context:
             if covers is not None and covers > scan0.last_seq:
                 raise StartupStop("checkpoint_ahead_of_ledger", {"covers_seq": covers, "last_seq": scan0.last_seq}, "A15")
 
+        if tail.kind == "TC4" and identity is None:
+            # SV021-01: hidden records may hold requests under any turn; only a
+            # valid reservation bounds them. Without one, nothing is changed and
+            # no new identity is issued.
+            raise StartupStop("identity_unproven", {"tail_sha256": sha256(scan0.tail)}, "TC4")
+
         decision = self._classify_base(p0, extra, format2, lineage, read_blob)
         try:
-            core = derive_core(decision.replay, plan, tail, scan0, tail_ack, lineage)
+            core = derive_core(decision.replay, plan, tail, scan0, tail_ack, lineage, identity_reserved=identity)
         except ReplayMismatch as error:
             raise StartupStop("replay_mismatch", {"error": str(error)[:200]}) from error
+        if decision.adopt is not None:
+            # A10: bind the file as the base it equals, before anything follows it.
+            core = [decision.adopt, *core]
 
         # Set the tail aside only under a durable intent (see the module docstring).
         if scan0.tail and intent is None:
@@ -437,6 +462,7 @@ class _Context:
                 "lineage_id": lineage, "last_seq": scan0.last_seq, "chain": scan0.last_chain,
                 "segment": scan0.tail_segment, "offset": scan0.tail_offset,
                 "tail_sha256": sha256(scan0.tail), "tail_bytes": len(scan0.tail), "ack": tail_ack,
+                "identity_reserved": identity,
             }
             cp.write_bytes_durable(session_dir / RECOVERING, json.dumps(intent, sort_keys=True).encode(), ops=ops)
         if scan0.tail and scan.records[-1].seq == scan0.last_seq and scan.tail == scan0.tail:
@@ -460,7 +486,7 @@ class _Context:
         writer = cp.LedgerWriter.continue_after(session_dir, lineage, now, ops=ops)
         replay = decision.replay
         for index, record in enumerate(extra):
-            if index < len(core) and (record.type_name, record.payload) != (core[index][0], _wire(core[index][1])):
+            if index < len(core) and not _same_record(record, core[index]):
                 raise StartupStop("recovery_intent_mismatch", {"seq": record.seq}, "intent")
             try:
                 replay.apply(record)
@@ -468,15 +494,28 @@ class _Context:
                 raise StartupStop("replay_mismatch", {"seq": record.seq, "error": str(error)[:200]}) from error
         session = Session(
             session_dir, self.home_dir, writer, replay, ops=ops, lifecycle=self.lifecycle,
-            last_checkpoint=decision.last_checkpoint, **self.session_kwargs,
+            checkpoints=decision.checkpoints, identity_reserved=identity, **self.session_kwargs,
         )
         session.since_records = decision.suffix_records + len(extra)
         for type_name, payload in core[len(extra):]:
-            session._commit(type_name, payload)
+            if type_name == "ADOPT":
+                data = payload
+                session._commit(
+                    "RECOVERY",
+                    lambda blob: {"kind": "conversation_adopted", "detail": {"conv_sha": sha256(data), "blob": blob}},
+                    blob=data,
+                    replay_bytes=len(data),
+                )
+            else:
+                session._commit(type_name, payload)
         after_core = extra[len(core):]
         self._finish_case(session, decision, plan, core, after_core)
         _remove(session_dir, RECOVERING, ops)
         self._consume_ack(session, now.records)
+        # SV021-01: the reservation now covers every turn this ledger used and
+        # the next one, durably, before the duty can cause any request.
+        used = [r.payload["turn_seq"] for r in now.records if r.type_name == "REQUEST_SENT"]
+        session.reserve_turns(max([*used, session.state.requests_next["turn_seq"]]), exact=True)
         foreign = frozenset(m.get("content") for m in session.messages if m.get("role") == "user") if decision.case == "A8" else frozenset()
         had_memory = bool(session.messages) or bool(session.state.notes_pending)
         return Opening(decision.case, session, had_memory=had_memory, foreign_texts=foreign)
@@ -508,22 +547,19 @@ class _Context:
         covers = newest.payload["covers_seq"] if newest else 0
         suffix = [record for record in p0 if record.seq > covers]
         strict = None
-        last_checkpoint = None
+        newest_bytes = None  # C_n's exact bytes, when some file or the previous base yields them
         try:
             if newest is None:
                 strict = _replay([], SessionState(lineage), p0, read_blob)
                 state_n = None
             else:
                 state_n = SessionState.from_wire(newest.payload["state"])
-                last_checkpoint = {
-                    "covers_seq": covers, "conv_sha256": newest.payload["conv"]["sha256"],
-                    "conv_bytes": newest.payload["conv"]["bytes"], "checkpoint_seq": newest.seq,
-                }
                 base = next((f for f in (conv, prev) if f.status == "ok" and f.sha == newest.payload["conv"]["sha256"]), None)
                 if base is not None:
+                    newest_bytes = base.data
                     strict = _replay(json.loads(base.data), state_n.copy(), suffix, read_blob)
                 else:
-                    strict = self._previous_base(p0, newest, state_n, (conv, prev), suffix, read_blob)
+                    strict, newest_bytes = self._previous_base(p0, newest, state_n, (conv, prev), suffix, read_blob)
         except rp.StateError as error:
             raise StartupStop("checkpoint_state_invalid", {"error": str(error)[:200]}) from error
         except ReplayMismatch as error:
@@ -535,58 +571,77 @@ class _Context:
             except ReplayMismatch as error:
                 raise StartupStop("replay_mismatch", {"error": str(error)[:200]}) from error
 
-        # A base switch already in the suffix binds its file until the next
-        # checkpoint (A10); one this recovery wrote itself (in `extra`, after a
-        # crash) also carried this recovery's notices (A10x/A12x).
-        switched_suffix = {r.payload.get("conv_sha") for r in suffix if r.type_name in SWITCH_TYPES} - {None}
-        switched_extra = {r.payload.get("conv_sha") for r in extra if r.type_name in SWITCH_TYPES} - {None}
-        deleted = any(r.type_name == "EXTERNAL_DELETE" for r in extra)
-        decision = _Decision("", strict, conv, newest, suffix, last_checkpoint, len(suffix))
+        # SV021-04/-05: the file's authority is decided by the latest
+        # transition that bound it -- the newest CHECKPOINT, or a later
+        # import/edit/reimport/deletion/adoption, including one this recovery
+        # already wrote (`extra`). A file matching it is never adopted again;
+        # anything else is a new edit or deletion, even if it matches an
+        # older source.
+        kind, bound, binder = _binding([*p0, *extra], newest)
+        carried = binder is not None and binder in extra and binder.type_name in (*SWITCH_TYPES, "EXTERNAL_DELETE")
+        known = {r.payload["conv"]["sha256"]: checkpoint_tuple(r) for r in checkpoints}
+        decision = _Decision("", strict, conv, newest, suffix, known, len(suffix), carried=carried)
         if not format2:
-            decision.case = "A8x" if any(r.type_name == "LEGACY_REIMPORT" for r in extra) else "A8"
+            consumed = kind not in ("checkpoint", "start") and (
+                (conv.status == "ok" and conv.sha == bound) or (conv.status == "absent" and bound is None)
+            )
+            decision.case = "A8t" if consumed else "A8"
             if decision.case == "A8" and conv.status == "unreadable":
                 if conv.data is not None:
                     _quarantine_file(session_dir, "legacy-conversation", conv.data, self.quarantine, self.ops)
                 raise StartupStop("legacy_conversation_unreadable", {"bytes": len(conv.data or b"")}, "A8")
         elif conv.status == "ok":
-            if newest is not None and conv.sha == newest.payload["conv"]["sha256"]:
-                decision.case = "A9"
+            if bound is not None and conv.sha == bound:
+                decision.case = "A9" if kind == "checkpoint" else "A9t"
+                if kind == "adopted" and binder in extra:
+                    decision.adopt = ("ADOPT", None)  # already written first by this recovery
             elif strict is not None and conv.data == rp.conversation_bytes(strict.messages):
+                # A10: the file is this replay (a checkpoint died after CK4).
+                # Bound by a durable adoption, so later records cannot make it
+                # look like an edit.
                 decision.case = "A10"
-            elif conv.sha in switched_extra:
-                decision.case = "A10x"
-            elif conv.sha in switched_suffix and strict is not None:
-                decision.case = "A10"
+                decision.adopt = ("ADOPT", conv.data)
             else:
                 decision.case = "A11"
         elif conv.status == "absent":
-            decision.case = "A12x" if deleted else ("A12" if newest is not None else "A13")
+            if bound is None:
+                decision.case = "A13" if newest is None and kind in ("start", "LEGACY_IMPORT") else "A12t"
+            else:
+                decision.case = "A12"
         else:
-            if strict is None:
+            if strict is None or (newest is not None and newest_bytes is None):
                 raise StartupStop("conversation_unreadable_unbound", None, "A14")
             decision.case = "A14"
+            # SV021-02: put the newest checkpoint's own (verified) bytes back,
+            # so the file is bound again and .prev.json keeps its base; before
+            # any checkpoint there is no such snapshot, only the replay.
+            decision.restore = newest_bytes
         if decision.replay is None:
             decision.replay = lenient()
         return decision
 
-    def _previous_base(self, p0, newest, state_n: SessionState, files, suffix, read_blob) -> Replay | None:
-        """A14's previous base (v2 1.4.4): replay through C_n, verify its hash, then the suffix."""
+    def _previous_base(self, p0, newest, state_n: SessionState, files, suffix, read_blob):
+        """A14's previous base (v2 1.4.4): replay through C_n, verify its hash, then the suffix.
+
+        Returns (replay, C_n's bytes) or (None, None) when no file holds the named previous base.
+        """
         prev_info = newest.payload["prev"]
         if not prev_info:
-            return None
+            return None, None
         base = next((f for f in files if f.status == "ok" and f.sha == prev_info["conv_sha256"]), None)
         older = next((r for r in p0 if r.seq == prev_info["checkpoint_seq"] and r.type_name == "CHECKPOINT"), None)
         if base is None or older is None:
-            return None
+            return None, None
         state_p = SessionState.from_wire(older.payload["state"])
         interval = [r for r in p0 if prev_info["covers_seq"] < r.seq <= newest.payload["covers_seq"]]
         middle = _replay(json.loads(base.data), state_p, interval, read_blob)
-        if rp.conversation_sha(middle.messages) != newest.payload["conv"]["sha256"]:
+        middle_bytes = rp.conversation_bytes(middle.messages)
+        if sha256(middle_bytes) != newest.payload["conv"]["sha256"]:
             raise StartupStop("replay_mismatch", {"at": newest.payload["covers_seq"]}, "A14")
         replay = Replay(middle.messages, state_n.copy(), read_blob)
         for record in suffix:
             replay.apply(record)
-        return replay
+        return replay, middle_bytes
 
     def _finish_case(self, session: Session, decision: _Decision, plan: cp.RecoveryPlan, core, after_core) -> None:
         """The base decision's records, then any recovery notices not yet durable."""
@@ -618,11 +673,12 @@ class _Context:
         if case == "A12":
             session._commit("EXTERNAL_DELETE", {"epoch": state.history_epoch + 1, "notices": notices})
             return
+        if decision.carried:
+            return  # the switch this recovery already wrote carried its notices
         if case == "A14":
             _quarantine_file(self.session_dir, "conversation", decision.conv.data or b"", self.quarantine, self.ops)
-            notices.append(A14_NOTICE)
-        if case in ("A10x", "A12x", "A8x"):
-            return  # the switch, carrying its notices, is already durable
+            if not any(r.type_name == "MSG_APPEND" and r.payload.get("text") == A14_NOTICE for r in decision.suffix):
+                notices.append(A14_NOTICE)  # once per newest checkpoint, however often the start repeats
         written = 0
         for record in after_core:
             if record.type_name == "MSG_APPEND" and written < len(notices) and record.payload.get("text") == notices[written]:
@@ -631,9 +687,12 @@ class _Context:
             session._append("notice", text)
         if case == "A14":
             # Replace the unreadable file without rotating it into
-            # conversation.prev.json, which still holds a bound base.
+            # conversation.prev.json, which still holds a bound base: with the
+            # newest checkpoint's own bytes (bound; the suffix replays on top),
+            # or, before any checkpoint, with the replay (A10 next time).
+            data = decision.restore if decision.restore is not None else rp.conversation_bytes(session.messages)
             try:
-                cp.write_bytes_durable(self.session_dir / "conversation.json", rp.conversation_bytes(session.messages), ops=self.ops)
+                cp.write_bytes_durable(self.session_dir / "conversation.json", data, ops=self.ops)
             except cp.PersistenceFailure as error:
                 session._fail(error)
 
@@ -661,8 +720,39 @@ class _Decision:
     conv: FileState
     newest: object
     suffix: list
-    last_checkpoint: dict | None
+    checkpoints: dict  # conversation sha -> the `prev` tuple of its newest CHECKPOINT
     suffix_records: int
+    carried: bool = False  # the binding switch is this recovery's own and carried its notices
+    adopt: tuple | None = None  # A10: ("ADOPT", file bytes), written before the core
+    restore: bytes | None = None  # A14: the newest checkpoint's bytes
+
+
+def _binding(records, newest):
+    """(kind, bound sha or None for an absent file, the binding record) after the newest checkpoint."""
+    covers = newest.payload["covers_seq"] if newest is not None else 0
+    if newest is not None:
+        kind, bound, binder = "checkpoint", newest.payload["conv"]["sha256"], newest
+    else:
+        kind, bound, binder = "start", None, None
+    for record in records:
+        if record.seq <= covers:
+            continue
+        name, payload = record.type_name, record.payload
+        if name in SWITCH_TYPES:
+            kind, bound, binder = name, payload.get("conv_sha"), record
+        elif name == "EXTERNAL_DELETE":
+            kind, bound, binder = name, None, record
+        elif name == "RECOVERY" and payload.get("kind") == "conversation_adopted":
+            kind, bound, binder = "adopted", payload["detail"].get("conv_sha"), record
+    return kind, bound, binder
+
+
+def _same_record(record, planned) -> bool:
+    """Whether a record written after an intent is the planned one (an adoption by kind only)."""
+    name, payload = planned
+    if name == "ADOPT":
+        return record.type_name == "RECOVERY" and record.payload.get("kind") == "conversation_adopted"
+    return (record.type_name, record.payload) == (name, _wire(payload))
 
 
 def _replay(messages, state: SessionState, records, read_blob, *, lenient: bool = False) -> Replay:
@@ -711,15 +801,19 @@ def _unmerged_notice(entries):
 # ---------------------------------------------------------------------------
 # The outcome records of a recovered tail (pure)
 # ---------------------------------------------------------------------------
-def derive_core(replay: Replay, plan: cp.RecoveryPlan, tail: cp.TailClass, scan0: cp.LedgerScan, ack, lineage: str) -> list:
-    """Closure of the open group, RECOVERY_ACK, then RECOVERY records -- deterministic in P and T.
+def derive_core(
+    replay: Replay, plan: cp.RecoveryPlan, tail: cp.TailClass, scan0: cp.LedgerScan, ack, lineage: str,
+    *, identity_reserved: int | None = None,
+) -> list:
+    """Closure of the open group, RECOVERY_ACK, then RECOVERY records -- deterministic in P, T and IDENTITY.
 
     Call outcomes are the accepted plan's (v2 1.3 classification). Request
     identity is derived from the replayed state rather than the plan's
     placeholder: a request with no recorded response is a possible spend
-    once; a damaged REQUEST_SENT used `requests_next`; after hidden records
-    (acknowledged TC4) the next turn skips every turn the hidden bytes could
-    have used, conditional on those bytes holding no earlier skip.
+    once; a damaged REQUEST_SENT used `requests_next`. After hidden records
+    (acknowledged TC4) the next turn is above the durable IDENTITY
+    reservation (SV021-01): every request, hidden or not, reserved its turn
+    there before its REQUEST_SENT, through any number of earlier recoveries.
     """
     core: list = []
     group = replay.group
@@ -749,8 +843,11 @@ def derive_core(replay: Replay, plan: cp.RecoveryPlan, tail: cp.TailClass, scan0
     nxt = dict(state.requests_next)
     spend_label = None
     if tail.kind == "TC4":
-        hidden_turns = tail.length // cp.MIN_RECORD_BYTES
-        nxt = {"turn_seq": state.requests_next["turn_seq"] + hidden_turns + 1, "attempt": 1}
+        if identity_reserved is None:
+            raise ReplayMismatch("no valid IDENTITY reservation bounds the hidden requests")
+        used = [r.payload["turn_seq"] for r in scan0.records if r.type_name == "REQUEST_SENT"]
+        turn = max(state.requests_next["turn_seq"], identity_reserved + 1, *(t + 1 for t in used))
+        nxt = {"turn_seq": turn, "attempt": 1}
         spend_label = "hidden"
     elif tail.kind == "TC2" and tail.declared_type == "REQUEST_SENT":
         spend_label = cp.request_label(lineage, nxt["turn_seq"], nxt["attempt"])

@@ -196,6 +196,54 @@ def test_an_unadopted_note_survives_a_crash_with_an_open_tool_group(tmp_path):
     assert second.messages[len(BASE) + 1]["content"] == rp.UNKNOWN_TEXT
 
 
+def legacy_root(tmp_path) -> Root:
+    import json  # noqa: PLC0415
+
+    root = Root(tmp_path)
+    (root.session_dir / "conversation.json").write_text(json.dumps(BASE, indent=2) + "\n")
+    (root.session_dir / "run.json").write_text(json.dumps({"lineage_id": "abc"}))
+    (root.home / "HANDOFF.md").write_text("N0\n")
+    return root
+
+
+def test_sv021_03_a_crash_between_legacy_import_and_its_note_loses_nothing(tmp_path):
+    """Astra SV021-03: die after LEGACY_IMPORT's sync, before any separate note record."""
+    import contextlib  # noqa: PLC0415
+
+    from test_chassis_recovery_live import Crash, FaultOps  # noqa: PLC0415
+
+    root = legacy_root(tmp_path)
+    ops = FaultOps()
+    writes = {"n": 0}
+
+    def third_segment_write(path):
+        if path.endswith(".svl"):
+            writes["n"] += 1
+            return writes["n"] == 3  # header, LEGACY_IMPORT, then whatever comes next
+        return False
+
+    ops.faults.append(("write", third_segment_write, Crash()))
+    with contextlib.suppress(Crash):
+        opening = st.open_session(root.session_dir, root.home, ops=ops)
+        opening.session.close()
+    for _restart in range(2):
+        session = run(root)
+        assert note_texts(session) == ["N0\n"], "the unadopted legacy note is adopted exactly once"
+        session.close()
+    assert [r.type_name for r in root.records()].count("LEGACY_IMPORT") == 1, "no repeated import"
+
+
+def test_sv021_03_a_crash_after_the_legacy_note_is_appended_adopts_it_once(tmp_path):
+    root = legacy_root(tmp_path)
+    opening = root.start()
+    opening.session.adopt_notes()  # the note's MSG_APPEND is durable; then the process dies
+    opening.session.close()
+    for _restart in range(2):
+        session = run(root)
+        assert note_texts(session) == ["N0\n"]
+        session.close()
+
+
 def test_a_pending_note_and_a_tail_ambiguity_both_survive_acknowledgement(tmp_path):
     root = Root(tmp_path)
     session = establish(root)

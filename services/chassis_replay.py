@@ -258,6 +258,7 @@ class Group:
     calls: list
     answered: int = 0  # calls 0..answered-1 have their tool message
     invoking: set = field(default_factory=set)
+    notice: str | None = None  # owed after the last answer (omitted calls; SV021-06)
 
     def next_call(self) -> dict | None:
         return self.calls[self.answered] if self.answered < len(self.calls) else None
@@ -335,6 +336,11 @@ class Replay:
             group.answered += 1
         if group.next_call() is None:
             self.group = None
+            if group.notice is not None:
+                # Part of the group's closure, whichever record closes it (a
+                # DONE, a recovery SYNTH/UNRUN): exactly once, before any
+                # queued message and before any checkpoint can be written.
+                self.messages.append(text_message("notice", group.notice))
 
     def _call_in_group(self, call_key) -> int:
         if self.group is None or not isinstance(call_key, list) or call_key[0] != self.group.turn_seq:
@@ -373,12 +379,22 @@ class Replay:
         ]
         self.state.originals = retain_originals(self.state.originals, added)
         calls = payload["calls"]
+        notice = payload.get("omitted_notice")
+        if notice is not None and not isinstance(notice, str):
+            raise ReplayMismatch("TURN_RESPONSE's omitted_notice is not text")
         if calls:
-            self.group = Group(payload["turn_seq"], copy.deepcopy(calls))
+            self.group = Group(payload["turn_seq"], copy.deepcopy(calls), notice=notice)
             self._answer_not_invoked()
+        elif notice is not None:
+            self.messages.append(text_message("notice", notice))
 
     def _on_response_refused(self, record, payload) -> None:
         self._responded(payload, "refused")
+        notice = payload.get("notice")
+        if notice is not None:
+            if not isinstance(notice, str):
+                raise ReplayMismatch("RESPONSE_REFUSED's notice is not text")
+            self.messages.append(text_message("notice", notice))
 
     def _on_invoking(self, record, payload) -> None:
         group = self.group
@@ -440,25 +456,7 @@ class Replay:
         notes.adopted_mirror_sha256 = entry["mirror_sha256"]
 
     def _on_note_written(self, record, payload) -> None:
-        notes = self.state
-        if payload["gen"] != notes.notes_next_gen:
-            raise ReplayMismatch(f"note generation {payload['gen']} where {notes.notes_next_gen} was due")
-        if len(notes.notes_pending) >= MAX_PENDING_NOTES:
-            raise ReplayMismatch("a note past MAX_PENDING_NOTES")
-        if payload["source"] not in NOTE_SOURCES:
-            raise ReplayMismatch(f"note source {payload['source']!r}")
-        notes.notes_pending.append(
-            {
-                "gen": payload["gen"],
-                "blob": payload["blob"],
-                "bytes": payload["bytes"],
-                "source": payload["source"],
-                "written_seq": record.seq,
-                "mirror_sha256": payload["mirror_sha256"],
-            }
-        )
-        notes.notes_next_gen = payload["gen"] + 1
-        notes.handoff_md_sha256 = payload["mirror_sha256"]
+        self._pending_note(record, payload)
 
     def _on_history_replaced(self, record, payload) -> None:
         self._require_boundary("HISTORY_REPLACED")
@@ -496,9 +494,36 @@ class Replay:
                 raise ReplayMismatch("LEGACY_IMPORT's legacy status")
             self.state.legacy = {"status": legacy["status"], "handoff_sha256": legacy.get("handoff_sha256")}
             if legacy.get("handoff_sha256") is not None:
-                # The legacy HANDOFF.md has been processed (matched, or adopted
-                # by the NOTE_WRITTEN{legacy} that follows): never a file edit.
+                # The legacy HANDOFF.md has been processed -- matched in the
+                # list, or carried below as a pending generation in this same
+                # record (SV021-03) -- so it is never a file edit.
                 self.state.handoff_md_sha256 = legacy["handoff_sha256"]
+        note = payload.get("note")
+        if note is not None:
+            self._pending_note(record, {**note, "source": "legacy"})
+
+    def _pending_note(self, record, note: dict) -> None:
+        notes = self.state
+        if note.get("gen") != notes.notes_next_gen:
+            raise ReplayMismatch(f"note generation {note.get('gen')} where {notes.notes_next_gen} was due")
+        if len(notes.notes_pending) >= MAX_PENDING_NOTES:
+            raise ReplayMismatch("a note past MAX_PENDING_NOTES")
+        if note.get("source") not in NOTE_SOURCES:
+            raise ReplayMismatch(f"note source {note.get('source')!r}")
+        if not (is_hex64(note.get("blob")) and is_hex64(note.get("mirror_sha256")) and counter(note.get("bytes"))):
+            raise ReplayMismatch("a note's blob, mirror or size")
+        notes.notes_pending.append(
+            {
+                "gen": note["gen"],
+                "blob": note["blob"],
+                "bytes": note["bytes"],
+                "source": note["source"],
+                "written_seq": record.seq,
+                "mirror_sha256": note["mirror_sha256"],
+            }
+        )
+        notes.notes_next_gen = note["gen"] + 1
+        notes.handoff_md_sha256 = note["mirror_sha256"]
 
     def _on_legacy_reimport(self, record, payload) -> None:
         self._epoch(payload, step=1)
@@ -540,6 +565,16 @@ class Replay:
                 if not (counter(nxt.get("turn_seq"), minimum=1) and counter(nxt.get("attempt"), minimum=1)):
                     raise ReplayMismatch("possible_duplicate_spend names an invalid next request")
                 self.state.requests_next = {"turn_seq": nxt["turn_seq"], "attempt": nxt["attempt"]}
+        elif kind == "conversation_adopted":
+            # A10 (SV021-04/-05): the file equal to this replay is bound as the
+            # base it is; its exact list is the blob, so replay without the
+            # older base still reaches it.
+            self._require_boundary("an adopted conversation")
+            messages = self._blob_list(detail["blob"], "the adopted conversation")
+            if hashlib.sha256(conversation_bytes(messages)).hexdigest() != detail.get("conv_sha"):
+                raise ReplayMismatch("conversation_adopted's hash does not match its blob")
+            self.messages[:] = messages
+            self.state.recap_folded = min(self.state.recap_folded, len(messages))
         elif kind == "note_dropped_pending_limit":
             # SV021 addition: v2 1.4.6 names the drop but no record; without
             # one, a drop after the newest checkpoint would vanish on replay.
@@ -571,8 +606,12 @@ def record_refs(record) -> set[str]:
         refs.add(payload["blob"])
     elif name == "TURN_RESPONSE":
         refs.update(payload["original_blobs"])
+    elif name == "RECOVERY" and payload.get("kind") == "conversation_adopted":
+        refs.add(payload["detail"]["blob"])
     elif name == "CHECKPOINT":
         refs.update(payload["state"]["blobs_live"])
+    if name == "LEGACY_IMPORT" and isinstance(payload.get("note"), dict):
+        refs.add(payload["note"]["blob"])  # the import's own pending generation (SV021-03)
     return refs
 
 

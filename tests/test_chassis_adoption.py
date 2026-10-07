@@ -76,10 +76,11 @@ def test_o4_8_negative_control_the_omitted_hash_covers_only_omitted_calls():
 def test_o4_8_257_calls_are_refused_with_one_notice_and_nothing_stored():
     adoption = adopt_response(response(calls_of(257)), turn_seq=7)
     assert adoption.refused and adoption.assistant is None and adoption.calls == ()
-    assert adoption.refusal_payload() == {"turn_seq": 7, "reason": "too_many_calls", "count": 257}
     assert adoption.notice == (
         "[runtime] the model response contained 257 tool calls (limit 256) and was not adopted; nothing was run"
     )
+    # v2's three keys, plus the notice the record owes (SV021-06).
+    assert adoption.refusal_payload() == {"turn_seq": 7, "reason": "too_many_calls", "count": 257, "notice": adoption.notice}
 
 
 def test_c_b5_a_call_past_the_invocation_cap_is_stored_elided_and_not_run():

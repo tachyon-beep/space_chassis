@@ -52,6 +52,14 @@ BLOB_READ_MAX = 64 * 1024 * 1024
 
 PersistenceFailure = cp.PersistenceFailure
 
+# The request-identity reservation (SV021-01). A request's turn is reserved in
+# IDENTITY, durably, before its REQUEST_SENT -- so every turn any request ever
+# used, including requests in ledger bytes later found damaged, is <= the
+# reservation. It lives outside the ledger because a damaged ledger suffix is
+# exactly what it must outlive. Reserved in blocks to save syncs.
+IDENTITY = "IDENTITY"
+RESERVE_BLOCK = 64
+
 
 class SessionInvariant(RuntimeError):
     """The runtime asked for a mutation its own state machine forbids. A defect, never a guess."""
@@ -59,6 +67,44 @@ class SessionInvariant(RuntimeError):
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def identity_bytes(lineage_id: str, reserved: int) -> bytes:
+    body = {"lineage_id": lineage_id, "turns_reserved_through": reserved}
+    check = sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode())
+    return json.dumps({**body, "check": check}, sort_keys=True).encode()
+
+
+def read_identity(session_dir: Path, lineage_id: str, ops: cp.DurableOps | None = None) -> int | None:
+    """The valid reservation for this lineage, or None (absent, unreadable, damaged, foreign)."""
+    ops = ops or cp.DurableOps()
+    try:
+        value = json.loads(ops.read(str(Path(session_dir) / IDENTITY), cp.MAX_MARKER_READ).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(value, dict) or set(value) != {"lineage_id", "turns_reserved_through", "check"}:
+        return None
+    reserved = value["turns_reserved_through"]
+    if value["lineage_id"] != lineage_id or not rp.counter(reserved):
+        return None
+    return reserved if identity_bytes(lineage_id, reserved) == json.dumps(value, sort_keys=True).encode() else None
+
+
+def file_sha(path: Path, ops: cp.DurableOps) -> str | None:
+    try:
+        return sha256(ops.read(str(path), BLOB_READ_MAX))
+    except OSError:
+        return None
+
+
+def checkpoint_tuple(record) -> dict:
+    """The `prev` tuple that names a CHECKPOINT record."""
+    return {
+        "covers_seq": record.payload["covers_seq"],
+        "conv_sha256": record.payload["conv"]["sha256"],
+        "conv_bytes": record.payload["conv"]["bytes"],
+        "checkpoint_seq": record.seq,
+    }
 
 
 class Session:
@@ -73,11 +119,13 @@ class Session:
         *,
         ops: cp.DurableOps | None = None,
         caps: envelope.Caps = envelope.DEFAULT_CAPS,
-        last_checkpoint: dict | None = None,
+        checkpoints: dict | None = None,
+        identity_reserved: int | None = None,
         records_max: int = RECOVERY_RECORDS_MAX,
         bytes_max: int = RECOVERY_BYTES_MAX,
         lifecycle=None,
         install=None,
+        meta_source=None,
     ) -> None:
         self.session_dir = Path(session_dir)
         self.home_dir = Path(home_dir)
@@ -86,35 +134,42 @@ class Session:
         self.replay = replay
         self.ops = ops or cp.DurableOps()
         self.caps = caps
-        self.last_checkpoint = last_checkpoint
+        # Conversation SHA-256 -> the `prev` tuple of the newest CHECKPOINT that
+        # bound those bytes (SV021-02): `prev` names what the retained file holds.
+        self.checkpoints: dict[str, dict] = dict(checkpoints or {})
+        self.identity_reserved = identity_reserved
         self.records_max = records_max
         self.bytes_max = bytes_max
         self.since_records = 0
         self.since_bytes = 0
         self.queue: list[tuple[str, str]] = []
-        self.group_notice: str | None = None
         self.broken = False
         self.marker_written: bool | None = None
         self.lifecycle = lifecycle or (lambda event, **fields: None)
-        # CK2-CK4. `install(messages, data) -> sha256`; the chassis routes it
-        # through `Carried.save_conversation` so its tests can fail it.
-        self.install = install or (lambda _messages, data: cp.install_conversation(self.session_dir, data, ops=self.ops))
+        # CK2-CK4. `install(messages, data, rotate) -> sha256`; the chassis
+        # routes it through `Carried.save_conversation` so its tests can fail it.
+        self.install = install or (
+            lambda _messages, data, rotate: cp.install_conversation(self.session_dir, data, ops=self.ops, rotate=rotate)
+        )
         # The legacy run.json keys (agent, name, run, turn, ...); CK5 adds the rest.
-        self.meta_source = dict
+        self.meta_source = meta_source or dict
 
     @classmethod
     def start_fresh(cls, session_dir: Path, home_dir: Path, lineage_id: str, *, ops: cp.DurableOps | None = None, **kwargs) -> Session:
-        """A new lineage: ledger/ and segment 0, empty conversation, initial state. Writes no record."""
+        """A new lineage: ledger/, segment 0 and an empty IDENTITY reservation. Writes no record."""
         ops = ops or cp.DurableOps()
         try:
             writer = cp.LedgerWriter.create(session_dir, lineage_id, ops=ops)
+            # Before any request can exist: an ambiguous tail later found in this
+            # lineage is then always covered by a valid reservation.
+            cp.write_bytes_durable(Path(session_dir) / IDENTITY, identity_bytes(lineage_id, 0), ops=ops)
         except cp.PersistenceFailure as error:
             # create() attempts the marker only for failures after it began
             # writing; a failed mkdir is still a session persistence failure.
             cp.mark_fsync_failed(session_dir, f"{type(error).__name__}: {error}", ops=ops)
             raise
         replay = Replay([], SessionState(lineage_id), lambda sha: writer.blobs.get(sha, BLOB_READ_MAX))
-        return cls(session_dir, home_dir, writer, replay, ops=ops, **kwargs)
+        return cls(session_dir, home_dir, writer, replay, ops=ops, identity_reserved=0, **kwargs)
 
     # -- views ---------------------------------------------------------------
     @property
@@ -189,22 +244,42 @@ class Session:
         identity = self.state.requests_next
         return cp.request_label(self.lineage_id, identity["turn_seq"], identity["attempt"])
 
+    def reserve_turns(self, through: int, *, exact: bool = False) -> None:
+        """Make IDENTITY cover `through` (durably, before anything that uses it); never lowers it."""
+        self._usable()
+        if self.identity_reserved is not None and through <= self.identity_reserved:
+            return
+        reserved = through if exact else min(through + RESERVE_BLOCK - 1, rp.MAX_COUNTER)
+        if not rp.counter(reserved, minimum=through):
+            raise cp.LedgerError(f"turn {through} is outside the identity domain")
+        try:
+            cp.write_bytes_durable(self.session_dir / IDENTITY, identity_bytes(self.lineage_id, reserved), ops=self.ops)
+        except cp.PersistenceFailure as error:
+            self._fail(error)
+        self.identity_reserved = reserved
+
     def send(self, effect):
-        """REQUEST_SENT (synced), then `effect()` -- the only way a request is sent."""
+        """IDENTITY covers the turn, REQUEST_SENT (synced), then `effect()` -- the only way a request is sent."""
         self._require_boundary("a request")
         identity = self.state.requests_next
         label = cp.request_label(self.lineage_id, identity["turn_seq"], identity["attempt"])
+        self.reserve_turns(identity["turn_seq"])
         self._commit("REQUEST_SENT", {"turn_seq": identity["turn_seq"], "attempt": identity["attempt"], "label": label})
         return effect()
 
     def adopt(self, adoption: envelope.Adoption) -> None:
-        """TURN_RESPONSE (originals first, FIFO-retained) or RESPONSE_REFUSED + its notice."""
+        """TURN_RESPONSE (originals first, FIFO-retained), or RESPONSE_REFUSED.
+
+        Both carry their notice (the refusal; the omitted calls), which the
+        reducer appends -- the refusal at once, the omission when the group's
+        last call is answered -- so no crash can separate a durable response
+        from the notice it owes (SV021-06).
+        """
         last = self.state.requests_last
         if last is None or last["outcome"] != "failed_unknown" or last["turn_seq"] != adoption.turn_seq:
             raise SessionInvariant(f"a response for turn {adoption.turn_seq} without its request")
         if adoption.refused:
             self._commit("RESPONSE_REFUSED", adoption.refusal_payload())
-            self._append("notice", adoption.notice)
             return
         retained = []
         for original in adoption.originals:
@@ -219,7 +294,6 @@ class Session:
         kept = {entry["sha256"] for entry in self.state.originals}
         for sha in dict.fromkeys(sha for sha in before if sha not in kept):
             self._commit("ORIGINAL_EVICTED", {"sha": sha})
-        self.group_notice = adoption.notice
 
     # -- tools (INVOKING gate, DONE) -------------------------------------------
     def _frontier(self, call: envelope.StoredCall) -> int:
@@ -320,17 +394,14 @@ class Session:
     def flush(self) -> None:
         """After the group's last answer: the omitted-calls notice, then the queue, in order."""
         self._require_boundary("a queue flush")
-        notice, self.group_notice = self.group_notice, None
         queued, self.queue = self.queue, []
-        if notice:
-            self._append("notice", notice)
         for kind, text in queued:
             self._append(kind, text)
 
     def discard_queue(self) -> int:
         """A broken session cannot flush: what was queued is lost, and the count is reported."""
-        lost = len(self.queue) + (1 if self.group_notice else 0)
-        self.queue, self.group_notice = [], None
+        lost = len(self.queue)
+        self.queue = []
         return lost
 
     # -- notes (D13 2.2.5 with v2 1.4.2-1.4.4) --------------------------------------
@@ -401,18 +472,6 @@ class Session:
         )
         return gen
 
-    def write_legacy_note(self, text: str, file_sha256: str) -> int:
-        """A5/A8 rule 5: a legacy HANDOFF.md not found in the list becomes one generation (source legacy)."""
-        stored, _info = envelope.truncate_marked(text, self.caps.note)
-        blob = stored.encode("utf-8")
-        gen = self.state.notes_next_gen
-        self._commit(
-            "NOTE_WRITTEN",
-            lambda key: {"gen": gen, "blob": key, "bytes": len(blob), "sha256": key, "source": "legacy", "mirror_sha256": file_sha256},
-            blob=blob,
-        )
-        return gen
-
     def adopt_notes(self, *, foreign_texts: frozenset = frozenset()) -> list[int]:
         """Append every pending generation once, in order; then any drop notice.
 
@@ -471,7 +530,7 @@ class Session:
     # -- checkpoints (CK1-CK6), thresholds and rotation -----------------------------
     def unit_end(self) -> None:
         """After a unit: checkpoint on the v2 1.4.1 threshold, else rotate a full segment."""
-        if self.broken or self.replay.group is not None or self.queue or self.group_notice:
+        if self.broken or self.replay.group is not None or self.queue:
             return
         if self.since_records >= self.records_max or self.since_bytes >= self.bytes_max:
             self.checkpoint()
@@ -484,14 +543,32 @@ class Session:
         except cp.PersistenceFailure as error:
             self._fail(error)
 
+    def _retained_prev(self) -> tuple[bool, dict | None]:
+        """CK3's choice (SV021-02): keep a bound snapshot as conversation.prev.json, and name it.
+
+        The current conversation.json is rotated aside unless that would
+        replace a bound snapshot in .prev.json with something older or unbound
+        -- after A10, A14 or an external edit .prev.json can be the only bound
+        base. (With nothing bound in .prev.json the current file is kept, as
+        D13 2.2.9 keeps a pre-ledger list at the first checkpoint.) `prev`
+        names the newest checkpoint whose bytes the retained file holds, or
+        nothing.
+        """
+        current = self.checkpoints.get(file_sha(self.session_dir / "conversation.json", self.ops))
+        kept = self.checkpoints.get(file_sha(self.session_dir / "conversation.prev.json", self.ops))
+        if kept is not None and (current is None or current["checkpoint_seq"] < kept["checkpoint_seq"]):
+            return False, dict(kept)
+        return True, dict(current) if current is not None else None
+
     def checkpoint(self, ended: dict | None = None) -> cp.Record:
-        """CK1 serialize; CK2-CK4 install (prev kept); CK5 run.json; CK6 CHECKPOINT."""
+        """CK1 serialize; CK2-CK4 install (a bound prev kept); CK5 run.json; CK6 CHECKPOINT."""
         self._usable()
-        if self.replay.group is not None or self.queue or self.group_notice:
+        if self.replay.group is not None or self.queue:
             raise SessionInvariant("a checkpoint is never written inside a tool group or with queued messages (CKG)")
         data = rp.conversation_bytes(self.messages)
+        rotate, prev = self._retained_prev()
         try:
-            conv_sha = self.install(self.messages, data)
+            conv_sha = self.install(self.messages, data, rotate)
         except OSError as error:
             self._fail(error)
         if conv_sha != sha256(data):
@@ -499,7 +576,6 @@ class Session:
             raise SessionInvariant("the installed conversation is not the serialized list")
         covers = self.writer.next_seq - 1
         conv = {"sha256": conv_sha, "bytes": len(data)}
-        prev = dict(self.last_checkpoint) if self.last_checkpoint else None
         meta = dict(self.meta_source())
         meta.update(
             {
@@ -527,7 +603,7 @@ class Session:
             "state": self.state.to_wire(next_seq=covers + 2),
         }
         record = self._commit("CHECKPOINT", payload)
-        self.last_checkpoint = {"covers_seq": covers, "conv_sha256": conv_sha, "conv_bytes": len(data), "checkpoint_seq": record.seq}
+        self.checkpoints[conv_sha] = checkpoint_tuple(record)
         self.since_records = self.since_bytes = 0
         self._rotate()
         return record
