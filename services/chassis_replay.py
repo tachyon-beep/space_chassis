@@ -605,7 +605,7 @@ def checkpoint_records(records) -> list:
 
 
 # ---------------------------------------------------------------------------
-# The reference graph (v2 1.4.5): what a later GC must keep
+# The reference graph (v2 1.4.5): what collection must keep
 # ---------------------------------------------------------------------------
 def record_refs(record) -> set[str]:
     """Every blob a record names (and replay may read)."""
@@ -633,8 +633,9 @@ def record_refs(record) -> set[str]:
 def retained_refs(records) -> set[str]:
     """refs(C_n.state) | refs(C_p.state) | refs(records after C_p.covers_seq).
 
-    GC is disabled in this runtime; this is the graph a later GC must keep,
-    computed so its completeness can be tested now.
+    The SV-021 reference helper, kept for its tests. Collection itself uses
+    `chassis_gc.retained_basis`, which also verifies C_p's exact tuple, its
+    state and the presence of its whole interval, and refuses otherwise.
     """
     checkpoints = checkpoint_records(records)
     if not checkpoints:

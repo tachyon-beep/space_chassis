@@ -26,6 +26,16 @@ and its notices, are durable.
 **Acknowledgements** are made durable as `ACKNOWLEDGED` before STOPPED is
 removed, and transcribed into the ledger as RECOVERY_ACK (with an `ack_id`
 that makes the transcription idempotent) at the next start, before any effect.
+
+**A pending collection** (SV-022). A valid `GC_INTENT` in P with no `GC_DONE`
+is finished here, whatever the session's `collect` setting: re-validated
+against the retained records (`chassis_gc.intent_problem`; invalid -> stop
+`gc_intent_invalid`, nothing removed), its *fixed* list re-run before this
+start writes any blob -- a blob it names could otherwise be recreated by this
+start and then removed -- and `GC_DONE` is the first record of the recovery
+core. A torn or damaged intent is in T, not P, and is never authority. A
+missing segment prefix that no retained intent names stops as damage
+(`ledger_prefix_missing`).
 """
 
 from __future__ import annotations
@@ -38,6 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import chassis_envelope as envelope
+import chassis_gc as gc
 import chassis_persistence as cp
 import chassis_replay as rp
 from chassis_replay import Replay, ReplayMismatch, SessionState
@@ -456,6 +467,14 @@ class _Context:
             # no new identity is issued.
             raise StartupStop("identity_unproven", {"tail_sha256": sha256(scan0.tail)}, "TC4")
 
+        # SV-022: a shortened ledger only as collection left it, and a pending
+        # intent only as authority it still is -- both checked before anything
+        # is written, copied, truncated or removed.
+        missing = gc.unauthorized_prefix(p0)
+        if missing is not None:
+            raise StartupStop("ledger_prefix_missing", {"oldest_segment": missing}, "A2")
+        collecting = self._pending_collection(p0)
+
         decision = self._classify_base(p0, extra, format2, lineage, read_blob)
         try:
             core = derive_core(decision.replay, plan, tail, scan0, tail_ack, lineage, identity_reserved=identity)
@@ -464,6 +483,10 @@ class _Context:
         if decision.adopt is not None:
             # A10: bind the file as the base it equals, before anything follows it.
             core = [decision.adopt, *core]
+        if collecting is not None:
+            # The pending collection completes first: GC_DONE immediately
+            # follows its intent, before any record (or blob) of this start.
+            core = [("GC_DONE", {"intent_seq": collecting.seq}), *core]
 
         # Set the tail aside only under a durable intent (see the module docstring).
         if scan0.tail and intent is None:
@@ -501,6 +524,11 @@ class _Context:
                 replay.apply(record)
             except ReplayMismatch as error:
                 raise StartupStop("replay_mismatch", {"seq": record.seq, "error": str(error)[:200]}) from error
+        if collecting is not None and not extra:
+            # The intent's own fixed list, re-run idempotently -- never a fresh
+            # scan -- before this start can write a blob. (With `extra`, its
+            # GC_DONE, compared above, is already durable.)
+            gc.unlink_intent(session_dir, collecting.payload, ops)
         session = Session(
             session_dir, self.home_dir, writer, replay, ops=ops, lifecycle=self.lifecycle,
             checkpoints=decision.checkpoints, identity_reserved=high_water, **self.session_kwargs,
@@ -529,6 +557,27 @@ class _Context:
         session.reserve_turns(target, exact=True)
         had_memory = bool(session.messages) or bool(session.state.notes_pending)
         return Opening(decision.case, session, had_memory=had_memory)
+
+    def _pending_collection(self, p0):
+        """The pending GC_INTENT that ends P and is still deletion authority, or None.
+
+        It must be P's last record (GC_DONE always follows its intent first)
+        and pass the same validation as when it was written, over the
+        retained records. Otherwise stop with nothing removed.
+        """
+        try:
+            pending = gc.pending_intent(p0)
+        except gc.GCRefused as refusal:
+            raise StartupStop("gc_intent_invalid", {"problem": refusal.reason}, "GC") from refusal
+        if pending is None:
+            return None
+        if pending.seq != p0[-1].seq:
+            problem = "records follow the pending intent"
+        else:
+            problem = gc.intent_problem(pending.payload, p0, intent_seq=pending.seq)
+        if problem:
+            raise StartupStop("gc_intent_invalid", {"seq": pending.seq, "problem": problem}, "GC")
+        return pending
 
     def _from_intent(self, scan: cp.LedgerScan, intent: dict):
         """The prefix the intent names, the records written after it, and its original tail."""
@@ -589,7 +638,10 @@ class _Context:
         # older source.
         kind, bound, binder = _binding([*p0, *extra], newest)
         carried = binder is not None and binder in extra and binder.type_name in (*SWITCH_TYPES, "EXTERNAL_DELETE")
-        known = {r.payload["conv"]["sha256"]: checkpoint_tuple(r) for r in checkpoints}
+        # SV-022: a checkpoint at or below any collection's floor may have lost
+        # interval records or blobs, so it is never offered as a later `prev`.
+        collected = max((r.payload["records_through"] for r in p0 if r.type_name == "GC_INTENT"), default=0)
+        known = {r.payload["conv"]["sha256"]: checkpoint_tuple(r) for r in checkpoints if r.seq > collected}
         decision = _Decision("", strict, conv, newest, suffix, known, len(suffix), carried=carried, kind=kind, bound=bound)
         if not format2:
             consumed = kind not in ("checkpoint", "start") and (

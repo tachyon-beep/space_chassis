@@ -22,6 +22,10 @@ this run held.
   later mutation and effect.
 * **CKG.** `checkpoint` refuses while a tool group is open or messages are
   queued: there is no mid-group checkpoint.
+* **Collection (SV-022).** With `collect=True`, each checkpoint is followed at
+  once by one bounded GC unit (`chassis_gc`): GC_INTENT (synced) -> the
+  intent's unlinks and fences -> GC_DONE. A refused plan deletes nothing; a
+  failed unlink or fence is a persistence failure like any other.
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ import json
 from pathlib import Path
 
 import chassis_envelope as envelope
+import chassis_gc as gc
 import chassis_persistence as cp
 import chassis_replay as rp
 from chassis_replay import Replay, SessionState
@@ -97,14 +102,11 @@ def file_sha(path: Path, ops: cp.DurableOps) -> str | None:
         return None
 
 
-def checkpoint_tuple(record) -> dict:
-    """The `prev` tuple that names a CHECKPOINT record."""
-    return {
-        "covers_seq": record.payload["covers_seq"],
-        "conv_sha256": record.payload["conv"]["sha256"],
-        "conv_bytes": record.payload["conv"]["bytes"],
-        "checkpoint_seq": record.seq,
-    }
+checkpoint_tuple = gc.checkpoint_tuple  # the `prev` tuple that names a CHECKPOINT record
+
+# Files whose presence means a transaction or stop is unresolved: no new
+# collection starts while any exists (IDENTITY is never a candidate at all).
+GC_BLOCKERS = ("RECOVERING", "ACKNOWLEDGED", "STOPPED", "FSYNC_FAILED")
 
 
 class Session:
@@ -126,6 +128,8 @@ class Session:
         lifecycle=None,
         install=None,
         meta_source=None,
+        collect: bool = False,
+        gc_batch_max: int = gc.GC_BATCH_MAX,
     ) -> None:
         self.session_dir = Path(session_dir)
         self.home_dir = Path(home_dir)
@@ -153,6 +157,9 @@ class Session:
         )
         # The legacy run.json keys (agent, name, run, turn, ...); CK5 adds the rest.
         self.meta_source = meta_source or dict
+        # SV-022 activation boundary: only the chassis's run passes collect=True.
+        self.collect = collect
+        self.gc_batch_max = gc_batch_max
 
     @classmethod
     def start_fresh(cls, session_dir: Path, home_dir: Path, lineage_id: str, *, ops: cp.DurableOps | None = None, **kwargs) -> Session:
@@ -603,8 +610,62 @@ class Session:
         record = self._commit("CHECKPOINT", payload)
         self.checkpoints[conv_sha] = checkpoint_tuple(record)
         self.since_records = self.since_bytes = 0
+        if self.collect:
+            self._collect(record)
         self._rotate()
         return record
+
+    def _collect(self, newest: cp.Record) -> None:
+        """One GC unit right after CK6 (v2 1.4.5): GC_INTENT -> unlinks and fences -> GC_DONE.
+
+        The plan is made from the ledger as read back and verified now, never
+        from memory, and only if no transaction or stop is unresolved. Any
+        refusal deletes nothing and the run goes on. Once the intent is
+        durable, a failed unlink or fence breaks the session (FSYNC_FAILED
+        attempted once, no GC_DONE, no further effect); the next start finishes
+        the same intent. It never checkpoints, so it cannot recurse.
+        """
+        blocked = [name for name in GC_BLOCKERS if (self.session_dir / name).exists()]
+        if blocked:
+            self.lifecycle("gc_refused", reason=f"unresolved: {', '.join(blocked)}")
+            return
+        try:
+            scan = cp.scan_segments(cp.read_segments(self.writer.ledger_dir, ops=self.ops), self.lineage_id)
+        except OSError as error:
+            self.lifecycle("gc_refused", reason=f"ledger unreadable: {type(error).__name__}")
+            return
+        last = scan.records[-1] if scan.records else None
+        if scan.stop or scan.tail or last is None or (last.seq, last.chain) != (newest.seq, newest.chain):
+            self.lifecycle("gc_refused", reason="the ledger read back does not end at this checkpoint")
+            return
+        try:
+            plan = gc.plan_collection(
+                scan.records, active_segment=self.writer.segment_no, blob_names=gc.blob_names(self.writer.blobs.dir),
+                batch_max=self.gc_batch_max,
+            )
+            problem = None if plan is None else gc.intent_problem(plan.payload, scan.records, active_segment=self.writer.segment_no)
+        except gc.GCRefused as refusal:
+            self.lifecycle("gc_refused", reason=refusal.reason)
+            return
+        if plan is None:
+            return
+        if problem:
+            self.lifecycle("gc_refused", reason=problem)
+            return
+        intent = self._commit("GC_INTENT", plan.payload)
+        try:
+            gc.unlink_intent(self.session_dir, plan.payload, self.ops)
+        except cp.PersistenceFailure as error:
+            self._fail(error)
+        self._commit("GC_DONE", {"intent_seq": intent.seq})
+        # A checkpoint at or below the floor is no longer a usable base: its
+        # interval may have lost records or blobs. Never name it as `prev`.
+        floor = plan.payload["records_through"]
+        self.checkpoints = {sha: tuple_ for sha, tuple_ in self.checkpoints.items() if tuple_["checkpoint_seq"] > floor}
+        self.lifecycle(
+            "gc_collected", intent_seq=intent.seq, records_through=floor,
+            segments=len(plan.payload["segments"]), blobs=len(plan.payload["blobs"]), leftover=plan.leftover,
+        )
 
     def record_run_end(self, exit_code: int, reason: str) -> None:
         """RUN_END, best-effort (v2 1.2): a failure here changes no exit."""

@@ -1146,6 +1146,10 @@ class Chassis:
                 new_lineage=lambda: uuid.uuid4().hex[:16],
                 install=self.carried.install,
                 meta_source=self._meta_fields,
+                # SV-022 activation (isolated WIP branch): each checkpoint is
+                # followed by one bounded collection of obsolete segments and
+                # blobs. A pending collection is finished at startup regardless.
+                collect=True,
             )
         except PersistenceFailure as failure:
             return self._end_before_main(EXIT_ENVIRONMENT, "persistence_failure", str(failure))

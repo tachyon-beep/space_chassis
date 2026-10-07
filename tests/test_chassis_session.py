@@ -516,11 +516,12 @@ def test_sv021_07_editing_the_history_copy_inside_a_tool_changes_nothing(make_ru
         ("call_b", "act", '{"what": "y"}'),
     ]
     session_dir = run.root / "home" / "session"
-    segments = cp.read_segments(session_dir / "ledger")
-    replay = rp.Replay([], rp.SessionState(run.meta()["lineage_id"]), cp.BlobStore(session_dir / "blobs").get)
-    for record in cp.scan_segments(segments, run.meta()["lineage_id"]).records:
-        replay.apply(record)
-    assert replay.messages == messages == json.loads((session_dir / "conversation.json").read_text())
+    # SV-022: the run collects, so the ledger's replay is startup's own (newest
+    # checkpoint + suffix), not a genesis replay of records it has collected.
+    opening = st.open_session(session_dir, run.root / "home")
+    assert opening.classification == "A9", opening
+    assert opening.session.messages == messages == json.loads((session_dir / "conversation.json").read_text())
+    opening.session.close()
     # A previous-base rebuild must reach the newest checkpoint's hash.
     (session_dir / "conversation.json").write_bytes(b"damaged")
     opening = st.open_session(session_dir, run.root / "home")
