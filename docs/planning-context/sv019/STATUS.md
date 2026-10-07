@@ -6,11 +6,14 @@ Contracts: SV-013 §2.2.2/2.2.4 and §4.1 (K-A1), §2.2.7 first paragraph with S
 
 | Unit | State | Where |
 |---|---|---|
-| K-A2 narrow flap fix | done (commit 1) | `services/supervisor.py`; `tests/test_supervisor_flap.py`; one legacy assertion updated |
-| K-E1 pure helpers | next | — |
-| K-G1 pure repair / group-atomic view | next | — |
-| K-A1 metadata + K-B1 termination | next | — |
-| Receipt | not started | — |
+| K-A2 narrow flap fix | done `71b2644` | `services/supervisor.py`; `tests/test_supervisor_flap.py`; one legacy assertion updated |
+| K-E1 pure helpers | done `43edf30` | `tests/test_chassis_wire.py` |
+| K-G1 pure repair / group-atomic view | done `5788a1e` | `tests/test_chassis_groups.py` |
+| K-A1 metadata + K-B1 termination | done `1f9f1d7` | `tests/test_chassis_termination.py`, `tests/test_chassis_metadata.py`; seed handoff docstring |
+| Complete selected set | 126 passed, no warnings | `RECEIPT.md` §2 |
+| Receipt | done | `RECEIPT.md` |
+
+Full run log, the contract → test map, staged exclusions and limits: `RECEIPT.md`. A denied `git stash` meant K-B1/K-A1 pre-fix evidence is by source, not by run (receipt §2).
 
 ## Runs (bounded runner, `--cpu 23`)
 
