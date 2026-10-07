@@ -372,30 +372,56 @@ def test_a_due_entry_fires_and_shuts_its_socket_and_a_cancelled_one_does_not(wat
             sock.close()
 
 
-def test_a_stale_entry_never_reaches_a_reused_descriptor(watchdog):
-    """Owners cancel before closing; a new socket on the old number is untouched."""
+class SocketDouble:
+    """Stands in for a socket object: records every shutdown the watchdog makes."""
+
+    def __init__(self, number: int) -> None:
+        self.number = number
+        self.shutdowns: list[int] = []
+
+    def shutdown(self, how):
+        self.shutdowns.append(how)
+
+
+def test_a_cancelled_entry_holds_no_socket_and_is_never_fired(watchdog):
+    """Ownership, not descriptor numbers: after cancel the watchdog keeps no reference.
+
+    What this proves: a cancelled entry drops its socket object at once and is
+    skipped when its deadline passes, so nothing registered later -- whatever
+    descriptor number it is given -- can be reached through it. What it does
+    not do: force the kernel to reuse a descriptor number; the doubles below
+    simply carry the same number to show the watchdog never looks at it.
+    """
+    old = SocketDouble(7)
+    entry = watchdog.register(old, 1.0, "r1", "upstream", socket.SHUT_RDWR)
+    watchdog.cancel(entry)
+    assert entry.sock is None, "a cancelled entry keeps no socket"
+    new = SocketDouble(7)  # "the same number", registered by someone else
+    later = watchdog.register(new, 10.0, "r2", "upstream", socket.SHUT_RDWR)
+    watchdog.clock.set(5.0)
+    watchdog.fire_due()
+    assert old.shutdowns == [] and new.shutdowns == [] and not entry.fired
+    watchdog.clock.set(11.0)
+    watchdog.fire_due()
+    assert new.shutdowns == [socket.SHUT_RDWR] and old.shutdowns == []
+    watchdog.cancel(later)
+
+
+def test_a_cancelled_real_socket_pair_keeps_working_after_its_deadline(watchdog):
+    """The same property on real sockets (no reuse is forced or claimed)."""
     a, b = socket.socketpair()
     entry = watchdog.register(a, 1.0, "r1", "upstream", socket.SHUT_RDWR)
-    old_fd = a.fileno()
     watchdog.cancel(entry)
-    a.close()
-    b.close()
-    c, d = socket.socketpair()
     try:
-        reused = old_fd in (c.fileno(), d.fileno())
         watchdog.clock.set(5.0)
         watchdog.fire_due()
-        d.sendall(b"still here")
-        c.settimeout(1)
-        assert c.recv(20) == b"still here"
-        c.sendall(b"and here")
-        d.settimeout(1)
-        assert d.recv(20) == b"and here"
+        b.sendall(b"still here")
+        a.settimeout(1)
+        assert a.recv(20) == b"still here"
         assert not entry.fired
-        assert reused or True  # the number is usually reused; the property holds either way
     finally:
-        c.close()
-        d.close()
+        a.close()
+        b.close()
 
 
 def test_cancelled_entries_do_not_pile_up_behind_long_deadlines(watchdog):
@@ -487,3 +513,203 @@ def test_o3_6_a_blocked_diagnostic_writer_never_delays_a_deadline():
             a.close()
             b.close()
     assert dog._writer_thread is None or (dog._writer_thread.join(5) or not dog._writer_thread.is_alive())
+
+
+# ---------------------------------------------------------------------------
+# SV018-01: every TCP attempt is owned, watched and bounded by the absolute deadline
+# ---------------------------------------------------------------------------
+class AttemptSocket:
+    """A TCP socket double. connect() costs fake time, capped by its timeout, then fails or not.
+
+    No network is touched: the addresses are documentation-range literals and
+    nothing ever leaves this object.
+    """
+
+    def __init__(self, clock: FakeClock, cost: float, succeeds: bool) -> None:
+        self.clock = clock
+        self.cost = cost
+        self.succeeds = succeeds
+        self.timeouts: list[float] = []
+        self.connected = None
+        self.closed = False
+        self.sent = 0
+        self.shutdowns: list[int] = []
+
+    def settimeout(self, value):
+        self.timeouts.append(value)
+
+    def setsockopt(self, *_args):
+        pass
+
+    def connect(self, address):
+        timeout = self.timeouts[-1]
+        self.clock.advance(min(self.cost, timeout))
+        if self.cost > timeout:
+            raise TimeoutError("timed out")
+        if not self.succeeds:
+            raise ConnectionRefusedError("refused")
+        self.connected = address
+
+    def send(self, data):
+        self.sent += len(data)
+        return len(data)
+
+    sendall = send
+
+    def shutdown(self, how):
+        self.shutdowns.append(how)
+
+    def close(self):
+        self.closed = True
+
+
+TWO_ADDRESSES = [
+    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.1", 443)),
+    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.2", 443)),
+]
+
+
+@pytest.fixture
+def attempts(monkeypatch):
+    """Immediate fake resolution to two addresses, and scripted socket attempts."""
+    clock = FakeClock(0.0)
+    monkeypatch.setattr(recorder_module, "CLOCK", clock)
+    monkeypatch.setattr(recorder_module, "UPSTREAM_SOCKET", "")
+    monkeypatch.setattr(recorder_module, "RESOLVE", lambda *args, **kwargs: list(TWO_ADDRESSES))
+    plan: list[tuple[float, bool]] = []
+    made: list[AttemptSocket] = []
+
+    def new_socket(family, type_, proto):
+        cost, succeeds = plan.pop(0)
+        sock = AttemptSocket(clock, cost, succeeds)
+        made.append(sock)
+        return sock
+
+    monkeypatch.setattr(recorder_module, "NEW_SOCKET", new_socket)
+    return clock, plan, made
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_a_second_address_is_never_tried_after_the_absolute_deadline(attempts, monkeypatch, scheme):
+    """The review's trace: start at 480, deadline 540; address one eats the 60 s; no address two.
+
+    With the inherited per-address connect, the second attempt would begin at
+    540 with a fresh 60 s timeout and could end at 600. HTTPS shares the same
+    attempt path (the TLS wrap comes only after a TCP connect succeeds).
+    """
+    clock, plan, made = attempts
+    monkeypatch.setenv("LLM_BASE_URL", f"{scheme}://upstream.test/v1")
+    plan.extend([(600.0, False), (1.0, True)])
+    clock.set(480.0)
+    before = recorder_module.WATCHDOG.counts()["active"]
+    upstream = recorder_module.Upstream(540.0, "r1")
+    with pytest.raises(recorder_module.UpstreamDeadline):
+        upstream.connect()
+    upstream.close()
+    assert clock.monotonic() == 540.0, "the one attempt stopped at the deadline"
+    assert len(made) == 1, "no second blocking attempt began after the cutoff"
+    assert made[0].timeouts == [60.0] and made[0].closed and made[0].sent == 0
+    assert recorder_module.WATCHDOG.counts()["active"] == before, "no stale entry"
+
+
+def test_addresses_fall_back_while_time_remains_with_the_time_left_recomputed(attempts, monkeypatch):
+    clock, plan, made = attempts
+    monkeypatch.setenv("LLM_BASE_URL", "http://upstream.test/v1")
+    plan.extend([(30.0, False), (1.0, True)])
+    clock.set(480.0)
+    before = recorder_module.WATCHDOG.counts()["active"]
+    upstream = recorder_module.Upstream(540.0, "r1")
+    upstream.connect()
+    try:
+        assert len(made) == 2
+        assert made[0].closed and made[0].timeouts == [60.0]
+        assert made[1].timeouts[0] == 30.0, "the second attempt gets only the time left"
+        assert made[1].connected == ("192.0.2.2", 443) and upstream.connection.sock is made[1]
+        assert recorder_module.WATCHDOG.counts()["active"] == before + 1, "only the live socket is watched"
+    finally:
+        upstream.close()
+    assert made[1].closed and recorder_module.WATCHDOG.counts()["active"] == before
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_a_connect_that_runs_out_of_time_is_refunded_and_sends_nothing(make_rig, attempts, monkeypatch, scheme):
+    """Through the handler: open at 480, one attempt to 540, 502 upstream_connect, refunded."""
+    clock, plan, made = attempts
+    rig = make_rig(tk=10_000, g=10_000)
+    store = RecordStore(rig.root / "transcripts", ops=ClockOps(clock, {"events.jsonl": 480.0}, {}))
+    rig.recorder.state.store = store
+    monkeypatch.setattr(recorder_module, "UPSTREAM_SOCKET", "")
+    monkeypatch.setenv("LLM_BASE_URL", f"{scheme}://upstream.test/v1")
+    plan.extend([(600.0, False), (1.0, True)])
+    before = recorder_module.WATCHDOG.counts()["active"]
+    try:
+        status, _headers, payload = rig.post(chat())
+        assert status == 502 and json.loads(payload)["error"]["code"] == "upstream_connect"
+        (close,) = rig.closes()
+        assert close["usage_class"] == "none" and close["charged_tokens"] == 0
+        assert rig.budget.snapshot(SLUG)["requests_used"] == 0, "nothing was sent: refunded"
+        assert len(made) == 1 and made[0].sent == 0 and made[0].closed
+        assert recorder_module.WATCHDOG.counts()["active"] == before
+        assert rig.upstream.requests == []
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# SV018-03: a deadline profile must be finite before any arithmetic
+# ---------------------------------------------------------------------------
+TIMING_ENV = {
+    "client_timeout": "RECORDER_TIMEOUT_SECONDS",
+    "client_margin": "RECORDER_CLIENT_MARGIN_SECONDS",
+    "custody_reserve": "RECORDER_CUSTODY_RESERVE_SECONDS",
+    "min_upstream": "RECORDER_MIN_UPSTREAM_SECONDS",
+    "header": "RECORDER_HEADER_DEADLINE_SECONDS",
+    "body": "RECORDER_BODY_DEADLINE_SECONDS",
+    "client_write": "RECORDER_CLIENT_WRITE_DEADLINE_SECONDS",
+    "io_timeout": "RECORDER_IO_TIMEOUT_SECONDS",
+    "tick": "RECORDER_WATCHDOG_TICK_SECONDS",
+}
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+@pytest.mark.parametrize("field", sorted(TIMING_ENV))
+def test_a_non_finite_timing_value_is_refused_directly_and_from_the_environment(field, value, monkeypatch):
+    assert timing_problems(Timing(**{field: float(value)})), f"{field}={value} accepted directly"
+    for name in TIMING_ENV.values():
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(TIMING_ENV[field], value)
+    assert timing_problems(Timing.from_env()), f"{TIMING_ENV[field]}={value} accepted"
+
+
+def test_an_unparseable_timing_value_is_refused_not_replaced_by_a_default(monkeypatch):
+    for name in TIMING_ENV.values():
+        monkeypatch.delenv(name, raising=False)
+    assert timing_problems(Timing.from_env()) == []
+    monkeypatch.setenv("RECORDER_BODY_DEADLINE_SECONDS", "sixty")
+    assert timing_problems(Timing.from_env())
+
+
+def test_a_non_finite_profile_stops_startup_before_any_thread_or_listener(monkeypatch, tmp_path):
+    fresh = Watchdog()
+    monkeypatch.setattr(recorder_module, "WATCHDOG", fresh)
+    monkeypatch.setattr(recorder_module, "TRANSCRIPTS_DIR", tmp_path)
+    monkeypatch.setattr(recorder_module, "SOCKET_DIR", tmp_path / "sock")
+    for name in TIMING_ENV.values():
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("RECORDER_WATCHDOG_TICK_SECONDS", "inf")
+    monkeypatch.setattr(recorder_module, "TIMING", Timing.from_env())
+    assert recorder_module.main() == 1
+    assert fresh._thread is None and fresh._writer_thread is None
+    assert not (tmp_path / "sock").exists() and not (tmp_path / "recorder.jsonl").exists()
+
+
+def test_a_non_finite_deadline_is_never_put_in_the_heap(watchdog):
+    a, b = socket.socketpair()
+    try:
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            with pytest.raises(ValueError):
+                watchdog.register(a, bad, "r1", "body", socket.SHUT_RD)
+        assert watchdog.counts()["heap"] == 0
+    finally:
+        a.close()
+        b.close()

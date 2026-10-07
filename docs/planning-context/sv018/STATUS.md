@@ -1,6 +1,6 @@
 # SV-018 recorder package (R-B3 deadlines, structure, memory, response cap, SSE) — STATUS
 
-Ledger for SV-018 (Filigree not used). Branch `sv016/recorder-cleared`, base `11e0e26fd5e3e78f2b05f383a2493ef8cd8f1547` (accepted SV-016 + SV-017). No push, merge, deployment or host change.
+Ledger for SV-018 (Filigree not used). Branch `sv016/recorder-cleared`, base `11e0e26fd5e3e78f2b05f383a2493ef8cd8f1547` (accepted SV-016 + SV-017). I (the implementer) made no push, merge, deployment or host change. Separately, with John's explicit authorization, the coordinator pushed a WIP backup of `ff8819e` to `tachyon-beep/space_chassis` branch `wip/sv-recorder-opus-20261008` (see `docs/planning-context/GITHUB_WIP_BACKUP.md`); that backup is durability of the development work, not readiness, merge or deployment.
 
 Contract: SV-015 v2 §2.1 (t0-anchored deadlines, forward check, watchdog diagnostics off the enforcement path, startup check), §2.2 (pre-scan caps, memory reservation), §2.6, fixtures O3-4…O3-6, O4-3…O4-7; retained SV-013 §2.1.7, §2.1.9, §2.1.11 (non-superseded defaults), R-B2, R-B4…R-B8. Coordinator decisions (Astra preflight): one request per connection with `Connection: close`; slot and memory waits share 30 s of actual waiting; BODY_DEADLINE anchored at header completion; O3-5 models a disconnected client; elapsed_s/custody_s measure to their endpoint before the close append; diagnostics in a bounded deque under the watchdog's own lock; SSE structure excess in any event makes usage unknown; O4-5 object-array exceeds containers first, a scalar array proves the values cap.
 
@@ -16,3 +16,5 @@ Contract: SV-015 v2 §2.1 (t0-anchored deadlines, forward check, watchdog diagno
 | Receipt | done | `RECEIPT.md` |
 
 Commits: part 1 `6b758cc872e6bbd5c103c951609bef434e510c55` (mechanisms + integration checkpoint); part 2 `e6ade17ad4f955675d015de3c5d6e7f28383fd57` (header-fragment fix, regressions, compose, receipt). Revert units: part 2's tests depend on part 1; part 1 alone passes the pre-existing suites (46 + 33 at checkpoint). Next: independent Astra review.
+
+| Astra initial-review corrections (SV018-01…03, compose wording, FD-reuse fixture, watchdog shutdown containment) | done; 201 passed, 3 expected warnings | `checkpoint-002-astra-corrections.md`, `RECEIPT.md` §6 |

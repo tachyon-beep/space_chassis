@@ -742,11 +742,16 @@ class Timing:
     @classmethod
     def from_env(cls) -> Timing:
         def seconds(name: str, default: float) -> float:
+            # Unset means the default. A value that is set but is not a number
+            # is not quietly replaced by the default: it is carried as NaN, so
+            # `timing_problems` refuses the profile at startup.
             raw = (os.environ.get(name) or "").strip()
-            try:
-                return float(raw) if raw else default
-            except ValueError:
+            if not raw:
                 return default
+            try:
+                return float(raw)
+            except ValueError:
+                return math.nan
 
         return cls(
             client_timeout=seconds("RECORDER_TIMEOUT_SECONDS", 600.0),
@@ -764,8 +769,18 @@ class Timing:
 def timing_problems(timing: Timing) -> list[str]:
     """Why a profile cannot keep its promise; empty when it can. Startup refuses on any."""
     problems = []
-    if min(dataclasses.astuple(timing)) <= 0:
-        problems.append("every timing value must be positive")
+    # Finiteness first, before any arithmetic: NaN fails every comparison
+    # (so `<= 0` cannot catch it) and an infinite value poisons every sum.
+    for field in dataclasses.fields(timing):
+        value = getattr(timing, field.name)
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+            problems.append(f"{field.name} must be a finite number, not {value!r}")
+        elif value <= 0:
+            problems.append(f"{field.name} must be positive, not {value!r}")
+    if problems:
+        return problems
+    if not (math.isfinite(timing.e2e_budget) and math.isfinite(timing.upstream_offset)):
+        return ["the derived deadlines are not finite"]
     if timing.e2e_budget + timing.client_margin > timing.client_timeout:
         problems.append("the end-to-end budget plus the client margin exceeds the client timeout")
     if timing.upstream_offset < timing.min_upstream + timing.header:
@@ -890,6 +905,10 @@ class Watchdog:
 
     # -- registration ---------------------------------------------------------
     def register(self, sock, deadline: float, rid: str | None, phase: str, how: int) -> WatchEntry:
+        if not math.isfinite(deadline):
+            # A NaN never compares due and would sit at the heap's root, so
+            # nothing behind it would ever fire.
+            raise ValueError("a watchdog deadline must be finite")
         with self._lock:
             entry = WatchEntry(deadline, next(self._seq), sock, rid, phase, how)
             heapq.heappush(self._heap, (deadline, entry.seq, entry))
@@ -975,10 +994,15 @@ class Watchdog:
         sock = entry.sock
         if sock is None:
             return
-        with contextlib.suppress(OSError, ValueError):
-            # The base-class method on the descriptor: for a TLS socket this
-            # interrupts a blocked read without touching its SSL state.
-            socket.socket.shutdown(sock, entry.how)
+        # Nothing raised here may reach the watchdog's loop: one bad socket
+        # must not end enforcement for every other request.
+        with contextlib.suppress(Exception):
+            if isinstance(sock, socket.socket):
+                # The base-class method on the descriptor: for a TLS socket this
+                # interrupts a blocked read without touching its SSL state.
+                socket.socket.shutdown(sock, entry.how)
+            else:
+                sock.shutdown(entry.how)
 
     def stop(self) -> None:
         with self._lock:
@@ -1212,6 +1236,9 @@ MEMORY = MemoryBudget(MEMORY_BUDGET_BYTES)
 
 
 # -- responses: usage from JSON or SSE, honest about what was not parsed ---------
+SSE_LEADING = b" \t\r\n"  # optional whitespace allowed before the first `data:`
+
+
 def sse_usage(body: bytes) -> tuple[Usage, bool]:
     """(usage, structure_limit) from a server-sent-events body.
 
@@ -1222,7 +1249,10 @@ def sse_usage(body: bytes) -> tuple[Usage, bool]:
     makes the whole response's usage unknown, conservatively, even if another
     event carried a valid usage. Provider dialects beyond this are unvalidated.
     """
-    text = body.decode("utf-8", "replace").replace("\r\n", "\n")
+    # Only the whitespace `is_event_stream` accepts before the first `data:`
+    # is removed, so detection and extraction agree. No other line is touched,
+    # and the relayed bytes are never this parsed copy.
+    text = body.lstrip(SSE_LEADING).decode("utf-8", "replace").replace("\r\n", "\n")
     found = Usage(UNKNOWN)
     for event in text.split("\n\n"):
         data = [line[5:] for line in event.split("\n") if line.startswith("data:")]
@@ -1246,7 +1276,7 @@ def sse_usage(body: bytes) -> tuple[Usage, bool]:
 
 def is_event_stream(payload: bytes) -> bool:
     """By content, not Content-Type: the stub sends SSE as application/json."""
-    return payload.lstrip(b" \t\r\n").startswith(b"data:")
+    return payload.lstrip(SSE_LEADING).startswith(b"data:")
 
 
 @dataclass
@@ -2252,21 +2282,73 @@ def outbound_headers(inbound, key: str, extra: tuple[str, ...] = ()) -> dict[str
     return headers
 
 
-class WatchedConnection:
-    """A connection that tells its owner each socket it creates, as soon as it exists.
+# Name resolution and socket creation for the network path, looked up at call
+# time so a test can supply an immediate resolver and socket doubles.
+RESOLVE = socket.getaddrinfo
+NEW_SOCKET = socket.socket
 
-    The owner registers the socket with the watchdog, so a deadline can shut
-    down whatever the connection is blocked in -- connect on a unix socket,
-    a TLS handshake, the send, the status line, the body. A TCP connect has
-    no socket until `create_connection` returns (DNS and the connect run
-    inside it, bounded per address only by the per-operation timeout).
+
+class WatchedConnection:
+    """A connection whose every socket is owned and watched before it blocks.
+
+    The owner (`Upstream`) supplies three callbacks: `on_socket` registers or
+    rebinds the socket with the watchdog, `on_release` cancels that entry and
+    then closes the socket, and `time_left` gives the seconds left in the
+    upstream phase (raising once there are none). A deadline can then shut
+    down whatever the connection is blocked in: a unix-socket connect, each
+    TCP connect attempt, a TLS handshake, the send, the status line, the body.
+
+    TCP is connected here rather than by `socket.create_connection`, which
+    would reuse one timeout for every resolved address with no socket to
+    watch until it returned: an attempt that began before the deadline
+    could be followed by a fresh one after it. Here each address gets its
+    own watched socket and only the time left; once none is left no further
+    attempt begins. Name resolution runs once, first, and cannot be
+    interrupted -- no socket exists yet [X].
     """
 
     on_socket = None
+    on_release = None
+    time_left = None
 
     def _tell(self, sock) -> None:
         if self.on_socket is not None:
             self.on_socket(sock)
+
+    def _release(self, sock) -> None:
+        if self.on_release is not None:
+            self.on_release(sock)
+        else:
+            with contextlib.suppress(OSError):
+                sock.close()
+
+    def _attempt_timeout(self) -> float:
+        if self.time_left is None:
+            return self.timeout
+        return max(0.001, min(TIMING.io_timeout, self.time_left()))
+
+    def _tcp_connect(self) -> None:
+        addresses = RESOLVE(self.host, self.port, 0, socket.SOCK_STREAM)
+        failure: OSError | None = None
+        for family, kind, proto, _canonical, address in addresses:
+            timeout = self._attempt_timeout()  # raises once the phase has no time left
+            sock = NEW_SOCKET(family, kind, proto)
+            self.sock = sock
+            self._tell(sock)  # watched before it can block
+            try:
+                sock.settimeout(timeout)
+                sock.connect(address)
+            except OSError as error:
+                failure = error
+                self.sock = None
+                self._release(sock)  # its watch is cancelled before it is closed
+                continue
+            with contextlib.suppress(OSError):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            return
+        if failure is not None:
+            raise failure
+        raise OSError("the upstream name resolved to no address")
 
 
 class UnixHTTPConnection(WatchedConnection, http.client.HTTPConnection):
@@ -2294,21 +2376,26 @@ class UnixHTTPConnection(WatchedConnection, http.client.HTTPConnection):
 
 class TCPHTTPConnection(WatchedConnection, http.client.HTTPConnection):
     def connect(self) -> None:
-        super().connect()
-        self._tell(self.sock)
+        self._tcp_connect()
 
 
 class TLSHTTPConnection(WatchedConnection, http.client.HTTPSConnection):
-    """HTTPS with the handshake inside the watched upstream phase."""
+    """HTTPS over the same watched TCP attempts, with the handshake watched too.
+
+    The wrapped socket replaces the raw one in the watch before the handshake
+    starts; the context is the standard library's verified default, and the
+    host name is both the SNI and the name the certificate must match.
+    """
 
     def connect(self) -> None:
-        http.client.HTTPConnection.connect(self)
-        self._tell(self.sock)
-        self.sock = self._context.wrap_socket(
+        self._tcp_connect()
+        wrapped = self._context.wrap_socket(
             self.sock, server_hostname=self.host, do_handshake_on_connect=False
         )
-        self._tell(self.sock)
-        self.sock.do_handshake()
+        self.sock = wrapped
+        self._tell(wrapped)  # rebind ownership before the handshake can block
+        wrapped.settimeout(self._attempt_timeout())
+        wrapped.do_handshake()
 
 
 def upstream_connection() -> http.client.HTTPConnection:
@@ -2370,16 +2457,26 @@ class Upstream:
         self.rid = rid
         self.connection: http.client.HTTPConnection | None = None
         self.entry: WatchEntry | None = None
+        self.fired = False  # a released attempt's watch had fired
 
     @property
     def deadline_fired(self) -> bool:
-        return self.entry is not None and self.entry.fired
+        return self.fired or (self.entry is not None and self.entry.fired)
 
     def _watch(self, sock) -> None:
+        """Watch a new socket, or move the watch onto the socket that replaced it."""
         if self.entry is None:
             self.entry = WATCHDOG.register(sock, self.deadline, self.rid, "upstream", SHUT_ALL)
         else:
             WATCHDOG.rebind(self.entry, sock)
+
+    def _release(self, sock) -> None:
+        """A failed attempt: end its watch first, then close it."""
+        if WATCHDOG.cancel(self.entry):
+            self.fired = True
+        self.entry = None
+        with contextlib.suppress(OSError):
+            sock.close()
 
     def _time_left(self) -> float:
         remaining = self.deadline - now()
@@ -2395,10 +2492,13 @@ class Upstream:
         connection.auto_open = 0
         connection.timeout = max(0.001, min(TIMING.io_timeout, self._time_left()))
         connection.on_socket = self._watch
+        connection.on_release = self._release
+        connection.time_left = self._time_left
         self.connection = connection
         connection.connect()
-        if self.deadline_fired:
-            raise UpstreamDeadline("the upstream deadline passed during connect")
+        # Resolution and the connect may have used the time up: checked again
+        # here, so no request byte is ever sent after the deadline.
+        self._time_left()
 
     def exchange(self, headers: dict, body: bytes) -> tuple[int, dict, bytes, bool]:
         connection = self.connection

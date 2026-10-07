@@ -348,6 +348,33 @@ def test_sse_dialect_variants_are_parsed_by_the_stated_rules():
     assert recorder_module.is_event_stream(b"\r\n data: x") and not recorder_module.is_event_stream(b'{"data":1}')
 
 
+@pytest.mark.parametrize("prefix", [b" ", b"\t", b"\n  ", b"\r\n\t "], ids=["space", "tab", "newline-spaces", "crlf-tab-space"])
+def test_whitespace_before_the_first_data_line_keeps_its_usage(prefix):
+    """SV018-02: detection accepted the prefix; extraction must too."""
+    body = prefix + b'data: {"usage":{"total_tokens":7}}\n\n'
+    assert recorder_module.is_event_stream(body)
+    view = recorder_module.view_response(body, False)
+    assert (view.usage.cls, view.usage.actual) == ("known", 7)
+    multi = prefix + b'data: {"usage":\ndata:  {"total_tokens": 9}}\n\ndata: {"usage":{"total_tokens":-1}}\n\n'
+    usage, _limited = sse_usage(multi)
+    assert usage.actual == 9, "multi-line data still joined; the last *valid* usage still counts"
+
+
+@pytest.mark.parametrize("prefix", [b"  ", b"\n\t "], ids=["spaces", "newline-tab-space"])
+def test_a_whitespace_prefixed_stream_is_charged_its_actual_and_relayed_unchanged(make_rig, prefix):
+    rig = make_rig(tk=10_000, g=10_000)
+    body = prefix + b'data: {"usage":{"total_tokens":7}}\n\ndata: [DONE]\n\n'
+    rig.upstream.respond = lambda request: (200, {"Content-Type": "text/event-stream"}, body)
+    status, _headers, payload = rig.post(chat(stream=True))
+    assert status == 200 and payload == body, "the provider's bytes, byte for byte"
+    (close,) = rig.closes()
+    assert close["usage_class"] == "known" and close["charged_tokens"] == 7
+    assert close["usage"] == {"total_tokens": 7}
+    (turn,) = rig.transcript()
+    assert turn["usage_class"] == "known" and turn["usage"] == {"total_tokens": 7}
+    assert turn["response"]["raw_body"] == body.decode(), "the raw record keeps the prefix too"
+
+
 def test_an_over_structured_sse_event_is_flagged_in_the_record(make_rig):
     rig = make_rig(tk=10_000, g=10_000)
     deep = b'data: {"x":' + b"[" * 70 + b"]" * 70 + b"}\n\n"

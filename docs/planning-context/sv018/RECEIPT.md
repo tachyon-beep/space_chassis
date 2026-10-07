@@ -1,6 +1,6 @@
 # SV-018 / R-B3 recorder bounds — implementation receipt
 
-Branch `sv016/recorder-cleared`, base `11e0e26fd5e3e78f2b05f383a2493ef8cd8f1547` (accepted SV-016 + SV-017). Commits: part 1 (mechanisms + integration, checkpoint) and part 2 (regressions, compose, this receipt) — ids in `STATUS.md` and the final report. For independent Astra review; no merge, push or deployment.
+Branch `sv016/recorder-cleared`, base `11e0e26fd5e3e78f2b05f383a2493ef8cd8f1547` (accepted SV-016 + SV-017). Commits: part 1 (mechanisms + integration, checkpoint) and part 2 (regressions, compose, this receipt) — ids in `STATUS.md` and the final report. For independent Astra review. I made no merge, push or deployment; the coordinator's authorized WIP backup of `ff8819e` (branch `wip/sv-recorder-opus-20261008`) is a backup, not readiness. Correction pass after the Astra initial review: §6 and `checkpoint-002-astra-corrections.md`.
 
 Contract: SV-015 v2 §2.1, §2.2, §2.6, O3-4…O3-6, O4-3…O4-7 (supersede SV-013's relative timeout coupling and memory multipliers); retained SV-013 §2.1.7, §2.1.9, §2.1.11 non-superseded defaults, R-B2, R-B4…R-B8; the coordinator's preflight decisions (listed in `STATUS.md`).
 
@@ -30,7 +30,7 @@ No existing test was changed in this package.
 | R-B2 body drip → 408 within body deadline + tick; close, no open | `::test_r_b2_a_dripping_body_gets_a_408_within_its_deadline` |
 | header drip → canned 408, no close, `request_overdue` via the writer | `::test_dripping_headers_get_a_canned_408_and_no_invented_request` |
 | watchdog fire/cancel; SHUT_RD; diagnostics queued | `::test_a_due_entry_fires_and_shuts_its_socket_and_a_cancelled_one_does_not` |
-| stale entry never reaches a reused descriptor | `::test_a_stale_entry_never_reaches_a_reused_descriptor` |
+| a cancelled entry holds no socket and never fires (ownership, not FD numbers; kernel reuse is **not** forced) | `::test_a_cancelled_entry_holds_no_socket_and_is_never_fired`, `::test_a_cancelled_real_socket_pair_keeps_working_after_its_deadline` (replaced the earlier test with a tautological `assert reused or True`, §6) |
 | cancelled entries retired (bounded heap) | `::test_cancelled_entries_do_not_pile_up_behind_long_deadlines` |
 | fire during a TLS wrap shuts the new socket | `::test_a_deadline_that_fires_during_a_tls_wrap_shuts_the_new_socket_too` |
 | O3-6 blocked writer: sockets shut, queue 2, dropped 1, failed write keeps the count | `::test_o3_6_a_blocked_diagnostic_writer_never_delays_a_deadline` |
@@ -76,7 +76,19 @@ No pre-fix runs: the new tests exercise new mechanisms. The negative controls ar
 ## 5. What is and is not bounded (honest limits)
 
 - **Enforced:** structure counts, body and response byte caps, the reservation arithmetic, accepted connections, slots, phase deadlines on existing sockets (deadline + tick + scheduling).
-- **Not bounded [X]:** DNS inside a TCP connect; CPU time of the pre-scan and parse (per-byte Python loop over ≤ 2 MiB, unmeasured); filesystem calls (preflight, record appends) — reported via `custody_s`/`deadline_overrun`, never prevented; the effect of `shutdown` on TLS and AF_UNIX sockets beyond the local tests [N:K].
+- **Not bounded [X]:** DNS resolution before the TCP attempts (each attempt itself is now owned, watched and given only the time left — §6); CPU time of the pre-scan and parse (per-byte Python loop over ≤ 2 MiB, unmeasured); filesystem calls (preflight, record appends) — reported via `custody_s`/`deadline_overrun`, never prevented; the effect of `shutdown` on TLS and AF_UNIX sockets beyond the local tests [N:K].
 - **Assumed, unmeasured [N:F]:** that the 4/6/256-byte constants bound real interpreter allocation (commissioning C1 RSS). No 1 GiB process guarantee.
 - **Unperformed gates:** live TLS handshake under deadline, DNS timing, real provider SSE dialects and stripped-label tolerance, real RSS, deployment, the full repository suite, ruff.
 - Accepted SV-016/017 limits stand: one recorder per root, durable root precondition, no power-loss evidence, decoded (not byte-exact) transcript, `status` is the selected/attempted status, `relayed` is completion of the recorder's write.
+
+## 6. Correction pass (Astra initial R-B3 review)
+
+Base `ff8819e`. Full finding → change → test map, pre-fix results and limits: `checkpoint-002-astra-corrections.md`.
+
+- **SV018-01:** TCP and TLS share `WatchedConnection._tcp_connect`: one resolution (DNS, not interruptible), then per address an owned socket watched before its blocking connect, timeout `min(IO_TIMEOUT, time left)` recomputed, no attempt once the time is gone, a failed attempt's watch cancelled before its close; TLS rebinds the watch before the handshake; the time left is rechecked after connect, before any request byte. Connect-before-`begin_forward`, no reconnect, no-send refund and verified TLS defaults unchanged.
+- **SV018-02:** SSE extraction strips the same leading whitespace detection accepts, and nothing else.
+- **SV018-03:** every timing field must be a finite positive number before any arithmetic; a malformed set value is refused, **not** replaced by the default (behaviour change from part 1); the watchdog refuses non-finite deadlines.
+- **Also fixed:** the watchdog's socket shutdown contains every exception, so one bad socket cannot end enforcement.
+- **Docs:** compose comments state a conditional plan, not a guarantee; the tautological FD-reuse assertion is gone.
+- **Selected bounded run:** **201 passed**, 3 expected `SystemExit` warnings.
+- **Evidence limits added:** the connect fixtures are fake resolution and socket doubles on a fake clock (control flow and accounting), not kernel connect behaviour, DNS latency or a real TLS handshake.
