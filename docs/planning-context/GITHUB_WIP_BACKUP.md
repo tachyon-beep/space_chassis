@@ -8,6 +8,8 @@ This branch is a durability checkpoint, not a merge or deployment approval. John
 - SV017 transcript custody: accepted at `11e0e26fd5e3e78f2b05f383a2493ef8cd8f1547`; independent final review is `sv017/ASTRA-ACCEPTANCE.md`. Final selected set at that point: 121 passed.
 - SV018 deadline/resource bounds: accepted after corrections at `055345d1cd3d13845ffc12b9834787b17d67d23d`; independent final review is `sv018/ASTRA-ACCEPTANCE.md`. Final selected recorder set: **209 passed**, with three deliberate SystemExit warnings. All four Astra findings are closed. Acceptance remains conditional on the documented commissioning assumptions.
 
+- SV019 staged chassis metadata, clean-flap behavior, typed termination, pure wire helpers and outgoing group repair: accepted at `2f0567c1e1aaa0ca900adfa5f4ce1eaa40a783a9`; independent final review is `sv019/ASTRA-ACCEPTANCE.md`. Final selected set: **161 passed**, plus **five local-stub integration checks**, no warnings. Ledger activation, notes adoption and full response-envelope adoption remain staged out.
+
 The implementer's earlier 'nothing pushed' statements describe actions by that worker. The coordinator separately pushed and verified checkpoint `6b758cc` on the dedicated WIP branch. This document is prepared for the next fast-forward backup; its creation does not itself claim the next remote verification completed.
 
 ## Evidence and exclusions

@@ -98,4 +98,4 @@ Commit `2f0567c1e1aaa0ca900adfa5f4ce1eaa40a783a9`; details, pre-fix results and 
 
 ## 5. Evidence limits
 
-All runs are local fakes: no provider, model, socket or live supervisor. In-memory pairing is complete going forward; a run killed mid-group still leaves an unpaired stored list (only the outgoing view is repaired), and crash outcomes stay unclassified until K-D. Startup failures before `main(context)` (directories, run.json read, recorder connection, duty load, tool binding, resume/bootstrap) produce no `ended`/`run_end` and no checkpoint, by design.
+Initial unit checks used local fakes. Correction checks include actual script-entry subprocesses over local Unix sockets and five local-stub integration checks. No live model/provider or deployed supervisor stack was used. In-memory pairing is complete going forward; a run killed mid-group still leaves an unpaired stored list (only the outgoing view is repaired), and crash outcomes stay unclassified until K-D. Startup failures before `main(context)` (directories, run.json read, recorder connection, duty load, tool binding, resume/bootstrap) produce no `ended`/`run_end` and no checkpoint, by design.
