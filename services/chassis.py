@@ -180,14 +180,17 @@ def ended_call_text(stop: BaseException) -> str:
 def classify_exit(code) -> tuple[int, str, str]:
     """A bare SystemExit's (exit code, reason, note), never raising on an odd payload.
 
-    An int in 0-255 is honoured but labelled as having no termination record;
-    a string is a clean end whose text is the note; None is a clean end;
-    anything else -- including a bool or an out-of-range int, which a shell
-    would wrap into some other code -- is the run's own fault (43).
+    `SystemExit(int n)` exits n (SV-013 2.2.4), labelled as having no
+    termination record. No range is imposed here: what n becomes as a process
+    status (300 is 44, -1 is 255) is the operating system's arithmetic, as it
+    always was. A bool is an int (`True` is 1), as it always was. A string is
+    a clean end whose text is the note; None is a clean end; any other payload
+    is the run's own fault (43) instead of an exception inside this handler.
     """
     if code is None:
         return EXIT_OK, "exit_none", ""
-    if isinstance(code, int) and not isinstance(code, bool) and 0 <= code <= 255:
+    if isinstance(code, int):
+        code = int(code)
         return code, f"exit_{code}_without_termination_record", ""
     if isinstance(code, str):
         return EXIT_OK, "exit_str", code
@@ -893,8 +896,8 @@ class Chassis:
 
         Refusal is an ordinary ValueError, which a tool sees as its error text:
         nothing is dropped, shortened or reordered behind the duty's back. The
-        size is measured on the normalized text in escaped units, the same
-        measure every stored string is capped in.
+        text is normalized (a lone surrogate becomes `?`), and that normalized
+        text is both what is measured, in escaped units, and what is queued.
         """
         if not isinstance(text, str):
             raise ValueError("a message queued during a tool call must be text")
@@ -902,13 +905,16 @@ class Chassis:
             raise ValueError(
                 f"at most {MAX_QUEUED_MESSAGES} messages can be queued during one tool call group"
             )
-        units = escaped_units(normalize_text(text)[0])
+        # The text that is measured is the text that is stored: normalized, so
+        # a lone surrogate is `?` both in the bound and in the conversation.
+        normalized, _replaced = normalize_text(text)
+        units = escaped_units(normalized)
         if units > MAX_QUEUED_UNITS:
             raise ValueError(
                 f"a message queued during a tool call is at most {MAX_QUEUED_UNITS} escaped "
                 f"units; this one is {units}"
             )
-        self.queued.append({"role": role, "content": text})
+        self.queued.append({"role": role, "content": normalized})
 
     def close_group(self) -> None:
         """End the tool group in progress and append what it queued, in order."""
@@ -1237,10 +1243,11 @@ class Chassis:
                 if exit_code not in (EXIT_DUTY_FAULT, EXIT_ENVIRONMENT):
                     exit_code, reason = EXIT_DUTY_FAULT, "checkpoint_failed"
             if resumed and exit_code not in RESUMING_EXITS:
-                # The run ended in a way that does not carry the conversation.
-                # The checkpoint stays on disk -- it is the record of what this
-                # run was thinking, and the ladder may want it -- but the next
-                # run will not open it.
+                # The run ended with an exit that is not one of the resuming
+                # codes (42, 44), and the record says so. It is a label, not a
+                # reset: the checkpoint stays on disk and the next run's
+                # `resume()` adopts any readable conversation whatever this
+                # exit was. No memory-reset policy hangs on this record.
                 self.record("run_ended_unresumable", exit=exit_code)
             self.record(
                 "run_end",
@@ -1393,14 +1400,38 @@ def selection(
         start = index
 
     start = _advance_to_chunk(start, length, chunk_tokens)
-    # The window starts on a whole unit: never on a tool result, and never on
-    # anything else inside a tool group (a system message a duty slipped in
-    # between a call and its result), so a group is sent whole or not at all.
-    within = inside_group(messages)
-    while start < len(messages) - 1 and (messages[start].get("role") == "tool" or within[start]):
-        start += 1
+    start = _whole_unit_start(messages, start)
 
     return sorted(pinned | set(range(start, len(messages)))), start
+
+
+def _whole_unit_start(messages: list[dict], start: int) -> int:
+    """Move a window start that falls inside a tool group to a unit boundary.
+
+    A group (an assistant message with tool calls, and the tool and system
+    messages after it) is sent whole or not at all. If the start falls inside
+    a group, it moves forward to the next unit when there is one -- the group
+    it cut is older and is dropped whole -- and otherwise back to the group's
+    head: that group is the newest material, and it is kept whole even when it
+    alone exceeds the estimated window (SV-015 v2 section 2.3 accepts that one
+    newest unit can). A standalone tool message, answering nothing, is skipped
+    as before. The index returned is into the original list, so the recap's
+    fold boundary is the same group boundary.
+    """
+    within = inside_group(messages)
+
+    def tail(index: int) -> bool:
+        return within[index] or messages[index].get("role") == "tool"
+
+    if start >= len(messages) or not tail(start):
+        return start
+    following = next((index for index in range(start + 1, len(messages)) if not tail(index)), None)
+    if following is not None:
+        return following
+    head = start
+    while head > 0 and within[head]:
+        head -= 1
+    return head if within[start] else start
 
 
 def inside_group(messages: list[dict]) -> list[bool]:
@@ -1431,7 +1462,11 @@ ORPHAN_NOTICE = "[orphan tool result for {call_id}]: {content}"
 
 
 def repair_structure(messages: list[dict]) -> tuple[list[dict], list[dict]]:
-    """A copy of `messages` every upstream will accept, and what was changed.
+    """A copy of `messages` with tool results ordered and paired, and what was changed.
+
+    What this repairs is ordering and pairing only. It does not make duplicate
+    or invalid provider ids valid, and it does not establish that any provider
+    accepts the result: provider schema and id acceptance stay unvalidated.
 
     Every assistant message with tool calls is followed at once by exactly one
     tool message per call, in call order. A missing result is synthesized with
@@ -1558,8 +1593,10 @@ def prepared_view(
 
     The selected messages are then repaired as a view (`repair_structure`):
     every call answered once, in place, and nothing stray -- so a conversation
-    a duty edited, or a run that ended mid-group, still makes a request the
-    upstream accepts. The stored list is not touched.
+    a duty edited, or a run that ended mid-group, still sends tool results in
+    a well-ordered, fully paired form. That is ordering and pairing only;
+    whether a provider accepts the request (its schema, its ids) is not
+    established here. The stored list is not touched.
     """
     indices, _ = selection(messages, budget_tokens, chunk_tokens)
     kept, _repairs = repair_structure([messages[index] for index in indices])
@@ -1655,4 +1692,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # Launched as a script (as the supervisor does), this module is
+    # `__main__`. A duty that imports `chassis` -- or the seed's
+    # `_load_runtime`, which looks in sys.modules first -- must get *this*
+    # module, not a second copy of the same file: a second copy has its own
+    # exception classes, so a duty's `chassis.EnvironmentFailure` would not be
+    # the class this runtime catches, and its ToolRegistry not the one it
+    # reads. Binding the name before any duty code is loaded keeps one runtime.
+    sys.modules["chassis"] = sys.modules[__name__]
     sys.exit(main())

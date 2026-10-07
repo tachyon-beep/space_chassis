@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -327,8 +328,10 @@ CONTROL = [
     ("raise Odd('strange')", 43, "run_traceback", "the call raised Odd: strange; the run ended"),
     ("raise SystemExit(None)", 0, "exit_none", "the call raised SystemExit(None); the run ended"),
     ("raise SystemExit('bye')", 0, "exit_str", "the call raised SystemExit('bye'); the run ended"),
-    ("raise SystemExit(300)", 43, "invalid_exit_payload", "the call raised SystemExit(300); the run ended"),
-    ("raise SystemExit(True)", 43, "invalid_exit_payload", "the call raised SystemExit(True); the run ended"),
+    ("raise SystemExit(300)", 300, "exit_300_without_termination_record", "the call raised SystemExit(300); the run ended"),
+    ("raise SystemExit(-1)", -1, "exit_-1_without_termination_record", "the call raised SystemExit(-1); the run ended"),
+    ("raise SystemExit(True)", 1, "exit_1_without_termination_record", "the call raised SystemExit(True); the run ended"),
+    ("raise SystemExit([1])", 43, "invalid_exit_payload", "the call raised SystemExit([1]); the run ended"),
     ("context.finish('done')", 0, "finish", "finish accepted; run ending"),
 ]
 
@@ -490,3 +493,234 @@ def test_a_failed_turn_checkpoint_ends_the_run_as_an_environment_failure(make_ru
     assert run.go() == chassis.EXIT_ENVIRONMENT
     assert run.run_end()["reason"] == "persistence_failure"
     assert len(run.client.sent) == 1, "no further turn after the failed checkpoint"
+
+
+# ---------------------------------------------------------------------------
+# SV019-B1-03: SystemExit(int n) -> n, as SV-013 2.2.4 says
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        (0, (0, "exit_0_without_termination_record", "")),
+        (42, (42, "exit_42_without_termination_record", "")),
+        (300, (300, "exit_300_without_termination_record", "")),
+        (-1, (-1, "exit_-1_without_termination_record", "")),
+        (True, (1, "exit_1_without_termination_record", "")),
+        (False, (0, "exit_0_without_termination_record", "")),
+        (None, (0, "exit_none", "")),
+        ("bye", (0, "exit_str", "bye")),
+        (["x"], (43, "invalid_exit_payload", "SystemExit(['x'])")),
+        (1.5, (43, "invalid_exit_payload", "SystemExit(1.5)")),
+    ],
+)
+def test_an_integer_exit_is_passed_on_unchanged(code, expected):
+    """No range is imposed: what the process status becomes is the shell's arithmetic, not a policy here."""
+    assert chassis.classify_exit(code) == expected
+
+
+# ---------------------------------------------------------------------------
+# SV019-B1-01: what is queued is what was measured
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("count", "accepted"),
+    [(10, True), (65536, True), (65537, False)],
+    ids=["few-surrogates", "surrogates-at-cap", "surrogates-over-cap"],
+)
+def test_queued_text_is_stored_normalized_exactly_as_it_was_measured(make_run, count, accepted):
+    extra = (
+        f"TEXT = chr(0xD800) * {count} + 'ok'\n\n"
+        "def BEHAVIOUR(context, what):\n    context.say(TEXT[: len(TEXT) - 2] if len(TEXT) > 100 else TEXT)\n"
+        "    return 'queued'\n"
+    )
+    run = make_run([reply(calls=[("call_q", "act", {"what": "q"})]), reply("done")], extra=extra)
+    run.go()
+    after = run.after_first_assistant()
+    expected = "?" * count + ("ok" if count <= 100 else "")
+    if accepted:
+        assert after[0] == T("call_q", "act", "queued") and after[1] == {"role": "user", "content": expected}
+        assert chassis.escaped_units(after[1]["content"]) <= chassis.MAX_QUEUED_UNITS
+        assert after[2] == {"role": "user", "content": "again"}, "queue order kept"
+    else:
+        assert after[0]["content"].startswith("error: ValueError: a message queued during a tool call is at most 65536")
+        assert after[1] == {"role": "user", "content": "again"}, "refused, not truncated or dropped silently"
+    for messages in (run.chassis.messages, run.saved(), *run.client.sent):
+        assert not any(0xD800 <= ord(ch) <= 0xDFFF for m in messages for ch in str(m.get("content", ""))), (
+            "an unnormalized surrogate was retained"
+        )
+
+
+# ---------------------------------------------------------------------------
+# SV019-B1-02: the runtime launched as a script, as the supervisor launches it
+# ---------------------------------------------------------------------------
+SCRIPT_DUTY = '''
+import json, os, sys
+{runtime}
+tools = chassis.ToolRegistry()
+CONTEXT = None
+INVOKED = []
+
+
+def _note(name):
+    INVOKED.append(name)
+    path = os.environ["TRACE_FILE"]
+    with open(path, "w") as handle:
+        json.dump({{
+            "invoked": INVOKED,
+            "same_module": sys.modules["chassis"] is sys.modules.get("__main__"),
+        }}, handle)
+
+
+@tools.register
+def read_file(path: str) -> str:
+    """Read."""
+    _note("read_file")
+    return "x-contents"
+
+
+@tools.register
+def write_file(path: str, text: str) -> str:
+    """Write."""
+    _note("write_file")
+    return "wrote"
+
+
+@tools.register
+def act(what: str) -> str:
+    """Act."""
+    _note("act")
+{act}
+
+
+def main(context):
+    global CONTEXT
+    CONTEXT = context
+    _note("main")
+{main}
+'''
+
+IMPORT_RUNTIME = "import chassis"
+SEED_RUNTIME = (
+    "existing = sys.modules.get('chassis')\n"
+    "assert existing is not None and hasattr(existing, 'Chassis'), 'no loaded runtime'\n"
+    "chassis = existing"
+)
+
+
+def script_run(duty_runtime: str, act: str, main: str, replies) -> dict:
+    """Run `python3 services/chassis.py` in a temporary world against the local stub model."""
+    import shutil  # noqa: PLC0415 -- this harness only
+    import subprocess  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+
+    from stub_model import Stub, StubServer  # noqa: PLC0415 -- the local stub, on conftest's path
+
+    root = Path(tempfile.mkdtemp(prefix="sv19-", dir="/tmp"))  # short: a unix socket path is capped
+    try:
+        for name in ("work", "home", "telemetry", "diary", "diode"):
+            (root / name).mkdir()
+        (root / "work" / "duty.py").write_text(
+            SCRIPT_DUTY.format(runtime=duty_runtime, act=act, main=main), encoding="utf-8"
+        )
+        server = StubServer(Stub(script=replies), socket_path=root / "model.sock").start()
+        env = dict(os.environ)
+        for name in ("RUN_MAX_TURNS", "RUN_MAX_SECONDS", "CONTEXT_WINDOW_EVICTION_TOKENS", "AGENT_ENTRY"):
+            env.pop(name, None)
+        env.update(
+            {
+                "SERVICES_DIR": str(PROJECT / "services"),
+                "AGENT_SLUG": "agent_s",
+                "AGENT_NAME": "script",
+                "WORK_DIR": str(root / "work"),
+                "AGENT_HOME": str(root / "home"),
+                "DIARY_DIR": str(root / "diary"),
+                "DIODE_DUTY_DIR": str(root / "diode"),
+                "TELEMETRY_DIR": str(root / "telemetry"),
+                "LLM_SOCKET_PATH": str(root / "model.sock"),
+                "LLM_BASE_URL": "http://localhost/v1",
+                "LLM_MODEL": "stub",
+                "OPENROUTER_API_KEY": "sk-dummy",
+                "SOCKET_WAIT_SECONDS": "5",
+                "RECORDER_TIMEOUT_SECONDS": "30",
+                "CONTEXT_WINDOW_TOKENS": "200000",
+                "TRACE_FILE": str(root / "trace.json"),
+            }
+        )
+        try:
+            done = subprocess.run(
+                [sys.executable, str(PROJECT / "services" / "chassis.py")],
+                cwd=str(root / "work"),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+        finally:
+            server.stop()
+        lifecycle = root / "telemetry" / "agents" / "agent_s" / "lifecycle.jsonl"
+        records = [json.loads(line) for line in lifecycle.read_text().splitlines() if line] if lifecycle.exists() else []
+        conversation = root / "home" / "session" / "conversation.json"
+        return {
+            "code": done.returncode,
+            "output": done.stdout[-3000:] + done.stderr[-3000:],
+            "run_end": next((r for r in records if r["event"] == "run_end"), None),
+            "messages": json.loads(conversation.read_text()) if conversation.exists() else [],
+            "trace": json.loads((root / "trace.json").read_text()) if (root / "trace.json").exists() else {},
+        }
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def three_calls():
+    from stub_model import Reply, ToolCall  # noqa: PLC0415
+
+    return [
+        Reply(
+            tool_calls=[
+                ToolCall("read_file", {"path": "x"}),
+                ToolCall("act", {"what": "end"}),
+                ToolCall("write_file", {"path": "y", "text": "z"}),
+            ]
+        )
+    ]
+
+
+SCRIPT_CASES = [
+    ("raise chassis.EnvironmentFailure('gone')", 44, "environment", "the call raised EnvironmentFailure: gone; the run ended", ""),
+    ("raise chassis.TurnLimitReached('cap')", 42, "turn_limit", "the call raised TurnLimitReached: cap; the run ended", ""),
+    ("raise chassis.DutyFault('broken')", 43, "duty_fault", "the call raised DutyFault: broken; the run ended", ""),
+    ("raise chassis.RunTermination('handoff')", 42, "handoff", "handoff accepted; run ending", "by handoff "),
+    ("CONTEXT.finish('done')", 0, "finish", "finish accepted; run ending", "by finish "),
+    ("raise SystemExit(300)", 300 & 0xFF, "exit_300_without_termination_record", "the call raised SystemExit(300); the run ended", ""),
+    ("raise SystemExit(-1)", (-1) & 0xFF, "exit_-1_without_termination_record", "the call raised SystemExit(-1); the run ended", ""),
+]
+
+
+@pytest.mark.parametrize("runtime", [IMPORT_RUNTIME, SEED_RUNTIME], ids=["import-chassis", "seed-load-runtime"])
+@pytest.mark.parametrize(
+    ("act", "status", "reason", "text", "how"),
+    SCRIPT_CASES,
+    ids=[case[2] for case in SCRIPT_CASES],
+)
+def test_script_mode_controls_from_an_imported_runtime_reach_their_owner(runtime, act, status, reason, text, how):
+    """SV019-B1-02: before the fix `import chassis` in a script-launched run was a second module."""
+    result = script_run(runtime, f"    {act}", "    context.ask('go')\n", three_calls())
+    assert result["trace"].get("same_module") is True, result["output"]
+    assert result["code"] == status, result["output"]
+    assert result["run_end"]["reason"] == reason, result["output"]
+    tool_messages = [m for m in result["messages"] if m.get("role") == "tool"]
+    assert [m["content"] for m in tool_messages] == [
+        "x-contents",
+        text,
+        f"not run: the run ended {how}in call {tool_messages[1]['tool_call_id']}",
+    ]
+    assert result["trace"]["invoked"] == ["main", "read_file", "act"], "a later call was invoked"
+
+
+def test_script_mode_a_swallowed_handoff_continues_and_ends_as_main_returned():
+    from stub_model import Reply  # noqa: PLC0415
+
+    main = "    try:\n        context.handoff('N')\n    except SystemExit:\n        pass\n    context.ask('go')\n"
+    result = script_run(IMPORT_RUNTIME, "    return 'unused'", main, [Reply(text="fine")])
+    assert result["code"] == 0, result["output"]
+    assert result["run_end"]["reason"] == "main_returned"
+    assert result["messages"][-1]["role"] == "assistant"

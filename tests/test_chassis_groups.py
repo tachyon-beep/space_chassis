@@ -147,16 +147,120 @@ def test_repair_is_idempotent():
 # ---------------------------------------------------------------------------
 # Group-atomic selection and the outgoing view
 # ---------------------------------------------------------------------------
+def groups_of(messages):
+    """Each tool group as (head index, [assistant and tool member indices])."""
+    groups = []
+    for index, message in enumerate(messages):
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            members = [index]
+            following = index + 1
+            while following < len(messages) and messages[following].get("role") in ("tool", "system"):
+                if messages[following].get("role") == "tool":
+                    members.append(following)
+                following += 1
+            groups.append((index, members))
+    return groups
+
+
+def assert_group_atomic(messages, indices, start):
+    """The oracle, on original indices: every group's assistant and results are all in or all out.
+
+    Pinned system messages are exempt (they are always sent); nothing else is,
+    and in particular not the last index.
+    """
+    chosen = set(indices)
+    for head, members in groups_of(messages):
+        inside = [member in chosen for member in members]
+        assert all(inside) or not any(inside), f"group at {head} split: {list(zip(members, inside))}"
+    assert not chassis.inside_group(messages)[start], f"the window starts inside a group at {start}"
+
+
 def test_the_window_never_opens_inside_a_group_at_an_interposed_system_message():
     """Before K-G1 only a tool message was skipped; a system message inside a group was a valid start."""
     messages = [system("sys"), user("go")]
     for index in range(30):
         messages += [asst(f"c{index}"), system(f"inside {index}"), tool(f"c{index}", "r" * 200)]
-    for budget in (200, 400, 800, 1600):
-        _indices, start = chassis.selection(messages, budget, 50)
-        assert start >= len(messages) - 1 or not chassis.inside_group(messages)[start], (
-            f"budget {budget}: the window opened inside a group at index {start}"
-        )
+    for budget in (1, 200, 400, 800, 1600):
+        for chunk in (1, 50, 400):
+            indices, start = chassis.selection(messages, budget, chunk)
+            assert_group_atomic(messages, indices, start)
+
+
+def test_an_oversized_newest_single_call_group_is_kept_whole():
+    """SV019-G1-01: the minimal case. Before the fix the result was kept without its call."""
+    messages = [user("go"), asst("a"), tool("a", "x" * 1000)]
+    indices, start = chassis.selection(messages, 1, 1)
+    assert indices == [0, 1, 2] and start == 1
+    assert chassis.window_bounds(messages, 1, 1) == (1, 2), "the fold boundary is the group's head"
+    carried = chassis.Carried(Path("/nonexistent/session"), Path("/nonexistent/home"))
+    sent = chassis.prepared_view(messages, 1, 1, carried)
+    assert sent == messages and all(x is y for x, y in zip(sent, messages, strict=True)), (
+        "no orphan notice was made from a complete retained group"
+    )
+
+
+def test_an_oversized_newest_multi_call_group_is_kept_whole_with_its_system_messages():
+    messages = [
+        system("standing"),
+        user("go"),
+        asst("old"),
+        tool("old", "o" * 300),
+        user("next"),
+        asst("a", "b"),
+        system("inside"),
+        tool("a", "x" * 800),
+        tool("b", "y" * 800),
+        system("after"),
+    ]
+    indices, start = chassis.selection(messages, 50, 10)
+    assert start == 5
+    assert indices == [0, 1, 5, 6, 7, 8, 9], "the older group is out whole; the newest is in whole"
+    assert_group_atomic(messages, indices, start)
+    carried = chassis.Carried(Path("/nonexistent/session"), Path("/nonexistent/home"))
+    sent = chassis.prepared_view(messages, 50, 10, carried)
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "tool", "tool", "system", "system"]
+    assert [m.get("tool_call_id") for m in sent[3:5]] == ["a", "b"]
+    assert chassis.REPAIRED_UNKNOWN_RESULT not in json.dumps(sent)
+    assert "orphan tool result" not in json.dumps(sent)
+
+
+def test_a_trailing_system_message_does_not_split_the_newest_group():
+    messages = [user("go"), asst("a"), tool("a", "x" * 1000), system("after")]
+    indices, start = chassis.selection(messages, 1, 1)
+    assert start == 1 and indices == [0, 1, 2, 3]
+
+
+def test_an_older_group_is_dropped_whole_and_the_newest_ordinary_tail_kept():
+    messages = [user("go"), asst("c0"), tool("c0", "r" * 400), user("u1 " + "u" * 400), asst("a"), tool("a", "x" * 50)]
+    for budget, chunk in ((40, 1), (40, 10), (60, 25), (130, 1)):
+        indices, start = chassis.selection(messages, budget, chunk)
+        assert_group_atomic(messages, indices, start)
+        assert {4, 5} <= set(indices), "the newest group is always sent"
+
+
+def test_repeated_folding_never_folds_part_of_a_retained_oversized_group(tmp_path):
+    carried = chassis.Carried(tmp_path / "session", tmp_path / "home")
+    instance = object.__new__(chassis.Chassis)
+    instance.context_window = 50
+    instance.eviction_chunk = 10
+    instance.recap_folded = 0
+    instance.carried = carried
+    instance.record = lambda *_args, **_kwargs: None
+    instance.messages = [system("sys"), user("go")]
+    for round_index in range(8):
+        instance.messages += [
+            user(f"ask {round_index}"),
+            asst(f"a{round_index}", text=f"calling {round_index}"),
+            tool(f"a{round_index}", f"huge {round_index} " + "h" * 600),
+        ]
+        chassis.Chassis.fold_recap_if_needed(instance)
+        head = len(instance.messages) - 2
+        assert instance.recap_folded <= head, "part of the newest group was folded"
+        indices, start = chassis.selection(instance.messages, 50, 10)
+        assert start == head and indices[-2:] == [head, head + 1]
+    recap = carried.recap()
+    assert "calling 7" not in recap and "huge 7" not in recap
+    assert "calling 0" in recap and recap.count("huge 0") == 1
 
 
 def test_the_outgoing_view_is_repaired_and_the_stored_list_is_not():
