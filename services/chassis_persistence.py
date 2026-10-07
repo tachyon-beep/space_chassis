@@ -55,6 +55,9 @@ MAX_LEDGER_BODY = 1_048_576
 # assumed: a counter that would need a 13th digit is refused, never wrapped.
 MAX_SEQ = 10**12 - 1
 SEGMENT_MAX = 16 * 1024 * 1024
+# Segment file names are `NNNNNN.svl`; a 7th digit would make a name the
+# reader does not list, so the writer refuses to rotate past this.
+MAX_SEGMENT_NO = 999_999
 HEADER_PATTERN = re.compile(rb"SVL1 ([0-9]{12}) ([0-9a-f]{2}) ([0-9]{10}) ([0-9a-f]{16}) ")
 TRAILER_PATTERN = re.compile(rb" ([0-9a-f]{64})\n")
 HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -231,7 +234,9 @@ def validate_payload(type_name: str, payload) -> str | None:
             return "state: active_group must be null and queued empty (CKG)"
     if type_name == "DONE":
         outcome = payload["outcome"]
-        if not isinstance(outcome, str) or not (outcome == "returned" or outcome.startswith("raised:")):
+        if not isinstance(outcome, str) or not (
+            outcome == "returned" or (outcome.startswith("raised:") and len(outcome) > len("raised:"))
+        ):
             return "outcome"
         if not isinstance(payload["blob"], str) or not HEX64.fullmatch(payload["blob"]):
             return "blob"
@@ -356,6 +361,14 @@ def parse_record(data: bytes, offset: int, expected_seq: int, prev_chain: str | 
     problem = validate_payload(header.type_name, payload)
     if problem:
         return Invalid(f"body: {problem}", header)
+    # The body must be exactly what the writer would produce for this payload:
+    # json.loads alone accepts NaN, duplicate keys and other spellings, which
+    # would make the decoded payload differ from what the bytes were meant to say.
+    try:
+        if canonical_body(payload) != body:
+            return Invalid("body is not canonical", header)
+    except LedgerError:
+        return Invalid("body is not canonical", header)
     if prev_chain is None:
         prev_chain = payload.get("prev_chain") if header.type_name == "LEDGER_HEADER" else None
         if prev_chain is None:
@@ -448,6 +461,8 @@ def _segment_header_problem(record: Record, number: int, lineage_id: str, chain:
     if payload["first_seq"] != record.seq:
         return "first_seq does not match the header's seq"
     if records:
+        if number != records[-1].segment + 1:
+            return "segment number does not follow the previous segment"
         if payload["prev_chain"] != chain:
             return "prev_chain does not continue the previous segment"
     elif number == 0 and payload["prev_chain"] != genesis_chain(lineage_id):
@@ -482,11 +497,18 @@ class GroupState:
     closed: dict  # call_index -> ("UNRUN"|"SYNTH", payload)
 
     def open_calls(self) -> list[dict]:
-        return [c for c in self.calls if c["call_index"] not in self.done and c["call_index"] not in self.closed]
+        """Admitted calls with no DONE/UNRUN/SYNTH. A call with admit != invoke is
+        never invoked and its disposition is fixed by TURN_RESPONSE itself, so it
+        never keeps a group open."""
+        return [
+            c
+            for c in self.calls
+            if c["admit"] == "invoke" and c["call_index"] not in self.done and c["call_index"] not in self.closed
+        ]
 
     def frontier_call(self) -> dict | None:
-        admitted = [c for c in self.open_calls() if c["admit"] == "invoke"]
-        return admitted[0] if admitted else None
+        open_calls = self.open_calls()
+        return open_calls[0] if open_calls else None
 
 
 @dataclass(frozen=True)
@@ -520,11 +542,9 @@ def prefix_state(records: tuple[Record, ...]) -> PState:
             turn, index = payload["call_key"]
             if turn == group.turn_seq:
                 group = GroupState(group.turn_seq, group.calls, group.invoking, group.done, {**group.closed, index: (name, payload)})
-        if group is not None and not group.open_calls() and name not in ("TURN_RESPONSE",):
-            # Every call is closed: the group is over (queued messages may follow).
-            group = None if name != "TURN_RESPONSE" else group
-    if group is not None and not group.open_calls():
-        group = None
+        if group is not None and not group.open_calls():
+            # Every admitted call is closed: the group is over (queued messages may follow).
+            group = None
     return PState(group, pending, last_turn)
 
 
@@ -585,6 +605,13 @@ def classify_tail(scan: LedgerScan, frontier: frozenset[str] | None = None) -> T
     if frontier is None:
         frontier = scan_frontier(scan)
     last = scan.last_seq
+    if scan.records and scan.last_chain and scan.tail_segment == scan.records[-1].segment:
+        # A frame that is valid after P belongs in P. A scan handed in with such
+        # a "tail" is inconsistent, and classifying it would call a valid record
+        # damaged; refuse instead.
+        candidate = parse_record(tail, 0, last + 1, scan.last_chain, scan.tail_segment)
+        if isinstance(candidate, Record) and candidate.type_name != "LEDGER_HEADER":
+            raise ValueError("the tail begins with a frame that is valid after P; rescan")
     first = read_header(tail, 0)
     first_valid = (
         first is not None and first.check_ok and first.seq == last + 1 and 2 <= first.plen <= MAX_LEDGER_BODY
@@ -675,7 +702,18 @@ class RecoveryPlan:
     handoff_mirror_check: bool = False
 
 
-CONSERVATIVE_ACK = {"reason": "ledger_tail_ambiguous", "resolution": "continue-conservative"}
+def request_label(lineage_id: str, turn_seq: int, attempt: int) -> str:
+    """SV-013 2.2.3 t1: `<lineage_id>:<turn_seq>:<attempt>`."""
+    return f"{lineage_id}:{turn_seq}:{attempt}"
+
+
+def tail_stop_detail(tail: bytes) -> dict:
+    """The STOPPED detail for a tail stop. Its hash binds a later acknowledgement to these bytes."""
+    return {"bytes": len(tail), "tail_sha256": hashlib.sha256(tail).hexdigest()}
+
+
+def _type_hex(type_name: str | None) -> str | None:
+    return None if type_name is None else f"{TYPE_IDS[type_name]:02x}"
 
 
 def plan_recovery(scan: LedgerScan, tail: TailClass, *, read_blob, acknowledgement: dict | None = None) -> RecoveryPlan:
@@ -686,15 +724,25 @@ def plan_recovery(scan: LedgerScan, tail: TailClass, *, read_blob, acknowledgeme
     one-frame TC2 rule ever call a call whose gate might be in T "unrun";
     TC4, acknowledged or not, never does.
 
-    TC4 continues only with `acknowledgement` equal to the RECOVERY_ACK
-    payload `acknowledge_stop` returns for `continue-conservative`. That is
-    permission, not evidence; any other value (including bootstrap-preserving,
-    which is the caller's separate choice) leaves the stop in place.
+    TC4 continues only with an `acknowledgement` from `acknowledge_stop` for
+    `continue-conservative` whose `tail_sha256` is this tail's. That is
+    permission, not evidence; a stale acknowledgement, or any other
+    resolution (bootstrap-preserving is the caller's separate choice), leaves
+    the stop in place.
     """
     if tail.kind in ("A2", "TC3"):
         return RecoveryPlan("stop", tail, stop_reason="ledger_damaged_at")
-    if tail.kind == "TC4" and acknowledgement != CONSERVATIVE_ACK:
+    if tail.kind == "TC4" and not (
+        isinstance(acknowledgement, dict)
+        and acknowledgement.get("reason") == "ledger_tail_ambiguous"
+        and acknowledgement.get("resolution") == "continue-conservative"
+        and acknowledgement.get("tail_sha256") == hashlib.sha256(scan.tail).hexdigest()
+    ):
         return RecoveryPlan("stop", tail, stop_reason="ledger_tail_ambiguous")
+    if tail.kind == "TC2" and tail.declared_type == "LEDGER_HEADER":
+        # v2 1.4.10, segment rotation row: header damage -> A2. A torn header
+        # shorter than its declared frame is TC1 and is not affected.
+        return RecoveryPlan("stop", tail, stop_reason="ledger_damaged_at")
 
     state = prefix_state(scan.records)
     notices: list[str] = []
@@ -706,9 +754,11 @@ def plan_recovery(scan: LedgerScan, tail: TailClass, *, read_blob, acknowledgeme
     hidden = tail.kind == "TC4"
 
     if tail.kind == "TC1":
-        records.append({"kind": "torn_incomplete", "detail": {"bytes": tail.length, "declared_type": tail.declared_type}})
+        records.append(
+            {"kind": "torn_incomplete", "detail": {"bytes": tail.length, "declared_type": _type_hex(tail.declared_type)}}
+        )
     if tail.kind == "TC2":
-        records.append({"kind": "damaged_final", "detail": {"type": tail.declared_type, "bytes": tail.length}})
+        records.append({"kind": "damaged_final", "detail": {"type": _type_hex(tail.declared_type), "bytes": tail.length}})
     if hidden:
         records.append({"kind": "damaged_tail_acknowledged", "detail": {"bytes": tail.length}})
         notices.append(HIDDEN_TURN_NOTICE.format(seq=scan.last_seq))
@@ -923,7 +973,9 @@ def acknowledge_stop(session_dir: Path, reason: str, resolution: str, *, ops: Du
     """The operator's acknowledgement capability: verify the stop, return the RECOVERY_ACK payload.
 
     It checks that a STOPPED record with this reason exists and that the
-    resolution is one this reason allows. It does **not** append the record or
+    resolution is one this reason allows. It is a capability for an operator
+    to exercise, not a decision this module or a test makes about any real
+    stop. It does **not** append the record or
     remove STOPPED: the caller does both, in that order, through the ledger
     writer and `clear_stop`. Acknowledgement grants permission to continue; it
     adds no evidence about what the damaged bytes held.
@@ -940,7 +992,13 @@ def acknowledge_stop(session_dir: Path, reason: str, resolution: str, *, ops: Du
         raise LedgerError(f"the stop is {record.get('reason')!r}, not {reason!r}")
     if resolution not in ACK_RESOLUTIONS.get(reason, DEFAULT_RESOLUTIONS):
         raise LedgerError(f"{resolution!r} is not a resolution for {reason!r}")
-    return {"reason": reason, "resolution": resolution}
+    acknowledgement = {"reason": reason, "resolution": resolution}
+    detail = record.get("detail")
+    if isinstance(detail, dict) and isinstance(detail.get("tail_sha256"), str):
+        # Binds the acknowledgement to the bytes that were stopped on: a later,
+        # different damaged tail is a new stop, not covered by this one.
+        acknowledgement["tail_sha256"] = detail["tail_sha256"]
+    return acknowledgement
 
 
 def clear_stop(session_dir: Path, *, ops: DurableOps | None = None) -> None:
@@ -984,6 +1042,8 @@ class BlobStore:
 
 
 def segment_name(number: int) -> str:
+    if not isinstance(number, int) or isinstance(number, bool) or not 0 <= number <= MAX_SEGMENT_NO:
+        raise LedgerError(f"segment number {number!r} is outside 0..{MAX_SEGMENT_NO}")
     return f"{number:06d}.svl"
 
 
@@ -1035,7 +1095,11 @@ class LedgerWriter:
     # -- starting -------------------------------------------------------------
     @classmethod
     def create(cls, session_dir: Path, lineage_id: str, *, ops: DurableOps | None = None, segment_max: int = SEGMENT_MAX) -> LedgerWriter:
-        """A new lineage: ledger/ (fenced in session/), segment 0 from the genesis chain."""
+        """A new lineage: ledger/ (fenced in session/), segment 0 from the genesis chain.
+
+        An existing *empty* segment 0 (its creation's header was torn and has
+        been set aside) is reused; any other existing segment 0 is refused.
+        """
         writer = cls(session_dir, lineage_id, next_seq=1, prev_chain=genesis_chain(lineage_id), segment_no=-1, ops=ops, segment_max=segment_max)
         if not writer.ledger_dir.is_dir():
             try:
@@ -1043,7 +1107,8 @@ class LedgerWriter:
                 writer.ops.sync_dir(str(writer.session_dir))
             except OSError as error:
                 raise PersistenceFailure(f"ledger/ could not be created durably: {error}") from error
-        writer.open_segment()
+        first = writer.ledger_dir / segment_name(0)
+        writer.open_segment(reuse_empty=first.exists())
         return writer
 
     @classmethod
@@ -1080,7 +1145,9 @@ class LedgerWriter:
         Until the directory sync returns, the new name may vanish (M-2); the
         previous segment then ends at its last record (TC0), and the next
         writer recreates this segment number with the same first_seq.
-        `reuse_empty` is only for `continue_after`: the file exists and is empty.
+        `reuse_empty` is for an existing empty file only (O2-5's surviving name).
+        Every refusal (number or seq width, a non-empty file to reuse) happens
+        before any byte is written.
         """
         self._usable()
         number = self.segment_no + 1
@@ -1088,13 +1155,17 @@ class LedgerWriter:
         payload = {"lineage_id": self.lineage_id, "segment_no": number, "first_seq": self.next_seq, "prev_chain": self.chain}
         frame, chain = encode_frame(self.next_seq, "LEDGER_HEADER", payload, self.chain)
         flags = os.O_WRONLY | os.O_APPEND | os.O_CLOEXEC | (0 if reuse_empty else os.O_CREAT | os.O_EXCL)
-        fd = None
         try:
             fd = self.ops.open(str(path), flags)
-            if reuse_empty and os.fstat(fd).st_size != 0:
+        except OSError as error:
+            # No byte was written, so nothing is in doubt: no FSYNC_FAILED marker.
+            self.broken = True
+            raise PersistenceFailure(f"segment {path.name} could not be opened: {error}") from error
+        if reuse_empty and os.fstat(fd).st_size != 0:
+            with contextlib.suppress(OSError):
                 self.ops.close(fd)
-                fd = None
-                raise LedgerError("the segment to reuse is not empty")
+            raise LedgerError("the segment to reuse is not empty")
+        try:
             _write_all(self.ops, fd, frame)
             self.ops.fsync(fd)
             self.ops.sync_dir(str(self.ledger_dir))
@@ -1144,9 +1215,16 @@ class LedgerWriter:
         return effect()
 
     def append_with_blob(self, type_name: str, data: bytes, build) -> Record:
-        """Blob before reference: the blob is durable before the record naming it is written."""
+        """Blob before reference: the blob is durable before the record naming it is written.
+
+        A blob that cannot be made durable is a persistence failure like any
+        other sync error: the record is never written and the writer is broken.
+        """
         self._usable()
-        sha = self.blobs.put(data)
+        try:
+            sha = self.blobs.put(data)
+        except PersistenceFailure as error:
+            self._fail(None, error)
         return self.append(type_name, build(sha))
 
     def close(self) -> None:
@@ -1201,16 +1279,25 @@ class QuarantineResult:
     copy: Path | None
 
 
-def quarantine_tail(session_dir: Path, scan: LedgerScan, quarantine: Quarantine, *, ops: DurableOps | None = None) -> QuarantineResult:
+def quarantine_tail(
+    session_dir: Path, scan: LedgerScan, plan: RecoveryPlan, quarantine: Quarantine, *, ops: DurableOps | None = None
+) -> QuarantineResult:
     """Copy T to corrupt/ and truncate the segment to the end of P -- or, at capacity, neither.
 
-    At capacity: no copy, **no truncation**, `STOPPED{corrupt_quarantine_full}`;
-    the tail bytes stay where they are. The segment is re-read first, so the
-    bytes truncated are exactly the bytes copied.
+    Only for a plan that continues and recommends it (TC1, TC2, acknowledged
+    TC4); a stop -- an unacknowledged TC4 among them -- is never truncated
+    here. At capacity: no copy, **no truncation**,
+    `STOPPED{corrupt_quarantine_full}`; the tail bytes stay where they are.
+    The segment is re-read first, so the bytes truncated are exactly the
+    bytes copied, and the copy is durable before the truncation.
     """
     ops = ops or DurableOps()
+    if plan.action != "continue" or not plan.quarantine_tail:
+        raise LedgerError(f"the recovery plan ({plan.action}, {plan.tail.kind}) does not set the tail aside")
     if scan.stop or not scan.tail or scan.tail_segment is None:
         raise LedgerError("there is no classified tail to set aside")
+    if plan.tail.length != len(scan.tail):
+        raise LedgerError("the plan was made for a different tail")
     session_dir = Path(session_dir)
     segment_path = session_dir / "ledger" / segment_name(scan.tail_segment)
     current = ops.read(str(segment_path), MAX_SEGMENT_READ)
@@ -1249,7 +1336,8 @@ def quarantine_tail(session_dir: Path, scan: LedgerScan, quarantine: Quarantine,
 # The conversation file (SV-013 CK1-CK4)
 # ---------------------------------------------------------------------------
 def conversation_bytes(messages: list) -> bytes:
-    """CK1: the plain list exactly as the chassis writes it today (indent 2, ASCII, trailing newline)."""
+    """CK1: the plain list exactly as the chassis writes it today through
+    `common.write_json_atomic` (indent 2, ASCII escapes, trailing newline)."""
     return (json.dumps(messages, indent=2) + "\n").encode("ascii")
 
 
