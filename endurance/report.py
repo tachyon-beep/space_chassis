@@ -62,6 +62,24 @@ def size_of(path: Path) -> int:
     return 0
 
 
+def count_requests(events: list[dict]) -> int:
+    """The requests the recorder opened: distinct string ids of `open` events.
+
+    Halving the line count assumed every request wrote one `open` and one
+    `close`. It never did: a refusal before the body is parsed writes a `close`
+    with no `open`, an `open` whose process died has no `close`, and a stray
+    boot-style line is neither. Counting what was opened, by id, is the one
+    number those cases cannot inflate. A non-string id is not a request id.
+    """
+    return len(
+        {
+            event["id"]
+            for event in events
+            if event.get("event") == "open" and isinstance(event.get("id"), str)
+        }
+    )
+
+
 def agent_metrics(run_dir: Path, slug: str) -> dict:
     transcripts = run_dir / "transcripts" / slug
     turns = read_lines(transcripts / "agent_life_transcript.jsonl")
@@ -83,7 +101,7 @@ def agent_metrics(run_dir: Path, slug: str) -> dict:
     return {
         "agent": slug,
         "turns": len(turns),
-        "requests": len(events) // 2 if events else 0,
+        "requests": count_requests(events),
         "runs": len(runs),
         "runs_resumed": len(resume_events),
         "runs_fresh": len(fresh_events),
