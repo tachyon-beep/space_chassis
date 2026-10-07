@@ -1,6 +1,8 @@
 # SV-020 status
 
-**Correction 1 complete; awaiting Astra re-review. Foundation inactive.**
+**Correction 1 independently accepted by Astra. Foundation remains inactive.**
+
+Acceptance: `ASTRA-ACCEPTANCE.md`, runtime/tests `8b897931be6986e2da9a299c63060d0925a817f3`, reviewed documentation head `b84a4bbef7b07b7dd36b6a7ebf6b6ef4fd0a8aa1`. All three findings are closed. The coordinator verified that head on the authorized GitHub WIP branch. Live adoption is the next package, SV021.
 
 - `afe11a0`: the interrupted, untested draft (coordinator checkpoint).
 - `61833d8` / `add1627` / `4534cc0`: the draft assessed and corrected (11 items), 93 tests, receipt. The coordinator backed this up to the WIP branch (tree `3b7387f0…`). It is not accepted.

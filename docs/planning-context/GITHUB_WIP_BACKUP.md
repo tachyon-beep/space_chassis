@@ -10,7 +10,9 @@ This branch is a durability checkpoint, not a merge or deployment approval. John
 
 - SV019 staged chassis metadata, clean-flap behavior, typed termination, pure wire helpers and outgoing group repair: accepted at `2f0567c1e1aaa0ca900adfa5f4ce1eaa40a783a9`; independent final review is `sv019/ASTRA-ACCEPTANCE.md`. Final selected set: **161 passed**, plus **five local-stub integration checks**, no warnings. Ledger activation, notes adoption and full response-envelope adoption remain staged out.
 
-The implementer's earlier 'nothing pushed' statements describe actions by that worker. The coordinator separately pushed and verified checkpoint `6b758cc` on the dedicated WIP branch. This document is prepared for the next fast-forward backup; its creation does not itself claim the next remote verification completed.
+- SV020 inactive persistence foundation: accepted at `8b897931be6986e2da9a299c63060d0925a817f3`; independent final review is `sv020/ASTRA-ACCEPTANCE.md`. Final selected set: **114 passed**. All three Astra findings are closed. Live authority/checkpoint/replay and mutation integration remain SV021 work.
+
+The coordinator last verified remote checkpoint `b84a4bbef7b07b7dd36b6a7ebf6b6ef4fd0a8aa1`, tree `704fe01a54cc96f31c1f290851d8e927db051bc9`. Implementer statements that nothing was pushed refer to that worker's actions. This documentation update is prepared for a subsequent normal fast-forward backup; its creation does not claim that later remote verification has completed.
 
 ## Evidence and exclusions
 
