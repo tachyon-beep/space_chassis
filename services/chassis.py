@@ -38,10 +38,12 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import importlib.util
 import inspect
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -426,6 +428,140 @@ def estimate_tokens(messages: list[dict]) -> int:
 
 def chassis_budget(chassis: Chassis) -> int:
     return chassis.context_window
+
+
+# ---------------------------------------------------------------------------
+# Text and ids: pure helpers (SV-015 v2 section 2.3)
+# ---------------------------------------------------------------------------
+# Sizes are measured in *escaped units*: E(s) = len(json.dumps(s,
+# ensure_ascii=True)) - 2. For every string that is at least its length in each
+# serialized form the runtime produces or causes -- the saved conversation, a
+# request, a UTF-8 record -- so a cap in escaped units bounds all of them, which
+# a cap in UTF-8 bytes does not (160 NULs are 160 bytes but 960 escaped units).
+#
+# These are pure functions. Wiring them into stored responses is a later step
+# (SV-013 K-E2); `queue_message` uses E for its admission bound.
+TRUNCATION_MARKER = "\n[truncated: kept {kept} of {total} bytes; sha256 {digest}]"
+WIRE_ID = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
+WIRE_BASE = re.compile(r"[A-Za-z0-9_.:-]{1,48}")
+
+
+def _unit_cost(character: str) -> int:
+    code = ord(character)
+    if character in '"\\\n\r\t\b\f':
+        return 2
+    if code < 0x20 or code == 0x7F:
+        return 6  # \u00XX: controls, and DEL, which json.dumps also escapes
+    if code < 0x80:
+        return 1  # printable ASCII
+    if code < 0x10000:
+        return 6  # \uXXXX
+    return 12  # a surrogate pair of \uXXXX escapes
+
+
+def escaped_units(text: str) -> int:
+    """E(text): the length of `text` as ASCII-escaped JSON, without its quotes."""
+    return sum(_unit_cost(character) for character in text)
+
+
+def normalize_text(text: str) -> tuple[str, int]:
+    """Lone surrogates become `?`; returns the text and how many were replaced.
+
+    `text.encode("utf-8", "replace")` maps each code point in U+D800-U+DFFF to
+    `?`. Nothing else changes, so the result always encodes as UTF-8.
+    """
+    replaced = sum(1 for character in text if 0xD800 <= ord(character) <= 0xDFFF)
+    if not replaced:
+        return text, 0
+    return text.encode("utf-8", "replace").decode("utf-8"), replaced
+
+
+def truncate_marked(text: str, cap: int) -> tuple[str, dict]:
+    """Normalize `text`, then keep it whole or cut it with a marker, within `cap` units.
+
+    Over the cap, the result is the longest code-point prefix p of the
+    normalized text such that E(p) + E(marker) <= cap, followed by the marker
+    `"\\n[truncated: kept K of N bytes; sha256 H]"`, where K is p's UTF-8
+    length and N and H are the normalized original's UTF-8 length and SHA-256.
+    A code-point prefix is always valid UTF-8, so no character is ever split.
+    A cap too small for the marker itself raises ValueError: the caller's
+    configuration is wrong, and no silent shortening is better than that.
+    """
+    normalized, replaced = normalize_text(text)
+    costs = [_unit_cost(character) for character in normalized]
+    units = sum(costs)
+    encoded = normalized.encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()
+    info = {
+        "truncated": False,
+        "kept_bytes": len(encoded),
+        "original_bytes": len(encoded),
+        "sha256": digest,
+        "replaced_chars": replaced,
+        "escaped_units": units,
+    }
+    if units <= cap:
+        return normalized, info
+
+    unit_prefix = [0]
+    byte_prefix = [0]
+    for character, cost in zip(normalized, costs, strict=True):
+        unit_prefix.append(unit_prefix[-1] + cost)
+        byte_prefix.append(byte_prefix[-1] + len(character.encode("utf-8")))
+
+    def marker(length: int) -> str:
+        return TRUNCATION_MARKER.format(kept=byte_prefix[length], total=len(encoded), digest=digest)
+
+    def fits(length: int) -> bool:
+        return unit_prefix[length] + escaped_units(marker(length)) <= cap
+
+    if not fits(0):
+        raise ValueError(f"a cap of {cap} escaped units cannot hold the truncation marker")
+    # The cost is non-decreasing in the prefix length (the marker's K only
+    # grows), so the longest fitting prefix is found by bisection.
+    low, high = 0, len(normalized)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if fits(middle):
+            low = middle
+        else:
+            high = middle - 1
+    stored = normalized[:low] + marker(low)
+    info.update(truncated=True, kept_bytes=byte_prefix[low], escaped_units=escaped_units(stored))
+    return stored, info
+
+
+def assign_wire_ids(ids: list, turn_seq: int) -> list[str]:
+    """Collision-free wire ids for one response's tool calls (SV-015 v2 section 2.3).
+
+    An original id is kept if it is a string of 1-64 characters from
+    `[A-Za-z0-9_.:-]` and occurs exactly once. Every usable original is
+    reserved *before* any replacement is generated, so a replacement can never
+    take a name a later original keeps. Anything else -- a duplicate, a missing
+    id, a non-string, a lone surrogate -- gets `<base>.rt<i>`, with `.<k>` added
+    until it is unused. The base is the original when it is a valid string of
+    at most 48 characters, else `rt.<turn_seq>`. Any JSON type is accepted;
+    nothing is encoded or hashed, so nothing here can raise on odd input.
+    """
+
+    def usable(value) -> bool:
+        return isinstance(value, str) and WIRE_ID.fullmatch(value) is not None and ids.count(value) == 1
+
+    used = {value for value in ids if usable(value)}
+    wire: list[str] = []
+    for index, value in enumerate(ids):
+        if usable(value):
+            wire.append(value)
+            continue
+        base = value if isinstance(value, str) and WIRE_BASE.fullmatch(value) else f"rt.{turn_seq}"
+        candidate = f"{base}.rt{index}"
+        suffix = 1
+        while candidate in used:
+            candidate = f"{base}.rt{index}.{suffix}"
+            suffix += 1
+        wire.append(candidate)
+        used.add(candidate)
+    return wire
 
 
 # ---------------------------------------------------------------------------
