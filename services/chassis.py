@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import hashlib
 import importlib.util
 import inspect
 import json
@@ -66,6 +65,19 @@ from common import (  # noqa: E402  (path is set up above on purpose)
     write_json_atomic,
     write_text_atomic,
 )
+
+# The session owner (SV-021). Every change to the conversation, the notes, the
+# request identity and the checkpoint goes through one `chassis_session.Session`
+# as a synced ledger record; startup classifies and recovers the session first
+# (`chassis_startup`). These modules never import this one, so a duty that
+# imports `chassis` -- in script mode, the bound `__main__` -- shares them.
+import chassis_envelope as envelope  # noqa: E402
+import chassis_persistence as persistence  # noqa: E402
+import chassis_startup  # noqa: E402
+
+# The label REQUEST_SENT records travels with the request at the top level of
+# its body; the recorder (R-B1) strips and records it before forwarding.
+CORRELATION_KEY = "x_chassis_correlation"
 
 EXIT_OK = 0
 EXIT_HANDOFF = 42
@@ -99,6 +111,13 @@ RECAP_FRAME_PREFIX = (
     "It is a lossy record, kept because the window is not a memory:\n\n"
 )
 
+# What an empty conversation opens with when the duty has no bootstrap().
+DEFAULT_OPENING = (
+    "You are running. Nothing has been assigned to you yet. "
+    "Read /opt/brief/MISSION.md, /opt/brief/WORLD.md and "
+    "/opt/brief/PROTOCOL.md before deciding anything."
+)
+
 
 class EnvironmentFailure(Exception):
     """The recorder or the upstream is unusable; nothing about the run is at fault."""
@@ -120,8 +139,12 @@ class WallLimitReached(BudgetReached):
     pass
 
 
-class PersistenceFailure(Exception):
-    """A checkpoint could not be written. The environment's failure, not the run's: exit 44."""
+# A session write or sync failed: the environment's failure, not the run's
+# (exit 44). One class, deliberately: the persistence layer's own, an OSError
+# (SV-013 2.2.4), so what the session raises is what this runtime catches and
+# what a tool raising `chassis.PersistenceFailure` raises -- by identity, not
+# by matching class names.
+PersistenceFailure = persistence.PersistenceFailure
 
 
 class RunTermination(SystemExit):
@@ -132,12 +155,13 @@ class RunTermination(SystemExit):
     run simply continues: nothing records a termination until the exception
     reaches the runtime's own catcher. Its code is the familiar one (42 for a
     handoff, 0 for a finish); its `kind` is what tells a typed end from a bare
-    `sys.exit(42)`.
+    `sys.exit(42)`, and `note_gen` names the note generation it left, if any.
     """
 
-    def __init__(self, kind: str) -> None:
+    def __init__(self, kind: str, note_gen: int | None = None) -> None:
         super().__init__(EXIT_HANDOFF if kind == "handoff" else EXIT_OK)
         self.kind = kind
+        self.note_gen = note_gen
 
 
 class NestedTurnRefused(RuntimeError):
@@ -228,8 +252,13 @@ class Carried:
                 return None
         return data
 
-    def save_conversation(self, messages: list[dict]) -> None:
-        write_json_atomic(self.conversation_path, messages)
+    def save_conversation(self, messages: list[dict]) -> str:
+        """CK1-CK4: the plain list, serialized as always; the old file kept as conversation.prev.json.
+
+        Returns the installed bytes' SHA-256. Raises PersistenceFailure.
+        """
+        self.session_dir.mkdir(parents=True, exist_ok=True)
+        return persistence.install_conversation(self.session_dir, persistence.conversation_bytes(messages))
 
     def recap(self) -> str:
         raw = read_bounded(self.recap_path, RECAP_MAX_BYTES)
@@ -494,10 +523,9 @@ class RunContext:
             raise RuntimeError("history cannot be replaced during a tool call")
         if not isinstance(messages, list):
             raise ValueError("history must be a list of messages")
-        self._chassis.messages[:] = messages
-        # The recap's fold point is an index into the list: it cannot point past
-        # the end of the one that replaced it.
-        self._chassis.recap_folded = min(self._chassis.recap_folded, len(messages))
+        # HISTORY_REPLACED (the new list as a blob first), then a checkpoint at
+        # once. The recap's fold point cannot point past the new list's end.
+        self._chassis.session.replace_history(messages)
 
     def ask(self, text: str, tools: bool = True) -> str:
         """One model call with `text` as the newest user message; returns its text.
@@ -518,17 +546,16 @@ class RunContext:
         "handoff accepted; run ending" and any later calls in the same turn are
         answered "not run"; the run exits 42.
         """
-        self._chassis.write_handoff(note)
-        raise RunTermination("handoff")
+        gen = self._chassis.write_handoff(note)
+        raise RunTermination("handoff", gen)
 
     def finish(self, note: str = "") -> None:
         """End this run cleanly. The next run starts, and resumes if it can.
 
         Raises RunTermination (a SystemExit) with exit 0, as `handoff` does.
         """
-        if note:
-            self._chassis.write_handoff(note)
-        raise RunTermination("finish")
+        gen = self._chassis.write_handoff(note) if note else None
+        raise RunTermination("finish", gen)
 
 
 def estimate_tokens(messages: list[dict]) -> int:
@@ -547,135 +574,18 @@ def chassis_budget(chassis: Chassis) -> int:
 # ---------------------------------------------------------------------------
 # Text and ids: pure helpers (SV-015 v2 section 2.3)
 # ---------------------------------------------------------------------------
-# Sizes are measured in *escaped units*: E(s) = len(json.dumps(s,
-# ensure_ascii=True)) - 2. For every string that is at least its length in each
-# serialized form the runtime produces or causes -- the saved conversation, a
-# request, a UTF-8 record -- so a cap in escaped units bounds all of them, which
-# a cap in UTF-8 bytes does not (160 NULs are 160 bytes but 960 escaped units).
-#
-# These are pure functions. Wiring them into stored responses is a later step
-# (SV-013 K-E2); `queue_message` uses E for its admission bound.
-TRUNCATION_MARKER = "\n[truncated: kept {kept} of {total} bytes; sha256 {digest}]"
-WIRE_ID = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
-WIRE_BASE = re.compile(r"[A-Za-z0-9_.:-]{1,48}")
-
-
-def _unit_cost(character: str) -> int:
-    code = ord(character)
-    if character in '"\\\n\r\t\b\f':
-        return 2
-    if code < 0x20 or code == 0x7F:
-        return 6  # \u00XX: controls, and DEL, which json.dumps also escapes
-    if code < 0x80:
-        return 1  # printable ASCII
-    if code < 0x10000:
-        return 6  # \uXXXX
-    return 12  # a surrogate pair of \uXXXX escapes
-
-
-def escaped_units(text: str) -> int:
-    """E(text): the length of `text` as ASCII-escaped JSON, without its quotes."""
-    return sum(_unit_cost(character) for character in text)
-
-
-def normalize_text(text: str) -> tuple[str, int]:
-    """Lone surrogates become `?`; returns the text and how many were replaced.
-
-    `text.encode("utf-8", "replace")` maps each code point in U+D800-U+DFFF to
-    `?`. Nothing else changes, so the result always encodes as UTF-8.
-    """
-    replaced = sum(1 for character in text if 0xD800 <= ord(character) <= 0xDFFF)
-    if not replaced:
-        return text, 0
-    return text.encode("utf-8", "replace").decode("utf-8"), replaced
-
-
-def truncate_marked(text: str, cap: int) -> tuple[str, dict]:
-    """Normalize `text`, then keep it whole or cut it with a marker, within `cap` units.
-
-    Over the cap, the result is the longest code-point prefix p of the
-    normalized text such that E(p) + E(marker) <= cap, followed by the marker
-    `"\\n[truncated: kept K of N bytes; sha256 H]"`, where K is p's UTF-8
-    length and N and H are the normalized original's UTF-8 length and SHA-256.
-    A code-point prefix is always valid UTF-8, so no character is ever split.
-    A cap too small for the marker itself raises ValueError: the caller's
-    configuration is wrong, and no silent shortening is better than that.
-    """
-    normalized, replaced = normalize_text(text)
-    costs = [_unit_cost(character) for character in normalized]
-    units = sum(costs)
-    encoded = normalized.encode("utf-8")
-    digest = hashlib.sha256(encoded).hexdigest()
-    info = {
-        "truncated": False,
-        "kept_bytes": len(encoded),
-        "original_bytes": len(encoded),
-        "sha256": digest,
-        "replaced_chars": replaced,
-        "escaped_units": units,
-    }
-    if units <= cap:
-        return normalized, info
-
-    unit_prefix = [0]
-    byte_prefix = [0]
-    for character, cost in zip(normalized, costs, strict=True):
-        unit_prefix.append(unit_prefix[-1] + cost)
-        byte_prefix.append(byte_prefix[-1] + len(character.encode("utf-8")))
-
-    def marker(length: int) -> str:
-        return TRUNCATION_MARKER.format(kept=byte_prefix[length], total=len(encoded), digest=digest)
-
-    def fits(length: int) -> bool:
-        return unit_prefix[length] + escaped_units(marker(length)) <= cap
-
-    if not fits(0):
-        raise ValueError(f"a cap of {cap} escaped units cannot hold the truncation marker")
-    # The cost is non-decreasing in the prefix length (the marker's K only
-    # grows), so the longest fitting prefix is found by bisection.
-    low, high = 0, len(normalized)
-    while low < high:
-        middle = (low + high + 1) // 2
-        if fits(middle):
-            low = middle
-        else:
-            high = middle - 1
-    stored = normalized[:low] + marker(low)
-    info.update(truncated=True, kept_bytes=byte_prefix[low], escaped_units=escaped_units(stored))
-    return stored, info
-
-
-def assign_wire_ids(ids: list, turn_seq: int) -> list[str]:
-    """Collision-free wire ids for one response's tool calls (SV-015 v2 section 2.3).
-
-    An original id is kept if it is a string of 1-64 characters from
-    `[A-Za-z0-9_.:-]` and occurs exactly once. Every usable original is
-    reserved *before* any replacement is generated, so a replacement can never
-    take a name a later original keeps. Anything else -- a duplicate, a missing
-    id, a non-string, a lone surrogate -- gets `<base>.rt<i>`, with `.<k>` added
-    until it is unused. The base is the original when it is a valid string of
-    at most 48 characters, else `rt.<turn_seq>`. Any JSON type is accepted;
-    nothing is encoded or hashed, so nothing here can raise on odd input.
-    """
-
-    def usable(value) -> bool:
-        return isinstance(value, str) and WIRE_ID.fullmatch(value) is not None and ids.count(value) == 1
-
-    used = {value for value in ids if usable(value)}
-    wire: list[str] = []
-    for index, value in enumerate(ids):
-        if usable(value):
-            wire.append(value)
-            continue
-        base = value if isinstance(value, str) and WIRE_BASE.fullmatch(value) else f"rt.{turn_seq}"
-        candidate = f"{base}.rt{index}"
-        suffix = 1
-        while candidate in used:
-            candidate = f"{base}.rt{index}.{suffix}"
-            suffix += 1
-        wire.append(candidate)
-        used.add(candidate)
-    return wire
+# Moved unchanged to `chassis_envelope`, which adopts responses with them; the
+# names stay importable from here. `queue_message` uses E for its bound.
+from chassis_envelope import (  # noqa: E402
+    TRUNCATION_MARKER,
+    WIRE_BASE,
+    WIRE_ID,
+    _unit_cost,
+    assign_wire_ids,
+    escaped_units,
+    normalize_text,
+    truncate_marked,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -698,15 +608,16 @@ class Chassis:
         self.max_seconds = env_optional_int("RUN_MAX_SECONDS")
         self.run_id = f"{int(time.time())}-{os.getpid()}"
         self.turn = 0
+        # The owner of every session mutation, from startup on (see run()).
+        self.session = None
         self.messages: list[dict] = []
         self.tools = ToolRegistry()
         self.context: RunContext | None = None
         self.recap_folded = 0
         # The tool group in progress (the turn number), or None. While it is set
         # nothing may land between a call and its result: ask() and
-        # set_history() are refused and say()/note() wait in `queued`.
+        # set_history() are refused and say()/note() wait in the session's queue.
         self.active_group: int | None = None
-        self.queued: list[dict] = []
         # What the previous run left in run.json, read once at the start; the
         # file is rewritten by every checkpoint of this run.
         self.previous_meta: dict | None = None
@@ -723,6 +634,32 @@ class Chassis:
         self.telemetry_dir = Path(os.environ.get("TELEMETRY_DIR", "/telemetry"))
         self.lifecycle_path = self.telemetry_dir / "agents" / self.slug / "lifecycle.jsonl"
         self.operations_path = self.telemetry_dir / "agents" / self.slug / "operations.jsonl"
+
+    # -- the session's views -------------------------------------------------
+    # With a session, the conversation and the fold point are the session's,
+    # changed only by its records; nothing here may assign them. Without one
+    # (an object built for a unit test of a helper), they are plain attributes.
+    @property
+    def messages(self) -> list[dict]:
+        session = getattr(self, "session", None)
+        return session.messages if session is not None else self._messages
+
+    @messages.setter
+    def messages(self, value: list[dict]) -> None:
+        if getattr(self, "session", None) is not None:
+            raise AttributeError("the conversation changes only through the session")
+        self._messages = value
+
+    @property
+    def recap_folded(self) -> int:
+        session = getattr(self, "session", None)
+        return session.state.recap_folded if session is not None else self._recap_folded
+
+    @recap_folded.setter
+    def recap_folded(self, value: int) -> None:
+        if getattr(self, "session", None) is not None:
+            raise AttributeError("the fold point changes only through the session")
+        self._recap_folded = value
 
     # -- the record ---------------------------------------------------------
     def record(self, event: str, **fields) -> None:
@@ -791,17 +728,38 @@ class Chassis:
         )
 
     def request(self, client, use_tools: bool = True):
-        """One completion request, with the window applied and send-view repaired."""
+        """One completion request: window applied, send-view repaired, size checked, gated.
+
+        The whole body -- model, messages, tool schemas, tool_choice and the
+        correlation label -- is measured as `json.dumps(body)` (SV-015 v2 2.3)
+        before anything is recorded or sent; over the recorder's body limit it
+        is refused locally (DutyFault, 43) with no REQUEST_SENT and no request.
+        Otherwise REQUEST_SENT is durable before the request's bytes leave.
+        """
         self.fold_recap_if_needed()
         send = prepared_view(self.messages, self.context_window, self.eviction_chunk, self.carried)
         kwargs: dict[str, Any] = {"model": self.model, "messages": send}
         if use_tools and self.tools.schemas:
             kwargs["tools"] = self.tools.schemas
             kwargs["tool_choice"] = "auto"
+        label = self.session.next_label()
         try:
-            response = client.chat.completions.create(**kwargs)
-        except Exception as error:  # noqa: BLE001 -- classified, not swallowed
-            raise classify(error) from error
+            size = envelope.request_bytes({**kwargs, CORRELATION_KEY: label})
+        except (TypeError, ValueError, RecursionError) as error:
+            raise DutyFault(f"the request is not serializable: {type(error).__name__}: {error}") from error
+        if size > envelope.CLIENT_MAX_REQUEST_BYTES:
+            self.record("request_refused_locally", bytes=size, limit=envelope.CLIENT_MAX_REQUEST_BYTES)
+            raise DutyFault(
+                f"request exceeds the recorder body limit ({size} > {envelope.CLIENT_MAX_REQUEST_BYTES} bytes)"
+            )
+
+        def send_it():
+            try:
+                return client.chat.completions.create(**kwargs, extra_body={CORRELATION_KEY: label})
+            except Exception as error:  # noqa: BLE001 -- classified, not swallowed
+                raise classify(error) from error
+
+        response = self.session.send(send_it)
         self.capture_usage(response)
         return response
 
@@ -823,71 +781,71 @@ class Chassis:
         """
         if self.active_group is not None:
             raise NestedTurnRefused("nested turn not supported")
+        session = self.session
         client = self._client
         if text is not None:
-            self.messages.append({"role": "user", "content": text})
+            self.add_message("user", text)
         response = self.request(client, use_tools=use_tools)
-        choice = response.choices[0] if response.choices else None
+        choices = getattr(response, "choices", None)
+        choice = choices[0] if choices else None
         if choice is None:
             raise EnvironmentFailure("the upstream returned no choices")
-        message = choice.message
-        content = message.content or ""
-        reasoning = getattr(message, "reasoning_content", None)
-        assistant: dict[str, Any] = {"role": "assistant", "content": content}
-        tool_calls = getattr(message, "tool_calls", None) or []
-        if reasoning:
-            assistant["reasoning_content"] = reasoning
-        if tool_calls:
-            assistant["tool_calls"] = [
-                {
-                    "id": call.id,
-                    "type": "function",
-                    "function": {"name": call.function.name, "arguments": call.function.arguments},
-                }
-                for call in tool_calls
-            ]
-        self.messages.append(assistant)
-        self.last_had_tools = bool(tool_calls)
+        # The bounded, stored form of the response (SV-015 v2 2.3), durable as
+        # TURN_RESPONSE -- or RESPONSE_REFUSED and a notice -- before any tool runs.
+        raw = envelope.raw_from_message(getattr(choice, "message", None))
+        adoption = envelope.adopt_response(raw, session.state.requests_last["turn_seq"], session.caps)
+        session.adopt(adoption)
+        self.last_had_tools = bool(adoption.calls)
         self.turn += 1
-        if tool_calls:
-            # Every stored call gets exactly one result, in memory, whatever
-            # ends the run: the call it ended in is told why, and every later
-            # call is told it did not run -- and is not invoked.
+        if adoption.calls:
+            # Every stored call gets exactly one result, durably, whatever ends
+            # the run: the call it ended in is told why, and every later call is
+            # told it did not run -- and is not invoked. A call the response
+            # adoption refused (call limit, arguments, name) is answered by its
+            # admission text and never invoked.
             self.active_group = self.turn
             try:
-                for position, call in enumerate(tool_calls):
-                    try:
-                        result = self.invoke(call.function.name, call.function.arguments)
-                    except BaseException as stop:
-                        self.messages.append(self.tool_message(call, ended_call_text(stop)))
-                        how = f"by {stop.kind} " if isinstance(stop, RunTermination) else ""
-                        for later in tool_calls[position + 1 :]:
-                            self.messages.append(
-                                self.tool_message(later, f"not run: the run ended {how}in call {call.id}")
-                            )
-                        raise
-                    self.messages.append(self.tool_message(call, result))
+                self._run_group(adoption)
             finally:
                 self.close_group()
         self.checkpoint()
-        self.record("turn", tools=len(tool_calls), usage=dict(self.usage_totals))
+        fields = {"tools": len(adoption.calls), "usage": dict(self.usage_totals)}
+        if adoption.refused or adoption.omitted:
+            fields["calls_in_response"] = adoption.count
+        self.record("turn", **fields)
         self.check_budgets()
-        return content
+        return adoption.assistant["content"] if adoption.assistant is not None else ""
 
-    @staticmethod
-    def tool_message(call, content: str) -> dict:
-        return {
-            "role": "tool",
-            "tool_call_id": call.id,
-            "name": call.function.name,
-            "content": content,
-        }
+    def _run_group(self, adoption) -> None:
+        session = self.session
+        for call in adoption.calls:
+            if call.admit != "invoke":
+                continue
+            try:
+                outcome, result = session.invoke(
+                    call, lambda call=call: self.invoke_outcome(call.name, call.invoke_arguments)
+                )
+            except BaseException as stop:
+                typed = isinstance(stop, RunTermination)
+                session.end_group(
+                    call,
+                    stop,
+                    ended_text=ended_call_text(stop),
+                    how=f"by {stop.kind} " if typed else "",
+                    termination=(stop.kind, stop.note_gen) if typed else None,
+                )
+                if typed:
+                    # Its TERMINATION is recorded with the call; run() must not
+                    # record a second, direct one when the exception reaches it.
+                    stop.recorded = True
+                raise
+            session.record_result(call, outcome, result)
 
     # -- messages a duty adds -------------------------------------------------
     def add_message(self, role: str, text) -> None:
-        """Append now, or queue until the tool group in progress has all its results."""
+        """Append now (one MSG_APPEND unit), or queue until the group in progress has all its results."""
         if self.active_group is None:
-            self.messages.append({"role": role, "content": text})
+            self.session.append_message(role, text)
             return
         self.queue_message(role, text)
 
@@ -901,7 +859,7 @@ class Chassis:
         """
         if not isinstance(text, str):
             raise ValueError("a message queued during a tool call must be text")
-        if len(self.queued) >= MAX_QUEUED_MESSAGES:
+        if len(self.session.queue) >= MAX_QUEUED_MESSAGES:
             raise ValueError(
                 f"at most {MAX_QUEUED_MESSAGES} messages can be queued during one tool call group"
             )
@@ -914,17 +872,32 @@ class Chassis:
                 f"a message queued during a tool call is at most {MAX_QUEUED_UNITS} escaped "
                 f"units; this one is {units}"
             )
-        self.queued.append({"role": role, "content": normalized})
+        self.session.queue_message(role, normalized)
 
     def close_group(self) -> None:
-        """End the tool group in progress and append what it queued, in order."""
+        """End the tool group in progress and append what it queued, in order.
+
+        The flush is one MSG_APPEND per message, after the group's last answer
+        (and after any omitted-calls notice). A session that has failed cannot
+        record them: they are lost, and the record says how many.
+        """
         self.active_group = None
-        if self.queued:
-            self.messages.extend(self.queued)
-            self.queued = []
+        session = self.session
+        if session is None:
+            return
+        if session.broken or session.group is not None:
+            lost = session.discard_queue()
+            if lost:
+                self.record("queued_messages_lost", count=lost)
+            return
+        session.flush()
 
     def invoke(self, name: str, arguments: str) -> str:
-        """Run one registered tool by name. Every ordinary failure becomes text.
+        """Run one registered tool by name. Every ordinary failure becomes text."""
+        return self.invoke_outcome(name, arguments)[1]
+
+    def invoke_outcome(self, name: str, arguments: str) -> tuple[str, str]:
+        """Run one registered tool by name: `(outcome, text)`, outcome `returned` or `raised:<Type>`.
 
         A tool that raises an ordinary exception is information the model can
         act on, so the error is handed back rather than ending the run. What
@@ -940,11 +913,11 @@ class Chassis:
             known = sorted(self.tools.tools)
             self.operation("tool_unknown", tool=name, registered=len(known), names=known[:40])
             if known:
-                return (
+                return "returned", (
                     f"error: no tool named {name!r} is registered; this run has "
                     f"{len(known)} tool(s): {', '.join(known)}"
                 )
-            return (
+            return "returned", (
                 f"error: no tool named {name!r} is registered, and this run has no "
                 "tools at all: nothing in the duty registered any"
             )
@@ -952,23 +925,23 @@ class Chassis:
             kwargs = json.loads(arguments or "{}")
         except json.JSONDecodeError as error:
             self.operation("tool_bad_args", tool=name, error=str(error))
-            return f"error: arguments were not valid json: {error}"
+            return "returned", f"error: arguments were not valid json: {error}"
         if not isinstance(kwargs, dict):
-            return "error: arguments must be a json object"
+            return "returned", "error: arguments must be a json object"
         signature = inspect.signature(func)
         unknown = set(kwargs) - set(signature.parameters)
         if unknown:
-            return f"error: {name} does not take {', '.join(sorted(unknown))}"
+            return "returned", f"error: {name} does not take {', '.join(sorted(unknown))}"
         try:
             result = func(**kwargs)
         except CONTROL_EXCEPTIONS:
             raise
         except Exception as error:  # noqa: BLE001 -- the model is told, not the log
             self.operation("tool_error", tool=name, error=f"{type(error).__name__}: {error}")
-            return f"error: {type(error).__name__}: {error}"
+            return f"raised:{type(error).__name__}", f"error: {type(error).__name__}: {error}"
         text = "" if result is None else str(result)
         self.operation("tool", tool=name, chars=len(text))
-        return text
+        return "returned", text
 
     # -- the window ---------------------------------------------------------
     def fold_recap_if_needed(self) -> None:
@@ -981,10 +954,11 @@ class Chassis:
         longer has.
         """
         kept_start, _ = window_bounds(self.messages, self.context_window, self.eviction_chunk)
-        if kept_start <= self.recap_folded:
+        folded = self.recap_folded
+        if kept_start <= folded:
             return
         lines = []
-        for message in self.messages[self.recap_folded : kept_start]:
+        for message in self.messages[folded:kept_start]:
             role = message.get("role", "?")
             if role == "system":
                 # Pinned material is never evicted, so folding it would record
@@ -1001,7 +975,14 @@ class Chassis:
                 body = body[:RECAP_LINE_CHARS] + " …"
             lines.append(f"- [{role}] {body}")
         self.carried.append_recap(lines)
-        self.recap_folded = kept_start
+        session = getattr(self, "session", None)
+        if session is not None:
+            # recap.md first, then the record: a crash between repeats lines
+            # in the recap at worst, never loses them.
+            session.record_fold(folded, kept_start, len(lines))
+            session.unit_end()
+        else:
+            self.recap_folded = kept_start
         self.record("recap_fold", dropped=len(lines), at_index=kept_start)
 
     # -- budgets ------------------------------------------------------------
@@ -1015,20 +996,22 @@ class Chassis:
 
     # -- state --------------------------------------------------------------
     def checkpoint(self, ended: dict | None = None) -> None:
-        """Write the conversation (a plain list, as always) and run.json.
+        """CK1-CK6: the conversation (a plain list, as always), run.json, then CHECKPOINT.
 
-        run.json gains three additive keys: `lineage_id` (stable across runs),
-        `recap_folded` (how far the recap has folded, so a resumed run does not
-        fold the same messages again) and, on the final checkpoint, `ended`
-        (`{exit, reason, at, run}`). It deliberately does **not** gain
-        `format`, `writer` or `checkpoint`: those mark the ledger's authority
-        (SV-013 2.2.2), and publishing them before the ledger exists would make
-        a later ledger-aware runtime read this file as a lost ledger.
+        run.json keeps its existing keys and gains `lineage_id`, `recap_folded`,
+        `ended` (`{exit, reason, at, run}`, on the final checkpoint) and the
+        ledger's authority markers `format: 2`, `writer`, `history_epoch` and
+        `checkpoint{covers_seq, conv, prev, epoch}` -- published only now that
+        the ledger writer and its recovery are active together (SV-013 2.2.2).
 
-        A filesystem error becomes PersistenceFailure (exit 44); anything else,
-        such as a message a duty made unserializable, propagates as it is.
+        Never inside a tool group (CKG). A persistence error is
+        PersistenceFailure (exit 44), after the FSYNC_FAILED marker is attempted.
         """
-        meta = {
+        self.session.checkpoint(ended=ended)
+
+    def _meta_fields(self) -> dict:
+        """run.json's existing keys; the session adds the ledger's."""
+        return {
             "agent": self.slug,
             "name": self.name,
             "run": self.run_id,
@@ -1039,31 +1022,24 @@ class Chassis:
             "context_window": self.context_window,
             "usage": dict(self.usage_totals),
             "entry": str(self.entry),
-            "lineage_id": self.lineage_id,
-            "recap_folded": self.recap_folded,
         }
-        if ended is not None:
-            meta["ended"] = ended
-        try:
-            self.carried.save_conversation(self.messages)
-            self.carried.save_meta(meta)
-        except OSError as error:
-            raise PersistenceFailure(
-                f"the checkpoint could not be written: {type(error).__name__}: {error}"
-            ) from error
 
-    def write_handoff(self, note: str) -> None:
+    def write_handoff(self, note: str) -> int | None:
+        """NOTE_WRITTEN (the note's own generation, durable), then the HANDOFF.md mirror.
+
+        Returns the generation, or None when a 17th unadopted note is dropped
+        (SV-015 v2 1.4.6: the run still ends; the next resume says so).
+        """
         self.home_dir.mkdir(parents=True, exist_ok=True)
         # Recorded here rather than at the exit: a note that unwinds through
         # frames of SystemExit arrives at the exit path as an empty string, and
         # the record would say a run ended for no reason. This is the moment the
         # reason actually exists.
         self.last_handoff = note.strip()
-        write_text_atomic(
-            self.carried.handoff_path,
-            f"# Handoff, left {iso()} by run {self.run_id} (turn {self.turn})\n\n{note.strip()}\n",
-        )
-        self.record("handoff", chars=len(note))
+        header = f"# Handoff, left {iso()} by run {self.run_id} (turn {self.turn})"
+        gen = self.session.write_note(note, header=header)
+        self.record("handoff", chars=len(note), gen=gen)
+        return gen
 
     def status(self) -> dict:
         # The previous run's facts as they were when this run started; this
@@ -1137,23 +1113,43 @@ class Chassis:
         or a traceback with no `ended` metadata and no `run_end` record, and,
         deliberately, no checkpoint: nothing has been loaded that could be
         written back without risking the saved conversation.
+
+        Before all of that, startup classifies the session (SV-013 A0-A15) and
+        recovers it from the ledger, without a model call or a tool. A
+        diagnostic stop ends the run 44 there; recovery's own records (call
+        outcomes, notices, base switches) are durable before the duty loads.
         """
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.home_dir.mkdir(parents=True, exist_ok=True)
         previous = self.carried.meta()
         self.previous_meta = previous
-        lineage = previous.get("lineage_id")
-        if isinstance(lineage, str) and LINEAGE_ID.fullmatch(lineage):
-            self.lineage_id = lineage
-        else:
-            self.lineage_id = uuid.uuid4().hex[:16]
-            self.record("lineage_started", lineage_id=self.lineage_id)
+        problem = envelope.DEFAULT_CAPS.problem()
+        if problem:
+            raise DutyFault(f"invalid_caps: {problem}")
+        try:
+            opening = chassis_startup.open_session(
+                self.session_dir,
+                self.home_dir,
+                lifecycle=self.record,
+                repair=self._repair_adopted,
+                new_lineage=lambda: uuid.uuid4().hex[:16],
+                install=lambda messages, _data: self.carried.save_conversation(messages),
+            )
+        except PersistenceFailure as failure:
+            return self._end_before_main(EXIT_ENVIRONMENT, "persistence_failure", str(failure))
+        if opening.stop is not None:
+            self.record("diagnostic_stop", classification=opening.classification, stop=opening.stop, detail=opening.detail)
+            return self._end_before_main(EXIT_ENVIRONMENT, "diagnostic_stop", opening.stop)
+        self.session = opening.session
+        self.session.meta_source = self._meta_fields
+        self.lineage_id = self.session.lineage_id
         self.record(
             "run_start",
             entry=str(self.entry),
             model=self.model,
             window=self.context_window,
             lineage_id=self.lineage_id,
+            classification=opening.classification,
         )
 
         self._client = self.client()
@@ -1187,7 +1183,7 @@ class Chassis:
             duty_class_id=id(getattr(getattr(module, "ToolRegistry", None), "__mro__", (None,))[0]),
         )
 
-        resumed = self.resume(previous)
+        resumed = self.resume_session(opening)
         self.record("run_resumed" if resumed else "run_fresh", messages=len(self.messages))
 
         exit_code = EXIT_OK
@@ -1200,6 +1196,11 @@ class Chassis:
             # Typed, and distinct from a bare sys.exit(42): this is the only
             # path that records a handoff or a finish as the reason.
             exit_code, reason, note = stop.code, stop.kind, self.last_handoff
+            if not getattr(stop, "recorded", False) and not self.session.broken:
+                try:
+                    self.session.record_termination(stop.kind, stop.note_gen)
+                except PersistenceFailure as failure:
+                    exit_code, reason, note = EXIT_ENVIRONMENT, "persistence_failure", str(failure)
         except SystemExit as stop:
             exit_code, reason, note = classify_exit(stop.code)
             if not note:
@@ -1242,6 +1243,9 @@ class Chassis:
                 self.record("checkpoint_failed", error=f"{type(error).__name__}: {error}"[:500])
                 if exit_code not in (EXIT_DUTY_FAULT, EXIT_ENVIRONMENT):
                     exit_code, reason = EXIT_DUTY_FAULT, "checkpoint_failed"
+            # RUN_END is best-effort (SV-015 v2 1.2): its failure changes no exit.
+            self.session.record_run_end(exit_code, reason)
+            self.session.close()
             if resumed and exit_code not in RESUMING_EXITS:
                 # The run ended with an exit that is not one of the resuming
                 # codes (42, 44), and the record says so. It is a label, not a
@@ -1264,8 +1268,52 @@ class Chassis:
             )
         return exit_code
 
+    def _end_before_main(self, exit_code: int, reason: str, note: str) -> int:
+        """A run that ends at startup: nothing was loaded, nothing is written back."""
+        self.record("run_end", exit=exit_code, reason=reason, note=note[:2000], turns=0, usage=dict(self.usage_totals))
+        print(f"[chassis] run ended before main: exit={exit_code} reason={reason} {note[:300]}", flush=True)
+        return exit_code
+
+    def _repair_adopted(self, messages: list[dict], folded: int) -> tuple[list[dict], int]:
+        """The recap-frame repair for a list adopted from outside the runtime, recorded when it acts."""
+        kept, folded = drop_stored_recap_frames(messages, folded)
+        if len(kept) != len(messages):
+            self.record("conversation_repaired", dropped=len(messages) - len(kept), kept=len(kept))
+        return kept, folded
+
+    def resume_session(self, opening) -> bool:
+        """After startup: adopt notes once each, then open a conversation only if there is none.
+
+        Every step is a session record: an agent-edited HANDOFF.md becomes one
+        generation (never a runtime mirror), every unadopted generation is
+        appended once in order (a duty that swallowed its handoff left one), a
+        17th-note drop is reported, and an empty conversation -- a new lineage,
+        or a duty's deletion -- is opened by the duty's `bootstrap()` (as one
+        HISTORY_REPLACED) or the default opening. Appended, never prepended:
+        the list stays chronological (see `resume`).
+        """
+        session = self.session
+        session.adopt_file_edit()
+        adopted = session.adopt_notes(foreign_texts=opening.foreign_texts)
+        seeded = False
+        if not session.messages:
+            bootstrap = getattr(sys.modules.get("duty"), "bootstrap", None)
+            if callable(bootstrap):
+                opened = bootstrap(self.context)
+                if isinstance(opened, list) and opened:
+                    session.replace_history(opened)
+                    seeded = True
+            if not session.messages:
+                session.append_message("user", DEFAULT_OPENING)
+        return bool(opening.had_memory or adopted or seeded)
+
     def resume(self, previous: dict) -> bool:
-        """Rebuild the conversation, or start one, and frame it.
+        """The pre-ledger resume, for an object with no session (helper tests only).
+
+        `run()` resumes through `resume_session`: with a session, adoption is
+        once per note generation (SV-013 C-N1), not every run.
+
+        Rebuild the conversation, or start one, and frame it.
 
         Resume is the default because losing a long conversation to a
         supervisor restart would make endurance impossible. A duty that wants a
@@ -1330,16 +1378,7 @@ class Chassis:
                     self.messages.extend(seeded)
                     seeded_by_duty = True
             if not self.messages:
-                self.messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "You are running. Nothing has been assigned to you yet. "
-                            "Read /opt/brief/MISSION.md, /opt/brief/WORLD.md and "
-                            "/opt/brief/PROTOCOL.md before deciding anything."
-                        ),
-                    }
-                )
+                self.messages.append({"role": "user", "content": DEFAULT_OPENING})
         return bool(carried or seeded_by_duty)
 
 
@@ -1667,6 +1706,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the duty once.")
     parser.add_argument("--status", action="store_true", help="print this run's facts and exit")
     parser.add_argument("--entry", help="override AGENT_ENTRY for this run")
+    parser.add_argument(
+        "--acknowledge-stop",
+        metavar="REASON",
+        help="an operator's acknowledgement of a diagnostic stop (permission, not evidence)",
+    )
+    parser.add_argument("--resolution", help="with --acknowledge-stop: how to continue")
     args = parser.parse_args(argv)
 
     chassis = Chassis()
@@ -1674,6 +1719,23 @@ def main(argv: list[str] | None = None) -> int:
         chassis.entry = Path(args.entry)
     if args.status:
         print(json.dumps(chassis.status(), indent=2))
+        return EXIT_OK
+    if args.acknowledge_stop:
+        if not args.resolution:
+            parser.error("--acknowledge-stop needs --resolution")
+        try:
+            ack = chassis_startup.acknowledge(chassis.session_dir, args.acknowledge_stop, args.resolution)
+        except persistence.LedgerError as error:
+            print(f"[chassis] acknowledgement refused: {error}", flush=True)
+            return 2
+        except PersistenceFailure as failure:
+            print(f"[chassis] acknowledgement could not be made durable: {failure}", flush=True)
+            return EXIT_ENVIRONMENT
+        print(
+            f"[chassis] acknowledged {args.acknowledge_stop} with {args.resolution} (ack {ack['ack_id']}); "
+            "the next run records it before anything else",
+            flush=True,
+        )
         return EXIT_OK
 
     print(
@@ -1689,6 +1751,9 @@ def main(argv: list[str] | None = None) -> int:
     except DutyFault as fault:
         print(f"[chassis] duty fault: {fault}", flush=True)
         return EXIT_DUTY_FAULT
+    except PersistenceFailure as failure:
+        print(f"[chassis] persistence failure: {failure}", flush=True)
+        return EXIT_ENVIRONMENT
 
 
 if __name__ == "__main__":

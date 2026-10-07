@@ -449,7 +449,10 @@ def test_the_reference_frontier_follows_the_turn_state_machine():
     fin = record(5, "DONE", done(1, 0, ZERO), ZERO)
     assert cp.legal_next_types(()) == {"LEDGER_HEADER"}
     assert cp.legal_next_types(tuple(base)) == cp.UNIT_BOUNDARY_NEXT
-    assert cp.legal_next_types(tuple(base + [req])) == cp.AFTER_REQUEST_NEXT
+    # SV021: the live owner may go on after a failed request (a retry, a
+    # message, the run's checkpoint), so a unit boundary's types are reachable too.
+    assert cp.legal_next_types(tuple(base + [req])) == cp.AFTER_REQUEST_NEXT | cp.UNIT_BOUNDARY_NEXT
+    assert "TURN_RESPONSE" in cp.legal_next_types(tuple(base + [req]))
     assert cp.legal_next_types(tuple(base + [req, resp])) == cp.IN_GROUP_NEXT
     assert cp.legal_next_types(tuple(base + [req, resp, inv])) == cp.INVOKED_CALL_NEXT
     # The bad_args call is never invoked, so it does not hold the group open.

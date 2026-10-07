@@ -1,11 +1,13 @@
-"""Staged run metadata: lineage, fold progress and how the last run ended (SV-019 K-A1).
+"""Run metadata: lineage, fold progress and how the last run ended (SV-019 K-A1; SV-021).
 
-Contract: SV-013 sections 2.2.2/2.2.4 and 4.1, with the staging exception
-from the SV-019 preflight: run.json gains `lineage_id`, `recap_folded` and
-`ended`, and deliberately **not** `format`, `writer` or `checkpoint` -- those
-mark the ledger's authority (K-D), and a ledger-aware runtime's rule A7 would
-read them, with no ledger present, as a lost ledger. The conversation stays a
-plain list written exactly as before.
+Contract: SV-013 sections 2.2.2/2.2.4 and 4.1. Under SV-019's staging
+exception run.json gained `lineage_id`, `recap_folded` and `ended` and
+deliberately not `format`, `writer` or `checkpoint`, because a ledger-aware
+runtime's rule A7 reads those, with no ledger present, as a lost ledger. SV-021
+activates the ledger writer and its recovery together, so the markers are now
+published -- at CK5, mirroring the CHECKPOINT that follows -- and only with a
+ledger behind them; the first test below was changed for exactly that. The
+conversation stays a plain list written exactly as before.
 
 Runs use the termination tests' harness: the real `Chassis.run()`, a scripted
 fake client, temporary roots.
@@ -24,7 +26,10 @@ STATUS_MAIN = "    STATUS.append(json.loads(context.status()))\n    context.ask(
 IMPORT_JSON = "import json\n"
 
 
-def test_run_json_gains_the_staged_keys_and_no_authority_markers(make_run):
+def test_run_json_keeps_its_keys_and_publishes_authority_only_with_the_ledger(make_run):
+    """SV-021: was `..._and_no_authority_markers` while no ledger existed (see the module docstring)."""
+    import chassis_persistence as cp  # noqa: PLC0415
+
     run = make_run([reply("ok")], main="    context.finish('done')\n")
     run.go()
     meta = run.meta()
@@ -33,9 +38,14 @@ def test_run_json_gains_the_staged_keys_and_no_authority_markers(make_run):
     assert chassis.LINEAGE_ID.fullmatch(meta["lineage_id"])
     assert meta["recap_folded"] == 0
     assert meta["ended"] == {"exit": 0, "reason": "finish", "at": meta["ended"]["at"], "run": run.chassis.run_id}
-    assert not {"format", "writer", "checkpoint", "history_epoch"} & set(meta), (
-        "a ledger authority marker was published before the ledger exists"
+    assert (meta["format"], meta["writer"], meta["history_epoch"]) == (2, "chassis-2", 1)
+    session = run.root / "home" / "session"
+    scan = cp.scan_segments(cp.read_segments(session / "ledger"), meta["lineage_id"])
+    newest = [r for r in scan.records if r.type_name == "CHECKPOINT"][-1]
+    assert scan.tail == b"" and newest.payload["covers_seq"] == meta["checkpoint"]["covers_seq"], (
+        "the markers mirror a CHECKPOINT that exists in the ledger"
     )
+    assert meta["checkpoint"]["conv"]["sha256"] == cp.hashlib.sha256((session / "conversation.json").read_bytes()).hexdigest()
 
 
 def test_the_conversation_is_still_a_plain_list_written_as_before(make_run):

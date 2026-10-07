@@ -1,10 +1,10 @@
 """The chassis persistence foundation: SVL1 ledger frames, a scanner, and durable primitives.
 
-Standard library only. **Nothing in the production chassis imports this module
-yet.** It is the reusable, tested foundation for the integrated K-D1/K-D2
-activation (SV-013 section 4.1 ships them together), and it deliberately does
-not activate anything: no `format: 2` in run.json, no gate in a live run, no
-recovery at startup. Contracts: SV-015 v2 sections 1.1-1.4 (fault model M-1 to
+Standard library only. The foundation of the integrated K-D1/K-D2 runtime
+(SV-013 section 4.1 ships them together): since SV-021 the chassis uses it
+through `chassis_session` (the one owner of every mutation) and
+`chassis_startup` (classification and recovery); this module itself still
+decides nothing at run time. Contracts: SV-015 v2 sections 1.1-1.4 (fault model M-1 to
 M-5; framing; tail classification; checkpoint graph, durability, quarantine,
 FSYNC_FAILED honesty), with SV-013 section 2.2.2-2.2.3's retained texts.
 
@@ -19,10 +19,9 @@ Three layers, kept apart on purpose:
   explicit calls, each tested on its own, every filesystem call through an
   injectable `DurableOps`.
 
-Exception identity: `PersistenceFailure` here is this module's own (an
-OSError, as SV-013 2.2.4 names it). The production chassis has its own
-`PersistenceFailure`; unifying the two is part of activation, and nothing here
-assumes either way.
+Exception identity: `PersistenceFailure` here (an OSError, as SV-013 2.2.4
+names it) is the runtime's one class: `chassis.PersistenceFailure` is this
+object (SV-021), not a same-named copy.
 """
 
 from __future__ import annotations
@@ -509,8 +508,10 @@ UNIT_BOUNDARY_NEXT = frozenset(
     }
 )
 AFTER_REQUEST_NEXT = frozenset({"TURN_RESPONSE", "RESPONSE_REFUSED", "RUN_END", "RECOVERY"})
-IN_GROUP_NEXT = frozenset({"INVOKING", "UNRUN", "SYNTH", "TERMINATION", "NOTE_WRITTEN", "RUN_END", "ORIGINAL_EVICTED"})
-INVOKED_CALL_NEXT = frozenset({"DONE", "SYNTH", "TERMINATION", "NOTE_WRITTEN", "RUN_END"})
+# SV021, from the live owner (`chassis_session`): a tool may drop a 17th note
+# (RECOVERY{note_dropped_pending_limit}) while its call is open.
+IN_GROUP_NEXT = frozenset({"INVOKING", "UNRUN", "SYNTH", "TERMINATION", "NOTE_WRITTEN", "RUN_END", "ORIGINAL_EVICTED", "RECOVERY"})
+INVOKED_CALL_NEXT = frozenset({"DONE", "SYNTH", "TERMINATION", "NOTE_WRITTEN", "RUN_END", "RECOVERY"})
 
 
 @dataclass(frozen=True)
@@ -583,7 +584,11 @@ def legal_next_types(records: tuple[Record, ...]) -> frozenset[str]:
             return INVOKED_CALL_NEXT
         return IN_GROUP_NEXT
     if state.pending_request is not None:
-        return AFTER_REQUEST_NEXT
+        # SV021: a request whose response never came is followed by its
+        # response, or -- after a failed request the run survived, or a
+        # recovery -- by anything a unit boundary allows (a retry, a message,
+        # the run's checkpoint). Its spend stays possible either way.
+        return AFTER_REQUEST_NEXT | UNIT_BOUNDARY_NEXT
     return UNIT_BOUNDARY_NEXT
 
 
@@ -1071,11 +1076,11 @@ class BlobStore:
         write_bytes_durable(self.dir / sha, data, ops=self.ops)
         return sha
 
-    def get(self, sha: str) -> bytes | None:
-        if not HEX64.fullmatch(sha or ""):
+    def get(self, sha: str, limit: int = MAX_BLOB_READ) -> bytes | None:
+        if not isinstance(sha, str) or not HEX64.fullmatch(sha):
             return None
         try:
-            data = self.ops.read(str(self.dir / sha), MAX_BLOB_READ)
+            data = self.ops.read(str(self.dir / sha), limit)
         except OSError:  # missing, unreadable, or over the bound: the payload is lost
             return None
         return data if hashlib.sha256(data).hexdigest() == sha else None
@@ -1373,10 +1378,20 @@ def quarantine_tail(
     current = ops.read(str(segment_path), MAX_SEGMENT_READ)
     if current[scan.tail_offset :] != scan.tail:
         raise LedgerError("the segment changed after it was scanned")
-    if not quarantine.admits(len(scan.tail)):
+    corrupt = Path(quarantine.corrupt_dir)
+    # The name carries the content hash: a second recovery at the same offset
+    # with different bytes gets its own file and never replaces earlier evidence.
+    digest = hashlib.sha256(scan.tail).hexdigest()[:16]
+    copy = corrupt / f"ledger-{scan.tail_segment:06d}-{scan.tail_offset}-{digest}.bin"
+    # SV021: a quarantine re-run after a crash between copy and truncation finds
+    # its own identical copy. It is already admitted; admitting it again could
+    # refuse at the cap for bytes that are already set aside.
+    already = False
+    with contextlib.suppress(OSError):
+        already = ops.read(str(copy), len(scan.tail)) == scan.tail
+    if not already and not quarantine.admits(len(scan.tail)):
         write_stop(session_dir, "corrupt_quarantine_full", {"bytes": len(scan.tail)}, ops=ops)
         return QuarantineResult(False, "corrupt_quarantine_full", None)
-    corrupt = Path(quarantine.corrupt_dir)
     # corrupt/'s name is fenced in its parent on every call, whether it is new
     # or survived a process death (SV020-01): truncation removes the only other
     # copy of the tail, so it must never depend on an unfenced name.
@@ -1386,10 +1401,8 @@ def quarantine_tail(
         ops.sync_dir(str(corrupt.parent))
     except OSError as error:
         raise PersistenceFailure(f"corrupt/ could not be made durable: {error}") from error
-    # The name carries the content hash: a second recovery at the same offset
-    # with different bytes gets its own file and never replaces earlier evidence.
-    digest = hashlib.sha256(scan.tail).hexdigest()[:16]
-    copy = corrupt / f"ledger-{scan.tail_segment:06d}-{scan.tail_offset}-{digest}.bin"
+    # Rewritten even when it already exists: write_bytes_durable's directory
+    # fence is what makes the copy's name durable before truncation.
     write_bytes_durable(copy, scan.tail, ops=ops)
     fd = None
     try:
