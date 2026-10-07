@@ -516,6 +516,146 @@ def refusal_message(refused: Refused) -> str:
     return "the recorder refused this request identifier as a duplicate"
 
 
+# ---------------------------------------------------------------------------
+# The request body
+# ---------------------------------------------------------------------------
+# A body is accepted only inside a stated domain: strict UTF-8, JSON with no
+# NaN/Infinity literal and no number that overflows to one, and an object at
+# the top. Outside it the request is refused here, before anything is opened
+# or spent: such a body used to be forwarded, the provider would have
+# rejected it, and the chassis treats a 400 as a duty fault either way.
+#
+# Three representations, kept apart on purpose:
+#   original   -- exactly the bytes received;
+#   forwarded  -- the original bytes verbatim unless a transformation applies,
+#                 else one canonical ASCII re-serialization;
+#   recorded   -- the parsed object after the same removals, for the transcript.
+# Byte identity upstream is promised only when nothing was transformed. A body
+# with a duplicated key (at any depth) is forwarded verbatim if untouched, and
+# refused if it would need re-serializing, which would silently drop one of
+# the values.
+CORRELATION_KEY = "x_chassis_correlation"
+LABEL_PATTERN = re.compile(r"[A-Za-z0-9._:-]+")
+MAX_LABEL_BYTES = 128
+MAX_LABEL_LRU = env_int("RECORDER_MAX_LABEL_LRU", 64)
+
+
+class _NonFinite(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class ParsedRequest:
+    original: bytes
+    forwarded: bytes
+    recorded: dict
+    transformed: bool
+    duplicate_keys: bool
+    label: str | None = None
+    label_invalid: dict | None = None
+
+
+@dataclass(frozen=True)
+class RequestRefusal:
+    code: str
+    message: str
+    status: int = 400
+
+
+def _reject_constant(_name: str):
+    raise _NonFinite
+
+
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):
+        raise _NonFinite
+    return value
+
+
+def classify_label(value) -> tuple[str | None, dict | None]:
+    """A valid correlation label, or the safe facts about an invalid one.
+
+    The label is untrusted and carries no meaning here: nothing is suppressed,
+    deduplicated or settled by it. An invalid one is described by its type and
+    size only; its value is never written down.
+    """
+    if isinstance(value, str):
+        size = len(value.encode("utf-8", "surrogatepass"))
+        if 1 <= size <= MAX_LABEL_BYTES and LABEL_PATTERN.fullmatch(value):
+            return value, None
+        return None, {"type": "str", "bytes": size}
+    encoded = json.dumps(value, ensure_ascii=True, allow_nan=True)
+    return None, {"type": type(value).__name__, "bytes": len(encoded.encode("ascii"))}
+
+
+def parse_request(body: bytes, *, streaming: bool) -> ParsedRequest | RequestRefusal:
+    """Decide what is forwarded, what is recorded, and whether to refuse.
+
+    Total over any bytes: every failure is a RequestRefusal with a fixed
+    sentence, never an exception and never the parser's own message.
+    """
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return RequestRefusal("body_not_utf8", "the request body is not valid UTF-8")
+    duplicates = False
+
+    def pairs(items):
+        nonlocal duplicates
+        obj = {}
+        for key, value in items:
+            if key in obj:
+                duplicates = True
+            obj[key] = value
+        return obj
+
+    try:
+        parsed = json.loads(
+            text,
+            object_pairs_hook=pairs,
+            parse_constant=_reject_constant,
+            parse_float=_finite_float,
+        )
+    except _NonFinite:
+        return RequestRefusal(
+            "nonfinite_number", "the request body contains a number that is not finite"
+        )
+    except json.JSONDecodeError:
+        return RequestRefusal("body_not_json", "the request body is not valid JSON")
+    except (ValueError, RecursionError):
+        # Valid JSON this process will not hold: nesting past the parser's
+        # recursion limit, or an integer past the interpreter's digit limit.
+        return RequestRefusal(
+            "unsupported_json", "the request body nests too deeply or has an oversized number"
+        )
+    if not isinstance(parsed, dict):
+        return RequestRefusal("body_not_object", "the request body must be a JSON object")
+
+    recorded = dict(parsed)
+    transformed = False
+    label = label_invalid = None
+    if CORRELATION_KEY in recorded:
+        label, label_invalid = classify_label(recorded.pop(CORRELATION_KEY))
+        transformed = True
+    if not streaming and "stream" in recorded:
+        # The upstream cannot stream: ask for one complete body instead.
+        recorded.pop("stream")
+        recorded.pop("stream_options", None)
+        transformed = True
+    if not transformed:
+        return ParsedRequest(body, body, recorded, False, duplicates)
+    if duplicates:
+        return RequestRefusal(
+            "duplicate_keys",
+            "the request body repeats a key, and this request would need re-encoding",
+        )
+    forwarded = json.dumps(
+        recorded, ensure_ascii=True, allow_nan=False, separators=(",", ":")
+    ).encode("ascii")
+    return ParsedRequest(body, forwarded, recorded, True, False, label, label_invalid)
+
+
 class AgentState:
     """Per-agent bookkeeping: where its record goes, and its in-flight slots."""
 
@@ -526,6 +666,18 @@ class AgentState:
         self.transcript = self.dir / "agent_life_transcript.jsonl"
         self.events = self.dir / "events.jsonl"
         self.slots = threading.BoundedSemaphore(max(1, MAX_INFLIGHT_PER_SOCKET))
+        self._labels: OrderedDict[str, None] = OrderedDict()
+        self._labels_lock = threading.Lock()
+
+    def label_seen_before(self, label: str) -> bool:
+        """Whether this socket saw the label recently. A hint for a reader, nothing more."""
+        with self._labels_lock:
+            seen = label in self._labels
+            self._labels[label] = None
+            self._labels.move_to_end(label)
+            while len(self._labels) > max(0, MAX_LABEL_LRU):
+                self._labels.popitem(last=False)
+            return seen
 
 
 class Recorder(threading.Thread):
@@ -788,19 +940,25 @@ def make_handler(recorder: Recorder):
                     exchange, 411, "length_required", "requests must carry a content-length"
                 )
                 return
-            raw_length = self.headers.get("Content-Length")
-            try:
-                length = int(raw_length or "")
-            except ValueError:
+            lengths = self.headers.get_all("Content-Length") or []
+            if len(lengths) != 1:
+                code = "missing_content_length" if not lengths else "duplicate_content_length"
                 self._refuse(
-                    exchange, 400, "bad_content_length", "content-length must be a whole number"
+                    exchange, 400, code, "requests must carry exactly one content-length"
                 )
                 return
-            if length < 0:
+            raw_length = lengths[0].strip()
+            if raw_length.startswith("-") and raw_length[1:].isdigit():
                 self._refuse(
                     exchange, 400, "bad_content_length", "content-length must not be negative"
                 )
                 return
+            if not re.fullmatch(r"[0-9]{1,20}", raw_length):
+                self._refuse(
+                    exchange, 400, "bad_content_length", "content-length must be a whole number"
+                )
+                return
+            length = int(raw_length)
             if length > REQUEST_MAX_BYTES:
                 self._refuse(
                     exchange,
@@ -810,6 +968,15 @@ def make_handler(recorder: Recorder):
                 )
                 return
             body = self.rfile.read(length)
+            if len(body) < length:
+                # The client stopped early. Nothing partial is ever forwarded.
+                self._refuse(
+                    exchange,
+                    400,
+                    "short_body",
+                    f"the request body ended after {len(body)} of {length} bytes",
+                )
+                return
 
             marker = REFUSE_DIR / f"refuse-{state.slug}.marker"
             if marker.exists():
@@ -822,21 +989,11 @@ def make_handler(recorder: Recorder):
                 )
                 return
 
-            try:
-                parsed = json.loads(body.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                parsed = {"raw_body": body.decode("utf-8", "ignore")[:2000]}
-            forwarded = body
-            if not upstream_supports_streaming():
-                # Drop the streaming request rather than let it garble the
-                # record. This only governs what is asked for.
-                try:
-                    asked = json.loads(body.decode("utf-8"))
-                except (UnicodeDecodeError, json.JSONDecodeError):
-                    asked = None
-                if isinstance(asked, dict) and asked.pop("stream", None) is not None:
-                    asked.pop("stream_options", None)
-                    forwarded = json.dumps(asked).encode("utf-8")
+            request = parse_request(body, streaming=upstream_supports_streaming())
+            if isinstance(request, RequestRefusal):
+                self._refuse(exchange, request.status, request.code, request.message)
+                return
+            forwarded = request.forwarded
             # The estimate is over what is actually sent: the same bytes the
             # upstream will bill for its prompt.
             exchange.estimate = max(1, len(forwarded) // 4)
@@ -846,22 +1003,29 @@ def make_handler(recorder: Recorder):
                 return
             exchange.slots = True
 
-            model = parsed.get("model") if isinstance(parsed, dict) else None
-            messages = parsed.get("messages") if isinstance(parsed, dict) else None
-            append_jsonl(
-                state.events,
-                {
-                    "at": iso(),
-                    "event": "open",
-                    "id": exchange.rid,
-                    "agent": state.slug,
-                    "model": model,
-                    "messages": len(messages) if isinstance(messages, list) else 0,
-                    "bytes_in": len(body),
-                    "bytes_forwarded": len(forwarded),
-                    "estimate": exchange.estimate,
-                },
-            )
+            recorded = request.recorded
+            messages = recorded.get("messages")
+            opened = {
+                "at": iso(),
+                "event": "open",
+                "id": exchange.rid,
+                "agent": state.slug,
+                "model": recorded.get("model"),
+                "messages": len(messages) if isinstance(messages, list) else 0,
+                "bytes_in": len(body),
+                "bytes_forwarded": len(forwarded),
+                "estimate": exchange.estimate,
+                "transformed": request.transformed,
+            }
+            if request.duplicate_keys:
+                opened["duplicate_keys"] = True
+            if request.label is not None:
+                opened["client_label"] = request.label
+                if state.label_seen_before(request.label):
+                    opened["label_seen_before"] = True
+            elif request.label_invalid is not None:
+                opened["client_label_invalid"] = request.label_invalid
+            append_jsonl(state.events, opened)
 
             # Reserve against the ceilings before spending anything upstream.
             decision = budget.admit(exchange.rid, state.slug, exchange.estimate)
@@ -931,7 +1095,7 @@ def make_handler(recorder: Recorder):
                     "at": iso(),
                     "agent": state.slug,
                     "id": exchange.rid,
-                    "request": parsed,
+                    "request": recorded,
                     "response": response_data,
                     "status": status,
                 },

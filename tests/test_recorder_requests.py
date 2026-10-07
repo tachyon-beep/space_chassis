@@ -15,6 +15,7 @@ record can say it.
 
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import shutil
@@ -28,7 +29,14 @@ from pathlib import Path
 
 import pytest
 import recorder as recorder_module
-from recorder import AgentState, Budget, Recorder
+from recorder import (
+    AgentState,
+    Budget,
+    ParsedRequest,
+    Recorder,
+    RequestRefusal,
+    parse_request,
+)
 
 SLUG = "otter"
 ROUTE = "/api/v1/chat/completions"
@@ -449,3 +457,250 @@ def test_the_recorder_start_goes_to_its_own_file_and_bad_names_are_not_served(
     assert "Bad" not in json.dumps(lines)
     assert not (rig.root / "transcripts" / "Bad").exists()
     assert not [e for e in rig.events() if e.get("event") == "recorder_start"]
+
+
+# ---------------------------------------------------------------------------
+# R-B1: the request body, its three representations and the correlation label
+# ---------------------------------------------------------------------------
+R_H3 = b'{"model":"stub","messages":[{"role":"user","content":"hi"}]}'
+R_H4 = b'{"model":"stub","x_chassis_correlation":"0f1e:7:1","messages":[]}'
+R_H4_FORWARDED = b'{"model":"stub","messages":[]}'
+
+
+def sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def test_an_untouched_body_is_forwarded_byte_for_byte():
+    """R-H3, against the dossier's literal length and digest."""
+    assert len(R_H3) == 60
+    assert sha(R_H3) == "795b56c3b951d80f6ffa8cad2e652063496a078c992da7bf8596567d501032f2"
+    parsed = parse_request(R_H3, streaming=True)
+    assert isinstance(parsed, ParsedRequest)
+    assert parsed.forwarded is R_H3 and parsed.transformed is False
+    assert max(1, len(parsed.forwarded) // 4) == 15
+    assert parsed.label is None and parsed.label_invalid is None
+
+
+def test_the_correlation_label_is_stripped_and_the_body_re_encoded():
+    """R-H4, against the dossier's literal forwarded bytes and digest."""
+    assert len(R_H4) == 65
+    assert sha(R_H4).startswith("7ec0d4bb") and sha(R_H4).endswith("a7af2")
+    parsed = parse_request(R_H4, streaming=True)
+    assert parsed.forwarded == R_H4_FORWARDED and len(parsed.forwarded) == 30
+    assert sha(parsed.forwarded) == "0d1a07f04e6f1fe940b9b125fa8bc66405291d62e4099a57eaa8eaeded0b3212"
+    assert max(1, len(parsed.forwarded) // 4) == 7
+    assert parsed.label == "0f1e:7:1"
+    assert "x_chassis_correlation" not in parsed.recorded
+
+
+def test_an_invalid_label_is_described_and_never_kept():
+    """R-H5: 200 characters, and a number. Both stripped; neither recorded."""
+    long_label = "a" * 200
+    body = json.dumps({"x_chassis_correlation": long_label, "messages": []}).encode()
+    parsed = parse_request(body, streaming=True)
+    assert parsed.label is None and parsed.label_invalid == {"type": "str", "bytes": 200}
+    assert long_label.encode() not in parsed.forwarded
+    parsed = parse_request(b'{"x_chassis_correlation":42,"messages":[]}', streaming=True)
+    assert parsed.label_invalid == {"type": "int", "bytes": 2}
+    assert parsed.forwarded == b'{"messages":[]}'
+    for bad in ("", "has space", "semi;colon", "é", "\ud800", "a" * 129):
+        body = json.dumps({"x_chassis_correlation": bad}).encode()
+        parsed = parse_request(body, streaming=True)
+        assert parsed.label is None and parsed.label_invalid["type"] == "str", bad
+    body = json.dumps({"x_chassis_correlation": "a" * 128}).encode()
+    assert parse_request(body, streaming=True).label == "a" * 128
+
+
+def test_a_non_finite_number_is_refused_with_or_without_a_transformation():
+    """R-H6. With the stream strip, the old code re-encoded 1e400 as `Infinity`."""
+    for body in (
+        b'{"messages":[],"t":1e400}',
+        b'{"messages":[],"t":-1e400}',
+        b'{"messages":[],"t":NaN}',
+        b'{"messages":[],"t":Infinity}',
+        b'{"messages":[],"t":[-Infinity]}',
+        b'{"messages":[],"stream":true,"t":1e400}',
+    ):
+        for streaming in (True, False):
+            refusal = parse_request(body, streaming=streaming)
+            assert isinstance(refusal, RequestRefusal), body
+            assert refusal.code == "nonfinite_number" and refusal.status == 400, body
+
+
+def test_a_duplicate_key_is_forwarded_untouched_or_refused_if_it_would_be_re_encoded():
+    """R-H7, at the top level and nested."""
+    body = b'{"a":1,"a":2,"messages":[]}'
+    parsed = parse_request(body, streaming=True)
+    assert parsed.forwarded is body and parsed.duplicate_keys is True
+    assert parsed.recorded["a"] == 2
+    labelled = b'{"a":1,"a":2,"messages":[],"x_chassis_correlation":"l"}'
+    assert parse_request(labelled, streaming=True).code == "duplicate_keys"
+    nested = b'{"messages":[{"k":1,"k":2}],"x_chassis_correlation":"l"}'
+    assert parse_request(nested, streaming=True).code == "duplicate_keys"
+    streamed = b'{"messages":[{"k":1,"k":2}],"stream":true}'
+    assert parse_request(streamed, streaming=False).code == "duplicate_keys"
+    assert parse_request(streamed, streaming=True).forwarded is streamed
+
+
+def test_streaming_off_strips_the_stream_keys_whenever_the_stream_key_is_present():
+    for value in ("true", "false", "null"):
+        body = ('{"messages":[],"stream":%s,"stream_options":{"include_usage":true}}' % value).encode()
+        parsed = parse_request(body, streaming=False)
+        assert parsed.forwarded == b'{"messages":[]}' and parsed.transformed, value
+        assert "stream" not in parsed.recorded and "stream_options" not in parsed.recorded
+    body = b'{"messages":[],"stream_options":{}}'
+    assert parse_request(body, streaming=False).forwarded is body, "no stream key, no strip"
+    body = b'{"messages":[],"stream":true}'
+    assert parse_request(body, streaming=True).forwarded is body
+
+
+def test_a_re_encoded_body_is_ascii_and_keeps_every_character():
+    content = "é€\U0001f600\u0000 "
+    body = json.dumps(
+        {"messages": [{"content": content}], "x_chassis_correlation": "l", "lone": "\ud800"}
+    ).encode()
+    parsed = parse_request(body, streaming=True)
+    parsed.forwarded.decode("ascii")
+    assert json.loads(parsed.forwarded) == {"messages": [{"content": content}], "lone": "\ud800"}
+
+
+def test_the_parser_is_total_over_hostile_bytes():
+    """Every input ends in a parse or a fixed refusal; none raises, none echoes the parser."""
+    cases = {
+        b"": "body_not_json",
+        b"\xff\xfe": "body_not_utf8",
+        b'{"a":"\xed\xa0\x80"}': "body_not_utf8",  # an encoded surrogate is not UTF-8
+        b"[]": "body_not_object",
+        b"null": "body_not_object",
+        b"1": "body_not_object",
+        b'"x"': "body_not_object",
+        b"{": "body_not_json",
+        b'{"a":1}{"b":2}': "body_not_json",
+        b"[" * 100_000 + b"]" * 100_000: "unsupported_json",
+        b'{"n":' + b"9" * 5000 + b"}": "unsupported_json",
+    }
+    for body, code in cases.items():
+        result = parse_request(body, streaming=False)
+        assert isinstance(result, RequestRefusal) and result.code == code, body[:20]
+        assert "line" not in result.message and "column" not in result.message
+
+
+def test_a_label_reaches_neither_the_upstream_nor_the_transcript(make_rig):
+    """R-H4 end to end: the fake upstream saw the 30 bytes; only the open event names the label."""
+    rig = make_rig()
+    status, _headers, _payload = rig.post(R_H4)
+    assert status == 200
+    (request,) = rig.upstream.requests
+    assert request["body"] == R_H4_FORWARDED
+    (opened,) = [e for e in rig.events() if e["event"] == "open"]
+    assert opened["client_label"] == "0f1e:7:1" and opened["transformed"] is True
+    assert opened["estimate"] == 7 and opened["bytes_forwarded"] == 30
+    rig.closes()
+    (turn,) = rig.transcript()
+    assert "x_chassis_correlation" not in turn["request"]
+    assert rig.raw_record().count("0f1e:7:1") == 1, "the label is in the open event only"
+
+
+def test_a_repeated_label_is_a_hint_and_the_hint_memory_is_bounded(make_rig, monkeypatch):
+    rig = make_rig(rq=10, tk=1000, g=1000)
+    monkeypatch.setattr(recorder_module, "MAX_LABEL_LRU", 2)
+    for label in ("l1", "l1", "l2", "l3", "l1"):
+        body = json.dumps({"messages": [], "x_chassis_correlation": label}).encode()
+        assert rig.post(body)[0] == 200
+    opens = [e for e in rig.events() if e["event"] == "open"]
+    assert [e.get("label_seen_before", False) for e in opens] == [False, True, False, False, False]
+    assert len(rig.recorder.state._labels) == 2
+    assert len(rig.upstream.requests) == 5, "a repeated label suppresses nothing"
+
+
+def test_an_invalid_label_is_recorded_as_type_and_size_only(make_rig):
+    rig = make_rig()
+    body = json.dumps({"messages": [], "x_chassis_correlation": "SECRET-LABEL value!"}).encode()
+    assert rig.post(body)[0] == 200
+    (opened,) = [e for e in rig.events() if e["event"] == "open"]
+    assert opened["client_label_invalid"] == {"type": "str", "bytes": 19}
+    assert "client_label" not in opened
+    assert b"SECRET-LABEL" not in rig.upstream.requests[0]["body"]
+    rig.closes()
+    assert "SECRET-LABEL" not in rig.raw_record()
+
+
+def test_a_refused_body_writes_one_close_and_no_open_and_reaches_nobody(make_rig):
+    """R-H6 / R-H7 end to end."""
+    rig = make_rig()
+    status, _headers, payload = rig.post(b'{"messages":[],"t":1e400}')
+    assert status == 400 and json.loads(payload)["error"]["code"] == "nonfinite_number"
+    labelled = b'{"a":1,"a":2,"messages":[],"x_chassis_correlation":"l"}'
+    status, _headers, payload = rig.post(labelled)
+    assert status == 400 and json.loads(payload)["error"]["code"] == "duplicate_keys"
+    closes = rig.closes(2)
+    assert sorted(c["outcome"] for c in closes) == ["duplicate_keys", "nonfinite_number"]
+    assert not [e for e in rig.events() if e["event"] == "open"]
+    assert rig.upstream.requests == []
+    assert rig.budget.snapshot(SLUG)["requests_used"] == 0
+
+
+def test_a_duplicate_key_body_without_a_transformation_is_forwarded_verbatim(make_rig):
+    rig = make_rig()
+    body = b'{"a":1,"a":2,"messages":[]}'
+    assert rig.post(body)[0] == 200
+    assert rig.upstream.requests[0]["body"] == body
+    (opened,) = [e for e in rig.events() if e["event"] == "open"]
+    assert opened["duplicate_keys"] is True and opened["transformed"] is False
+
+
+def test_streaming_off_end_to_end_records_what_was_forwarded(make_rig, monkeypatch):
+    rig = make_rig()
+    monkeypatch.setenv("UPSTREAM_STREAMING", "0")
+    assert rig.post(b'{"messages":[],"stream":true,"stream_options":{}}')[0] == 200
+    assert rig.upstream.requests[0]["body"] == b'{"messages":[]}'
+    rig.closes()
+    assert rig.transcript()[0]["request"] == {"messages": []}
+
+
+def raw_exchange(rig: Rig, head: bytes, body: bytes) -> bytes:
+    """Send bytes, half-close, read whatever comes back."""
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(10)
+    sock.connect(str(rig.socket))
+    try:
+        sock.sendall(head + body)
+        sock.shutdown(socket.SHUT_WR)
+        chunks = []
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        sock.close()
+
+
+def test_a_body_shorter_than_its_length_is_refused_and_never_forwarded(make_rig):
+    """R-B1: Content-Length 100, 60 bytes, then end of stream."""
+    rig = make_rig()
+    head = f"POST {ROUTE} HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n".encode()
+    reply = raw_exchange(rig, head, R_H3)
+    assert reply.startswith(b"HTTP/1.1 400") and b"short_body" in reply
+    (close,) = rig.closes()
+    assert close["outcome"] == "short_body"
+    assert not [e for e in rig.events() if e["event"] == "open"]
+    assert rig.upstream.requests == []
+    assert rig.budget.snapshot(SLUG)["live"] == 0
+
+
+def test_two_content_lengths_are_refused(make_rig):
+    """R-B3: the base code used the first value."""
+    rig = make_rig()
+    head = (
+        f"POST {ROUTE} HTTP/1.1\r\nHost: x\r\nContent-Length: 60\r\nContent-Length: 60\r\n\r\n"
+    ).encode()
+    reply = raw_exchange(rig, head, R_H3)
+    assert reply.startswith(b"HTTP/1.1 400") and b"duplicate_content_length" in reply
+    head = f"POST {ROUTE} HTTP/1.1\r\nHost: x\r\nContent-Length: 6_0\r\n\r\n".encode()
+    assert raw_exchange(rig, head, R_H3).startswith(b"HTTP/1.1 400")
+    closes = rig.closes(2)
+    assert sorted(c["outcome"] for c in closes) == ["bad_content_length", "duplicate_content_length"]
+    assert rig.upstream.requests == []
