@@ -1018,3 +1018,420 @@ def test_cli_acknowledgement_and_restart_behind_the_first_request_barrier():
         assert_stripped(world)
     finally:
         world.close()
+
+
+# ===========================================================================
+# SV-023 correction 1: regressions for Astra SV023-01 ... SV023-04
+# (written and run against the reviewed code first; checkpoint-001)
+# ===========================================================================
+def _only_stop_changed(before: dict, after: dict) -> None:
+    changed = {n for n in set(before) | set(after) if before.get(n) != after.get(n)}
+    assert changed <= {"session/STOPPED"}, f"changed: {changed}"
+
+
+def _rewrite_carrier(ctx: Stopped, change) -> None:
+    """Valid JSON with one field changed; the seal (`check`) is left as it was."""
+    path = ctx.session_dir / st.ACKNOWLEDGED
+    value = json.loads(path.read_bytes())
+    change(value)
+    path.write_text(json.dumps(value, sort_keys=True))
+
+
+def _set(key, value):
+    def apply(carrier):
+        if value is _MISSING:
+            carrier.pop(key)
+        else:
+            carrier[key] = value
+    return apply
+
+
+_MISSING = object()
+CARRIER_DAMAGE = {
+    "invalid-json": lambda ctx: (ctx.session_dir / st.ACKNOWLEDGED).write_bytes((ctx.session_dir / st.ACKNOWLEDGED).read_bytes()[:-1]),
+    "not-an-object": lambda ctx: (ctx.session_dir / st.ACKNOWLEDGED).write_text("[]"),
+    "reason-one-character": lambda ctx: _rewrite_carrier(ctx, _set("reason", ctx.reason[:-1] + "X")),
+    "reason-an-old-pair": lambda ctx: _rewrite_carrier(ctx, _set("reason", "fsync_failed_previous_run")),
+    "ack-id-missing": lambda ctx: _rewrite_carrier(ctx, _set("ack_id", _MISSING)),
+    "ack-id-not-a-string": lambda ctx: _rewrite_carrier(ctx, _set("ack_id", 7)),
+    "reason-a-list": lambda ctx: _rewrite_carrier(ctx, _set("reason", [ctx.reason])),
+    "resolution-a-dict": lambda ctx: _rewrite_carrier(ctx, _set("resolution", {"x": 1})),
+    "wrong-check": lambda ctx: _rewrite_carrier(ctx, lambda c: c["evidence"].update(conv_sha256="0" * 64)),
+    "control-changed-conversation": lambda ctx: _unbound_list(ctx),
+}
+
+
+@pytest.mark.parametrize("damage", sorted(CARRIER_DAMAGE))
+@pytest.mark.parametrize("kind", sorted(KINDS))
+def test_sv023_01_a_present_carrier_that_does_not_verify_stops_before_any_change(tmp_path, kind, damage):
+    ctx = stopped(tmp_path, kind)
+    repair(ctx)
+    ctx.acknowledge()
+    CARRIER_DAMAGE[damage](ctx)
+    before = ctx.root.snapshot()
+    opening = ctx.root.start()
+    assert opening.session is None and opening.stop == "acknowledgement_unverified", opening
+    _only_stop_changed(before, ctx.root.snapshot())
+    assert receipts(ctx.root) == [] and effects(ctx.root) == ctx.effects
+    assert ctx.root.start().classification == "A0"
+
+
+@pytest.mark.parametrize("damage", ["invalid-json", "unknown-pair", "a-witnessed-envelope", "tail-hash-missing"])
+def test_sv023_01_a_damaged_old_pair_carrier_also_fails_closed(tmp_path, damage):
+    root = Root(tmp_path)
+    establish(root).close()
+    (root.session_dir / st.FSYNC_FAILED).write_text("{}")
+    root.start()
+    st.acknowledge(root.session_dir, "fsync_failed_previous_run", "continue-from-bound")
+    path = root.session_dir / st.ACKNOWLEDGED
+    carrier = json.loads(path.read_text())
+    if damage == "invalid-json":
+        path.write_bytes(path.read_bytes()[:-1])
+    elif damage == "unknown-pair":
+        path.write_text(json.dumps({**carrier, "resolution": "bootstrap-preserving"}))
+    elif damage == "a-witnessed-envelope":
+        path.write_text(json.dumps({**carrier, "witness": {}, "evidence": {}, "check": "0" * 64}))
+    else:
+        path.write_text(json.dumps({**carrier, "reason": "ledger_tail_ambiguous", "resolution": "continue-conservative"}))
+    before = root.snapshot()
+    opening = root.start()
+    assert opening.stop == "acknowledgement_unverified", opening
+    _only_stop_changed(before, root.snapshot())
+    assert root.types().count("RECOVERY_ACK") == 0
+
+
+def test_sv023_01_control_a_valid_old_pair_carrier_is_still_consumed(tmp_path):
+    root = Root(tmp_path)
+    establish(root).close()
+    (root.session_dir / st.FSYNC_FAILED).write_text("{}")
+    root.start()
+    st.acknowledge(root.session_dir, "fsync_failed_previous_run", "continue-from-bound")
+    assert root.start().classification == "A9" and root.types().count("RECOVERY_ACK") == 1
+
+
+def _fail_once(ops: AckOps, predicate) -> list:
+    hits = []
+
+    def fail(call, path, frame):
+        if not hits and predicate(call, path, frame):
+            hits.append((call, path))
+            return OSError(5, "injected EIO")
+        return None
+
+    ops.fail_when = fail
+    return hits
+
+
+@pytest.mark.parametrize("how", ["failed-first-fence", "independent-marker"])
+@pytest.mark.parametrize("kind", sorted(KINDS))
+def test_sv023_02_a_later_acknowledgement_never_replaces_an_unfinished_carrier(tmp_path, kind, how):
+    ctx = stopped(tmp_path, kind)
+    repair(ctx)
+    carrier = ctx.acknowledge()
+    if how == "failed-first-fence":
+        ops = AckOps()
+        hits = _fail_once(ops, lambda call, path, frame: call == "sync_dir")
+        ops.armed = True
+        with pytest.raises(cp.PersistenceFailure):
+            ctx.root.start(ops=ops)
+        assert hits and receipts(ctx.root) == [], "a real persistence failure before the first receipt"
+    else:
+        (ctx.session_dir / st.FSYNC_FAILED).write_text("{}")
+    assert (ctx.session_dir / st.FSYNC_FAILED).exists()
+    assert ctx.root.start().stop == "fsync_failed_previous_run"
+    before = ctx.root.snapshot()
+    with pytest.raises(cp.LedgerError, match="pending"):
+        st.acknowledge(ctx.session_dir, "fsync_failed_previous_run", "continue-from-bound")
+    assert ctx.root.snapshot() == before, "the refusal changed the store"
+    assert _carrier(ctx) == carrier and (ctx.session_dir / st.FSYNC_FAILED).exists() and ctx.root.stopped()
+    assert ctx.root.start().classification == "A0" and receipts(ctx.root) == []
+
+
+def test_sv023_02_control_an_old_pair_retry_of_the_same_stop_is_still_supported(tmp_path):
+    root = Root(tmp_path)
+    establish(root).close()
+    (root.session_dir / st.FSYNC_FAILED).write_text("{}")
+    root.start()
+    ops = AckOps()
+    ops.crash_when = lambda call, path, frame: call == "unlink" and path.endswith(st.STOPPED)
+    ops.armed = True
+    with pytest.raises(Crash):  # after the carrier and FSYNC_FAILED's removal, before STOPPED's
+        st.acknowledge(root.session_dir, "fsync_failed_previous_run", "continue-from-bound", ops=ops)
+    assert (root.session_dir / st.ACKNOWLEDGED).exists() and not (root.session_dir / st.FSYNC_FAILED).exists()
+    st.acknowledge(root.session_dir, "fsync_failed_previous_run", "continue-from-bound")
+    assert root.start().classification == "A9" and root.types().count("RECOVERY_ACK") == 1
+
+
+# -- SV023-03: this transaction's own torn frame, through every cleanup combination --
+def torn_ready(path: Path, torn: str):
+    """An acknowledged A14 stop whose consuming start finds its own torn receipt or torn closure frame."""
+    ctx = stopped(path, "a14")
+    repair(ctx)
+    ctx.acknowledge()
+    receipt, unrun = _own_frames(ctx)
+    fragment = receipt[:70] if torn == "receipt" else unrun[:70]
+    with open(ctx.root.segment(), "ab") as handle:
+        handle.write(fragment if torn == "receipt" else receipt + fragment)
+    return ctx, fragment
+
+
+def assert_torn_resolved(ctx: Stopped, fragment: bytes, label: str) -> None:
+    torn = [r.payload for r in ctx.root.records() if r.type_name == "RECOVERY" and r.payload["kind"] == "torn_incomplete"]
+    digest = __import__("hashlib").sha256(fragment).hexdigest()
+    assert len(torn) == 1 and torn[0]["detail"]["tail_sha256"] == digest and torn[0]["detail"]["bytes"] == len(fragment), (
+        f"{label}: {torn}"
+    )
+    copies = [n for n in ctx.root.corrupt() if n.startswith("ledger-") and digest[:16] in n]
+    assert len(copies) == 1 and (ctx.session_dir / "corrupt" / copies[0]).read_bytes() == fragment, f"{label}: quarantine"
+
+
+def torn_probe(path: Path, torn: str):
+    ctx, _fragment = torn_ready(path, torn)
+    ops = AckOps()
+    ops.armed = True
+    opening = ctx.root.start(ops=ops)
+    opening.session.close()
+    return ops.log
+
+
+@pytest.mark.parametrize("loss", ["process-death", "host-loss"])
+@pytest.mark.parametrize("torn", ["receipt", "closure"])
+def test_sv023_03_every_cut_after_an_own_torn_frame_converges(tmp_path, torn, loss):
+    log = torn_probe(tmp_path / "probe", torn)
+    for cut in range(len(log)):
+        label = f"cut {cut} before {log[cut]} ({torn}, {loss})"
+        ctx, fragment = torn_ready(tmp_path / f"cut-{cut}", torn)
+        ops = AckOps()
+        ops.crash_at = cut
+        ops.armed = True
+        with pytest.raises(Crash):
+            ctx.root.start(ops=ops)
+        ops.abandon()
+        if loss == "host-loss":
+            host_loss(ops)
+        assert ctx.root.stopped() is None, f"{label}: no new operator choice is ever needed"
+        try:
+            # Interrupt the restart once more at the same position of its own log
+            # (carried watermarks; host loss again), then two further starts.
+            second = AckOps(ops)
+            second.crash_at = cut
+            second.armed = True
+            try:
+                ctx.root.start(ops=second).session.close()
+            except Crash:
+                second.abandon()
+                if loss == "host-loss":
+                    host_loss(second)
+            assert ctx.root.stopped() is None, "no new operator choice is ever needed"
+            opening = converge(ctx, second)
+            assert_resumed(ctx, opening)
+            assert_torn_resolved(ctx, fragment, label)
+        except (AssertionError, cp.LedgerError) as error:
+            raise AssertionError(f"{label}: {error}") from error
+
+
+def _cut_torn(tmp_path, predicate, torn: str = "receipt"):
+    ctx, fragment = torn_ready(tmp_path, torn)
+    ops = AckOps()
+    ops.crash_when = predicate
+    ops.armed = True
+    with pytest.raises(Crash):
+        ctx.root.start(ops=ops)
+    ops.abandon()
+    return ctx, fragment
+
+
+def _second_removal(call, path, frame) -> bool:
+    """Before whichever of RECOVERING's and ACKNOWLEDGED's removals comes second."""
+    if call != "unlink" or not path.endswith((st.RECOVERING, st.ACKNOWLEDGED)):
+        return False
+    other = st.ACKNOWLEDGED if path.endswith(st.RECOVERING) else st.RECOVERING
+    return not (Path(path).parent / other).exists()
+
+
+@pytest.mark.parametrize("torn", ["receipt", "closure"])
+def test_sv023_03_the_reviewed_window_between_the_two_removals(tmp_path, torn):
+    """The review's trace: one of the two removals done, the other not, then restart."""
+    ctx, fragment = _cut_torn(tmp_path, _second_removal, torn)
+    opening = ctx.root.start()
+    assert opening.stop is None, opening
+    opening.session.close()
+    assert_resumed(ctx, ctx.root.start())
+    assert_torn_resolved(ctx, fragment, "window")
+
+
+@pytest.mark.parametrize("torn", ["receipt", "closure"])
+def test_sv023_03_the_torn_recovery_is_ordered_and_its_intent_carries_the_context(tmp_path, torn, monkeypatch):
+    ctx, _fragment = torn_ready(tmp_path / "run", torn)
+    receipt = st.receipt_payload(_carrier(ctx))
+    seen = {}
+    real = cp.write_bytes_durable
+
+    def keep(path, data, **kwargs):
+        if Path(path).name == st.RECOVERING:
+            seen["intent"] = json.loads(data)
+        return real(path, data, **kwargs)
+
+    monkeypatch.setattr(cp, "write_bytes_durable", keep)
+    ops = AckOps()
+    ops.armed = True
+    ctx.root.start(ops=ops).session.close()
+    witnessed = {"ack_id": receipt["ack_id"], "receipt": receipt, "after_seq": ctx.witness["ledger"]["last_seq"]}
+    assert seen["intent"]["witnessed"] == witnessed, "the intent carries the transaction's context, sealed"
+    calls = [(call, name) for call, name, _frame in ops.log]
+    intent, carrier = calls.index(("unlink", st.RECOVERING)), calls.index(("unlink", st.ACKNOWLEDGED))
+    sync = max(i for i, c in enumerate(calls[:carrier]) if c == ("fsync", "000000.svl"))
+    assert sync < carrier < intent, "receipt synced, then the carrier, then the intent"
+    assert calls[carrier + 1] == ("sync_dir", "session") == calls[intent + 1]
+
+
+def test_sv023_03_negative_control_an_intent_without_the_context_strands_the_recovery(tmp_path, monkeypatch):
+    real = st._sealed_intent
+
+    def without_context(body):
+        return real({key: value for key, value in body.items() if key != "witnessed"})
+
+    monkeypatch.setattr(st, "_sealed_intent", without_context)
+    ctx, _fragment = _cut_torn(tmp_path, _second_removal)
+    assert not (ctx.session_dir / st.ACKNOWLEDGED).exists() and (ctx.session_dir / st.RECOVERING).exists()
+    opening = ctx.root.start()
+    assert opening.stop is not None, "without the context the retired carrier's core is re-derived without its receipt"
+
+
+def test_sv023_04_a_pending_tc4_carrier_whose_tail_is_gone_grants_nothing(tmp_path):
+    root = Root(tmp_path)
+    establish(root).close()
+    end = root.segment().stat().st_size
+    with open(root.segment(), "ab") as handle:
+        handle.write(bytes(300))
+    assert root.start().stop == "ledger_tail_ambiguous"
+    st.acknowledge(root.session_dir, "ledger_tail_ambiguous", "continue-conservative")
+    os.truncate(root.segment(), end)  # the acknowledged bytes are no longer the ledger's (simulated)
+    before = root.snapshot()
+    opening = root.start()
+    assert opening.stop == "acknowledgement_unverified", opening
+    _only_stop_changed(before, root.snapshot())
+    assert root.types().count("RECOVERY_ACK") == 0, "no receipt bound to a tail that is not there"
+
+
+@pytest.mark.parametrize("change", ["recovery-record", "quarantine-copy", "extra-record-after-retirement"])
+def test_sv023_03_a_changed_recovery_record_or_quarantine_still_fails_closed(tmp_path, change):
+    if change == "extra-record-after-retirement":
+        ctx, _f = _cut_torn(tmp_path, lambda call, path, frame: call == "unlink" and path.endswith(st.RECOVERING))
+        assert not (ctx.session_dir / st.ACKNOWLEDGED).exists() and (ctx.session_dir / st.RECOVERING).exists()
+        _append(ctx.root, "RECOVERY", {"kind": "torn_incomplete", "detail": {"bytes": 1, "declared_type": None, "tail_sha256": "0" * 64}})
+    else:
+        ctx, fragment = _cut_torn(tmp_path, lambda call, path, frame: call == "write" and frame == "10")
+        assert (ctx.session_dir / st.RECOVERING).exists() and ctx.root.records()[-1].seq == ctx.witness["ledger"]["last_seq"]
+        if change == "recovery-record":
+            _append(ctx.root, "RECOVERY", {"kind": "torn_incomplete", "detail": {"bytes": len(fragment), "declared_type": "10", "tail_sha256": "0" * 64}})
+        else:
+            (copy,) = [p for p in (ctx.session_dir / "corrupt").iterdir() if p.name.startswith("ledger-")]
+            copy.write_bytes(b"x" * len(fragment))
+    before = ctx.root.snapshot()
+    opening = ctx.root.start()
+    assert opening.session is None and opening.stop is not None, opening
+    _only_stop_changed(before, ctx.root.snapshot())
+
+
+# -- SV023-04: every supported pair retires its carrier only over a durable receipt --
+def fsync_pair_ready(path: Path) -> Root:
+    root = Root(path)
+    establish(root).close()
+    (root.session_dir / st.FSYNC_FAILED).write_text("{}")
+    root.start()
+    st.acknowledge(root.session_dir, "fsync_failed_previous_run", "continue-from-bound")
+    return root
+
+
+def old_receipt_unsynced(path: Path):
+    """The fsync pair on a clean bound root: the receipt is the only record (no extra append can hide it)."""
+    root = fsync_pair_ready(path)
+    p1 = AckOps()
+    p1.crash_when = lambda call, path, frame: call == "fsync" and frame == "10"
+    p1.armed = True
+    with pytest.raises(Crash):
+        root.start(ops=p1)
+    p1.abandon()
+    assert root.types().count("RECOVERY_ACK") == 1, "readable after the process death"
+    return root, p1
+
+
+def test_sv023_04_an_old_pair_readable_receipt_is_synced_before_retirement(tmp_path):
+    root, p1 = old_receipt_unsynced(tmp_path)
+    p2 = AckOps(p1)
+    p2.armed = True
+    opening = root.start(ops=p2)
+    assert opening.classification == "A9"
+    opening.session.close()
+    calls = [(call, name) for call, name, _frame in p2.log]
+    retire = calls.index(("unlink", st.ACKNOWLEDGED))
+    assert ("fsync", "000000.svl") in calls[:retire] and ("write", "000000.svl") not in calls, "synced, never rewritten"
+    host_loss(p2)
+    again = root.start()
+    assert again.classification == "A9" and root.types().count("RECOVERY_ACK") == 1
+    assert not (root.session_dir / st.ACKNOWLEDGED).exists()
+
+
+def test_sv023_04_negative_control_without_the_fence_an_old_receipt_is_lost(tmp_path, monkeypatch):
+    root, p1 = old_receipt_unsynced(tmp_path)
+    monkeypatch.setattr(st, "_sync_record", lambda *args: None)
+    p2 = AckOps(p1)
+    root.start(ops=p2).session.close()
+    host_loss(p2)
+    assert root.types().count("RECOVERY_ACK") == 0 and not (root.session_dir / st.ACKNOWLEDGED).exists()
+
+
+def test_sv023_04_a_failed_receipt_sync_keeps_the_carrier_and_takes_the_persistence_boundary(tmp_path):
+    root, p1 = old_receipt_unsynced(tmp_path)
+    p2 = AckOps(p1)
+    hits = _fail_once(p2, lambda call, path, frame: call == "fsync" and path.endswith(".svl"))
+    p2.armed = True
+    with pytest.raises(cp.PersistenceFailure):
+        root.start(ops=p2)
+    assert hits and (root.session_dir / st.ACKNOWLEDGED).exists() and (root.session_dir / st.FSYNC_FAILED).exists()
+    assert root.start().stop == "fsync_failed_previous_run"
+
+
+@pytest.mark.parametrize("loss", ["process-death", "host-loss"])
+@pytest.mark.parametrize("second", ["completes", "dies-before-the-carrier-removal"])
+def test_sv023_04_tc4_keeps_its_conservative_closure_and_identity_across_mixed_crashes(tmp_path, second, loss):
+    root = Root(tmp_path)
+    establish(root).close()
+    reserved = cs.read_identity(root.session_dir, LINEAGE)
+    with open(root.segment(), "ab") as handle:
+        handle.write(bytes(300))
+    assert root.start().stop == "ledger_tail_ambiguous"
+    st.acknowledge(root.session_dir, "ledger_tail_ambiguous", "continue-conservative")
+    p1 = AckOps()
+    p1.crash_when = lambda call, path, frame: call == "fsync" and frame == "0a"  # the last core record, unsynced
+    p1.armed = True
+    with pytest.raises(Crash):
+        root.start(ops=p1)
+    p1.abandon()
+    p2 = AckOps(p1)
+    p2.armed = True
+    if second == "completes":
+        opening = root.start(ops=p2)
+        assert opening.stop is None
+        opening.session.close()
+    else:
+        p2.crash_when = lambda call, path, frame: call == "unlink" and path.endswith(st.ACKNOWLEDGED)
+        with pytest.raises(Crash):
+            root.start(ops=p2)
+        p2.abandon()
+        assert not (root.session_dir / st.RECOVERING).exists(), "the intent was retired before the carrier"
+    assert ("write", "000000.svl") not in [(c, n) for c, n, _f in p2.log], "nothing was appended again"
+    if loss == "host-loss":
+        host_loss(p2)
+    opening = root.start()
+    assert opening.stop is None, opening
+    records = root.records()
+    acks = [r.payload for r in records if r.type_name == "RECOVERY_ACK"]
+    assert len(acks) == 1 and acks[0]["tail_sha256"] == __import__("hashlib").sha256(bytes(300)).hexdigest()
+    spend = [r.payload for r in records if r.type_name == "RECOVERY" and r.payload["kind"] == "possible_duplicate_spend"]
+    assert len(spend) == 1 and spend[0]["detail"]["next"] == {"turn_seq": reserved + 1, "attempt": 1}
+    notices = [r for r in records if r.type_name == "MSG_APPEND" and r.payload.get("kind") == "notice"]
+    assert len(notices) == 1 and "tools may have run" in notices[0].payload["text"]
+    assert opening.session.next_label() == f"{LINEAGE}:{reserved + 1}:1"
+    assert not (root.session_dir / st.ACKNOWLEDGED).exists() and not (root.session_dir / st.RECOVERING).exists()

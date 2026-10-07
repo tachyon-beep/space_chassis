@@ -248,6 +248,11 @@ def acknowledge(session_dir: Path, reason: str, resolution: str, *, ops: cp.Dura
     ack = cp.acknowledge_stop(session_dir, reason, resolution, ops=ops)
     stopped = ops.read(str(session_dir / STOPPED), cp.MAX_MARKER_READ)
     ack["ack_id"] = sha256(stopped + f"\n{reason}\n{resolution}".encode())[:32]
+    # SV023-02: an unfinished carrier is never replaced. Only this same
+    # acknowledgement (the same stop, pair and binding) may be written again.
+    held_kind, held, _problem = read_carrier(session_dir, ops)
+    if held_kind != "absent" and not (held_kind == "old" and held == ack):
+        _refuse("another acknowledgement is pending and is never replaced; it keeps its transaction")
     cp.write_bytes_durable(session_dir / ACKNOWLEDGED, json.dumps(ack, sort_keys=True).encode(), ops=ops)
     if reason == "fsync_failed_previous_run":
         try:
@@ -260,13 +265,40 @@ def acknowledge(session_dir: Path, reason: str, resolution: str, *, ops: cp.Dura
     return ack
 
 
-def _read_ack(session_dir: Path, ops) -> dict | None:
-    status, ack = _read_json_object(ops, session_dir / ACKNOWLEDGED, cp.MAX_MARKER_READ)
+OLD_CARRIER_KEYS = frozenset({"reason", "resolution", "ack_id"})
+WITNESSED_ENVELOPE_KEYS = frozenset({"witness", "evidence", "check"})
+
+
+def read_carrier(session_dir: Path, ops) -> tuple[str, dict | None, str | None]:
+    """ACKNOWLEDGED classified: ("absent" | "old" | "witnessed" | "invalid", carrier, problem).
+
+    SV023-01: absence is the only state that grants nothing and stops
+    nothing. A present file that cannot be read, or whose types, pair or
+    schema are not exactly a carrier this runtime writes, is "invalid": the
+    start stops before any change. Types are checked before the pair is
+    looked up. An old-pair carrier has exactly the old schema; a witnessed
+    envelope is never reinterpreted as one.
+    """
+    status, carrier = _read_json_object(ops, Path(session_dir) / ACKNOWLEDGED, cp.MAX_MARKER_READ)
+    if status == "absent":
+        return "absent", None, None
     if status != "ok":
-        return None
-    if (ack.get("reason"), ack.get("resolution")) not in IMPLEMENTED_RESOLUTIONS or not isinstance(ack.get("ack_id"), str):
-        return None
-    return ack
+        return "invalid", None, "unreadable"
+    reason, resolution = carrier.get("reason"), carrier.get("resolution")
+    if not (isinstance(reason, str) and isinstance(resolution, str)) or (reason, resolution) not in IMPLEMENTED_RESOLUTIONS:
+        return "invalid", None, "pair"
+    if (reason, resolution) in WITNESSED_RESOLUTIONS:
+        problem = carrier_problem(carrier)
+        return ("invalid", None, problem) if problem else ("witnessed", carrier, None)
+    keys = set(carrier)
+    tail = reason == "ledger_tail_ambiguous"
+    if keys & WITNESSED_ENVELOPE_KEYS or keys != (OLD_CARRIER_KEYS | ({"tail_sha256"} if tail else set())):
+        return "invalid", None, "keys"
+    if not (isinstance(carrier["ack_id"], str) and HEX32.fullmatch(carrier["ack_id"])):
+        return "invalid", None, "ack_id"
+    if tail and not rp.is_hex64(carrier["tail_sha256"]):
+        return "invalid", None, "tail_sha256"
+    return "old", carrier, None
 
 
 def _remove(session_dir: Path, name: str, ops) -> None:
@@ -527,7 +559,11 @@ def witnessed_evidence(session_dir: Path, witness: dict, ops=None, *, receipt: d
             _refuse(f"{RECOVERING} is present and is resolved first")
         last_seq = intent.get("last_seq") if intent_status == "ok" else None
         found = next((r for r in scan.records if r.seq == last_seq), None) if rp.counter(last_seq, minimum=1) else None
-        if found is None or found.seq < ledger["last_seq"] or found.chain != intent.get("chain"):
+        # SV023-03: only an intent this transaction wrote, naming this receipt
+        # and this witnessed end (the intent itself is validated in full later).
+        context = intent.get("witnessed") if intent_status == "ok" else None
+        own_intent = context == {"ack_id": receipt["ack_id"], "receipt": receipt, "after_seq": ledger["last_seq"]}
+        if found is None or found.seq < ledger["last_seq"] or found.chain != intent.get("chain") or not own_intent:
             _refuse("a recovery is open that is not this acknowledgement's own")
         intent_seq = found.seq
     own = [record for record in after if intent_seq is None or record.seq <= intent_seq]
@@ -635,8 +671,8 @@ def _acknowledge_witnessed(session_dir: Path, reason: str, resolution: str, ops)
     than replaced.
     """
     status, stopped = _read(ops, session_dir / STOPPED, cp.MAX_MARKER_READ)
-    held_status, held = _read_json_object(ops, session_dir / ACKNOWLEDGED, cp.MAX_MARKER_READ)
-    held_ok = held_status == "ok" and carrier_problem(held) is None
+    held_kind, held, _problem = read_carrier(session_dir, ops)
+    held_ok = held_kind == "witnessed"
     if status == "absent" and held_ok and (held["reason"], held["resolution"]) == (reason, resolution):
         _fence_session(session_dir, ops)
         return held
@@ -647,11 +683,11 @@ def _acknowledge_witnessed(session_dir: Path, reason: str, resolution: str, ops)
     if problem:
         _refuse(f"the {reason} stop carries no valid witness ({problem}); a stop without one is not eligible")
     ack_id = sha256(stopped + f"\n{reason}\n{resolution}".encode())[:32]
-    if held_status != "absent" and not (held_ok and held["ack_id"] == ack_id):
-        _refuse("another acknowledgement is pending")
+    if held_kind != "absent" and not (held_ok and held["ack_id"] == ack_id):
+        _refuse("another acknowledgement is pending and is never replaced; it keeps its transaction")
     verified = witnessed_evidence(session_dir, witness, ops)
     carrier = _sealed({"reason": reason, "resolution": resolution, "ack_id": ack_id, "witness": witness, "evidence": verified.evidence})
-    if held_status != "absent" and held != carrier:
+    if held_kind != "absent" and held != carrier:
         _refuse("the pending acknowledgement of this stop was made on other evidence")
     cp.write_bytes_durable(session_dir / ACKNOWLEDGED, json.dumps(carrier, sort_keys=True).encode(), ops=ops)
     cp.clear_stop(session_dir, ops=ops)
@@ -724,10 +760,14 @@ class _Context:
             raise StartupStop("diagnostic_stop", None, "A0", write=False)
         if (session_dir / FSYNC_FAILED).exists():
             raise StartupStop("fsync_failed_previous_run", None, "A1")
-        self.ack = _read_ack(session_dir, self.ops)
+        carrier_kind, self.ack, problem = read_carrier(session_dir, self.ops)
+        if carrier_kind == "invalid":
+            # SV023-01: a present carrier that cannot be classified grants nothing
+            # and is not absence: stop before any change, its bytes kept.
+            raise StartupStop("acknowledgement_unverified", {"problem": f"carrier: {problem}"}, "ACK")
         self.witnessed = None
         self.clean_end = None
-        if self.ack is not None and (self.ack["reason"], self.ack["resolution"]) in WITNESSED_RESOLUTIONS:
+        if carrier_kind == "witnessed":
             # SV-023: verified before this start changes anything at all.
             self.witnessed = self._verify_carrier(self.ack)
         meta_status, meta = _read_json_object(self.ops, session_dir / "run.json")
@@ -847,7 +887,7 @@ class _Context:
             session._commit("LEGACY_IMPORT", lambda blob: {**payload, "blob": blob}, blob=data, replay_bytes=len(data))
         else:
             session._commit("LEGACY_IMPORT", payload)
-        self._consume_ack(session, ())
+        self._consume_ack(session)
         classification = "A5" if conv.status == "ok" else "A4"
         return Opening(classification, session, had_memory=bool(messages) or note_text is not None)
 
@@ -892,9 +932,26 @@ class _Context:
             scan0 = cp.LedgerScan(p0, p0[-1].seq, p0[-1].chain, original_tail, intent["segment"], intent["offset"])
         else:
             p0, extra, scan0 = scan.records, (), scan
+        # SV023-03: the witnessed transaction's receipt and end, from its carrier
+        # or, once the carrier is retired, from the intent that carries them.
+        context = intent.get("witnessed") if intent is not None else None
+        if self.witnessed is not None:
+            receipt, witness_end = self.witnessed.receipt, self.witnessed.carrier["witness"]["ledger"]["last_seq"]
+        elif context is not None:
+            receipt, witness_end = context["receipt"], context["after_seq"]
+        else:
+            receipt = witness_end = None
         # What IDENTITY is carried forward as: never below either checked value.
         high_water = max((v for v in (live, identity) if v is not None), default=None)
         tail_ack = ack if ack and ack.get("reason") == "ledger_tail_ambiguous" else None
+        if tail_ack is not None and intent is None and not scan0.tail:
+            # SV023-04: the acknowledged tail is gone. Only this same transaction
+            # can have set it aside, and then its receipt -- bound to that tail
+            # -- is recorded and only the carrier is left to retire. Otherwise
+            # the permission names bytes that are not here: it grants nothing.
+            if not any(r.type_name == "RECOVERY_ACK" and r.payload == _wire(tail_ack) for r in p0):
+                raise StartupStop("acknowledgement_unverified", {"ack_id": tail_ack["ack_id"], "problem": "the acknowledged tail is not in the ledger"}, "ACK")
+            tail_ack = None
         tail = cp.classify_tail(scan0)
         plan = cp.plan_recovery(scan0, tail, read_blob=read_blob, acknowledgement=tail_ack)
         if plan.action == "stop":
@@ -938,18 +995,23 @@ class _Context:
             # The pending collection completes first: GC_DONE immediately
             # follows its intent, before any record (or blob) of this start.
             core = [("GC_DONE", {"intent_seq": collecting.seq}), *core]
-        if self.witnessed is not None and not self.witnessed.written:
-            # SV-023: the receipt is this start's first record, before any closure.
-            core = [("RECOVERY_ACK", self.witnessed.receipt), *core]
+        if receipt is not None and not any(r.seq > witness_end and _same_record(r, ("RECOVERY_ACK", receipt)) for r in p0):
+            # SV-023: the receipt is this transaction's first record, before any closure.
+            core = [("RECOVERY_ACK", receipt), *core]
 
         # Set the tail aside only under a durable intent (see the module docstring).
         if scan0.tail and intent is None:
-            intent = _sealed_intent({
+            body = {
                 "lineage_id": lineage, "last_seq": scan0.last_seq, "chain": scan0.last_chain,
                 "segment": scan0.tail_segment, "offset": scan0.tail_offset,
                 "tail_sha256": sha256(scan0.tail), "tail_bytes": len(scan0.tail), "ack": tail_ack,
                 "identity_reserved": identity,
-            })
+            }
+            if receipt is not None:
+                # SV023-03: the witnessed context outlives the carrier, sealed with
+                # the rest, so the whole core (receipt first) is re-derived alike.
+                body["witnessed"] = {"ack_id": receipt["ack_id"], "receipt": receipt, "after_seq": witness_end}
+            intent = _sealed_intent(body)
             cp.write_bytes_durable(session_dir / RECOVERING, json.dumps(intent, sort_keys=True).encode(), ops=ops)
         if scan0.tail and scan.records[-1].seq == scan0.last_seq and scan.tail == scan0.tail:
             result = cp.quarantine_tail(session_dir, scan, plan, self.quarantine, ops=ops)
@@ -978,6 +1040,9 @@ class _Context:
                 replay.apply(record)
             except ReplayMismatch as error:
                 raise StartupStop("replay_mismatch", {"seq": record.seq, "error": str(error)[:200]}) from error
+        if receipt is not None and len(extra) > len(core):
+            # SV023-03: a witnessed recovery writes exactly its core; nothing more is its own.
+            raise StartupStop("recovery_intent_mismatch", {"seq": extra[len(core)].seq}, "intent")
         if collecting is not None and not extra:
             # The intent's own fixed list, re-run idempotently -- never a fresh
             # scan -- before this start can write a blob. (With `extra`, its
@@ -1003,8 +1068,19 @@ class _Context:
                 session._commit(type_name, payload)
         after_core = extra[len(core):]
         self._finish_case(session, decision, plan, core, after_core)
-        _remove(session_dir, RECOVERING, ops)
-        self._consume_ack(session, now.records)
+        if intent is not None:
+            # Records an earlier start wrote under this intent were read here,
+            # not necessarily synced: durable before the intent can go (SV023-04).
+            for record in {r.segment: r for r in extra}.values():
+                _sync_record(session_dir, record, ops)
+        if receipt is not None:
+            # SV023-03: the carrier first, then the intent. A surviving intent
+            # still holds the witnessed context; with neither, all is done.
+            self._consume_ack(session)
+            _remove(session_dir, RECOVERING, ops)
+        else:
+            _remove(session_dir, RECOVERING, ops)
+            self._consume_ack(session)
         # SV021-01: the reservation now covers every turn this ledger used and
         # the next one, durably, before the duty can cause any request.
         used = [r.payload["turn_seq"] for r in now.records if r.type_name == "REQUEST_SENT"]
@@ -1231,33 +1307,37 @@ class _Context:
             except cp.PersistenceFailure as error:
                 session._fail(error)
 
-    def _consume_ack(self, session: Session, records) -> None:
-        """Transcribe a non-tail acknowledgement as RECOVERY_ACK once; then remove ACKNOWLEDGED."""
+    def _consume_ack(self, session: Session) -> None:
+        """Transcribe the acknowledgement as RECOVERY_ACK once, make that receipt durable, then remove ACKNOWLEDGED.
+
+        For every implemented pair (SV023-04), the carrier is retired only over
+        exactly one receipt that matches it: reason, resolution and ack_id,
+        plus, for TC4, the tail it was bound to (a witnessed receipt: its
+        stop and evidence). The receipt's own segment is synced first, because
+        it may be an earlier start's append that is readable but was never
+        synced. A failed sync is a persistence failure, and the carrier stays.
+        A TC4 receipt comes with its tail's recovery (`derive_core`); until it
+        exists there is nothing to retire.
+        """
         ack = self.ack
         if ack is None:
             return
-        if self.witnessed is not None:
-            # SV-023: exactly one receipt, made durable here -- it may be an
-            # earlier start's append that is readable but was never synced --
-            # before the carrier, removed last, can no longer re-create it.
-            wanted = _wire(self.witnessed.receipt)
-            ledger = cp.scan_segments(cp.read_segments(self.session_dir / "ledger", ops=self.ops), session.lineage_id).records
-            found = [r for r in ledger if r.type_name == "RECOVERY_ACK" and r.payload == wanted]
-            if len(found) != 1:
-                raise SessionInvariant(f"the acknowledgement receipt is recorded {len(found)} times, not once")
-            _sync_record(self.session_dir, found[0], self.ops)
-            _remove(self.session_dir, ACKNOWLEDGED, self.ops)
+        wanted = _wire(self.witnessed.receipt if self.witnessed is not None else ack)
+
+        def matching() -> list:
+            ledger = cp.scan_segments(cp.read_segments(self.session_dir / "ledger", ops=self.ops), session.lineage_id)
+            return [r for r in ledger.records if r.type_name == "RECOVERY_ACK" and r.payload == wanted]
+
+        found = matching()
+        if not found and self.witnessed is None and ack["reason"] != "ledger_tail_ambiguous":
+            session._commit("RECOVERY_ACK", wanted)
+            found = matching()
+        if not found:
             return
-        done = any(r.type_name == "RECOVERY_ACK" and r.payload.get("ack_id") == ack["ack_id"] for r in records)
-        done = done or any(
-            r.type_name == "RECOVERY_ACK" and r.payload.get("ack_id") == ack["ack_id"]
-            for r in cp.scan_segments(cp.read_segments(self.session_dir / "ledger", ops=self.ops), session.lineage_id).records
-        )
-        if not done and ack["reason"] != "ledger_tail_ambiguous":
-            session._commit("RECOVERY_ACK", {"reason": ack["reason"], "resolution": ack["resolution"], "ack_id": ack["ack_id"]})
-            done = True
-        if done:
-            _remove(self.session_dir, ACKNOWLEDGED, self.ops)
+        if len(found) != 1:
+            raise SessionInvariant(f"the acknowledgement receipt is recorded {len(found)} times, not once")
+        _sync_record(self.session_dir, found[0], self.ops)
+        _remove(self.session_dir, ACKNOWLEDGED, self.ops)
 
 
 @dataclass
@@ -1332,7 +1412,7 @@ def _validated_intent(intent: dict, lineage: str) -> dict:
     def bad(why: str):
         raise StartupStop("recovery_intent_invalid", {"field": why}, "intent")
 
-    if set(intent) != INTENT_KEYS:
+    if set(intent) not in (INTENT_KEYS, INTENT_KEYS | {"witnessed"}):
         bad("keys")
     body = {key: value for key, value in intent.items() if key != "check"}
     if intent["check"] != _intent_check(body):
@@ -1357,7 +1437,37 @@ def _validated_intent(intent: dict, lineage: str) -> dict:
         and ack.get("tail_sha256") == intent["tail_sha256"]
     ):
         bad("ack")
+    if "witnessed" in intent and (ack is not None or witnessed_context_problem(intent["witnessed"], intent["last_seq"])):
+        bad("witnessed")
     return intent
+
+
+RECEIPT_KEYS = frozenset({"reason", "resolution", "ack_id", "stop_id", "evidence_sha256"})
+
+
+def witnessed_context_problem(context, last_seq: int) -> str | None:
+    """Why an intent's `witnessed` context (SV023-03) is not this runtime's, or None.
+
+    It names the witnessed transaction's receipt (exactly `receipt_payload`'s
+    shape), that receipt's ack_id, and the witnessed end the intent's anchor
+    cannot precede.
+    """
+    if not (isinstance(context, dict) and set(context) == {"ack_id", "receipt", "after_seq"}):
+        return "keys"
+    receipt = context["receipt"]
+    if not (isinstance(receipt, dict) and set(receipt) == RECEIPT_KEYS):
+        return "receipt keys"
+    if not all(isinstance(receipt[key], str) for key in RECEIPT_KEYS):
+        return "receipt types"
+    if (receipt["reason"], receipt["resolution"]) not in WITNESSED_RESOLUTIONS:
+        return "pair"
+    if not (HEX32.fullmatch(receipt["ack_id"]) and receipt["ack_id"] == context["ack_id"] and HEX32.fullmatch(receipt["stop_id"])):
+        return "ack_id"
+    if not rp.is_hex64(receipt["evidence_sha256"]):
+        return "evidence_sha256"
+    if not (rp.counter(context["after_seq"], minimum=1) and context["after_seq"] <= last_seq):
+        return "after_seq"
+    return None
 
 
 def _replay(messages, state: SessionState, records, read_blob, *, lenient: bool = False) -> Replay:
