@@ -6,9 +6,11 @@ Branch `sv016/recorder-cleared`. Accepted pre-foundation base `6f6c054f396ccbd30
 |---|---|---|
 | `61833d8a0f73155a0e6cfb4e5e011008c002d0be` | draft corrections in `services/chassis_persistence.py` | with the tests (they assert the corrected behaviour) |
 | `add1627444c1eb1e33a7371734a5cfe711b61752` | `tests/test_chassis_{ledger,recovery,durability}.py` | alone |
-| this docs commit | STATUS, RECEIPT, checkpoint 001 | docs only |
+| `4534cc02ec95b45f06b68d6d660ca0992381166f` | STATUS, RECEIPT, checkpoint 001 | docs only |
+| `8b897931be6986e2da9a299c63060d0925a817f3` | **correction 1** (Astra SV020-01/02/03): module + regressions | alone (tests assert the corrected behaviour) |
+| this docs commit | checkpoint 002, RECEIPT §3a, STATUS | docs only |
 
-Module SHA-256 after correction: `62155833a4b19d5b7f0765d73989a5f4312742a094431196184abb6496588bbe`. **No production code imports it** (repository search: only the three test files and STATUS name it). Chassis startup, `run.json` (no `format`), conversation storage and every live request/tool path are unchanged. `common.write_json_atomic`/`write_text_atomic` and the recorder `RecordStore` are untouched and not repurposed.
+Module SHA-256 after the initial correction: `62155833a4b19d5b7f0765d73989a5f4312742a094431196184abb6496588bbe`. **After correction 1: `48a48ad68e5878ca0137959a0a6d97b04b0ccfea2da6a2f6874d7aaa70cd1868`.** **No production code imports it** (repository search: only the three test files and STATUS name it). Chassis startup, `run.json` (no `format`), conversation storage and every live request/tool path are unchanged. `common.write_json_atomic`/`write_text_atomic` and the recorder `RecordStore` are untouched and not repurposed.
 
 Sources read: SV-020 Astra preflight; SV-015 v2 §1.1–1.4 (full), §4.1, §4.2, §4.9–4.10; v2 independent review V2-06; SV-013 §2.2.2 A0–A15 table, §2.2.3 records and call texts, C-D1/C-D3 rows; SV-015 v2 literal values (ledger entries) and literal generator lines 1–51 (read, not executed); SV-020 literal-source addendum; SV-020 bounded targets.
 
@@ -102,6 +104,21 @@ v2 §4.1 O1-5 states "the 144-byte valid frame + 10 bytes → TC3 → A2". Under
 
 During testing, two of my own expectations (not source oracles) were stricter than written: a valid frame *after* a damaged one is A2 by the probe (v2 §1.3 probes everything outside the first frame's declared extent, before TC3). I corrected the foreign-lineage test and C-D1's body variant to A2, which is SV-013's stated C-D1 outcome.
 
+## 3a. Correction 1 (Astra initial review, `8b89793`)
+
+Full finding → fix → test map with per-node pre-fix outcomes: `checkpoint-002-astra-corrections.md`. In summary:
+
+- **SV020-01 namespace fences.** Assumption, stated as a precondition: `session/` is a durable root, and its own name in its parent is not fenced by this module. Every name below it that this module depends on is fenced by a returned directory fsync in the current process before first dependence, whether the name is new or survived a process death:
+  - `ledger/` in `session/`, and segment names in `ledger/`: once per `LedgerWriter`, before any write, in `create` and in `continue_after` before it returns. A gate therefore cannot run before both fences.
+  - `blobs/` in `session/`: once per `BlobStore`, before the first blob write. Each blob name is then fenced in `blobs/` by `write_bytes_durable`, before the record that names it.
+  - `corrupt/` in `session/`: on every `quarantine_tail`, before the copy. The copy's name is fenced in `corrupt/` before truncation.
+
+  Existence checks (`is_dir`/`exists`) now only decide whether to `mkdir`; they never replace a fence. A fence failure is `PersistenceFailure`, and the dependent effect, blob write or truncation does not happen. The fixtures are ordered injected faults, not power-loss experiments.
+- **SV020-02.** Every acknowledged TC4 plan recommends the HANDOFF.md mirror check (open group, after REQUEST_SENT, unit boundary). Unacknowledged and stale acknowledgements stay stopped with no recommendations and no file change. Comparison and adoption are SV-021.
+- **SV020-03 representation policy.** Explicit refusal before any byte, seq or chain change of any payload whose canonical body would not decode back to the same bytes and a valid payload. For this encoder, that is exactly a string (key or value) containing a high-surrogate code unit immediately followed by a low-surrogate code unit. Lone surrogates (in either order) and genuine non-BMP scalars are accepted and scan. The read side is unchanged: escaped-pair bytes from elsewhere remain invalid and are never normalised. Duplicate-key and NaN rejection are kept.
+
+Counts after correction 1: **114 passed** (ledger 60 = 44 + 16; recovery 28, with assertions strengthened in four tests; durability 26 = 21 + 5).
+
 ## 4. Runs (bounded runner, `--cpu 23`, one command at a time)
 
 `python3 /home/john/Documents/Codex/2026-10-07/task/results/SV-016-bounded-check.py --cpu 23 <targets>`
@@ -129,6 +146,9 @@ Before any run, the C-D1 header variant was switched to the generator's `damage_
 - **K-E2 bounds**: no maximal-shape or 358-record / 25,166,144-byte recovery-bound claim. `MAX_LEDGER_BODY` is enforced before writing. Integer fields named in `COUNTER_FIELDS` are bounded to 12 digits. Other numeric/string fields carry no width proof. Read bounds (`MAX_SEGMENT_READ` 32 MiB, `MAX_BLOB_READ` 16 MiB) and `MAX_CORRUPT_FILES` 64 / `MAX_CORRUPT_BYTES` 64 MiB are local choices [CM], not design values.
 - **Operator controls**: `acknowledge_stop` is a tested capability. No CLI, no real stop acknowledged, no RECOVERY_ACK append or STOPPED removal sequencing in a run. Bootstrap-preserving remains the operator's explicit choice. TC4 next-request numbering at a unit boundary (`last_turn + 1`, attempt 2) is a conservative placeholder pending live state.
 - **Exception identity**: `chassis_persistence.PersistenceFailure` is separate from the chassis's. Unifying them is an activation step.
+- **Global FSYNC_FAILED coverage** (Astra, preserved staging limit): only `LedgerWriter` attempts the v2 §1.4.9 marker itself (including on a namespace-fence failure). `write_bytes_durable`, `install_conversation`, `quarantine_tail`, `write_stop` and a standalone `BlobStore` raise `PersistenceFailure` without attempting it. The session-level error boundary must guarantee the attempt for every relevant sync failure, without recursing on marker failure, before activation.
+- **RECOVERY_ACK-before-clear** ordering is the caller's responsibility at activation. `acknowledge_stop` only prepares permission.
+- **Durable root**: the session directory's own name is a deployment precondition, not fenced here.
 - Out of scope: H/T/Q, pump, notes adoption, policy choices, bootstrap actions, `NOT_INVOKED` admission texts (K-E2's; the plan reports status only).
 
 ## 6. Evidence limits
