@@ -25,6 +25,8 @@ still leaves a record of the turn it asked for.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
+import heapq
 import http.client
 import itertools
 import json
@@ -64,12 +66,13 @@ ROUTE = "/api/v1/chat/completions"
 ROUTE_SUFFIX = "/chat/completions"
 TRANSCRIPTS_DIR = Path(os.environ.get("TRANSCRIPTS_DIR", "/transcripts"))
 SOCKET_DIR = Path(os.environ.get("SOCKET_DIR", "/llm/sock"))
-REQUEST_MAX_BYTES = env_int("REQUEST_MAX_BYTES", 16 * 1024 * 1024)
+# 2 MiB: a full 200,000-token window is about 0.8 MB of JSON, so this is
+# roughly twice that. The memory reservation below is sized from it.
+REQUEST_MAX_BYTES = env_int("REQUEST_MAX_BYTES", 2 * 1024 * 1024)
 # A directory an operator can drop `refuse-<slug>.marker` into to make one
 # agent's socket fail at the front door. It exists so that "the environment is
 # unusable" can be tested as a condition rather than waited for as an accident.
 REFUSE_DIR = Path(os.environ.get("RECORDER_REFUSE_DIR", "/tmp"))
-UPSTREAM_TIMEOUT = env_int("UPSTREAM_TIMEOUT_SECONDS", 600)
 # An upstream reachable over a unix socket instead of the network. This exists
 # for two reasons, and the second is the important one: an endurance run needs
 # a model that costs nothing and answers instantly, and a shim that speaks the
@@ -688,6 +691,601 @@ def parse_request(body: bytes, *, streaming: bool) -> ParsedRequest | RequestRef
     return ParsedRequest(body, forwarded, recorded, True, False, label, label_invalid)
 
 
+# ---------------------------------------------------------------------------
+# Bounds: deadlines, the watchdog, structure and memory (SV-015 v2 sections 2.1-2.2)
+# ---------------------------------------------------------------------------
+# Every deadline is anchored at t0, the monotonic instant the recorder's accept
+# returned for the connection, before any handler thread exists. One request
+# is served per connection (the response says `Connection: close`), so t0 can
+# never be reset by a later request on a kept-alive connection.
+#
+#   E2E_BUDGET   = CLIENT_TIMEOUT_HINT - CLIENT_MARGIN         (600 - 30 = 570)
+#   UPSTREAM_ABS = t0 + E2E_BUDGET - CUSTODY_RESERVE           (t0 + 540)
+#   latest start = UPSTREAM_ABS - MIN_UPSTREAM                 (t0 + 480)
+#
+# Headers must finish by t0 + HEADER_DEADLINE, the body by header completion +
+# BODY_DEADLINE, and both by the latest start. Slot and memory waits share one
+# allowance of actual waiting (INFLIGHT_WAIT_SECONDS); time spent reading the
+# body does not spend it. After the `open` is recorded and before anything is
+# admitted, a request past its latest start is refused 503
+# deadline_insufficient. The upstream phase -- connect, TLS, send, status,
+# headers, body -- ends at UPSTREAM_ABS, however late it began.
+#
+# What this does not bound, stated once: DNS inside a connect (no socket exists
+# yet to shut down), CPU spent pre-scanning and parsing (bounded by size, not
+# time), and filesystem calls (the preflight, the record appends): a stalled
+# disk is reported in `close` (`deadline_overrun`, `custody_s`), not prevented.
+
+
+@dataclass(frozen=True)
+class Timing:
+    """The deadline profile, in seconds. `from_env` is the deployed one."""
+
+    client_timeout: float = 600.0  # RECORDER_TIMEOUT_SECONDS, the chassis client's read timeout
+    client_margin: float = 30.0
+    custody_reserve: float = 30.0
+    min_upstream: float = 60.0
+    header: float = 30.0
+    body: float = 60.0
+    client_write: float = 60.0
+    io_timeout: float = 60.0  # per socket operation, under every phase deadline
+    tick: float = 0.25
+
+    @property
+    def e2e_budget(self) -> float:
+        return self.client_timeout - self.client_margin
+
+    @property
+    def upstream_offset(self) -> float:
+        return self.e2e_budget - self.custody_reserve
+
+    @classmethod
+    def from_env(cls) -> Timing:
+        def seconds(name: str, default: float) -> float:
+            raw = (os.environ.get(name) or "").strip()
+            try:
+                return float(raw) if raw else default
+            except ValueError:
+                return default
+
+        return cls(
+            client_timeout=seconds("RECORDER_TIMEOUT_SECONDS", 600.0),
+            client_margin=seconds("RECORDER_CLIENT_MARGIN_SECONDS", 30.0),
+            custody_reserve=seconds("RECORDER_CUSTODY_RESERVE_SECONDS", 30.0),
+            min_upstream=seconds("RECORDER_MIN_UPSTREAM_SECONDS", 60.0),
+            header=seconds("RECORDER_HEADER_DEADLINE_SECONDS", 30.0),
+            body=seconds("RECORDER_BODY_DEADLINE_SECONDS", 60.0),
+            client_write=seconds("RECORDER_CLIENT_WRITE_DEADLINE_SECONDS", 60.0),
+            io_timeout=seconds("RECORDER_IO_TIMEOUT_SECONDS", 60.0),
+            tick=seconds("RECORDER_WATCHDOG_TICK_SECONDS", 0.25),
+        )
+
+
+def timing_problems(timing: Timing) -> list[str]:
+    """Why a profile cannot keep its promise; empty when it can. Startup refuses on any."""
+    problems = []
+    if min(dataclasses.astuple(timing)) <= 0:
+        problems.append("every timing value must be positive")
+    if timing.e2e_budget + timing.client_margin > timing.client_timeout:
+        problems.append("the end-to-end budget plus the client margin exceeds the client timeout")
+    if timing.upstream_offset < timing.min_upstream + timing.header:
+        problems.append(
+            "the upstream cutoff leaves less than MIN_UPSTREAM after the header deadline; "
+            "raise RECORDER_TIMEOUT_SECONDS on both sides together"
+        )
+    return problems
+
+
+class MonotonicClock:
+    """The clock every deadline decision reads. Tests replace it with a fake."""
+
+    @staticmethod
+    def monotonic() -> float:
+        return time.monotonic()
+
+
+TIMING = Timing.from_env()
+CLOCK = MonotonicClock()
+
+
+def now() -> float:
+    return CLOCK.monotonic()
+
+
+@dataclass(frozen=True)
+class Deadlines:
+    """One request's absolute deadlines, all from its accept instant t0."""
+
+    t0: float
+    timing: Timing
+
+    @property
+    def header_end(self) -> float:
+        return min(self.t0 + self.timing.header, self.latest_start)
+
+    @property
+    def upstream_abs(self) -> float:
+        return self.t0 + self.timing.upstream_offset
+
+    @property
+    def latest_start(self) -> float:
+        return self.upstream_abs - self.timing.min_upstream
+
+    @property
+    def e2e_end(self) -> float:
+        return self.t0 + self.timing.e2e_budget
+
+    def body_end(self, header_done: float) -> float:
+        return min(header_done + self.timing.body, self.latest_start)
+
+
+SHUT_INGRESS = socket.SHUT_RD  # the handler can still write its 408
+SHUT_ALL = socket.SHUT_RDWR
+DIAG_QUEUE = env_int("RECORDER_DIAG_QUEUE", 256)
+
+
+class WatchEntry:
+    """One phase deadline. `owned` until its owner cancels; `pending` until it fires."""
+
+    __slots__ = ("deadline", "seq", "sock", "rid", "phase", "how", "owned", "pending", "fired")
+
+    def __init__(self, deadline, seq, sock, rid, phase, how) -> None:
+        self.deadline = deadline
+        self.seq = seq
+        self.sock = sock
+        self.rid = rid
+        self.phase = phase
+        self.how = how
+        self.owned = True
+        self.pending = True
+        self.fired = False
+
+
+class Watchdog:
+    """One recorder-wide heap of (deadline, socket, rid, phase), and one thread.
+
+    At a deadline it marks the entry fired and shuts its socket down: SHUT_RD
+    for the ingress phases, so the handler can still write its 408, SHUT_RDWR
+    for the upstream and client-write phases. A blocked recv or send then
+    returns and the handler classifies by the `fired` flag, not by error text.
+
+    Ownership: whoever registers a socket cancels its entry before closing
+    that socket. The shutdown happens under this watchdog's own lock, and
+    cancel takes the same lock, so a shutdown can never reach a descriptor
+    number that has been closed and reused by another connection.
+
+    Enforcement touches nothing but this lock and sockets: no file, no
+    record, no Budget. Its diagnostics go into a bounded deque under the same
+    lock (`put_nowait`); a full deque counts `dropped`; a separate writer
+    thread drains it to recorder.jsonl, and a stalled or failing writer delays
+    only the diagnostics. A dropped count is cleared only by the amount a
+    later readable diagnostic actually reported.
+    """
+
+    def __init__(self, *, clock=None, tick: float | None = None, queue_size: int | None = None,
+                 writer=None) -> None:
+        self._clock = clock
+        self._tick = tick
+        self._lock = threading.Lock()
+        self._wake = threading.Condition(self._lock)
+        self._heap: list[tuple[float, int, WatchEntry]] = []
+        self._seq = itertools.count(1)
+        self._active = 0
+        self._stale = 0
+        self._thread: threading.Thread | None = None
+        self._stopping = False
+        self.queue: deque[dict] = deque()
+        self.queue_size = DIAG_QUEUE if queue_size is None else queue_size
+        self.dropped = 0
+        self._writer = writer
+        self._writer_thread: threading.Thread | None = None
+        self._diag_wake = threading.Condition(self._lock)
+
+    # -- time -----------------------------------------------------------------
+    def _now(self) -> float:
+        return self._clock.monotonic() if self._clock is not None else now()
+
+    def _tick_seconds(self) -> float:
+        return self._tick if self._tick is not None else TIMING.tick
+
+    # -- registration ---------------------------------------------------------
+    def register(self, sock, deadline: float, rid: str | None, phase: str, how: int) -> WatchEntry:
+        with self._lock:
+            entry = WatchEntry(deadline, next(self._seq), sock, rid, phase, how)
+            heapq.heappush(self._heap, (deadline, entry.seq, entry))
+            self._active += 1
+            self._ensure_thread()
+            self._wake.notify()
+            return entry
+
+    def rebind(self, entry: WatchEntry, sock) -> None:
+        """Point an owned entry at the socket that replaced its own (a TLS wrap).
+
+        If the deadline already fired, the new socket is shut down at once.
+        """
+        with self._lock:
+            if not entry.owned:
+                return
+            entry.sock = sock
+            if entry.fired:
+                self._shutdown(entry)
+
+    def cancel(self, entry: WatchEntry | None) -> bool:
+        """Release an entry; True if it had fired. Idempotent. Call before closing its socket."""
+        if entry is None:
+            return False
+        with self._lock:
+            if entry.owned:
+                entry.owned = False
+                entry.sock = None
+                self._active -= 1
+                if entry.pending:
+                    entry.pending = False
+                    self._stale += 1
+                    # Retire cancelled entries once they outnumber the live
+                    # ones, so completed phases never pile up behind a long
+                    # deadline in the heap.
+                    if self._stale > 64 and self._stale > 2 * len(self._heap) - 2 * self._stale:
+                        self._heap = [item for item in self._heap if item[2].pending]
+                        heapq.heapify(self._heap)
+                        self._stale = 0
+            return entry.fired
+
+    def counts(self) -> dict:
+        with self._lock:
+            return {"active": self._active, "heap": len(self._heap), "queued": len(self.queue),
+                    "dropped": self.dropped}
+
+    # -- enforcement ----------------------------------------------------------
+    def _ensure_thread(self) -> None:
+        if self._thread is None or not self._thread.is_alive():
+            self._thread = threading.Thread(target=self._run, name="recorder-watchdog", daemon=True)
+            self._thread.start()
+
+    def _run(self) -> None:
+        with self._lock:
+            while not self._stopping:
+                self._wake.wait(self._tick_seconds())
+                self._fire_due_locked()
+
+    def fire_due(self) -> None:
+        """Fire every due entry now (the loop does this every tick; tests may too)."""
+        with self._lock:
+            self._fire_due_locked()
+
+    def _fire_due_locked(self) -> None:
+        current = self._now()
+        while self._heap and self._heap[0][0] <= current:
+            _deadline, _seq, entry = heapq.heappop(self._heap)
+            if not entry.pending:
+                self._stale = max(0, self._stale - 1)
+                continue
+            entry.pending = False
+            entry.fired = True
+            # Still owned: the owner's cancel is what releases the socket for
+            # closing, so this shutdown cannot reach a reused descriptor.
+            self._shutdown(entry)
+            self._put_locked(
+                {"event": "request_overdue", "id": entry.rid, "phase": entry.phase,
+                 "overdue_s": round(current - entry.deadline, 3)}
+            )
+
+    @staticmethod
+    def _shutdown(entry: WatchEntry) -> None:
+        sock = entry.sock
+        if sock is None:
+            return
+        with contextlib.suppress(OSError, ValueError):
+            # The base-class method on the descriptor: for a TLS socket this
+            # interrupts a blocked read without touching its SSL state.
+            socket.socket.shutdown(sock, entry.how)
+
+    def stop(self) -> None:
+        with self._lock:
+            self._stopping = True
+            self._wake.notify_all()
+            self._diag_wake.notify_all()
+
+    # -- diagnostics ----------------------------------------------------------
+    def put_nowait(self, record: dict) -> bool:
+        with self._lock:
+            return self._put_locked(record)
+
+    def _put_locked(self, record: dict) -> bool:
+        if len(self.queue) >= self.queue_size:
+            self.dropped += 1
+            return False
+        self.queue.append(record)
+        if self._writer is not None or self._writer_thread is not None:
+            self._ensure_writer()
+        self._diag_wake.notify()
+        return True
+
+    def start_writer(self, writer) -> None:
+        with self._lock:
+            self._writer = writer
+            self._ensure_writer()
+
+    def _ensure_writer(self) -> None:
+        if self._writer is None:
+            return
+        if self._writer_thread is None or not self._writer_thread.is_alive():
+            self._writer_thread = threading.Thread(
+                target=self._drain, name="recorder-diagnostics", daemon=True
+            )
+            self._writer_thread.start()
+
+    def _drain(self) -> None:
+        while True:
+            with self._lock:
+                while not self.queue and not self._stopping:
+                    self._diag_wake.wait(1.0)
+                if self._stopping and not self.queue:
+                    return
+                record = self.queue.popleft()
+                dropped = self.dropped
+            if dropped:
+                record = {**record, "diag_dropped": dropped}
+            try:
+                result = self._writer(record)
+                readable = bool(getattr(result, "readable", False))
+            except Exception:  # noqa: BLE001 -- a diagnostic's failure is not reported about
+                readable = False
+            if readable and dropped:
+                with self._lock:
+                    self.dropped -= dropped
+
+
+# The writer is looked up at call time: diagnostics land in whichever
+# TRANSCRIPTS_DIR is current when they are drained.
+WATCHDOG = Watchdog(writer=lambda record: record_diagnostic(record))
+
+
+# The process-wide bound on accepted connections, taken before a handler thread
+# exists. A connection over it gets a canned 503 and is closed.
+MAX_CONNECTIONS = env_int("RECORDER_MAX_CONNECTIONS", 64)
+CONNECTIONS = threading.BoundedSemaphore(max(1, MAX_CONNECTIONS))
+def canned_response(status: str, code: str, message: str) -> bytes:
+    """A complete response for a connection that has no handler, or no parsed request."""
+    body = json.dumps({"error": {"message": message, "type": "recorder", "code": code}}).encode()
+    head = (
+        f"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nConnection: close\r\n"
+        f"Content-Length: {len(body)}\r\n\r\n"
+    )
+    return head.encode("ascii") + body
+
+
+CONNECTION_REFUSED_RESPONSE = canned_response(
+    "503 Service Unavailable", "connections", "the recorder has too many open connections"
+)
+HEADER_TIMEOUT_RESPONSE = canned_response(
+    "408 Request Timeout", "header_deadline", "the request headers did not arrive in time"
+)
+_COUNTERS_LOCK = threading.Lock()
+_COUNTERS: dict[str, int] = {}
+COUNTER_FLUSH_SECONDS = 10.0
+_COUNTERS_FLUSHED = [0.0]
+
+
+def count_event(name: str) -> None:
+    """A rate-limited counter for events with no request id (refused accepts, header stage)."""
+    with _COUNTERS_LOCK:
+        _COUNTERS[name] = _COUNTERS.get(name, 0) + 1
+        current = time.monotonic()
+        if current - _COUNTERS_FLUSHED[0] < COUNTER_FLUSH_SECONDS:
+            return
+        _COUNTERS_FLUSHED[0] = current
+        snapshot = dict(_COUNTERS)
+        _COUNTERS.clear()
+    if not WATCHDOG.put_nowait({"event": "counters", **snapshot}):
+        # Not lost silently: they wait for the next flush.
+        with _COUNTERS_LOCK:
+            for key, value in snapshot.items():
+                _COUNTERS[key] = _COUNTERS.get(key, 0) + value
+
+
+# -- structure: a linear pre-scan before any json.loads -----------------------
+# Caps per SV-015 v2 section 2.2. The pre-scan counts, outside strings, the
+# nesting depth, the containers ({ and [) and the values (each container, each
+# string literal -- keys included -- and each scalar token). It allocates
+# nothing per token: it indexes the bytes and skips strings with bytes.find. It
+# is not a JSON validator; json.loads still decides validity afterwards.
+REQUEST_CAPS = (64, 32_768, 131_072)  # depth, containers, values
+RESPONSE_CAPS = (64, 8_192, 32_768)
+_QUOTE, _BACKSLASH = 0x22, 0x5C
+_OPEN = frozenset(b"{[")
+_CLOSE = frozenset(b"}]")
+_SEPARATORS = frozenset(b" \t\r\n,:")
+
+
+@dataclass(frozen=True)
+class Scan:
+    depth: int
+    containers: int
+    values: int
+    exceeded: str | None  # "depth" | "containers" | "values" | None
+
+
+def prescan(data: bytes, caps: tuple[int, int, int]) -> Scan:
+    max_depth, max_containers, max_values = caps
+    depth = deepest = containers = values = 0
+    in_scalar = False
+    index, size = 0, len(data)
+    while index < size:
+        byte = data[index]
+        if byte == _QUOTE:
+            in_scalar = False
+            values += 1
+            if values > max_values:
+                return Scan(deepest, containers, values, "values")
+            # Skip to the closing quote that is not escaped.
+            cursor = index + 1
+            while True:
+                quote = data.find(b'"', cursor)
+                if quote < 0:
+                    return Scan(deepest, containers, values, None)  # unterminated: json.loads decides
+                slashes = 0
+                back = quote - 1
+                while back > index and data[back] == _BACKSLASH:
+                    slashes += 1
+                    back -= 1
+                if slashes % 2 == 0:
+                    break
+                cursor = quote + 1
+            index = quote + 1
+            continue
+        if byte in _OPEN:
+            in_scalar = False
+            depth += 1
+            containers += 1
+            values += 1
+            deepest = max(deepest, depth)
+            if depth > max_depth:
+                return Scan(deepest, containers, values, "depth")
+            if containers > max_containers:
+                return Scan(deepest, containers, values, "containers")
+            if values > max_values:
+                return Scan(deepest, containers, values, "values")
+        elif byte in _CLOSE:
+            in_scalar = False
+            depth = max(0, depth - 1)
+        elif byte in _SEPARATORS:
+            in_scalar = False
+        elif not in_scalar:
+            in_scalar = True
+            values += 1
+            if values > max_values:
+                return Scan(deepest, containers, values, "values")
+        index += 1
+    return Scan(deepest, containers, values, None)
+
+
+# -- memory: a reservation before parsing ---------------------------------------
+MAX_RESPONSE = env_int("RECORDER_MAX_RESPONSE_BYTES", 2 * 1024 * 1024)
+MEMORY_BUDGET_BYTES = env_int("RECORDER_MEMORY_BUDGET_BYTES", 768 * 1024 * 1024)
+VALUE_COST = 256
+
+
+def memory_for_request(body_bytes: int, values: int) -> int:
+    """M_req = 33*B + 256*V (raw, decoded, parsed, forwarded and recorded forms)."""
+    return 33 * body_bytes + VALUE_COST * values
+
+
+def memory_for_response() -> int:
+    """M_resp = 21*MAX_RESPONSE + 256*V_resp_cap, reserved up front."""
+    return 21 * MAX_RESPONSE + VALUE_COST * RESPONSE_CAPS[2]
+
+
+class MemoryBudget:
+    """A process-wide byte reservation, waited for in arrival order of wake-ups.
+
+    The reservation is arithmetic: it bounds what concurrent requests are
+    allowed to hold by the per-request estimates above. Whether those estimates
+    bound real interpreter allocation is unmeasured (commissioning C1).
+    """
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.used = 0
+        self._cond = threading.Condition()
+
+    def reserve(self, amount: int, timeout: float) -> bool:
+        if amount > self.total:
+            return False
+        deadline = time.monotonic() + max(0.0, timeout)
+        with self._cond:
+            while self.used + amount > self.total:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._cond.wait(remaining)
+            self.used += amount
+            return True
+
+    def release(self, amount: int) -> None:
+        with self._cond:
+            self.used -= amount
+            self._cond.notify_all()
+
+
+MEMORY = MemoryBudget(MEMORY_BUDGET_BYTES)
+
+
+# -- responses: usage from JSON or SSE, honest about what was not parsed ---------
+def sse_usage(body: bytes) -> tuple[Usage, bool]:
+    """(usage, structure_limit) from a server-sent-events body.
+
+    CRLF is normalized; events are split on blank lines; each event's `data:`
+    lines are joined with newlines (one optional leading space removed);
+    `[DONE]` is skipped; each event is pre-scanned and parsed on its own. The
+    usage is the last event's valid usage. Any event over the structure caps
+    makes the whole response's usage unknown, conservatively, even if another
+    event carried a valid usage. Provider dialects beyond this are unvalidated.
+    """
+    text = body.decode("utf-8", "replace").replace("\r\n", "\n")
+    found = Usage(UNKNOWN)
+    for event in text.split("\n\n"):
+        data = [line[5:] for line in event.split("\n") if line.startswith("data:")]
+        if not data:
+            continue
+        joined = "\n".join(part[1:] if part.startswith(" ") else part for part in data)
+        if joined.strip() == "[DONE]":
+            continue
+        encoded = joined.encode("utf-8", "surrogatepass")
+        if prescan(encoded, RESPONSE_CAPS).exceeded:
+            return Usage(UNKNOWN), True
+        try:
+            parsed = json.loads(joined, parse_constant=_nonfinite_marker, parse_float=_float_or_marker)
+        except (ValueError, RecursionError):
+            continue
+        usage = extract_usage(parsed)
+        if usage.cls == KNOWN:
+            found = usage
+    return found, False
+
+
+def is_event_stream(payload: bytes) -> bool:
+    """By content, not Content-Type: the stub sends SSE as application/json."""
+    return payload.lstrip(b" \t\r\n").startswith(b"data:")
+
+
+@dataclass
+class ResponseView:
+    """What the record holds about one upstream response, and what it cost."""
+
+    data: object  # the transcript's `response` field
+    usage: Usage
+    structure_limit: bool = False
+    cap_exceeded: bool = False
+
+
+def view_response(payload: bytes, truncated: bool) -> ResponseView:
+    if truncated:
+        # Never parsed: a prefix's usage is not evidence of what was billed.
+        return ResponseView(
+            {
+                "raw_body": payload.decode("utf-8", "backslashreplace"),
+                "raw_body_truncated": True,
+                "response_cap_exceeded": True,
+                "kept_bytes": len(payload),
+            },
+            Usage(UNKNOWN),
+            cap_exceeded=True,
+        )
+    if is_event_stream(payload):
+        usage, limited = sse_usage(payload)
+        view = ResponseView(decode_payload(payload), usage, structure_limit=limited)
+        return view
+    if prescan(payload, RESPONSE_CAPS).exceeded:
+        text = payload.decode("utf-8", "ignore")
+        data = {"raw_body": text[:1_000_000], "structure_limit": True}
+        if len(text) > 1_000_000:
+            data["raw_body_truncated"] = True
+        return ResponseView(data, Usage(UNKNOWN), structure_limit=True)
+    data = decode_payload(payload)
+    return ResponseView(data, extract_usage(data))
+
+
 class AgentState:
     """Per-agent bookkeeping: where its record goes, and its in-flight slots."""
 
@@ -713,6 +1311,22 @@ class AgentState:
             while len(self._labels) > max(0, MAX_LABEL_LRU):
                 self._labels.popitem(last=False)
             return seen
+
+
+class Accepted(tuple):
+    """The handler's `client_address`: a unix peer has no address, but it has an accept time."""
+
+    def __new__(cls, t0: float):
+        accepted = super().__new__(cls, ("unix", 0))
+        accepted.t0 = t0
+        return accepted
+
+
+def refuse_connection(sock) -> None:
+    """A canned 503 to a connection over the bound, written briefly and once."""
+    with contextlib.suppress(OSError):
+        sock.settimeout(1.0)
+        sock.sendall(CONNECTION_REFUSED_RESPONSE)
 
 
 class Recorder(threading.Thread):
@@ -742,7 +1356,27 @@ class Recorder(threading.Thread):
 
             def get_request(self):
                 conn, _ = self.socket.accept()
-                return conn, ("unix", 0)
+                # t0: every deadline of this connection's one request counts from here.
+                return conn, Accepted(now())
+
+            def process_request(self, request, client_address):
+                # The connection bound is taken before a handler thread exists.
+                if not CONNECTIONS.acquire(blocking=False):
+                    refuse_connection(request)
+                    count_event("connections_refused")
+                    self.shutdown_request(request)
+                    return
+                try:
+                    super().process_request(request, client_address)
+                except BaseException:
+                    CONNECTIONS.release()
+                    raise
+
+            def process_request_thread(self, request, client_address):
+                try:
+                    super().process_request_thread(request, client_address)
+                finally:
+                    CONNECTIONS.release()
 
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         server = Server(str(self.socket_path), handler)
@@ -887,9 +1521,21 @@ class Exchange:
     one `close` event is attempted.
     """
 
-    def __init__(self, rid: str) -> None:
+    def __init__(self, rid: str, t0: float | None = None) -> None:
         self.rid = rid
-        self.started = time.monotonic()
+        self.started = now()
+        # The connection's accept instant, and every deadline derived from it.
+        self.t0 = self.started if t0 is None else t0
+        self.deadlines = Deadlines(self.t0, TIMING)
+        # The slot and memory waits share this allowance of actual waiting.
+        self.wait_left = float(INFLIGHT_WAIT_SECONDS)
+        self.memory = 0
+        self.memory_pool: MemoryBudget | None = None
+        # When the response (or recorder error) attempt began, and when the
+        # upstream's answer was in hand: elapsed_s and custody_s measure to
+        # these, never to the close append that follows.
+        self.ready_at: float | None = None
+        self.custody_from: float | None = None
         self.settled_at: float | None = None
         self.slots = False
         self.admitted = False
@@ -924,9 +1570,59 @@ def make_handler(recorder: Recorder):
         def log_message(self, fmt, *args):  # noqa: A003 -- base class signature
             pass
 
+        # -- the connection: one request, headers under a deadline --------------
+        def setup(self):
+            super().setup()
+            self.t0 = getattr(self.client_address, "t0", None)
+            if self.t0 is None:
+                self.t0 = now()
+            self.response_started = False
+            self.header_done: float | None = None
+            self.connection.settimeout(TIMING.io_timeout)
+            self.header_watch = WATCHDOG.register(
+                self.connection,
+                Deadlines(self.t0, TIMING).header_end,
+                None,
+                "header",
+                SHUT_INGRESS,
+            )
+
+        def handle(self):
+            """Exactly one request per connection: the response says Connection: close.
+
+            A request whose headers never completed has no request to close in
+            the events: if the header deadline cut it off, it gets a canned 408
+            and a counter, and nothing else is invented about it.
+            """
+            try:
+                self.handle_one_request()
+                self.close_connection = True
+                if self.header_done is None:
+                    fired = WATCHDOG.cancel(self.header_watch)
+                    if fired and not self.response_started:
+                        with contextlib.suppress(OSError):
+                            self.connection.settimeout(1.0)
+                            self.connection.sendall(HEADER_TIMEOUT_RESPONSE)
+                        count_event("header_deadline")
+                    elif self.response_started:
+                        count_event("header_refused")
+            finally:
+                WATCHDOG.cancel(self.header_watch)
+
+        def send_response_only(self, code, message=None):
+            self.response_started = True
+            super().send_response_only(code, message)
+
+        def _begin(self) -> tuple[Exchange, bool]:
+            """Headers are complete: end their phase and start the request's bookkeeping."""
+            self.header_done = now()
+            late = WATCHDOG.cancel(self.header_watch)
+            self.close_connection = True
+            return Exchange(next_rid(), self.t0), late
+
         # -- the one exit -----------------------------------------------------
         def do_GET(self):  # noqa: N802 -- base class API
-            exchange = Exchange(next_rid())
+            exchange, _late = self._begin()
             try:
                 self._refuse(
                     exchange,
@@ -938,8 +1634,15 @@ def make_handler(recorder: Recorder):
                 self._finish(exchange)
 
         def do_POST(self):  # noqa: N802 -- base class API
-            exchange = Exchange(next_rid())
+            exchange, late = self._begin()
             try:
+                if late:
+                    # The deadline fired as the headers completed: the read
+                    # side is already shut, so the body can never arrive.
+                    self._refuse(
+                        exchange, 408, "header_deadline", "the request headers did not arrive in time"
+                    )
+                    return
                 self._post(exchange)
             except Exception as error:  # noqa: BLE001 -- the client still gets a status
                 # Only the exception's type is kept: its text can carry a URL.
@@ -977,15 +1680,20 @@ def make_handler(recorder: Recorder):
                 if exchange.admitted and exchange.accounted is None:
                     self._account(exchange, Usage(UNKNOWN))
             finally:
-                if exchange.slots:
-                    exchange.slots = False
-                    TOTAL_SLOTS.release()
-                    state.slots.release()
-                self._write_close(exchange)
+                try:
+                    if exchange.memory:
+                        amount, exchange.memory = exchange.memory, 0
+                        exchange.memory_pool.release(amount)
+                finally:
+                    if exchange.slots:
+                        exchange.slots = False
+                        TOTAL_SLOTS.release()
+                        state.slots.release()
+                    self._write_close(exchange)
 
         def _account(self, exchange: Exchange, usage: Usage) -> None:
             exchange.accounted = budget.close(exchange.rid, usage)
-            exchange.settled_at = time.monotonic()
+            exchange.settled_at = now()
 
         def _write_close(self, exchange: Exchange) -> None:
             if exchange.event_written:
@@ -1020,6 +1728,13 @@ def make_handler(recorder: Recorder):
                 record["recorded"] = exchange.recorded.status
                 if exchange.recorded.dir_unsynced:
                     record["dir_unsynced"] = True
+            # Measured to the response attempt (or, with none, to now): this
+            # record cannot know how long its own append will take.
+            ready = exchange.ready_at if exchange.ready_at is not None else now()
+            record["elapsed_s"] = round(ready - exchange.t0, 3)
+            if exchange.custody_from is not None:
+                record["custody_s"] = round(ready - exchange.custody_from, 3)
+            record["deadline_overrun"] = ready > exchange.deadlines.e2e_end
             try:
                 result = append_with_custody(state.store, state.events, record)
                 unrecorded = None if result.readable else result.status
@@ -1041,19 +1756,33 @@ def make_handler(recorder: Recorder):
                     print(json.dumps(fallback), file=sys.stderr, flush=True)
 
         # -- replies ----------------------------------------------------------
-        def _relay(self, status: int, headers: dict, payload: bytes) -> bool:
-            """Write one response. False if the client was no longer there."""
+        def _relay(self, exchange: Exchange, status: int, headers: dict, payload: bytes) -> bool:
+            """Write one response under the client-write deadline. False if it did not complete.
+
+            The phase shuts the connection both ways at its deadline; a fired
+            phase is a failed write whatever the last send returned.
+            """
+            if exchange.ready_at is None:
+                exchange.ready_at = now()
+            entry = WATCHDOG.register(
+                self.connection, now() + TIMING.client_write, exchange.rid, "client_write", SHUT_ALL
+            )
             try:
+                self.connection.settimeout(max(0.001, min(TIMING.io_timeout, TIMING.client_write)))
                 self.send_response(status)
                 for name, value in headers.items():
                     self.send_header(name, value)
                 self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Connection", "close")
                 self.end_headers()
                 self.wfile.write(payload)
+                written = True
             except OSError:
-                self.close_connection = True
-                return False
-            return True
+                written = False
+            finally:
+                fired = WATCHDOG.cancel(entry)
+            self.close_connection = True
+            return written and not fired
 
         def _refuse(self, exchange: Exchange, status: int, outcome: str, message: str) -> None:
             exchange.status, exchange.outcome, exchange.refusal = status, outcome, message
@@ -1064,18 +1793,19 @@ def make_handler(recorder: Recorder):
             exchange.responded = True
             # Whether this error reached the client is not recorded as `relayed`:
             # that field is about the upstream's response.
-            self._relay(status, {"Content-Type": "application/json"}, body)
+            self._relay(exchange, status, {"Content-Type": "application/json"}, body)
 
-        def _take_slots(self) -> bool:
-            """One of this socket's slots, then one of the fleet's, waiting a bounded time.
+        def _take_slots(self, timeout: float) -> bool:
+            """One of this socket's slots, then one of the fleet's, waiting at most `timeout`.
 
             The socket's own slot is taken first so a busy socket waits on itself
             without holding fleet capacity while it does. If taking the second
             fails in any way -- a timeout or a raise -- the first is given back
             here, because the caller only owns the pair once this returns True.
             """
-            deadline = time.monotonic() + INFLIGHT_WAIT_SECONDS
-            if not state.slots.acquire(timeout=INFLIGHT_WAIT_SECONDS):
+            timeout = max(0.0, timeout)
+            deadline = time.monotonic() + timeout
+            if not state.slots.acquire(timeout=timeout):
                 return False
             taken = False
             try:
@@ -1084,6 +1814,61 @@ def make_handler(recorder: Recorder):
                 if not taken:
                     state.slots.release()
             return taken
+
+        def _wait(self, exchange: Exchange, acquire) -> bool:
+            """Spend the shared wait allowance on one acquisition, capped by the latest start."""
+            cap = min(exchange.wait_left, exchange.deadlines.latest_start - now())
+            started = time.monotonic()
+            try:
+                return acquire(max(0.0, cap))
+            finally:
+                exchange.wait_left = max(0.0, exchange.wait_left - (time.monotonic() - started))
+
+        def _read_body(self, exchange: Exchange, length: int) -> bytes | None:
+            """Exactly `length` bytes under the body deadline, or a refusal (returns None).
+
+            The deadline counts from header completion and never passes the
+            latest start. The watchdog shuts the read side at the deadline;
+            each read also has the per-operation timeout.
+            """
+            end = exchange.deadlines.body_end(self.header_done)
+            entry = WATCHDOG.register(self.connection, end, exchange.rid, "body", SHUT_INGRESS)
+            chunks: list[bytes] = []
+            got = 0
+            timed_out = False
+            try:
+                while got < length:
+                    remaining = end - now()
+                    if remaining <= 0:
+                        timed_out = True
+                        break
+                    self.connection.settimeout(max(0.001, min(TIMING.io_timeout, remaining)))
+                    try:
+                        chunk = self.rfile.read1(min(65536, length - got))
+                    except TimeoutError:
+                        timed_out = True
+                        break
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    got += len(chunk)
+            finally:
+                fired = WATCHDOG.cancel(entry)
+            if fired or timed_out:
+                self._refuse(
+                    exchange, 408, "body_deadline", "the request body did not arrive in time"
+                )
+                return None
+            if got < length:
+                # The client stopped early. Nothing partial is ever forwarded.
+                self._refuse(
+                    exchange,
+                    400,
+                    "short_body",
+                    f"the request body ended after {got} of {length} bytes",
+                )
+                return None
+            return b"".join(chunks)
 
         # -- the request ------------------------------------------------------
         def _post(self, exchange: Exchange) -> None:
@@ -1131,15 +1916,24 @@ def make_handler(recorder: Recorder):
                     f"request body must be at most {REQUEST_MAX_BYTES} bytes",
                 )
                 return
-            body = self.rfile.read(length)
-            if len(body) < length:
-                # The client stopped early. Nothing partial is ever forwarded.
+            if now() >= exchange.deadlines.latest_start:
                 self._refuse(
                     exchange,
-                    400,
-                    "short_body",
-                    f"the request body ended after {len(body)} of {length} bytes",
+                    503,
+                    "deadline_insufficient",
+                    "too little of this request's time is left to reach the upstream",
                 )
+                return
+
+            # A slot before the body, so the bodies held at once are bounded by
+            # the slots, each at most REQUEST_MAX_BYTES.
+            if not self._wait(exchange, self._take_slots):
+                self._refuse(exchange, 429, "inflight", refusal_message(Refused("inflight", None)))
+                return
+            exchange.slots = True
+
+            body = self._read_body(exchange, length)
+            if body is None:
                 return
 
             marker = REFUSE_DIR / f"refuse-{state.slug}.marker"
@@ -1153,6 +1947,29 @@ def make_handler(recorder: Recorder):
                 )
                 return
 
+            # Structure before any json.loads: a linear count, no parsing.
+            scan = prescan(body, REQUEST_CAPS)
+            if scan.exceeded:
+                self._refuse(
+                    exchange,
+                    400,
+                    "structure_limit",
+                    f"the request body exceeds the recorder's JSON {scan.exceeded} limit",
+                )
+                return
+            # Memory for this request and its largest possible response, before parsing.
+            need = memory_for_request(len(body), scan.values) + memory_for_response()
+            pool = MEMORY
+            if not self._wait(exchange, lambda timeout: pool.reserve(need, timeout)):
+                self._refuse(
+                    exchange,
+                    429,
+                    "memory",
+                    "the recorder has no memory free for this request; try again shortly",
+                )
+                return
+            exchange.memory, exchange.memory_pool = need, pool
+
             request = parse_request(body, streaming=upstream_supports_streaming())
             if isinstance(request, RequestRefusal):
                 self._refuse(exchange, request.status, request.code, request.message)
@@ -1161,11 +1978,6 @@ def make_handler(recorder: Recorder):
             # The estimate is over what is actually sent: the same bytes the
             # upstream will bill for its prompt.
             exchange.estimate = max(1, len(forwarded) // 4)
-
-            if not self._take_slots():
-                self._refuse(exchange, 429, "inflight", refusal_message(Refused("inflight", None)))
-                return
-            exchange.slots = True
 
             recorded = request.recorded
             messages = recorded.get("messages")
@@ -1220,6 +2032,18 @@ def make_handler(recorder: Recorder):
                 )
                 return
 
+            # The forward check: the open and the preflight are filesystem calls
+            # no deadline can interrupt, so the time left is looked at again
+            # before anything is admitted or contacted.
+            if now() > exchange.deadlines.latest_start:
+                self._refuse(
+                    exchange,
+                    503,
+                    "deadline_insufficient",
+                    "too little of this request's time is left to reach the upstream",
+                )
+                return
+
             # Reserve against the ceilings before spending anything upstream.
             decision = budget.admit(exchange.rid, state.slug, exchange.estimate)
             if isinstance(decision, Refused):
@@ -1231,62 +2055,65 @@ def make_handler(recorder: Recorder):
             # the outbound set is built fresh, and never written to the record.
             headers = outbound_headers(self.headers, upstream_key(), forward_header_names())
 
-            upstream = Upstream()
+            upstream = Upstream(exchange.deadlines.upstream_abs, exchange.rid)
             try:
-                upstream.connect()
-            except Exception as error:  # noqa: BLE001 -- reported to the client as 502
-                # Nothing was sent: the reservation is cancelled and refunded.
-                self._account(exchange, Usage(UNKNOWN))
-                log(f"{state.slug}: {exchange.rid}: upstream connect failed: {type(error).__name__}")
-                self._refuse(
-                    exchange,
-                    502,
-                    "upstream_connect",
-                    f"the recorder could not connect to the upstream ({type(error).__name__})",
-                )
-                return
-            try:
-                if not budget.begin_forward(exchange.rid):
+                try:
+                    upstream.connect()
+                except Exception as error:  # noqa: BLE001 -- reported to the client as 502
+                    # Nothing was sent: the reservation is cancelled and refunded.
+                    self._account(exchange, Usage(UNKNOWN))
+                    log(f"{state.slug}: {exchange.rid}: upstream connect failed: {type(error).__name__}")
                     self._refuse(
-                        exchange, 503, "shutting_down", "the recorder is not forwarding requests"
+                        exchange,
+                        502,
+                        "upstream_connect",
+                        f"the recorder could not connect to the upstream ({type(error).__name__})",
                     )
                     return
-                status, response_headers, payload = upstream.exchange(headers, forwarded)
-            except Exception as error:  # noqa: BLE001 -- reported to the client as 502
-                # Bytes may have reached the provider: the estimate stays charged.
-                self._account(exchange, Usage(UNKNOWN))
-                log(f"{state.slug}: {exchange.rid}: upstream failure: {type(error).__name__}")
-                self._refuse(
-                    exchange,
-                    502,
-                    "upstream_transport",
-                    f"the recorder could not reach the upstream ({type(error).__name__})",
-                )
-                return
+                try:
+                    if not budget.begin_forward(exchange.rid):
+                        self._refuse(
+                            exchange, 503, "shutting_down", "the recorder is not forwarding requests"
+                        )
+                        return
+                    reply = upstream.exchange(headers, forwarded)
+                except Exception as error:  # noqa: BLE001 -- reported to the client as 502
+                    # Bytes may have reached the provider: the estimate stays charged.
+                    self._account(exchange, Usage(UNKNOWN))
+                    if upstream.deadline_fired:
+                        message = "the upstream did not finish before the recorder's deadline"
+                    else:
+                        message = f"the recorder could not reach the upstream ({type(error).__name__})"
+                    log(f"{state.slug}: {exchange.rid}: upstream failure: {type(error).__name__}")
+                    self._refuse(exchange, 502, "upstream_transport", message)
+                    return
             finally:
                 upstream.close()
 
+            status, response_headers, payload, truncated = reply
+            exchange.custody_from = now()
             exchange.upstream_status = status
-            response_data = decode_payload(payload)
-            exchange.usage = extract_usage(response_data)
+            view = view_response(payload, truncated)
+            exchange.usage = view.usage
             # Settle before the transcript and the relay, so the accounting is
             # right even when both of those fail.
             self._account(exchange, exchange.usage)
             exchange.status = status
             exchange.outcome = "ok" if 200 <= status < 300 else "upstream_http"
 
-            exchange.recorded = append_with_custody(
-                state.store,
-                state.transcript,
-                {
-                    "at": iso(),
-                    "agent": state.slug,
-                    "id": exchange.rid,
-                    "request": recorded,
-                    "response": response_data,
-                    "status": status,
-                },
-            )
+            transcript = {
+                "at": iso(),
+                "agent": state.slug,
+                "id": exchange.rid,
+                "request": recorded,
+                "response": view.data,
+                "status": status,
+                "usage": view.usage.raw,
+                "usage_class": view.usage.cls,
+            }
+            if view.structure_limit:
+                transcript["structure_limit"] = True
+            exchange.recorded = append_with_custody(state.store, state.transcript, transcript)
             if not exchange.recorded.readable:
                 # Record before relay: an answer with no readable record is
                 # withheld. It was paid for; the accounting above says so.
@@ -1298,13 +2125,23 @@ def make_handler(recorder: Recorder):
                     "the recorder could not record the response, so it was withheld",
                 )
                 return
+            if view.cap_exceeded:
+                # The kept prefix is recorded; the answer itself is not relayed.
+                self._refuse(
+                    exchange,
+                    502,
+                    "response_cap_exceeded",
+                    f"the upstream response exceeded {MAX_RESPONSE} bytes; it was recorded in part "
+                    "and not relayed",
+                )
+                return
             out_headers = {
                 name: value
                 for name, value in response_headers.items()
                 if name.lower() not in FRAMING
             }
             exchange.responded = True
-            exchange.relayed = self._relay(status, out_headers, payload)
+            exchange.relayed = self._relay(exchange, status, out_headers, payload)
 
     return Handler
 
@@ -1399,7 +2236,24 @@ def outbound_headers(inbound, key: str, extra: tuple[str, ...] = ()) -> dict[str
     return headers
 
 
-class UnixHTTPConnection(http.client.HTTPConnection):
+class WatchedConnection:
+    """A connection that tells its owner each socket it creates, as soon as it exists.
+
+    The owner registers the socket with the watchdog, so a deadline can shut
+    down whatever the connection is blocked in -- connect on a unix socket,
+    a TLS handshake, the send, the status line, the body. A TCP connect has
+    no socket until `create_connection` returns (DNS and the connect run
+    inside it, bounded per address only by the per-operation timeout).
+    """
+
+    on_socket = None
+
+    def _tell(self, sock) -> None:
+        if self.on_socket is not None:
+            self.on_socket(sock)
+
+
+class UnixHTTPConnection(WatchedConnection, http.client.HTTPConnection):
     """http.client over a unix socket: an upstream that needs no port."""
 
     def __init__(self, socket_path: str, timeout: float) -> None:
@@ -1408,13 +2262,37 @@ class UnixHTTPConnection(http.client.HTTPConnection):
 
     def connect(self) -> None:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        # Owned by the connection from here: a watching owner cancels its
+        # deadline and then closes it through close(), never the other way round.
+        self.sock = sock
         try:
+            self._tell(sock)
             sock.settimeout(self.timeout)
             sock.connect(self.socket_path)
         except BaseException:
-            sock.close()
+            if self.on_socket is None:
+                self.sock = None
+                sock.close()
             raise
-        self.sock = sock
+
+
+class TCPHTTPConnection(WatchedConnection, http.client.HTTPConnection):
+    def connect(self) -> None:
+        super().connect()
+        self._tell(self.sock)
+
+
+class TLSHTTPConnection(WatchedConnection, http.client.HTTPSConnection):
+    """HTTPS with the handshake inside the watched upstream phase."""
+
+    def connect(self) -> None:
+        http.client.HTTPConnection.connect(self)
+        self._tell(self.sock)
+        self.sock = self._context.wrap_socket(
+            self.sock, server_hostname=self.host, do_handshake_on_connect=False
+        )
+        self._tell(self.sock)
+        self.sock.do_handshake()
 
 
 def upstream_connection() -> http.client.HTTPConnection:
@@ -1423,56 +2301,136 @@ def upstream_connection() -> http.client.HTTPConnection:
     HTTPS uses the standard library's verified defaults -- certificate and
     host name both checked. Environment proxy variables are not consulted.
     """
+    timeout = TIMING.io_timeout
     if UPSTREAM_SOCKET:
-        return UnixHTTPConnection(UPSTREAM_SOCKET, UPSTREAM_TIMEOUT)
+        return UnixHTTPConnection(UPSTREAM_SOCKET, timeout)
     target = urlsplit(upstream_url())
     if target.scheme == "https":
-        return http.client.HTTPSConnection(
-            target.hostname,
-            target.port,
-            timeout=UPSTREAM_TIMEOUT,
-            context=ssl.create_default_context(),
+        return TLSHTTPConnection(
+            target.hostname, target.port, timeout=timeout, context=ssl.create_default_context()
         )
     if target.scheme == "http":
-        return http.client.HTTPConnection(target.hostname, target.port, timeout=UPSTREAM_TIMEOUT)
+        return TCPHTTPConnection(target.hostname, target.port, timeout=timeout)
     raise ValueError("the upstream URL must be http or https")
 
 
+def host_header(connection: http.client.HTTPConnection) -> str:
+    """Host as http.client would send it: the port only when it is not the default."""
+    try:
+        host = connection.host.encode("ascii").decode("ascii")
+    except UnicodeEncodeError:
+        host = connection.host.encode("idna").decode("ascii")
+    if ":" in host:
+        host = f"[{host}]"
+    if connection.port == connection.default_port:
+        return host
+    return f"{host}:{connection.port}"
+
+
+class UpstreamDeadline(TimeoutError):
+    """The upstream phase reached its absolute deadline."""
+
+
 class Upstream:
-    """One HTTP exchange, connected before anything is sent.
+    """One HTTP exchange, connected before anything is sent, inside one deadline.
 
     Connecting is a separate step because it decides the accounting: a connect
     that fails (including a TLS handshake) has sent no request, so the
     reservation is refunded; once bytes may have left, the estimate stays
-    charged whatever happens. `auto_open` is off, so http.client can never
-    reconnect behind that decision: an exchange without a live connection
-    fails instead. The upstream may answer with a content-length or chunked;
-    http.client reads both, and a recorder that mishandled the second would
-    silently truncate a streamed completion in the record.
+    charged whatever happens. `auto_open` is off and the request is sent by an
+    explicit loop on the connected socket, so nothing can reconnect behind
+    that decision: an exchange without a live connection fails instead.
+
+    The whole phase -- connect, handshake, send, status line, headers, body --
+    ends at the request's absolute upstream deadline: each socket operation
+    gets the per-operation timeout or the time left, whichever is smaller, and
+    the watchdog shuts the socket both ways at the deadline. The body is read
+    up to MAX_RESPONSE bytes plus one byte of lookahead, chunked or not; more
+    than that is reported as truncated, never read on.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, deadline: float | None = None, rid: str | None = None) -> None:
+        self.deadline = now() + TIMING.upstream_offset if deadline is None else deadline
+        self.rid = rid
         self.connection: http.client.HTTPConnection | None = None
+        self.entry: WatchEntry | None = None
+
+    @property
+    def deadline_fired(self) -> bool:
+        return self.entry is not None and self.entry.fired
+
+    def _watch(self, sock) -> None:
+        if self.entry is None:
+            self.entry = WATCHDOG.register(sock, self.deadline, self.rid, "upstream", SHUT_ALL)
+        else:
+            WATCHDOG.rebind(self.entry, sock)
+
+    def _time_left(self) -> float:
+        remaining = self.deadline - now()
+        if remaining <= 0 or self.deadline_fired:
+            raise UpstreamDeadline("the upstream deadline has passed")
+        return remaining
+
+    def _arm(self, sock) -> None:
+        sock.settimeout(max(0.001, min(TIMING.io_timeout, self._time_left())))
 
     def connect(self) -> None:
         connection = upstream_connection()
         connection.auto_open = 0
-        try:
-            connection.connect()
-        except BaseException:
-            connection.close()
-            raise
+        connection.timeout = max(0.001, min(TIMING.io_timeout, self._time_left()))
+        connection.on_socket = self._watch
         self.connection = connection
+        connection.connect()
+        if self.deadline_fired:
+            raise UpstreamDeadline("the upstream deadline passed during connect")
 
-    def exchange(self, headers: dict, body: bytes) -> tuple[int, dict, bytes]:
+    def exchange(self, headers: dict, body: bytes) -> tuple[int, dict, bytes, bool]:
         connection = self.connection
         if connection is None or connection.sock is None:
             raise http.client.NotConnected("no upstream connection was made before sending")
-        connection.request("POST", request_path(upstream_url()), body=body, headers=headers)
-        response = connection.getresponse()
-        return response.status, dict(response.getheaders()), response.read()
+        sock = connection.sock
+        lines = [f"POST {request_path(upstream_url())} HTTP/1.1", f"Host: {host_header(connection)}",
+                 "Accept-Encoding: identity"]
+        for name, value in headers.items():
+            if any(ch in f"{name}{value}" for ch in "\r\n\0"):
+                raise ValueError("an outbound header contains a line break")
+            lines.append(f"{name}: {value}")
+        lines.append(f"Content-Length: {len(body)}")
+        view = memoryview("\r\n".join(lines).encode("latin-1") + b"\r\n\r\n" + body)
+        while view:
+            self._arm(sock)
+            sent = sock.send(view)
+            view = view[sent:]
+        response = http.client.HTTPResponse(sock, method="POST")
+        try:
+            self._arm(sock)
+            response.begin()
+            status, response_headers = response.status, dict(response.getheaders())
+            limit = MAX_RESPONSE + 1
+            parts: list[bytes] = []
+            got = 0
+            while got < limit:
+                self._arm(sock)
+                chunk = response.read1(min(65536, limit - got))
+                if not chunk:
+                    break
+                parts.append(chunk)
+                got += len(chunk)
+            if got <= MAX_RESPONSE and response.length:
+                raise http.client.IncompleteRead(b"", response.length)
+        finally:
+            response.close()
+        if self.deadline_fired:
+            # A shut socket reads as an end of body: only the flag can tell.
+            raise UpstreamDeadline("the upstream deadline passed while reading")
+        payload = b"".join(parts)
+        truncated = len(payload) > MAX_RESPONSE
+        return status, response_headers, payload[:MAX_RESPONSE], truncated
 
     def close(self) -> None:
+        # The watchdog entry is released before the socket is closed: a
+        # deadline can then never reach a descriptor number already reused.
+        WATCHDOG.cancel(self.entry)
         if self.connection is not None:
             with contextlib.suppress(OSError):
                 self.connection.close()
@@ -1580,6 +2538,16 @@ def main() -> int:
         print(
             f"[recorder] refusing to start: the transcript directory {TRANSCRIPTS_DIR} "
             "does not exist, and the recorder does not create it",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
+    problems = timing_problems(TIMING)
+    if problems:
+        # A profile that cannot keep its own deadline promise is refused
+        # rather than run: the client would give up before the recorder does.
+        print(
+            "[recorder] refusing to start: inconsistent deadline profile: " + "; ".join(problems),
             file=sys.stderr,
             flush=True,
         )
