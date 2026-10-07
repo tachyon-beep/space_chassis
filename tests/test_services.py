@@ -395,12 +395,9 @@ def test_the_supervisor_never_runs_the_runtime_out_of_the_codebase(tmp_path, mon
 # ---------------------------------------------------------------------------
 # The record
 # ---------------------------------------------------------------------------
-def test_no_service_ever_writes_a_request_header_to_the_record():
-    """The key is protected by shape, not by care: headers are never read."""
-    source = (PROJECT / "services" / "recorder.py").read_text(encoding="utf-8")
-    body = source.split("def do_POST")[1] if "def do_POST" in source else source
-    assert "Authorization" in source, "the recorder must inject the credential somewhere"
-    transcript_writes = [line for line in body.splitlines() if "transcript" in line]
-    for line in transcript_writes:
-        assert "headers" not in line, f"a header was written to the transcript: {line.strip()}"
-    assert "self.headers.items()" in body, "header forwarding must be explicit, not wholesale"
+# "No request header is ever written to the record" used to be checked here by
+# reading the recorder's source text. It is now checked by behaviour, in
+# tests/test_recorder_requests.py
+# (test_no_request_header_is_ever_written_to_the_record_and_the_upstream_gets_seven):
+# a fake upstream records exactly what it received on both transports, and the
+# test reads the transcript and events for the client's and the recorder's keys.

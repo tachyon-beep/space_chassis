@@ -21,6 +21,7 @@ import json
 import shutil
 import socket
 import socketserver
+import ssl
 import tempfile
 import threading
 import time
@@ -56,9 +57,12 @@ def completion(total: int = 30) -> dict:
 
 
 class FakeUpstream:
-    """An upstream on a unix socket that records each request and answers on cue."""
+    """An upstream that records each request and answers on cue.
 
-    def __init__(self, path: Path) -> None:
+    On a unix socket by default; with `path=None`, on a loopback TCP port.
+    """
+
+    def __init__(self, path: Path | None) -> None:
         self.path = path
         self.requests: list[dict] = []
         self.respond = lambda request: stub_reply(completion())
@@ -99,7 +103,14 @@ class FakeUpstream:
         class Server(socketserver.ThreadingUnixStreamServer):
             daemon_threads = True
 
-        self.server = Server(str(path), Handler)
+        class TCPServer(socketserver.ThreadingTCPServer):
+            daemon_threads = True
+
+        if path is None:
+            self.server = TCPServer(("127.0.0.1", 0), Handler)
+            self.url = "http://127.0.0.1:%d/v1" % self.server.server_address[1]
+        else:
+            self.server = Server(str(path), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05})
         self.thread.start()
 
@@ -137,7 +148,7 @@ class Rig:
             if raw_headers is None:
                 connection.request(method, path, body=body, headers=headers or {})
             else:
-                connection.putrequest(method, path, skip_accept_encoding=True)
+                connection.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
                 for name, value in raw_headers:
                     connection.putheader(name, value)
                 connection.endheaders(body)
@@ -184,22 +195,24 @@ def make_rig(monkeypatch):
     built: list[Rig] = []
     roots: list[Path] = []
 
-    def build(rq: int = 3, tk: int = 100, g: int = 150, upstream_socket: str | None = None) -> Rig:
+    def build(rq: int = 3, tk: int = 100, g: int = 150, network: bool = False) -> Rig:
         # A short path: a unix socket's address is capped near a hundred bytes.
         root = Path(tempfile.mkdtemp(prefix="sv16-", dir="/tmp"))
         roots.append(root)
         for name in ("sock", "transcripts", "markers"):
             (root / name).mkdir()
-        upstream = FakeUpstream(root / "up.sock")
+        upstream = FakeUpstream(None if network else root / "up.sock")
         monkeypatch.setattr(recorder_module, "SOCKET_DIR", root / "sock")
         monkeypatch.setattr(recorder_module, "TRANSCRIPTS_DIR", root / "transcripts")
         monkeypatch.setattr(recorder_module, "REFUSE_DIR", root / "markers")
         monkeypatch.setattr(
-            recorder_module,
-            "UPSTREAM_SOCKET",
-            upstream_socket if upstream_socket is not None else str(upstream.path),
+            recorder_module, "UPSTREAM_SOCKET", "" if network else str(upstream.path)
         )
-        monkeypatch.setenv("LLM_BASE_URL", "http://upstream.invalid/v1")
+        monkeypatch.setenv(
+            "LLM_BASE_URL", upstream.url if network else "http://upstream.invalid/v1"
+        )
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("RECORDER_FORWARD_HEADERS", raising=False)
         monkeypatch.setenv("LLM_API_KEY", RECORDER_KEY)
         monkeypatch.delenv("UPSTREAM_STREAMING", raising=False)
         budget = Budget(g)
@@ -704,3 +717,168 @@ def test_two_content_lengths_are_refused(make_rig):
     closes = rig.closes(2)
     assert sorted(c["outcome"] for c in closes) == ["bad_content_length", "duplicate_content_length"]
     assert rig.upstream.requests == []
+
+
+# ---------------------------------------------------------------------------
+# R-B2: what goes upstream, on both transports
+# ---------------------------------------------------------------------------
+CLIENT_HEADERS = [
+    ("Host", "localhost"),
+    ("aUtHoRiZaTiOn", "Bearer CLIENT-DUMMY"),
+    ("X-Secret-Marker", "DUMMY-123"),
+    ("Accept", "text/event-stream"),
+    ("User-Agent", "client/1"),
+    ("Content-Length", str(len(R_H3))),
+]
+REVIEWED = {
+    "accept-encoding": "identity",
+    "content-length": str(len(R_H3)),
+    "content-type": "application/json",
+    "accept": "text/event-stream",
+    "user-agent": "space-chassis-recorder/0.2",
+}
+
+
+def headers_received(rig: Rig, client_headers=CLIENT_HEADERS) -> list[tuple[str, str]]:
+    status, _headers, _payload = rig.post(R_H3, raw_headers=client_headers)
+    assert status == 200
+    rig.closes()
+    return rig.upstream.requests[-1]["headers"]
+
+
+def without_host(headers: list[tuple[str, str]]) -> dict[str, str]:
+    return {name.lower(): value for name, value in headers if name.lower() != "host"}
+
+
+def test_no_request_header_is_ever_written_to_the_record_and_the_upstream_gets_seven(make_rig):
+    """R-H1, on the unix-socket path and the network path, compared.
+
+    This replaces the source-grep that asserted the recorder's text mentioned
+    `self.headers.items()`: it watches what the upstream actually received
+    and what the record actually holds. The key is synthetic and goes only to
+    the fake upstream.
+    """
+    received = {}
+    for network in (False, True):
+        rig = make_rig(network=network)
+        headers = headers_received(rig)
+        names = sorted(name.lower() for name, _ in headers)
+        assert names == sorted([*REVIEWED, "host", "authorization"]), (network, headers)
+        received[network] = without_host(headers)
+        assert received[network] == {**REVIEWED, "authorization": f"Bearer {RECORDER_KEY}"}
+        record = rig.raw_record()
+        assert record, "the request was recorded"
+        for secret in ("CLIENT-DUMMY", "DUMMY-123", RECORDER_KEY):
+            assert secret not in record, (network, secret)
+        assert "authorization" not in record.lower()
+    assert received[False] == received[True], "the two transports send different headers"
+
+
+def test_with_no_key_configured_no_authorization_is_sent_at_all(make_rig, monkeypatch):
+    """R-H2: the client's own key is never a fallback."""
+    for network in (False, True):
+        rig = make_rig(network=network)
+        monkeypatch.setenv("LLM_API_KEY", "")
+        headers = headers_received(rig)
+        assert len(headers) == 6
+        assert without_host(headers) == REVIEWED
+        assert "CLIENT-DUMMY" not in json.dumps(headers)
+
+
+def test_only_allowlisted_single_printable_x_headers_are_passed_on(make_rig, monkeypatch):
+    rig = make_rig()
+    monkeypatch.setenv(
+        "RECORDER_FORWARD_HEADERS",
+        "X-Title, x-api-key, Authorization, X-Twice, X-Ctl, X-Long, Bad Name, Y-Other",
+    )
+    client = [
+        ("Host", "localhost"),
+        ("X-Title", "space chassis"),
+        ("X-Api-Key", "CLIENT-API-KEY"),
+        ("X-Twice", "a"),
+        ("X-Twice", "b"),
+        ("X-Ctl", "a\tb"),
+        ("X-Long", "a" * 257),
+        ("Y-Other", "y"),
+        ("Content-Length", str(len(R_H3))),
+    ]
+    headers = without_host(headers_received(rig, client))
+    extras = {name: value for name, value in headers.items() if name.startswith(("x-", "y-"))}
+    assert extras == {"x-title": "space chassis"}
+    assert "CLIENT-API-KEY" not in rig.raw_record()
+
+
+def test_the_outbound_builder_ignores_case_and_refuses_credentials_by_name():
+    import email.message  # noqa: PLC0415 -- the header type http.server hands the handler
+
+    def message(*pairs):
+        built = email.message.Message()
+        for name, value in pairs:
+            built[name] = value
+        return built
+
+    build = recorder_module.outbound_headers
+    assert build(message(("ACCEPT", " Text/Event-Stream ")), "")["Accept"] == "text/event-stream"
+    assert build(message(("Accept", "*/*")), "")["Accept"] == "*/*"
+    assert build(message(("Accept", "application/json; q=1")), "")["Accept"] == "application/json"
+    twice = message(("Accept", "text/event-stream"), ("Accept", "*/*"))
+    assert build(twice, "")["Accept"] == "application/json"
+    assert build(message(), "")["Accept"] == "application/json"
+    assert "Authorization" not in build(message(("Authorization", "Bearer x")), "")
+    assert build(message(), "k")["Authorization"] == "Bearer k"
+    denied = message(("Cookie", "c"), ("X-Api-Key", "k"), ("Authorization", "a"))
+    assert set(build(denied, "", ("Cookie", "X-Api-Key", "Authorization"))) == {
+        "Content-Type",
+        "Accept",
+        "User-Agent",
+    }
+
+
+def test_the_network_path_uses_verified_tls_and_ignores_the_unix_socket_when_unset(monkeypatch):
+    monkeypatch.setattr(recorder_module, "UPSTREAM_SOCKET", "")
+    monkeypatch.setenv("LLM_BASE_URL", "https://model.invalid/api/v1")
+    connection = recorder_module.upstream_connection()
+    assert isinstance(connection, http.client.HTTPSConnection)
+    assert connection._context.verify_mode == ssl.CERT_REQUIRED
+    assert connection._context.check_hostname is True
+    assert (connection.host, connection.port) == ("model.invalid", 443)
+    assert recorder_module.request_path(recorder_module.upstream_url()) == "/api/v1/chat/completions"
+    monkeypatch.setattr(recorder_module, "UPSTREAM_SOCKET", "/tmp/x.sock")
+    assert isinstance(recorder_module.upstream_connection(), recorder_module.UnixHTTPConnection)
+
+
+def test_nothing_is_sent_without_a_connection_made_before_the_send_gate(make_rig):
+    """No hidden auto-connect: a dropped connection fails the exchange instead of reopening."""
+    rig = make_rig()
+    unconnected = recorder_module.Upstream()
+    with pytest.raises(http.client.NotConnected):
+        unconnected.exchange({}, b"{}")
+    upstream = recorder_module.Upstream()
+    upstream.connect()
+    assert upstream.connection.auto_open == 0
+    upstream.close()
+    with pytest.raises(http.client.NotConnected):
+        upstream.exchange({}, b"{}")
+    assert rig.upstream.requests == []
+
+
+def test_a_refused_network_connection_is_refunded_too(make_rig, monkeypatch):
+    """R-C7 on the network path, which urllib could not tell from a send failure."""
+    rig = make_rig(network=True)
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    monkeypatch.setenv("LLM_BASE_URL", f"http://127.0.0.1:{port}/v1")
+    status, _headers, payload = rig.post(chat())
+    assert status == 502 and json.loads(payload)["error"]["code"] == "upstream_connect"
+    (close,) = rig.closes()
+    assert close["usage_class"] == "none" and close["charged_tokens"] == 0
+    snap = rig.budget.snapshot(SLUG)
+    assert (snap["requests_used"], snap["tokens_used"], snap["live"]) == (0, 0, 0)
+
+    monkeypatch.setenv("LLM_BASE_URL", "ftp://upstream.invalid/v1")
+    status, _headers, payload = rig.post(chat())
+    assert status == 502 and "upstream.invalid" not in payload.decode()
+    assert rig.closes(2)[-1]["outcome"] == "upstream_connect"
+    assert rig.budget.snapshot(SLUG)["requests_used"] == 0

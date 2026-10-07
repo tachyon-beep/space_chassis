@@ -33,11 +33,10 @@ import os
 import re
 import socket
 import socketserver
+import ssl
 import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 from collections import OrderedDict, deque
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler
@@ -80,7 +79,6 @@ WINDOW_SECONDS = 3600
 # announced itself. Agents come up independently of this process.
 POLL_SECONDS = 3
 
-HOP_BY_HOP = {"host", "content-length", "connection", "accept-encoding", "transfer-encoding"}
 FRAMING = {"content-length", "transfer-encoding", "connection", "content-encoding"}
 
 
@@ -1034,18 +1032,11 @@ def make_handler(recorder: Recorder):
                 return
             exchange.admitted = True
 
-            headers = {}
-            for name, value in self.headers.items():
-                if name.lower() in HOP_BY_HOP:
-                    continue
-                headers[name] = value
-            # The substitution. Anything the agent sent as a key is discarded
-            # here and never appears in a transcript.
-            key = upstream_key()
-            if key:
-                headers["Authorization"] = f"Bearer {key}"
+            # The substitution. Nothing the agent sent as a header is copied:
+            # the outbound set is built fresh, and never written to the record.
+            headers = outbound_headers(self.headers, upstream_key(), forward_header_names())
 
-            upstream = UnixUpstream(UPSTREAM_SOCKET) if UPSTREAM_SOCKET else UrllibUpstream()
+            upstream = Upstream()
             try:
                 upstream.connect()
             except Exception as error:  # noqa: BLE001 -- reported to the client as 502
@@ -1119,37 +1110,151 @@ def request_path(url: str) -> str:
     return path
 
 
-class UnixUpstream:
-    """One HTTP exchange over a unix socket, connected before anything is sent.
+# ---------------------------------------------------------------------------
+# What goes upstream
+# ---------------------------------------------------------------------------
+# The outbound headers are built fresh for every request by one function, for
+# the unix-socket and network paths alike, and never copied from the inbound
+# request: whatever the agent sent as a key, a cookie or a marker stays here.
+# http.client adds Host, Content-Length and Accept-Encoding: identity. With no
+# key configured, no Authorization header is sent at all.
+#
+# Stated narrowly: the configured key is read at send time and placed only in
+# the outbound request, so the authorized upstream necessarily receives it.
+# The recorder never serializes a request header into the record. A response
+# body can reflect anything, headers included, and that is outside this claim.
+USER_AGENT = "space-chassis-recorder/0.2"
+ACCEPT_VALUES = ("application/json", "text/event-stream", "*/*")
+FORWARD_HEADER_PATTERN = re.compile(r"X-[A-Za-z0-9-]{1,40}", re.IGNORECASE)
+DENIED_HEADERS = frozenset(
+    {
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "set-cookie",
+        "x-api-key",
+        "api-key",
+        "openai-organization",
+        "openai-project",
+    }
+)
+MAX_FORWARD_VALUE_BYTES = 256
+PRINTABLE_ASCII = re.compile(r"[\x20-\x7e]*")
 
-    Connecting is a separate step because it decides the accounting: a connect
-    that fails has sent nothing, so the reservation is refunded; once bytes may
-    have left, the estimate stays charged whatever happens. `auto_open` is off
-    so http.client can never reconnect behind that decision. The upstream may
-    answer with a content-length or with chunked encoding; http.client reads
-    both, and a recorder that mishandled the second would silently truncate a
-    streamed completion in the record.
+
+def forward_header_names() -> tuple[str, ...]:
+    """RECORDER_FORWARD_HEADERS: extra X- headers an operator chose to pass on.
+
+    Empty by default. A name is kept only if it is an X- name of at most forty
+    characters and not a credential's name; anything else is ignored.
     """
+    names = []
+    for item in (os.environ.get("RECORDER_FORWARD_HEADERS") or "").split(","):
+        name = item.strip()
+        if FORWARD_HEADER_PATTERN.fullmatch(name) and name.lower() not in DENIED_HEADERS:
+            names.append(name)
+    return tuple(names)
 
-    def __init__(self, socket_path: str) -> None:
+
+def outbound_headers(inbound, key: str, extra: tuple[str, ...] = ()) -> dict[str, str]:
+    """The headers sent upstream; `inbound` is the request's header message.
+
+    Accept is passed on only as one of three exact values; an allowlisted X-
+    header only when it appears once with a printable value of at most 256
+    bytes. Every comparison ignores case.
+    """
+    accept = "application/json"
+    values = inbound.get_all("Accept") or []
+    if len(values) == 1 and values[0].strip().lower() in ACCEPT_VALUES:
+        accept = values[0].strip().lower()
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": accept,
+        "User-Agent": USER_AGENT,
+    }
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    for name in extra:
+        if name.lower() in DENIED_HEADERS or not FORWARD_HEADER_PATTERN.fullmatch(name):
+            continue
+        values = inbound.get_all(name) or []
+        if len(values) != 1:
+            continue
+        value = values[0]
+        if PRINTABLE_ASCII.fullmatch(value) and len(value) <= MAX_FORWARD_VALUE_BYTES:
+            headers[name] = value
+    return headers
+
+
+class UnixHTTPConnection(http.client.HTTPConnection):
+    """http.client over a unix socket: an upstream that needs no port."""
+
+    def __init__(self, socket_path: str, timeout: float) -> None:
+        super().__init__("localhost", timeout=timeout)
         self.socket_path = socket_path
-        self.connection: http.client.HTTPConnection | None = None
 
     def connect(self) -> None:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            sock.settimeout(UPSTREAM_TIMEOUT)
+            sock.settimeout(self.timeout)
             sock.connect(self.socket_path)
         except BaseException:
             sock.close()
             raise
-        connection = http.client.HTTPConnection("localhost", timeout=UPSTREAM_TIMEOUT)
+        self.sock = sock
+
+
+def upstream_connection() -> http.client.HTTPConnection:
+    """An unconnected connection to the upstream: UPSTREAM_SOCKET, else LLM_BASE_URL.
+
+    HTTPS uses the standard library's verified defaults -- certificate and
+    host name both checked. Environment proxy variables are not consulted.
+    """
+    if UPSTREAM_SOCKET:
+        return UnixHTTPConnection(UPSTREAM_SOCKET, UPSTREAM_TIMEOUT)
+    target = urlsplit(upstream_url())
+    if target.scheme == "https":
+        return http.client.HTTPSConnection(
+            target.hostname,
+            target.port,
+            timeout=UPSTREAM_TIMEOUT,
+            context=ssl.create_default_context(),
+        )
+    if target.scheme == "http":
+        return http.client.HTTPConnection(target.hostname, target.port, timeout=UPSTREAM_TIMEOUT)
+    raise ValueError("the upstream URL must be http or https")
+
+
+class Upstream:
+    """One HTTP exchange, connected before anything is sent.
+
+    Connecting is a separate step because it decides the accounting: a connect
+    that fails (including a TLS handshake) has sent no request, so the
+    reservation is refunded; once bytes may have left, the estimate stays
+    charged whatever happens. `auto_open` is off, so http.client can never
+    reconnect behind that decision: an exchange without a live connection
+    fails instead. The upstream may answer with a content-length or chunked;
+    http.client reads both, and a recorder that mishandled the second would
+    silently truncate a streamed completion in the record.
+    """
+
+    def __init__(self) -> None:
+        self.connection: http.client.HTTPConnection | None = None
+
+    def connect(self) -> None:
+        connection = upstream_connection()
         connection.auto_open = 0
-        connection.sock = sock
+        try:
+            connection.connect()
+        except BaseException:
+            connection.close()
+            raise
         self.connection = connection
 
     def exchange(self, headers: dict, body: bytes) -> tuple[int, dict, bytes]:
         connection = self.connection
+        if connection is None or connection.sock is None:
+            raise http.client.NotConnected("no upstream connection was made before sending")
         connection.request("POST", request_path(upstream_url()), body=body, headers=headers)
         response = connection.getresponse()
         return response.status, dict(response.getheaders()), response.read()
@@ -1158,30 +1263,6 @@ class UnixUpstream:
         if self.connection is not None:
             with contextlib.suppress(OSError):
                 self.connection.close()
-
-
-class UrllibUpstream:
-    """The network path, through urllib, until it is replaced (SV-016 R-B2).
-
-    urllib connects inside `urlopen`, after the send gate, so a connect failure
-    here cannot be told from a send failure. It is counted the safe way: as
-    possibly sent, the estimate kept, never refunded.
-    """
-
-    def connect(self) -> None:
-        pass
-
-    def exchange(self, headers: dict, body: bytes) -> tuple[int, dict, bytes]:
-        request = urllib.request.Request(upstream_url(), data=body, headers=headers, method="POST")
-        try:
-            with urllib.request.urlopen(request, timeout=UPSTREAM_TIMEOUT) as response:
-                return response.status, dict(response.headers.items()), response.read()
-        except urllib.error.HTTPError as error:
-            payload = error.read() if error.fp else b""
-            return error.code, dict(error.headers.items()) if error.headers else {}, payload
-
-    def close(self) -> None:
-        pass
 
 
 def _is_count(value) -> bool:
