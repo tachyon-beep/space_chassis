@@ -14,7 +14,9 @@ This branch is a durability checkpoint, not a merge or deployment approval. John
 
 - SV021 integrated session/checkpoint/recovery adoption: accepted at `f3812dc9d351a231a0f0879f86c9807f0a6a6634`; independent final review is `sv021/ASTRA-ACCEPTANCE.md`. Final selected set: **511 passed**, including 97 recovery checks and five actual local script restarts. All ten findings are closed. Destructive GC, additional acknowledgement modes, exact numerical replay bounds, recorder-in-loop correlation and deployment remain outside that acceptance.
 
-The coordinator last verified remote checkpoint `24f452a491ed7f24837990236337698478749c5d`, tree `b934f0acfbf091129264b24d5378ad7e7536448d`. Implementer statements that nothing was pushed refer to that worker's actions. This documentation update is prepared for a subsequent normal fast-forward backup; its creation does not claim that later remote verification has completed.
+- SV022 checkpoint-safe collection and post-collection recovery: accepted at `53c5c44b167f73e7aefb326fdeacfdced5839835`; independent final review is `sv022/ASTRA-ACCEPTANCE.md`. Final selected set: **563 passed**, including 50 GC checks and two actual local recorder/chassis correlation fixtures. Both findings are closed. The mixed process-death/host-loss case is modeled, not real power-loss evidence; real-session collection and deployment remain outside acceptance.
+
+The coordinator last verified remote checkpoint `f6dcea2016dd1d7f9e00a6d516fec337e04c8a97`, tree `6925dbbc88d8111ca87e24ee9a0e10383dc2efba`. Worker statements that nothing was pushed refer to that worker's actions. This acceptance documentation is prepared for a subsequent normal fast-forward backup; its creation does not itself claim that later verification completed.
 
 ## Evidence and exclusions
 
