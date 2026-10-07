@@ -14,3 +14,5 @@ Contract: SV-015 v2 §2.1 (t0-anchored deadlines, forward check, watchdog diagno
 | compose: 2 MiB body default, RECORDER_TIMEOUT_SECONDS wiring | done (part 2) | `docker-compose.yml` |
 | Complete selected run | 159 passed, 3 expected SystemExit warnings | `RECEIPT.md` §3 |
 | Receipt | done | `RECEIPT.md` |
+
+Commits: part 1 `6b758cc872e6bbd5c103c951609bef434e510c55` (mechanisms + integration checkpoint); part 2 `e6ade17ad4f955675d015de3c5d6e7f28383fd57` (header-fragment fix, regressions, compose, receipt). Revert units: part 2's tests depend on part 1; part 1 alone passes the pre-existing suites (46 + 33 at checkpoint). Next: independent Astra review.
