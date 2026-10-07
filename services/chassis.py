@@ -1144,10 +1144,108 @@ def selection(
         start = index
 
     start = _advance_to_chunk(start, length, chunk_tokens)
-    while start < len(messages) - 1 and messages[start].get("role") == "tool":
+    # The window starts on a whole unit: never on a tool result, and never on
+    # anything else inside a tool group (a system message a duty slipped in
+    # between a call and its result), so a group is sent whole or not at all.
+    within = inside_group(messages)
+    while start < len(messages) - 1 and (messages[start].get("role") == "tool" or within[start]):
         start += 1
 
     return sorted(pinned | set(range(start, len(messages)))), start
+
+
+def inside_group(messages: list[dict]) -> list[bool]:
+    """For each message, whether it sits inside a tool group (after the group's head).
+
+    A group is an assistant message with tool calls and the run of tool and
+    system messages that follows it. Only the assistant message is a unit
+    boundary.
+    """
+    flags = [False] * len(messages)
+    open_group = False
+    for index, message in enumerate(messages):
+        role = message.get("role")
+        if open_group and role in ("tool", "system"):
+            flags[index] = True
+            continue
+        open_group = role == "assistant" and bool(message.get("tool_calls"))
+    return flags
+
+
+# What the outgoing view says for a call with no recorded result. It is a
+# statement of ignorance, not of non-execution: the call may well have run.
+REPAIRED_UNKNOWN_RESULT = (
+    "outcome unknown: no result for this call is in the conversation; "
+    "it may or may not have run"
+)
+ORPHAN_NOTICE = "[orphan tool result for {call_id}]: {content}"
+
+
+def repair_structure(messages: list[dict]) -> tuple[list[dict], list[dict]]:
+    """A copy of `messages` every upstream will accept, and what was changed.
+
+    Every assistant message with tool calls is followed at once by exactly one
+    tool message per call, in call order. A missing result is synthesized with
+    REPAIRED_UNKNOWN_RESULT; a system message found inside a group moves to
+    just after it; a tool message that answers no pending call -- a stray, or
+    a second answer to the same call -- becomes a user-role notice
+    `"[orphan tool result for <id>]: <content>"` at the same place. Messages
+    that need no change are the same objects. Repair is idempotent.
+
+    This is the *outgoing view*. It never edits the stored conversation, whose
+    indices the recap's fold point refers to, and a synthesized result is
+    never evidence that a call did not run.
+    """
+    repaired: list[dict] = []
+    notes: list[dict] = []
+
+    def orphan(message: dict) -> dict:
+        content = message.get("content")
+        text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+        notes.append({"kind": "orphan", "tool_call_id": message.get("tool_call_id")})
+        return {"role": "user", "content": ORPHAN_NOTICE.format(call_id=message.get("tool_call_id"), content=text)}
+
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        role = message.get("role")
+        calls = message.get("tool_calls") if role == "assistant" else None
+        if not calls:
+            repaired.append(orphan(message) if role == "tool" else message)
+            index += 1
+            continue
+        following = index + 1
+        while following < len(messages) and messages[following].get("role") in ("tool", "system"):
+            following += 1
+        trailing = messages[index + 1 : following]
+        unmatched = [item for item in trailing if item.get("role") == "tool"]
+        repaired.append(message)
+        for call in calls:
+            call_id = call.get("id") if isinstance(call, dict) else None
+            match = next((item for item in unmatched if item.get("tool_call_id") == call_id), None)
+            if match is not None:
+                unmatched = [item for item in unmatched if item is not match]
+                repaired.append(match)
+                continue
+            function = call.get("function") if isinstance(call, dict) else None
+            name = function.get("name") if isinstance(function, dict) else None
+            repaired.append(
+                {"role": "tool", "tool_call_id": call_id, "name": name, "content": REPAIRED_UNKNOWN_RESULT}
+            )
+            notes.append({"kind": "synthetic_result", "tool_call_id": call_id})
+        seen_tool = False
+        for item in reversed(trailing):
+            if item.get("role") == "tool":
+                seen_tool = True
+            elif seen_tool:
+                notes.append({"kind": "moved_system"})
+        for item in trailing:
+            if item.get("role") == "system":
+                repaired.append(item)
+            elif any(item is stray for stray in unmatched):
+                repaired.append(orphan(item))
+        index = following
+    return repaired, notes
 
 
 def _advance_to_chunk(start: int, length, chunk_tokens: int) -> int:
@@ -1208,9 +1306,14 @@ def prepared_view(
     The recap is inserted here rather than stored in the conversation, so it is
     always current, never duplicated, and never itself evicted by the window it
     is reporting on.
+
+    The selected messages are then repaired as a view (`repair_structure`):
+    every call answered once, in place, and nothing stray -- so a conversation
+    a duty edited, or a run that ended mid-group, still makes a request the
+    upstream accepts. The stored list is not touched.
     """
     indices, _ = selection(messages, budget_tokens, chunk_tokens)
-    kept = [messages[index] for index in indices]
+    kept, _repairs = repair_structure([messages[index] for index in indices])
     recap = carried.recap()
     if not recap:
         return kept

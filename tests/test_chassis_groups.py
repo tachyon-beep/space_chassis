@@ -1,0 +1,214 @@
+"""Atomic tool groups and structural repair of the outgoing view (SV-019 K-G1).
+
+Contract: SV-013 section 2.2.6 "Atomic groups and repair" (SV-011 B6.2-B6.3):
+every assistant message with tool calls is followed by exactly one tool
+message per call; misplaced system messages move after the group; orphan tool
+messages become user-role notices; selection never splits a group. SV-015 v2
+section 2.3 leaves the window budget, chunking and pinned policy unchanged.
+
+Scope, stated: `repair_structure` is pure and is applied to the *outgoing* view
+only. The stored conversation is never rewritten here (durable repair at
+recovery is SV-013 K-G2), so stored indices -- and the recap's fold point --
+keep referring to the original messages. A synthesized result says the
+outcome is unknown; it is never evidence that a past call did not run.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import sys
+from pathlib import Path
+
+PROJECT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT / "services"))
+
+import chassis  # noqa: E402
+from chassis import repair_structure  # noqa: E402
+
+
+def user(text):
+    return {"role": "user", "content": text}
+
+
+def system(text):
+    return {"role": "system", "content": text}
+
+
+def asst(*ids, text=""):
+    return {
+        "role": "assistant",
+        "content": text,
+        "tool_calls": [
+            {"id": i, "type": "function", "function": {"name": f"f_{i}", "arguments": "{}"}} for i in ids
+        ],
+    }
+
+
+def tool(call_id, text="ok"):
+    return {"role": "tool", "tool_call_id": call_id, "name": f"f_{call_id}", "content": text}
+
+
+def well_formed(messages) -> bool:
+    """Every call answered once, right after its assistant message; no stray tool messages."""
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if message.get("role") == "tool":
+            return False
+        calls = message.get("tool_calls") or []
+        if message.get("role") == "assistant" and calls:
+            answers = messages[index + 1 : index + 1 + len(calls)]
+            if [a.get("role") for a in answers] != ["tool"] * len(calls):
+                return False
+            if [a.get("tool_call_id") for a in answers] != [c.get("id") for c in calls]:
+                return False
+            index += 1 + len(calls)
+            continue
+        index += 1
+    return True
+
+
+# ---------------------------------------------------------------------------
+# repair_structure
+# ---------------------------------------------------------------------------
+def test_a_well_formed_list_is_returned_as_the_same_objects():
+    messages = [system("s"), user("go"), asst("a", "b"), tool("a"), tool("b"), user("next")]
+    repaired, notes = repair_structure(messages)
+    assert notes == []
+    assert all(x is y for x, y in zip(repaired, messages, strict=True))
+
+
+def test_a_missing_result_is_synthesized_as_unknown_never_unrun():
+    repaired, notes = repair_structure([user("go"), asst("a", "b"), tool("a"), user("then")])
+    assert well_formed(repaired)
+    synthetic = repaired[3]
+    assert synthetic == {
+        "role": "tool",
+        "tool_call_id": "b",
+        "name": "f_b",
+        "content": chassis.REPAIRED_UNKNOWN_RESULT,
+    }
+    assert "unknown" in synthetic["content"] and "not run" not in synthetic["content"]
+    assert notes == [{"kind": "synthetic_result", "tool_call_id": "b"}]
+
+
+def test_a_system_message_inside_a_group_moves_after_it():
+    note = system("a fact")
+    repaired, notes = repair_structure([user("go"), asst("a", "b"), tool("a"), note, tool("b")])
+    assert [m["role"] for m in repaired] == ["user", "assistant", "tool", "tool", "system"]
+    assert repaired[-1] is note and well_formed(repaired)
+    assert notes == [{"kind": "moved_system"}]
+
+
+def test_orphan_tool_messages_become_documented_user_notices():
+    stray = tool("zz", "result text")
+    repaired, notes = repair_structure([user("go"), stray, asst("a"), tool("a"), tool("a", "again")])
+    assert repaired[1] == {"role": "user", "content": "[orphan tool result for zz]: result text"}
+    assert repaired[-1] == {"role": "user", "content": "[orphan tool result for a]: again"}
+    assert well_formed(repaired)
+    assert [n["kind"] for n in notes] == ["orphan", "orphan"]
+    structured = repair_structure([{"role": "tool", "tool_call_id": None, "content": [{"text": "x"}]}])[0]
+    assert structured == [{"role": "user", "content": '[orphan tool result for None]: [{"text": "x"}]'}]
+
+
+def test_a_group_ends_at_the_first_message_that_is_not_a_tool_or_system_message():
+    repaired, _notes = repair_structure([asst("a", "b"), tool("a"), user("interrupted"), tool("b")])
+    assert [m["role"] for m in repaired] == ["assistant", "tool", "tool", "user", "user"]
+    assert repaired[2]["content"] == chassis.REPAIRED_UNKNOWN_RESULT
+    assert repaired[4]["content"].startswith("[orphan tool result for b]")
+
+
+def test_results_are_paired_in_call_order_and_duplicate_call_ids_pair_one_each():
+    repaired, _notes = repair_structure([asst("a", "a", "b"), tool("b", "B"), tool("a", "A1"), tool("a", "A2")])
+    assert [m.get("content") for m in repaired[1:]] == ["A1", "A2", "B"]
+
+
+def test_repair_is_idempotent():
+    broken = [
+        system("s"),
+        user("go"),
+        tool("stray"),
+        asst("a", "b", "c"),
+        system("inside"),
+        tool("c"),
+        tool("a"),
+        tool("a", "dup"),
+        user("later"),
+        tool("b"),
+        asst("d"),
+    ]
+    once, notes = repair_structure(copy.deepcopy(broken))
+    twice, again = repair_structure(copy.deepcopy(once))
+    assert twice == once and again == [] and notes
+    assert well_formed(once)
+
+
+# ---------------------------------------------------------------------------
+# Group-atomic selection and the outgoing view
+# ---------------------------------------------------------------------------
+def test_the_window_never_opens_inside_a_group_at_an_interposed_system_message():
+    """Before K-G1 only a tool message was skipped; a system message inside a group was a valid start."""
+    messages = [system("sys"), user("go")]
+    for index in range(30):
+        messages += [asst(f"c{index}"), system(f"inside {index}"), tool(f"c{index}", "r" * 200)]
+    for budget in (200, 400, 800, 1600):
+        _indices, start = chassis.selection(messages, budget, 50)
+        assert start >= len(messages) - 1 or not chassis.inside_group(messages)[start], (
+            f"budget {budget}: the window opened inside a group at index {start}"
+        )
+
+
+def test_the_outgoing_view_is_repaired_and_the_stored_list_is_not():
+    carried = chassis.Carried(Path("/nonexistent/session"), Path("/nonexistent/home"))
+    stored = [system("sys"), user("go"), asst("a", "b"), system("inside"), tool("a"), tool("x"), user("now")]
+    snapshot = copy.deepcopy(stored)
+    sent = chassis.prepared_view(stored, 100_000, 100, carried)
+    assert stored == snapshot, "the stored conversation was changed"
+    assert well_formed(sent)
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "tool", "tool", "system", "user", "user"]
+    assert sent[4]["content"] == chassis.REPAIRED_UNKNOWN_RESULT
+    assert sent[6]["content"].startswith("[orphan tool result for x]")
+
+
+def test_pinned_material_and_the_budget_are_unchanged_by_repair():
+    carried = chassis.Carried(Path("/nonexistent/session"), Path("/nonexistent/home"))
+    messages = [system("standing orders"), user("the mission")]
+    messages += [user(f"turn {index} " + "x" * 400) for index in range(100)]
+    plain = [messages[i] for i in chassis.selection(messages, 500, 100)[0]]
+    sent = chassis.prepared_view(messages, 500, 100, carried)
+    assert sent == plain, "a well-formed view is sent exactly as selected"
+    assert sent[0]["content"] == "standing orders" and sent[1]["content"] == "the mission"
+
+
+def test_repeated_folding_records_every_evicted_message_once_with_broken_groups(tmp_path):
+    """The recap's fold point stays an index into the stored list: nothing duplicated, nothing lost."""
+    carried = chassis.Carried(tmp_path / "session", tmp_path / "home")
+    instance = object.__new__(chassis.Chassis)
+    instance.context_window = 300
+    instance.eviction_chunk = 60
+    instance.recap_folded = 0
+    instance.carried = carried
+    instance.record = lambda *_args, **_kwargs: None
+    instance.messages = [system("sys"), user("go")]
+    for round_index in range(25):
+        instance.messages += [
+            asst(f"a{round_index}", f"b{round_index}", text=f"step {round_index}"),
+            tool(f"a{round_index}", f"result a{round_index} " + "y" * 150),
+            system(f"note {round_index}"),
+            user(f"user {round_index} " + "z" * 150),
+        ]
+        chassis.Chassis.fold_recap_if_needed(instance)
+        sent = chassis.prepared_view(instance.messages, 300, 60, carried)
+        assert well_formed(sent)
+    recap = carried.recap()
+    folded = instance.messages[: instance.recap_folded]
+    expected = [m for m in folded if m["role"] != "system" and chassis.render_message(m)]
+    assert expected, "the run was long enough to fold"
+    for message in expected:
+        body = chassis.render_message(message)[: chassis.RECAP_LINE_CHARS]
+        assert recap.count(body) == 1, f"folded {recap.count(body)} times: {body[:40]}"
+    assert "[orphan tool result" not in recap and chassis.REPAIRED_UNKNOWN_RESULT not in recap, (
+        "the view's repairs never reach the stored record"
+    )
+    assert json.dumps(instance.messages).count("orphan tool result") == 0
