@@ -1,6 +1,17 @@
 # SV-023 status
 
-**Implementation and bounded validation complete; awaiting the coordinator's checkpoint and independent review. Not accepted.** Final tree: 607 selected passes across 12 bounded commands (44 new + 563 retained), no failures (RECEIPT.md §1). Mutations M1 and M3 were run and restored; `grep MUTATION services/ tests/` is empty. Changed runtime: `services/chassis_startup.py` only. New: `tests/test_chassis_acknowledgements.py`, this STATUS, RECEIPT.md. No real session was touched, and no Git call was made.
+**Correction 1 (Astra SV023-01 … SV023-04) complete; awaiting the coordinator's checkpoint and Astra re-review. Not accepted.** Review: `SV-023-Astra-review.md` (head `b878ed6`, runtime/tests `c5b2ae1`), changes needed. All four findings are fixed in `services/chassis_startup.py`, with regressions written first and run alone on the reviewed runtime. Eight nodes failed as traced, including one further defect in the SV023-04 class found here: a duplicate, tail-unbound TC4 receipt after a plain process death. Final tree: 657 selected passes across 12 bounded commands (94 focused + 563 retained), no failures. Map, pre-fix outcomes, schema and ordering, tests, limits and execution provenance: `checkpoint-001-astra-corrections.md`. No Git call; temporary roots only.
+
+- SV023-01: `read_carrier` classifies ACKNOWLEDGED (absent/old/witnessed/invalid) with types checked before dispatch. A present invalid carrier stops `acknowledgement_unverified` before any change. The old-pair schema is exact; a damaged witnessed envelope is never treated as legacy.
+- SV023-02: neither command path replaces an unfinished carrier. Same-transaction retries are allowed; any other is refused byte-identically (bounded fail-closed option; no cancellation or two-transaction policy).
+- SV023-03: a witnessed torn-frame RECOVERING carries a sealed `witnessed` context. Retirement order for that transaction is receipt sync, carrier, then intent. Every surviving combination is checked; nothing beyond the intent's exact core is admitted.
+- SV023-04: every pair retires its carrier only over exactly one matching (reason/resolution/ack_id/TC4 tail) receipt whose segment was synced. A failed sync keeps the carrier. A TC4 carrier over a vanished tail grants nothing without its recorded receipt. Intent-core records found readable are synced before any RECOVERING removal.
+
+Provenance correction: the initial package's V9/V10 runs overlapped (coordinator finding). They were not serial, as checkpoint 2 below implied; see checkpoint-001 §1, which also records this correction's own C10–C12 submission in one message.
+
+---
+
+Earlier status (kept): **Implementation and bounded validation complete; awaiting the coordinator's checkpoint and independent review. Not accepted.** Final tree: 607 selected passes across 12 bounded commands (44 new + 563 retained), no failures (RECEIPT.md §1). Mutations M1 and M3 were run and restored; `grep MUTATION services/ tests/` is empty. Changed runtime: `services/chassis_startup.py` only. New: `tests/test_chassis_acknowledgements.py`, this STATUS, RECEIPT.md. No real session was touched, and no Git call was made.
 
 ---
 
@@ -28,10 +39,10 @@ Design (engineering decisions, listed for review in RECEIPT.md):
 
 ## Checkpoint 2: final validation and receipt
 
-- V1–V12 were run on the final tree only (RECEIPT.md §1), one literal runner command each, within the unchanged caps.
+- V1–V12 were run on the final tree only (RECEIPT.md §1), one literal runner command each, within the unchanged caps. [Corrected later: several commands were submitted in one message and V9/V10 overlapped; not serial. See checkpoint-001 §1.]
 - RECEIPT.md written: exact new pairs, schemas and domains, mechanism, reason-to-fixture and refusal matrix, crash cuts, controls, source deviations, evidence kinds, remaining limits.
 - Two development failures were fixture bugs of mine (RECEIPT §1). No retained assertion was changed.
-- Finding for review, not fixed (outside scope): the existing pairs' `_consume_ack` retires ACKNOWLEDGED after finding a receipt that is only readable, without syncing its segment (the SV022-01 class). The new pairs sync it.
+- Finding for review, not fixed (outside scope): the existing pairs' `_consume_ack` retires ACKNOWLEDGED after finding a receipt that is only readable, without syncing its segment (the SV022-01 class). The new pairs sync it. [Corrected later: it was not out of scope; fixed as SV023-04 in checkpoint-001.]
 
 ## Activation boundary
 
