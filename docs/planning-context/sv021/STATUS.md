@@ -1,6 +1,7 @@
 # SV-021 status
 
-**Correction 2 for Astra SV021-08…10 committed at `f3812dc9d351a231a0f0879f86c9807f0a6a6634`; awaiting independent re-review.** Re-reviewed head `d0430590586e8c8280fcc96b32571fb0c0ad0825` (runtime/tests `06fbc40e4df3287f8995bb54713ce316164b29d7`; review: changes needed, SV021-08/-09/-10). Not accepted; passing tests are not acceptance. SV-022 does not start before independent acceptance.
+**Independently accepted after correction 2.** Runtime/tests `f3812dc9d351a231a0f0879f86c9807f0a6a6634`, reviewed documentation head `24f452a491ed7f24837990236337698478749c5d`. All ten Astra findings are closed; final review: `ASTRA-ACCEPTANCE.md`. Reported selected evidence: 511 passes across nine bounded batches, including 97 recovery checks and five real script restarts. Acceptance covers the isolated WIP package with the staged limits below.
+
 
 ## Correction 2
 
@@ -43,6 +44,6 @@ Staged / not claimed (unchanged): destructive GC disabled (no C-G1/O2-4, no boun
 
 ## Next
 
-Independent Astra re-review of correction 2 is next. The coordinator committed the stopped worker's runtime/test bytes unchanged at `f3812dc9d351a231a0f0879f86c9807f0a6a6634`. No unresolved blocker known: identity evidence is the checked live reservation or the checksummed frozen intent, reconciled monotonically; where neither is valid, or they conflict, startup stops before any effect. Intents written before correction 2 (unsealed) also stop rather than being trusted.
+SV022: the separately reviewed destructive-GC/post-collection-recovery package, with a local recorder-in-loop correlation slice. Protect IDENTITY and sealed RECOVERING, per-generation foreign state, current file-binding suffix, added blob references and the exact retained C_n.prev tuple. See the final acceptance for dependencies. No merge, deployment, real-session collection or broader commissioning claim follows from this acceptance.
 
-No push, main merge, deployment, account change or paid-overage use by this session.
+The worker made no push; the coordinator separately verified the authorized WIP backup at `24f452a491ed7f24837990236337698478749c5d`.

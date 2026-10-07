@@ -12,7 +12,9 @@ This branch is a durability checkpoint, not a merge or deployment approval. John
 
 - SV020 inactive persistence foundation: accepted at `8b897931be6986e2da9a299c63060d0925a817f3`; independent final review is `sv020/ASTRA-ACCEPTANCE.md`. Final selected set: **114 passed**. All three Astra findings are closed. Live authority/checkpoint/replay and mutation integration remain SV021 work.
 
-The coordinator last verified remote checkpoint `b84a4bbef7b07b7dd36b6a7ebf6b6ef4fd0a8aa1`, tree `704fe01a54cc96f31c1f290851d8e927db051bc9`. Implementer statements that nothing was pushed refer to that worker's actions. This documentation update is prepared for a subsequent normal fast-forward backup; its creation does not claim that later remote verification has completed.
+- SV021 integrated session/checkpoint/recovery adoption: accepted at `f3812dc9d351a231a0f0879f86c9807f0a6a6634`; independent final review is `sv021/ASTRA-ACCEPTANCE.md`. Final selected set: **511 passed**, including 97 recovery checks and five actual local script restarts. All ten findings are closed. Destructive GC, additional acknowledgement modes, exact numerical replay bounds, recorder-in-loop correlation and deployment remain outside that acceptance.
+
+The coordinator last verified remote checkpoint `24f452a491ed7f24837990236337698478749c5d`, tree `b934f0acfbf091129264b24d5378ad7e7536448d`. Implementer statements that nothing was pushed refer to that worker's actions. This documentation update is prepared for a subsequent normal fast-forward backup; its creation does not claim that later remote verification has completed.
 
 ## Evidence and exclusions
 
