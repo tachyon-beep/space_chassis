@@ -48,7 +48,6 @@ if str(SERVICES_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICES_DIR))
 
 from common import (  # noqa: E402
-    append_jsonl,
     env_int,
     iso,
     slugs_from_env,
@@ -362,7 +361,17 @@ class Budget:
             now, now_wall = self._clock.monotonic(), self._clock.wall()
             requests, tokens = self._advance(slug, now, now_wall)
             glob = self._glob
-            if rid in self._live or rid in self._final:
+            # Ids are never meant to repeat: the handler's come from one boot and
+            # one counter. The budget does not rely on it. A tombstone retired
+            # early still leaves the old request's rolling entries counting for
+            # up to an hour; admitting the same id on top would overwrite their
+            # index, so it is refused while they remain.
+            if (
+                rid in self._live
+                or rid in self._final
+                or rid in requests.by_rid
+                or rid in tokens.by_rid
+            ):
                 return Refused("duplicate_rid", None)
             if len(self._live) >= self._max_live:
                 return Refused("inflight", None, self._max_live)
@@ -423,10 +432,15 @@ class Budget:
                     glob.used -= reservation.charge
                 self._retire(rid, {"state": "cancelled", "est": reservation.est, "charge": 0})
                 return Closed("cancelled", charge=0)
-            known = usage is not None and usage.cls == KNOWN and usage.actual is not None
+            # A known actual must be a whole non-negative count; anything else
+            # is treated as unknown and the estimate stands. `extract_usage`
+            # only builds valid ones, and any later usage source must too.
+            known = usage is not None and usage.cls == KNOWN and _is_count(usage.actual)
             new = usage.actual if known else reservation.charge
             delta = new - reservation.charge
             applied: list[str] = []
+            # A late settlement is reported only when it moves a number: a zero
+            # delta has no adjustment to record, so it has no `late` entry.
             late: list[dict] = []
             entry = tokens.by_rid.get(rid)
             if entry is not None:
@@ -455,6 +469,8 @@ class Budget:
             return Closed("settled", new, usage_class, tuple(applied), tuple(late))
 
     def _retire(self, rid: str, final: dict) -> None:
+        # Tombstones retire in the order they were made (FIFO, not
+        # least-recently-used): a lookup does not keep one alive.
         self._final[rid] = final
         while len(self._final) > self._max_tombstones:
             self._final.popitem(last=False)
@@ -583,8 +599,17 @@ def classify_label(value) -> tuple[str | None, dict | None]:
         if 1 <= size <= MAX_LABEL_BYTES and LABEL_PATTERN.fullmatch(value):
             return value, None
         return None, {"type": "str", "bytes": size}
-    encoded = json.dumps(value, ensure_ascii=True, allow_nan=True)
-    return None, {"type": type(value).__name__, "bytes": len(encoded.encode("ascii"))}
+    return None, {"type": type(value).__name__, "bytes": len(_encode_label(value))}
+
+
+def _encode_label(value) -> bytes:
+    return json.dumps(value, ensure_ascii=True, allow_nan=True).encode("ascii")
+
+
+def _encode_forwarded(recorded: dict) -> bytes:
+    return json.dumps(
+        recorded, ensure_ascii=True, allow_nan=False, separators=(",", ":")
+    ).encode("ascii")
 
 
 def parse_request(body: bytes, *, streaming: bool) -> ParsedRequest | RequestRefusal:
@@ -633,24 +658,30 @@ def parse_request(body: bytes, *, streaming: bool) -> ParsedRequest | RequestRef
     recorded = dict(parsed)
     transformed = False
     label = label_invalid = None
-    if CORRELATION_KEY in recorded:
-        label, label_invalid = classify_label(recorded.pop(CORRELATION_KEY))
-        transformed = True
-    if not streaming and "stream" in recorded:
-        # The upstream cannot stream: ask for one complete body instead.
-        recorded.pop("stream")
-        recorded.pop("stream_options", None)
-        transformed = True
-    if not transformed:
-        return ParsedRequest(body, body, recorded, False, duplicates)
-    if duplicates:
+    try:
+        if CORRELATION_KEY in recorded:
+            label, label_invalid = classify_label(recorded.pop(CORRELATION_KEY))
+            transformed = True
+        if not streaming and "stream" in recorded:
+            # The upstream cannot stream: ask for one complete body instead.
+            recorded.pop("stream")
+            recorded.pop("stream_options", None)
+            transformed = True
+        if not transformed:
+            return ParsedRequest(body, body, recorded, False, duplicates)
+        if duplicates:
+            return RequestRefusal(
+                "duplicate_keys",
+                "the request body repeats a key, and this request would need re-encoding",
+            )
+        forwarded = _encode_forwarded(recorded)
+    except (ValueError, RecursionError):
+        # Re-encoding walks the same structure the parser built, and the
+        # encoder's recursion need not match the decoder's exactly. Whatever
+        # parsed but cannot be re-encoded is refused here, never raised.
         return RequestRefusal(
-            "duplicate_keys",
-            "the request body repeats a key, and this request would need re-encoding",
+            "unsupported_json", "the request body nests too deeply or has an oversized number"
         )
-    forwarded = json.dumps(
-        recorded, ensure_ascii=True, allow_nan=False, separators=(",", ":")
-    ).encode("ascii")
     return ParsedRequest(body, forwarded, recorded, True, False, label, label_invalid)
 
 
@@ -737,6 +768,25 @@ def next_rid() -> str:
     return f"{BOOT}-{next(_RID_COUNTER):08d}"
 
 
+def write_record_line(path: Path, record: dict) -> None:
+    """Append one record as one line of ASCII JSON. Failure is the caller's to contain.
+
+    ASCII escapes are what make every accepted request writable: a body may
+    carry a lone surrogate as a JSON escape, which is valid JSON and is
+    forwarded as such, but cannot be encoded as UTF-8. Escaped, it is the same
+    six characters it arrived as, and a reader's `json.loads` gives back the
+    same string. Readers see JSON-equal records; only non-ASCII text is now
+    spelled as escapes.
+
+    This is serialization only. It promises nothing about durability, torn
+    lines or free space -- that is the custody work (SV-013 R-B4), not done here.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(record, ensure_ascii=True, separators=(",", ":")) + "\n"
+    with open(path, "ab") as handle:
+        handle.write(line.encode("ascii"))
+
+
 def record_diagnostic(record: dict) -> None:
     """One line in TRANSCRIPTS_DIR/recorder.jsonl, the process's own record.
 
@@ -745,7 +795,7 @@ def record_diagnostic(record: dict) -> None:
     process lands in an agent's events.
     """
     with contextlib.suppress(OSError, ValueError):
-        append_jsonl(TRANSCRIPTS_DIR / "recorder.jsonl", {"at": iso(), **record})
+        write_record_line(TRANSCRIPTS_DIR / "recorder.jsonl", {"at": iso(), **record})
 
 
 class Exchange:
@@ -772,7 +822,9 @@ class Exchange:
         self.estimate: int | None = None
         self.usage: Usage | None = None
         self.upstream_status: int | None = None
-        self.relayed: bool | None = None
+        # True only once the upstream's own response has been written to the
+        # client. A recorder error that reached the client is not a relay.
+        self.relayed = False
 
 
 def make_handler(recorder: Recorder):
@@ -817,6 +869,14 @@ def make_handler(recorder: Recorder):
                         "the recorder failed while handling this request "
                         f"({type(error).__name__})",
                     )
+            except BaseException:
+                # A control exception (SystemExit, KeyboardInterrupt...) unwinds
+                # through here and keeps going. Its `close` gets a fixed outcome;
+                # no status is claimed for a response that was never sent.
+                if not exchange.responded:
+                    exchange.status = None
+                exchange.outcome = "aborted"
+                raise
             finally:
                 self._finish(exchange)
 
@@ -869,10 +929,9 @@ def make_handler(recorder: Recorder):
                     record["late_adjustment"] = list(accounted.late)
             if exchange.upstream_status is not None:
                 record["upstream_status"] = exchange.upstream_status
-            if exchange.relayed is not None:
-                record["relayed"] = exchange.relayed
+            record["relayed"] = exchange.relayed
             try:
-                append_jsonl(state.events, record)
+                write_record_line(state.events, record)
             except Exception as error:  # noqa: BLE001 -- the last resort is the container log
                 fallback = {
                     "id": exchange.rid,
@@ -905,21 +964,28 @@ def make_handler(recorder: Recorder):
             ).encode()
             self.close_connection = True
             exchange.responded = True
-            exchange.relayed = self._relay(status, {"Content-Type": "application/json"}, body)
+            # Whether this error reached the client is not recorded as `relayed`:
+            # that field is about the upstream's response.
+            self._relay(status, {"Content-Type": "application/json"}, body)
 
         def _take_slots(self) -> bool:
             """One of this socket's slots, then one of the fleet's, waiting a bounded time.
 
             The socket's own slot is taken first so a busy socket waits on itself
-            without holding fleet capacity while it does.
+            without holding fleet capacity while it does. If taking the second
+            fails in any way -- a timeout or a raise -- the first is given back
+            here, because the caller only owns the pair once this returns True.
             """
             deadline = time.monotonic() + INFLIGHT_WAIT_SECONDS
             if not state.slots.acquire(timeout=INFLIGHT_WAIT_SECONDS):
                 return False
-            if TOTAL_SLOTS.acquire(timeout=max(0.0, deadline - time.monotonic())):
-                return True
-            state.slots.release()
-            return False
+            taken = False
+            try:
+                taken = TOTAL_SLOTS.acquire(timeout=max(0.0, deadline - time.monotonic()))
+            finally:
+                if not taken:
+                    state.slots.release()
+            return taken
 
         # -- the request ------------------------------------------------------
         def _post(self, exchange: Exchange) -> None:
@@ -933,7 +999,9 @@ def make_handler(recorder: Recorder):
                     f"endpoint, most simply at {ROUTE}",
                 )
                 return
-            if self.headers.get("Transfer-Encoding"):
+            # Presence, not value: an empty field, or an empty one before a
+            # `chunked`, is still a Transfer-Encoding and still refused.
+            if self.headers.get_all("Transfer-Encoding") is not None:
                 self._refuse(
                     exchange, 411, "length_required", "requests must carry a content-length"
                 )
@@ -1023,7 +1091,7 @@ def make_handler(recorder: Recorder):
                     opened["label_seen_before"] = True
             elif request.label_invalid is not None:
                 opened["client_label_invalid"] = request.label_invalid
-            append_jsonl(state.events, opened)
+            write_record_line(state.events, opened)
 
             # Reserve against the ceilings before spending anything upstream.
             decision = budget.admit(exchange.rid, state.slug, exchange.estimate)
@@ -1080,7 +1148,7 @@ def make_handler(recorder: Recorder):
             exchange.status = status
             exchange.outcome = "ok" if 200 <= status < 300 else "upstream_http"
 
-            append_jsonl(
+            write_record_line(
                 state.transcript,
                 {
                     "at": iso(),
@@ -1146,14 +1214,16 @@ def forward_header_names() -> tuple[str, ...]:
     """RECORDER_FORWARD_HEADERS: extra X- headers an operator chose to pass on.
 
     Empty by default. A name is kept only if it is an X- name of at most forty
-    characters and not a credential's name; anything else is ignored.
+    characters and not a credential's name; anything else is ignored. Header
+    names ignore case, so two spellings of one name are one name: the first
+    spelling is kept.
     """
-    names = []
+    names: dict[str, str] = {}
     for item in (os.environ.get("RECORDER_FORWARD_HEADERS") or "").split(","):
         name = item.strip()
         if FORWARD_HEADER_PATTERN.fullmatch(name) and name.lower() not in DENIED_HEADERS:
-            names.append(name)
-    return tuple(names)
+            names.setdefault(name.lower(), name)
+    return tuple(names.values())
 
 
 def outbound_headers(inbound, key: str, extra: tuple[str, ...] = ()) -> dict[str, str]:
@@ -1174,9 +1244,13 @@ def outbound_headers(inbound, key: str, extra: tuple[str, ...] = ()) -> dict[str
     }
     if key:
         headers["Authorization"] = f"Bearer {key}"
+    sent = {name.lower() for name in headers}
     for name in extra:
         if name.lower() in DENIED_HEADERS or not FORWARD_HEADER_PATTERN.fullmatch(name):
             continue
+        if name.lower() in sent:
+            continue
+        sent.add(name.lower())
         values = inbound.get_all(name) or []
         if len(values) != 1:
             continue

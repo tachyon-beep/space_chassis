@@ -553,6 +553,76 @@ def test_the_slug_pattern_accepts_the_rosters_names_and_nothing_path_shaped():
         assert not pattern.fullmatch(bad)
 
 
+def test_a_reused_id_whose_tombstone_was_retired_is_still_refused_while_its_entry_counts():
+    """Review condition RA1-01: the handler never reuses ids, and the budget no longer relies on it.
+
+    Tombstones retire in insertion order (FIFO). Once 01's tombstone is gone,
+    its rolling entries still count for an hour; a second 01 must not be
+    admitted on top of them, which would overwrite their index.
+    """
+    budget, clock = world(rq=10, tk=1000, max_tombstones=1)
+    forwarded(budget, "01", "A", 10)
+    budget.close("01", known(10))
+    forwarded(budget, "02", "A", 10)
+    budget.close("02", known(10))
+    assert budget.close("01").kind == "unknown_rid", "01's tombstone was retired"
+    assert budget.admit("01", "A", 10) == Refused("duplicate_rid", None)
+    assert counters(budget) == (2, 20, 20)
+    clock.at(3601)
+    assert isinstance(budget.admit("01", "A", 10), Admitted), "after its window, the id is free"
+
+
+def test_the_handler_ids_are_unique_across_threads():
+    ids = []
+    lock = threading.Lock()
+
+    def take():
+        mine = [recorder_module.next_rid() for _ in range(500)]
+        with lock:
+            ids.extend(mine)
+
+    threads = [threading.Thread(target=take) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert len(ids) == len(set(ids)) == 4000
+    assert all(i.startswith(recorder_module.BOOT + "-") for i in ids)
+
+
+def test_usage_is_known_only_for_whole_non_negative_counts():
+    """Review condition on Usage: the extractor's table, and the budget's own check."""
+    extract = recorder_module.extract_usage
+    cases = [
+        ({"usage": {"total_tokens": 0}}, KNOWN, 0),
+        ({"usage": {"total_tokens": 30}}, KNOWN, 30),
+        ({"usage": {"total_tokens": -1}}, UNKNOWN, None),
+        ({"usage": {"total_tokens": True}}, UNKNOWN, None),
+        ({"usage": {"total_tokens": 3.0}}, UNKNOWN, None),
+        ({"usage": {"total_tokens": "30"}}, UNKNOWN, None),
+        ({"usage": {"prompt_tokens": 20, "completion_tokens": 10}}, KNOWN, 30),
+        ({"usage": {"total_tokens": None, "prompt_tokens": 20, "completion_tokens": 10}}, KNOWN, 30),
+        ({"usage": {"prompt_tokens": 20, "completion_tokens": False}}, UNKNOWN, None),
+        ({"usage": {"prompt_tokens": 20}}, UNKNOWN, None),
+        ({"usage": None}, UNKNOWN, None),
+        ({"usage": [30]}, UNKNOWN, None),
+        ({}, UNKNOWN, None),
+        ([], UNKNOWN, None),
+        (None, UNKNOWN, None),
+    ]
+    for response, cls, actual in cases:
+        usage = extract(response)
+        assert (usage.cls, usage.actual) == (cls, actual), response
+
+    budget, _ = world(rq=10)
+    bads = (Usage(KNOWN, -5), Usage(KNOWN, True), Usage(KNOWN, None), Usage(KNOWN, 2.5))
+    for number, bad in enumerate(bads):
+        rid = f"bad-{number}"
+        forwarded(budget, rid, "A", 7)
+        closed = budget.close(rid, bad)
+        assert closed.usage_class == UNKNOWN and closed.charge == 7, bad
+
+
 # ---------------------------------------------------------------------------
 # R-0: the report counts requests by what was opened
 # ---------------------------------------------------------------------------

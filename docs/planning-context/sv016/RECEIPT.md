@@ -32,7 +32,8 @@ Both reviews mark R-0, R-A1/R-A2, R-B1/R-B2 usable. The v2 review's new findings
 | `95676e6` | R-A1 `Budget` + R-A2 handler, `recorder.jsonl`, slug bound, tests | **one unit**: `Allowance`/`SharedTokens` were replaced, so R-A1 cannot stand without the handler rewiring | — |
 | `b467b21` | R-B1 `parse_request`, correlation, framing | alone (reverting restores lenient forwarding) | `95676e6` |
 | `0031aab` | R-B2 `outbound_headers`, `Upstream`/`UnixHTTPConnection`, urllib removed; source-grep test replaced | alone (reverting restores the interim urllib path and the source-grep test) | `95676e6` |
-| (this commit) | final checkpoint, receipt, STATUS | docs only | — |
+| `925eaad` | final checkpoint, receipt, STATUS | docs only | — |
+| correction commit after `925eaad` | Astra initial-review fixes SV016-01…06, conditional hardenings, regressions, checkpoint 005 | alone (reverting restores `925eaad` behaviour, including the six defects) | `0031aab` |
 
 Recorder state is in memory; every revert behaves like an ordinary restart (counters reset). Events and transcripts are append-only; new fields are additive.
 
@@ -109,7 +110,8 @@ Fixture setup notes (expected values unchanged): R-A4 and R-A11 build "glob = 12
 
 - **No hard billed-token cap** [X]: known actual replaces the estimate, unknown keeps it; an overshoot blocks later admissions until the window rolls.
 - **R-B3 absent**: no header/body/upstream/client-write deadlines or watchdog; no `MAX_CONNECTIONS`; no memory admission or JSON pre-scan; responses are fully buffered without a cap; SSE usage is not parsed (SSE responses settle `unknown`); `UPSTREAM_TIMEOUT` (600 s, per operation) remains the only upstream bound. A stalled client or upstream can hold a slot.
-- **R-B4 absent**: the transcript/events writer is still `append_jsonl` (`ensure_ascii=False`). A lone surrogate escape (valid JSON) anywhere in a request or response makes the transcript append raise `UnicodeEncodeError` (after settlement → `500 internal_error`, response withheld); one in the request's `model` value makes the `open` append raise (before admission → `500 internal_error`). This is inherited behaviour, reasoned from the code and not exercised by a test. A transcript failure is `500 internal_error`, not `502 record_failed`; there is no `recorded` field, no free-space preflight, no `503 record_unavailable`.
+- **R-B4 absent**: since the correction pass (checkpoint 005) the recorder writes its own lines with `write_record_line` (ASCII-escaped JSON), so lone-surrogate escapes in accepted bodies and responses are recorded. That is serialization only: no fsync, directory sync, torn-line repair, append locking or free-space preflight. A transcript failure is `500 internal_error`, not `502 record_failed`; there is no `recorded` field, no custody classification, no `503 record_unavailable`/`record_capacity`. The R-A2 event fields are therefore a **narrower** interpretation of SV-013 §2.1.10: accounting fields (`outcome`, `estimate`, `usage_class`, `charged_tokens`, `late_adjustment`, `upstream_status`, `relayed`) only. These tests validate no R-B4 guarantee.
+- **Budget API preconditions**: request ids must never be reused (the handler's `<boot>-<counter>` ids are unique; `admit` additionally refuses an id still indexed in the socket's pools or tombstones). Tombstones retire FIFO, not LRU. A `known` usage counts only as a non-negative non-bool int; anything else settles as unknown. A late settlement with zero delta produces no `late_adjustment` entry (narrower than the design's unconditional late-destination table).
 - **Placement deviations** (checkpoint 002): in-flight slots are taken after the body read, and the operator marker is still checked after the body read, pending R-B3's body deadline.
 - `open.peer` (`SO_PEERCRED`) is not added.
 - Process death: by construction nothing fabricates a `close` for a previous boot; no crash test was run.
@@ -121,7 +123,8 @@ Fixture setup notes (expected values unchanged): R-A4 and R-A11 build "glob = 12
 - Request ids are `<boot>-<counter>` (were 16 random hex digits).
 - Out-of-domain bodies are refused `400` locally (were forwarded).
 - Only reviewed headers go upstream; SDK headers and the client's key are dropped; no `Authorization` without a configured key. `RECORDER_FORWARD_HEADERS` is the opt-in for X- headers.
-- Proxy environment variables are no longer honoured (urllib did); none is configured in this repository.
+- Proxy environment variables are no longer honoured and HTTP redirects are no longer followed (urllib did both automatically); none is configured or relied on in this repository. Non-2xx upstream responses are relayed as received.
+- (Correction pass) Recorder record lines are ASCII JSON: non-ASCII text appears as `\u` escapes; records are JSON-equal to before. `close.relayed` is always present and is true only when the upstream's own response was written to the client. A `close` written while a control exception (e.g. `SystemExit`) unwinds has `outcome: "aborted"` and no claimed status. Any `Transfer-Encoding` field, even empty, is refused `411`.
 - Announced slugs must match `^[a-z0-9_-]{1,64}$` and fit `RECORDER_MAX_SLUGS` (32).
 - New settings: `RECORDER_MAX_TOMBSTONES` 4096, `RECORDER_MAX_SLUGS` 32, `RECORDER_MAX_INFLIGHT_PER_SOCKET` 2, `RECORDER_MAX_INFLIGHT_TOTAL` 12, `RECORDER_INFLIGHT_WAIT_SECONDS` 30, `RECORDER_MAX_LABEL_LRU` 64, `RECORDER_FORWARD_HEADERS` (empty).
 

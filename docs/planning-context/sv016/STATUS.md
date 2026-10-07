@@ -15,7 +15,9 @@ Checkout: `/home/john/Documents/Codex/2026-10-07/task/execution/sv016-recorder`,
 | R-B2 headers/transport | done, `0031aab` | 003 |
 | Final verification and receipt | done; 72 targeted tests passed twice | 004, `RECEIPT.md` |
 
-Package complete pending the coordinator's independent Astra review. Read `RECEIPT.md` first.
+| Astra initial review correction pass (SV016-01…06 + conditions) | done; 86 targeted tests passed | 005 |
+
+Package complete pending the coordinator's independent Astra re-review. Read `RECEIPT.md`, then `checkpoint-005-astra-corrections.md`.
 
 Out of scope and not implemented: R-B3 (watchdog, deadlines, memory admission, SSE usage, response cap), R-B4 (custody `append_record`, record-before-relay results, preflight), every chassis/pump/vehicle batch.
 

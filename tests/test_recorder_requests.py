@@ -882,3 +882,254 @@ def test_a_refused_network_connection_is_refunded_too(make_rig, monkeypatch):
     assert status == 502 and "upstream.invalid" not in payload.decode()
     assert rig.closes(2)[-1]["outcome"] == "upstream_connect"
     assert rig.budget.snapshot(SLUG)["requests_used"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Correction pass: the findings of the SV-016 Astra initial package review
+# ---------------------------------------------------------------------------
+LONE = "\ud800"
+
+
+def test_a_lone_surrogate_in_an_accepted_body_is_recorded_and_settled(make_rig):
+    """SV016-01. Valid JSON escapes a lone surrogate; the record must hold it too.
+
+    In content and in model, with and without the label strip. The upstream
+    gets the untouched bytes or the one ASCII re-encoding, the turn settles at
+    its actual usage, and every record line parses back to the same strings.
+    """
+    rig = make_rig(rq=10, tk=10_000, g=10_000)
+    rig.upstream.respond = lambda request: stub_reply(
+        {**completion(), "choices": [{"message": {"role": "assistant", "content": LONE}}]}
+    )
+    cases = [
+        {"model": "stub", "messages": [{"role": "user", "content": LONE}]},
+        {"model": LONE, "messages": [{"role": "user", "content": "hi"}]},
+        {"model": "stub", "messages": [{"role": "user", "content": LONE}], "x_chassis_correlation": "l"},
+        {"model": LONE, "messages": [], "x_chassis_correlation": "l"},
+    ]
+    for number, case in enumerate(cases, start=1):
+        body = json.dumps(case).encode("ascii")
+        status, _headers, _payload = rig.post(body)
+        assert status == 200, case
+        sent = rig.upstream.requests[-1]["body"]
+        if "x_chassis_correlation" in case:
+            expected = {k: v for k, v in case.items() if k != "x_chassis_correlation"}
+            assert sent == json.dumps(expected, separators=(",", ":")).encode("ascii")
+        else:
+            assert sent == body, "an untouched body was not forwarded byte for byte"
+        closes = rig.closes(number)
+        assert len(closes) == number
+        assert closes[-1]["outcome"] == "ok" and closes[-1]["charged_tokens"] == 30
+        turn = rig.transcript()[-1]
+        assert turn["request"] == {k: v for k, v in case.items() if k != "x_chassis_correlation"}
+        assert turn["response"]["choices"][0]["message"]["content"] == LONE
+        opened = [e for e in rig.events() if e["event"] == "open"][-1]
+        assert opened["model"] == case["model"]
+    one_close_each(rig.events())
+    assert rig.budget.snapshot(SLUG)["tokens_used"] == 30 * len(cases)
+
+
+def test_relayed_means_the_upstream_response_reached_the_client(make_rig, monkeypatch):
+    """SV016-02. A recorder error that reached the client is not a relayed response."""
+    rig = make_rig(rq=10, tk=10_000, g=10_000)
+    assert rig.post(chat())[0] == 200
+    rig.upstream.respond = lambda request: stub_reply({"error": {"message": "slow down"}}, 429)
+    assert rig.post(chat())[0] == 429
+    rig.upstream.respond = lambda request: None
+    assert rig.post(chat())[0] == 502
+    rig.upstream.respond = lambda request: stub_reply(completion())
+    assert rig.post(chat(), path="/nope")[0] == 404
+    closes = rig.closes(4)
+    by_outcome = {c["outcome"]: c for c in closes}
+    assert by_outcome["ok"]["relayed"] is True
+    assert by_outcome["upstream_http"]["relayed"] is True
+    assert by_outcome["upstream_http"]["upstream_status"] == 429
+    assert by_outcome["upstream_transport"]["relayed"] is False
+    assert by_outcome["not_found"]["relayed"] is False
+
+    deaf = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    deaf.bind(str(rig.root / "deaf.sock"))
+    monkeypatch.setattr(recorder_module, "UPSTREAM_SOCKET", str(rig.root / "deaf.sock"))
+    try:
+        assert rig.post(chat())[0] == 502
+    finally:
+        deaf.close()
+    close = rig.closes(5)[-1]
+    assert close["outcome"] == "upstream_connect" and close["relayed"] is False
+
+
+def test_a_completion_withheld_after_a_transcript_failure_is_not_relayed(make_rig):
+    """SV016-02 / R-C1's relay field: the provider answered 200, the client got the recorder's 500."""
+    rig = make_rig(tk=1000, g=1000)
+    (rig.dir / "agent_life_transcript.jsonl").mkdir()
+    status, _headers, payload = rig.post(chat())
+    assert status == 500 and b"choices" not in payload
+    (close,) = rig.closes()
+    assert close["upstream_status"] == 200 and close["charged_tokens"] == 30
+    assert close["relayed"] is False
+
+
+def test_any_transfer_encoding_field_is_refused_even_an_empty_one(make_rig):
+    """SV016-03. Presence, not truthiness: an empty first field hid a later `chunked`."""
+    rig = make_rig()
+    heads = [
+        f"POST {ROUTE} HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: \r\nContent-Length: 60\r\n\r\n",
+        (
+            f"POST {ROUTE} HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: \r\n"
+            "Transfer-Encoding: chunked\r\nContent-Length: 60\r\n\r\n"
+        ),
+    ]
+    for head in heads:
+        reply = raw_exchange(rig, head.encode(), R_H3)
+        assert reply.startswith(b"HTTP/1.1 411"), reply[:40]
+    closes = rig.closes(2)
+    assert [c["outcome"] for c in closes] == ["length_required", "length_required"]
+    assert not [e for e in rig.events() if e["event"] == "open"]
+    assert rig.upstream.requests == []
+    assert rig.budget.snapshot(SLUG)["requests_used"] == 0
+
+
+class _Injected(Exception):
+    pass
+
+
+class FailOnceSemaphore:
+    """A fleet slot pool whose first acquire raises; afterwards an ordinary semaphore."""
+
+    def __init__(self) -> None:
+        self.real = threading.BoundedSemaphore(4)
+        self.failures = 1
+
+    def acquire(self, timeout=None):
+        if self.failures:
+            self.failures -= 1
+            raise _Injected("injected acquire failure")
+        return self.real.acquire(timeout=timeout)
+
+    def release(self):
+        self.real.release()
+
+
+def test_a_failing_fleet_slot_acquire_gives_the_socket_slot_back(make_rig, monkeypatch):
+    """SV016-04. One socket slot; the first request's fleet acquire raises; the next still gets in."""
+    rig = make_rig(rq=10, tk=1000, g=1000)
+    monkeypatch.setattr(recorder_module, "INFLIGHT_WAIT_SECONDS", 0.2)
+    monkeypatch.setattr(recorder_module, "TOTAL_SLOTS", FailOnceSemaphore())
+    rig.recorder.state.slots = threading.BoundedSemaphore(1)
+    assert rig.post(chat())[0] == 500
+    assert rig.post(chat())[0] == 200, "the socket slot leaked"
+    assert [c["outcome"] for c in rig.closes(2)] == ["internal_error", "ok"]
+
+
+def test_a_control_exception_before_sending_cancels_and_closes_once_with_a_typed_outcome(
+    make_rig, monkeypatch
+):
+    """SV016-05. SystemExit propagates; no status is claimed; the reservation is cancelled."""
+    rig = make_rig()
+    rig.recorder.state.slots = threading.BoundedSemaphore(1)
+    original = recorder_module.upstream_key
+
+    def abort() -> str:
+        raise SystemExit(3)
+
+    monkeypatch.setattr(recorder_module, "upstream_key", abort)
+    with pytest.raises((http.client.HTTPException, OSError)):
+        rig.post(chat())
+    (close,) = rig.closes()
+    time.sleep(0.1)
+    assert len(rig.closes()) == 1
+    assert close["outcome"] == "aborted" and close["status"] is None
+    assert close["usage_class"] == "none" and close["relayed"] is False
+    snap = rig.budget.snapshot(SLUG)
+    assert (snap["requests_used"], snap["live"]) == (0, 0)
+    assert rig.upstream.requests == []
+    monkeypatch.setattr(recorder_module, "upstream_key", original)
+    assert rig.post(chat())[0] == 200, "the slot was not released"
+
+
+def test_a_control_exception_after_sending_settles_unknown_and_closes_once(make_rig, monkeypatch):
+    rig = make_rig()
+    rig.recorder.state.slots = threading.BoundedSemaphore(1)
+
+    def abort(payload):
+        raise SystemExit(3)
+
+    monkeypatch.setattr(recorder_module, "decode_payload", abort)
+    body = chat()
+    with pytest.raises((http.client.HTTPException, OSError)):
+        rig.post(body)
+    (close,) = rig.closes()
+    assert close["outcome"] == "aborted" and close["status"] is None
+    assert close["usage_class"] == "unknown" and close["charged_tokens"] == len(body) // 4
+    assert close["upstream_status"] == 200 and close["relayed"] is False
+    snap = rig.budget.snapshot(SLUG)
+    assert (snap["requests_used"], snap["live"]) == (1, 0)
+    monkeypatch.setattr(recorder_module, "decode_payload", lambda payload: json.loads(payload))
+    assert rig.post(chat())[0] == 200, "the slot was not released"
+
+
+def test_a_configured_header_name_in_two_spellings_is_sent_once(make_rig, monkeypatch):
+    """SV016-06. The fake upstream must see one X-Title field, not two."""
+    rig = make_rig()
+    monkeypatch.setenv("RECORDER_FORWARD_HEADERS", "X-Title,x-title, X-TITLE")
+    assert recorder_module.forward_header_names() == ("X-Title",)
+    client = [("Host", "localhost"), ("X-Title", "hello"), ("Content-Length", str(len(R_H3)))]
+    headers = headers_received(rig, client)
+    assert [name.lower() for name, _ in headers].count("x-title") == 1
+    twice = [
+        ("Host", "localhost"),
+        ("X-Title", "a"),
+        ("x-title", "b"),
+        ("Content-Length", str(len(R_H3))),
+    ]
+    headers = headers_received(rig, twice)
+    assert "x-title" not in [name.lower() for name, _ in headers], "a duplicated inbound field passed"
+
+
+def test_the_builder_itself_deduplicates_extra_names_ignoring_case():
+    import email.message  # noqa: PLC0415 -- the header type http.server hands the handler
+
+    inbound = email.message.Message()
+    inbound["X-Title"] = "hello"
+    headers = recorder_module.outbound_headers(inbound, "", ("X-Title", "x-title", "X-TITLE"))
+    assert [name for name in headers if name.lower() == "x-title"] == ["X-Title"]
+    assert recorder_module.outbound_headers(email.message.Message(), "", ())  == {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "space-chassis-recorder/0.2",
+    }
+
+
+def test_the_parser_stays_total_near_the_recursion_limit():
+    """Review condition RB1-03: re-encoding (the label, the transformed body) is inside the guard.
+
+    A sweep of nesting depths around the interpreter's limit, in a label and
+    in a transformed body. Each ends in a parse or a fixed refusal; this does
+    not claim a depth that fails today, only that none can escape.
+    """
+    import sys  # noqa: PLC0415 -- only this sweep needs the limit
+
+    limit = sys.getrecursionlimit()
+    for depth in range(max(1, limit - 40), limit + 40, 4):
+        nested = b"[" * depth + b"]" * depth
+        bodies = (
+            b'{"messages":[],"x_chassis_correlation":' + nested + b"}",
+            b'{"messages":' + nested + b',"x_chassis_correlation":"l"}',
+            b'{"messages":' + nested + b',"stream":true}',
+        )
+        for body in bodies:
+            result = parse_request(body, streaming=False)
+            assert isinstance(result, (ParsedRequest, RequestRefusal)), depth
+
+
+def test_a_failing_re_encoding_is_a_fixed_refusal(monkeypatch):
+    """The guard itself, forced: the serializer raising is a refusal, not an escape."""
+    def too_deep(*_args, **_kwargs):
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(recorder_module, "_encode_forwarded", too_deep)
+    result = parse_request(b'{"messages":[],"x_chassis_correlation":"l"}', streaming=True)
+    assert isinstance(result, RequestRefusal) and result.code == "unsupported_json"
+    monkeypatch.setattr(recorder_module, "_encode_label", too_deep)
+    result = parse_request(b'{"messages":[],"x_chassis_correlation":[1]}', streaming=True)
+    assert isinstance(result, RequestRefusal) and result.code == "unsupported_json"
