@@ -263,36 +263,49 @@ def test_the_pump_never_signals_its_own_process_group(pump_dir):
 # ---------------------------------------------------------------------------
 # The recorder's ceilings
 # ---------------------------------------------------------------------------
+class _Clock:
+    """A clock the test moves; the budget reads it under its own lock."""
+
+    def __init__(self) -> None:
+        self.mono, self.wall_time = 0.0, 36000.0
+
+    def monotonic(self) -> float:
+        return self.mono
+
+    def wall(self) -> float:
+        return self.wall_time
+
+
 def test_a_pool_of_zero_refuses_rather_than_crashing():
     """A closed pool has no oldest stamp to wait for; it must say no, not raise."""
-    allowance = recorder_module.Allowance(0)
-    allowed, wait = allowance.check()
-    assert allowed is False and wait == 0
+    budget = recorder_module.Budget(0, _Clock())
+    budget.register("otter", 0, 1000)
+    refused = budget.admit("r1", "otter", 1)
+    assert isinstance(refused, recorder_module.Refused) and refused.wait == 0
 
 
 def test_an_allowance_counts_requests_and_tokens_separately():
-    requests = recorder_module.Allowance(2)
-    assert requests.check()[0] is True
-    requests.charge()
-    requests.charge()
-    assert requests.check()[0] is False
+    budget = recorder_module.Budget(0, _Clock())
+    budget.register("otter", 2, 1000)
+    assert isinstance(budget.admit("r1", "otter", 1), recorder_module.Admitted)
+    assert isinstance(budget.admit("r2", "otter", 1), recorder_module.Admitted)
+    assert budget.admit("r3", "otter", 1).reason == "requests"
 
-    tokens = recorder_module.Allowance(1000)
-    assert tokens.check(900)[0] is True
-    tokens.charge(900)
-    allowed, wait = tokens.check(200)
-    assert allowed is False and wait > 0
+    budget.register("heron", 10, 1000)
+    assert isinstance(budget.admit("r4", "heron", 900), recorder_module.Admitted)
+    refused = budget.admit("r5", "heron", 200)
+    assert refused.reason == "tokens" and refused.wait > 0
 
 
-def test_the_shared_pool_empties_at_the_top_of_the_hour(monkeypatch):
-    shared = recorder_module.SharedTokens(100)
-    assert shared.check(90)[0] is True
-    shared.charge(90)
-    assert shared.check(50)[0] is False
+def test_the_shared_pool_empties_at_the_top_of_the_hour():
+    clock = _Clock()
+    budget = recorder_module.Budget(100, clock)
+    budget.register("otter", 10, 1000)
+    assert isinstance(budget.admit("r1", "otter", 90), recorder_module.Admitted)
+    assert budget.admit("r2", "otter", 50).reason == "global"
     # Move the clock into the next hour: the pool empties rather than rolling.
-    real_time = time.time
-    monkeypatch.setattr(time, "time", lambda: real_time() + recorder_module.WINDOW_SECONDS)
-    assert shared.check(50)[0] is True
+    clock.wall_time += recorder_module.WINDOW_SECONDS
+    assert isinstance(budget.admit("r3", "otter", 50), recorder_module.Admitted)
 
 
 def test_the_recorder_accepts_any_chat_completions_prefix():

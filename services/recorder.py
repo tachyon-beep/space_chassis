@@ -25,8 +25,12 @@ still leaves a record of the turn it asked for.
 from __future__ import annotations
 
 import contextlib
+import http.client
+import itertools
 import json
+import math
 import os
+import re
 import socket
 import socketserver
 import sys
@@ -34,8 +38,11 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import OrderedDict, deque
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
+from urllib.parse import urlsplit
 
 SERVICES_DIR = Path(os.environ.get("SERVICES_DIR", "/opt/services"))
 if str(SERVICES_DIR) not in sys.path:
@@ -108,57 +115,409 @@ def upstream_key() -> str:
     return os.environ.get("OPENROUTER_API_KEY", "")
 
 
-class Allowance:
-    """A rolling-window counter, in memory only.
+# ---------------------------------------------------------------------------
+# The ceilings
+# ---------------------------------------------------------------------------
+# Every allowance is in memory only. Deliberately not persisted: a restart of
+# the recorder granting a fresh hour to a fleet that has been hammering it is a
+# smaller problem than a stale window surviving a deploy. The ceiling that
+# actually matters is the upstream key's own balance. A request that was in
+# flight when a previous process died shows an `open` with no `close`; nothing
+# here ever fabricates the missing `close`.
+#
+# What the accounting bounds, stated once (the reasoning is in the SV-013
+# dossier, section 2.1.3): at the instant a request is admitted, the current
+# effective charges in its socket's rolling token window plus its estimate fit
+# the limit, and likewise for the fleet's hour. The current effective charge of
+# a request is its known actual usage once that is known, and its estimate
+# otherwise. That is *not* a cap on billed tokens: a response can cost more
+# than its estimate, and then later requests are refused until the window
+# rolls, but nothing claws the overshoot back. A hard billed ceiling would need
+# a request-side output cap and a provider guarantee, and neither is here.
+MAX_TOMBSTONES = env_int("RECORDER_MAX_TOMBSTONES", 4096)
+MAX_SLUGS = env_int("RECORDER_MAX_SLUGS", 32)
+MAX_INFLIGHT_PER_SOCKET = env_int("RECORDER_MAX_INFLIGHT_PER_SOCKET", 2)
+MAX_INFLIGHT_TOTAL = env_int("RECORDER_MAX_INFLIGHT_TOTAL", 12)
+INFLIGHT_WAIT_SECONDS = env_int("RECORDER_INFLIGHT_WAIT_SECONDS", 30)
+# A slug names a directory and a socket. Discovery reads names agents announce
+# themselves, so the name is checked and the number of them is bounded: an
+# agent announcing a thousand names must not get a thousand listeners.
+SLUG_PATTERN = re.compile(r"[a-z0-9_-]{1,64}")
 
-    Deliberately not persisted: a restart of the recorder granting a fresh hour
-    to a fleet that has been hammering it is a smaller problem than a stale
-    window surviving a deploy. The ceiling that actually matters is the
-    upstream key's own balance.
+RESERVED = "reserved"
+FORWARDING = "forwarding"
+KNOWN = "known"
+UNKNOWN = "unknown"
+
+
+class SystemClock:
+    """The production clocks. Tests inject a fake with the same two methods."""
+
+    @staticmethod
+    def monotonic() -> float:
+        return time.monotonic()
+
+    @staticmethod
+    def wall() -> float:
+        return time.time()
+
+
+@dataclass
+class Entry:
+    """One admitted request in one rolling pool."""
+
+    rid: str
+    t: float  # monotonic, read under the budget lock at admission
+    amount: int  # the current effective charge
+
+
+class RollingPool:
+    """A per-socket rolling window: requests (amount 1) or tokens.
+
+    An entry counts while `now - t <= window`, the same inclusivity the
+    recorder has always had. A limit of zero or less means the pool is closed.
+    Entries arrive in lock order, and the clock is read under the lock, so the
+    queue is non-decreasing in `t` and pruning from the head alone is exact.
     """
 
-    def __init__(self, limit: int, window: int = WINDOW_SECONDS) -> None:
+    def __init__(self, limit: int, window: float = WINDOW_SECONDS) -> None:
         self.limit = limit
         self.window = window
-        self._events: list[tuple[float, int]] = []
-        self._lock = threading.Lock()
+        self.q: deque[Entry] = deque()
+        self.used = 0
+        self.by_rid: dict[str, Entry] = {}
 
-    def _prune(self, now: float) -> None:
-        cutoff = now - self.window
-        self._events = [event for event in self._events if event[0] >= cutoff]
+    def prune(self, now: float) -> None:
+        while self.q and now - self.q[0].t > self.window:
+            entry = self.q.popleft()
+            self.used -= entry.amount
+            del self.by_rid[entry.rid]
 
-    def check(self, tokens: int = 0) -> tuple[bool, int]:
-        """Would `tokens` more fit? Returns (allowed, seconds until room).
+    def add(self, rid: str, t: float, amount: int) -> None:
+        entry = Entry(rid, t, amount)
+        self.q.append(entry)
+        self.by_rid[rid] = entry
+        self.used += amount
 
-        A limit of zero or less means the pool is closed, and that is answered
-        before anything else looks at the window: an empty event list has no
-        oldest stamp, and asking for one is how a switched-off pool becomes a
-        crash instead of a refusal.
+    def remove(self, rid: str) -> None:
+        """Take a cancelled request out. O(len(q)): a deque has no keyed removal."""
+        entry = self.by_rid.pop(rid, None)
+        if entry is None:
+            return
+        self.q.remove(entry)
+        self.used -= entry.amount
+
+    def wait_for_count(self, now: float) -> int:
+        """Seconds until one more entry fits, counting entries only."""
+        k = len(self.q) + 1 - self.limit
+        return int(self.window - (now - self.q[k - 1].t)) + 1
+
+    def wait_for_sum(self, amount: int, now: float) -> int:
+        """Seconds until `amount` more fits against the current charges alone.
+
+        The earliest such time, not a promise: a refund can make it sooner and
+        another socket's admission does not affect it, but this socket's own
+        later admissions can take the room first. Defined because the caller
+        has already refused an amount larger than the whole limit.
         """
-        if self.limit <= 0:
-            return False, 0
-        now = time.time()
-        with self._lock:
-            self._prune(now)
-            if not self._events:
-                return True, 0
-            used = sum(amount for _, amount in self._events)
-            oldest = min(stamp for stamp, _ in self._events)
-            if len(self._events) >= self.limit:
-                return False, max(0, int(self.window - (now - oldest)) + 1)
-            if tokens and used + tokens > self.limit:
-                return False, max(0, int(self.window - (now - oldest)) + 1)
-            return True, 0
+        freed = 0
+        for entry in self.q:
+            freed += entry.amount
+            if self.used - freed + amount <= self.limit:
+                return int(self.window - (now - entry.t)) + 1
+        raise AssertionError("an amount within the limit always fits an empty window")
 
-    def charge(self, tokens: int = 0) -> None:
+
+class HourBucket:
+    """One token pool over the whole fleet, on the clock hour.
+
+    A fleet of ten can multiply any per-agent allowance by ten; this is the
+    ceiling that does not scale with the number of agents. It empties at the
+    top of the hour rather than rolling, so the fleet can plan around it. A
+    limit of zero or less means unlimited -- the opposite of a per-socket
+    pool's zero, and both meanings are kept as they always were.
+
+    The hour never moves backwards: a wall clock that steps back keeps the
+    current hour and its charges, rather than handing out a fresh one.
+    """
+
+    def __init__(self, limit: int, now_wall: float) -> None:
+        self.limit = limit
+        self.bucket = math.floor(now_wall / WINDOW_SECONDS)
+        self.used = 0
+
+    def advance(self, now_wall: float) -> None:
+        hour = math.floor(now_wall / WINDOW_SECONDS)
+        if hour > self.bucket:
+            self.bucket, self.used = hour, 0
+
+
+@dataclass
+class Reservation:
+    rid: str
+    slug: str
+    est: int
+    t: float
+    hour: int
+    charge: int
+    state: str  # RESERVED, then FORWARDING once bytes may reach the upstream
+
+
+@dataclass(frozen=True)
+class Usage:
+    """What a response said it cost. `known` only for a validated count."""
+
+    cls: str
+    actual: int | None = None
+    raw: dict | None = None
+
+
+@dataclass(frozen=True)
+class Admitted:
+    hour: int
+
+
+@dataclass(frozen=True)
+class Refused:
+    reason: str
+    wait: int | None  # 0 for a closed pool, None for "can never fit"
+    limit: int | None = None
+    est: int | None = None
+    clock_regressed: bool = False
+
+
+@dataclass(frozen=True)
+class Closed:
+    kind: str  # cancelled | settled | already_final | unknown_rid
+    charge: int | None = None
+    usage_class: str | None = None
+    applied: tuple[str, ...] = ()
+    late: tuple[dict, ...] = ()
+    final: dict | None = None
+
+
+class Budget:
+    """Every allowance the recorder enforces, behind one lock.
+
+    One lock owns every check and every mutation, so each call is atomic and
+    all seven admission checks precede any charge: two requests racing for the
+    last slot cannot both be admitted, and one refused request leaves nothing
+    behind. The clocks are injected and read *after* the lock is taken, so
+    lock order is timestamp order. Nothing under the lock touches a file or
+    the network; callers write their events after the call returns.
+
+    A reservation lives from `admit` until its handler `close`s it, however
+    long that takes. No timer expires one to make room: a request that is
+    still running is still spending.
+    """
+
+    def __init__(
+        self,
+        global_limit: int,
+        clock=None,
+        *,
+        max_tombstones: int | None = None,
+        max_slugs: int | None = None,
+        max_live: int | None = None,
+    ) -> None:
+        self._lock = threading.Lock()
+        self._clock = clock or SystemClock()
+        self._sockets: dict[str, tuple[RollingPool, RollingPool]] = {}
+        self._glob = HourBucket(global_limit, self._clock.wall())
+        self._live: dict[str, Reservation] = {}
+        self._final: OrderedDict[str, dict] = OrderedDict()
+        self._max_tombstones = max(1, MAX_TOMBSTONES if max_tombstones is None else max_tombstones)
+        self._max_slugs = MAX_SLUGS if max_slugs is None else max_slugs
+        # The handler's slots already bound the live set; this is the backstop
+        # that keeps the bound true even for a caller that skipped them.
+        self._max_live = max(1, MAX_INFLIGHT_TOTAL) if max_live is None else max_live
+
+    @property
+    def global_limit(self) -> int:
+        return self._glob.limit
+
+    def register(self, slug: str, request_limit: int, token_limit: int) -> bool:
+        """Give a socket its two rolling pools. False when the slug cap is reached."""
         with self._lock:
-            now = time.time()
-            self._prune(now)
-            self._events.append((now, tokens))
+            if slug in self._sockets:
+                return True
+            if len(self._sockets) >= self._max_slugs:
+                return False
+            self._sockets[slug] = (RollingPool(request_limit), RollingPool(token_limit))
+            return True
+
+    def limits(self, slug: str) -> tuple[int, int]:
+        requests, tokens = self._sockets[slug]
+        return requests.limit, tokens.limit
+
+    def _advance(self, slug: str, now: float, now_wall: float) -> tuple[RollingPool, RollingPool]:
+        self._glob.advance(now_wall)
+        requests, tokens = self._sockets[slug]
+        requests.prune(now)
+        tokens.prune(now)
+        return requests, tokens
+
+    def admit(self, rid: str, slug: str, est: int) -> Admitted | Refused:
+        if not isinstance(est, int) or isinstance(est, bool) or est < 1:
+            raise ValueError(f"an estimate is a positive whole number, not {est!r}")
+        with self._lock:
+            now, now_wall = self._clock.monotonic(), self._clock.wall()
+            requests, tokens = self._advance(slug, now, now_wall)
+            glob = self._glob
+            if rid in self._live or rid in self._final:
+                return Refused("duplicate_rid", None)
+            if len(self._live) >= self._max_live:
+                return Refused("inflight", None, self._max_live)
+            if requests.limit <= 0:
+                return Refused("requests_closed", 0, requests.limit)
+            if len(requests.q) + 1 > requests.limit:
+                return Refused("requests", requests.wait_for_count(now), requests.limit)
+            if tokens.limit <= 0:
+                return Refused("tokens_closed", 0, tokens.limit, est)
+            if est > tokens.limit:
+                return Refused("estimate_exceeds_limit", None, tokens.limit, est)
+            if tokens.used + est > tokens.limit:
+                return Refused("tokens", tokens.wait_for_sum(est, now), tokens.limit, est)
+            if glob.limit > 0 and est > glob.limit:
+                return Refused("estimate_exceeds_global_limit", None, glob.limit, est)
+            if glob.limit > 0 and glob.used + est > glob.limit:
+                end = (glob.bucket + 1) * WINDOW_SECONDS
+                regressed = math.floor(now_wall / WINDOW_SECONDS) < glob.bucket
+                return Refused("global", int(end - now_wall) + 1, glob.limit, est, regressed)
+            requests.add(rid, now, 1)
+            tokens.add(rid, now, est)
+            glob.used += est
+            self._live[rid] = Reservation(rid, slug, est, now, glob.bucket, est, RESERVED)
+            return Admitted(glob.bucket)
+
+    def begin_forward(self, rid: str) -> bool:
+        """RESERVED -> FORWARDING, or False. Only a reserved request may be sent."""
+        with self._lock:
+            reservation = self._live.get(rid)
+            if reservation is None or reservation.state != RESERVED:
+                return False
+            reservation.state = FORWARDING
+            return True
+
+    def close(self, rid: str, usage: Usage | None = None) -> Closed:
+        """End a reservation: cancel it if nothing was sent, settle it if it was.
+
+        Called once per admitted request by the handler that owns it. A second
+        call, or a call for a request this process never admitted, changes
+        nothing and says so.
+        """
+        with self._lock:
+            now, now_wall = self._clock.monotonic(), self._clock.wall()
+            reservation = self._live.get(rid)
+            if reservation is None:
+                if rid in self._final:
+                    return Closed("already_final", final=dict(self._final[rid]))
+                return Closed("unknown_rid")
+            requests, tokens = self._advance(reservation.slug, now, now_wall)
+            glob = self._glob
+            del self._live[rid]
+            if reservation.state == RESERVED:
+                # Nothing reached the provider: the request count is refunded
+                # along with the tokens.
+                requests.remove(rid)
+                tokens.remove(rid)
+                if reservation.hour == glob.bucket:
+                    glob.used -= reservation.charge
+                self._retire(rid, {"state": "cancelled", "est": reservation.est, "charge": 0})
+                return Closed("cancelled", charge=0)
+            known = usage is not None and usage.cls == KNOWN and usage.actual is not None
+            new = usage.actual if known else reservation.charge
+            delta = new - reservation.charge
+            applied: list[str] = []
+            late: list[dict] = []
+            entry = tokens.by_rid.get(rid)
+            if entry is not None:
+                tokens.used += delta
+                entry.amount = new
+                applied.append("socket_tokens")
+            elif delta:
+                late.append({"pool": "socket_tokens", "reason": "rolling_expired", "delta": delta})
+            if reservation.hour == glob.bucket:
+                glob.used += delta
+                applied.append("global")
+            elif delta:
+                late.append({"pool": "global", "hour": reservation.hour, "delta": delta})
+            usage_class = KNOWN if known else UNKNOWN
+            reservation.charge = new
+            self._retire(
+                rid,
+                {
+                    "state": "settled",
+                    "usage_class": usage_class,
+                    "est": reservation.est,
+                    "charge": new,
+                    "hour": reservation.hour,
+                },
+            )
+            return Closed("settled", new, usage_class, tuple(applied), tuple(late))
+
+    def _retire(self, rid: str, final: dict) -> None:
+        self._final[rid] = final
+        while len(self._final) > self._max_tombstones:
+            self._final.popitem(last=False)
+
+    def snapshot(self, slug: str) -> dict:
+        with self._lock:
+            now, now_wall = self._clock.monotonic(), self._clock.wall()
+            requests, tokens = self._advance(slug, now, now_wall)
+            return {
+                "requests_used": len(requests.q),
+                "tokens_used": tokens.used,
+                "global_bucket": self._glob.bucket,
+                "global_used": self._glob.used,
+                "live": len(self._live),
+                "tombstones": len(self._final),
+                "token_times": [entry.t for entry in tokens.q],
+            }
+
+
+def refusal_message(refused: Refused) -> str:
+    """The text a refused client reads. The three ordinary forms are unchanged."""
+    reason, limit, wait = refused.reason, refused.limit, refused.wait
+    if reason in ("requests", "requests_closed"):
+        return (
+            f"rate limited: at most {limit} request(s) per hour on this socket; "
+            f"next available in {wait} second(s)"
+        )
+    if reason in ("tokens", "tokens_closed"):
+        earliest = " at the earliest" if reason == "tokens" else ""
+        return (
+            f"rate limited: at most {limit} token(s) per hour on this socket; "
+            f"next available in {wait} second(s){earliest}"
+        )
+    if reason == "estimate_exceeds_limit":
+        return (
+            f"rate limited: at most {limit} token(s) per hour on this socket; this request's "
+            f"estimate of {refused.est} token(s) can never fit this limit"
+        )
+    if reason == "global":
+        message = (
+            f"rate limited: at most {limit} token(s) per hour across the fleet; "
+            f"next available in {wait} second(s)"
+        )
+        if refused.clock_regressed:
+            message += (
+                " (measured on a host clock that is behind the accounting hour, "
+                "so this may be longer than an hour)"
+            )
+        return message
+    if reason == "estimate_exceeds_global_limit":
+        return (
+            f"rate limited: at most {limit} token(s) per hour across the fleet; this request's "
+            f"estimate of {refused.est} token(s) can never fit this limit"
+        )
+    if reason == "inflight":
+        return "too many requests in flight at the recorder; try again shortly"
+    return "the recorder refused this request identifier as a duplicate"
 
 
 class AgentState:
-    """Per-agent bookkeeping: its allowance, and where its record goes."""
+    """Per-agent bookkeeping: where its record goes, and its in-flight slots."""
 
     def __init__(self, slug: str, transcript_dir: Path) -> None:
         self.slug = slug
@@ -166,43 +525,13 @@ class AgentState:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.transcript = self.dir / "agent_life_transcript.jsonl"
         self.events = self.dir / "events.jsonl"
-        self.requests = Allowance(env_int("RECORDER_HOURLY_MAX", 1200))
-        self.per_agent_tokens = Allowance(env_int("RECORDER_TOKEN_HOURLY_MAX", 4_000_000))
-
-
-class SharedTokens:
-    """One token pool over the whole fleet, on the clock hour.
-
-    A fleet of ten can multiply any per-agent allowance by ten; this is the
-    ceiling that does not scale with the number of agents. It empties at the
-    top of the hour rather than rolling, so the fleet can plan around it.
-    """
-
-    def __init__(self, limit: int) -> None:
-        self.limit = limit
-        self._hour = int(time.time() // WINDOW_SECONDS)
-        self._used = 0
-        self._lock = threading.Lock()
-
-    def check(self, tokens: int) -> tuple[bool, int]:
-        with self._lock:
-            hour = int(time.time() // WINDOW_SECONDS)
-            if hour != self._hour:
-                self._hour, self._used = hour, 0
-            if self.limit <= 0 or self._used + tokens <= self.limit:
-                return True, 0
-            remaining = int(WINDOW_SECONDS - (time.time() % WINDOW_SECONDS)) + 1
-            return False, remaining
-
-    def charge(self, tokens: int) -> None:
-        with self._lock:
-            self._used += tokens
+        self.slots = threading.BoundedSemaphore(max(1, MAX_INFLIGHT_PER_SOCKET))
 
 
 class Recorder(threading.Thread):
     """One listener, on one agent's socket, in its own thread."""
 
-    def __init__(self, state: AgentState, shared: SharedTokens, expected_key: str) -> None:
+    def __init__(self, state: AgentState, shared: Budget, expected_key: str) -> None:
         super().__init__(daemon=True)
         self.state = state
         self.shared = shared
@@ -246,9 +575,59 @@ def log(message: str) -> None:
     print(f"{iso()} [recorder] {message}", flush=True)
 
 
+BOOT = os.urandom(4).hex()
+_RID_COUNTER = itertools.count(1)
+# The fleet-wide half of the in-flight bound; each socket holds its own half.
+# Together they bound the live reservations, and so the budget's memory.
+TOTAL_SLOTS = threading.BoundedSemaphore(max(1, MAX_INFLIGHT_TOTAL))
+
+
+def next_rid() -> str:
+    """A request id unique within this process: the boot, then a counter."""
+    return f"{BOOT}-{next(_RID_COUNTER):08d}"
+
+
+def record_diagnostic(record: dict) -> None:
+    """One line in TRANSCRIPTS_DIR/recorder.jsonl, the process's own record.
+
+    It sits at the root beside the per-agent directories, so nothing that
+    discovers agents by directory mistakes it for one, and nothing about the
+    process lands in an agent's events.
+    """
+    with contextlib.suppress(OSError, ValueError):
+        append_jsonl(TRANSCRIPTS_DIR / "recorder.jsonl", {"at": iso(), **record})
+
+
+class Exchange:
+    """One request's bookkeeping, owned by the one thread handling it.
+
+    The flags are what make the handler's promises hold on every path,
+    including an exception halfway through: an admitted request is closed in
+    the budget exactly once, its slots are released exactly once, and at most
+    one `close` event is attempted.
+    """
+
+    def __init__(self, rid: str) -> None:
+        self.rid = rid
+        self.started = time.monotonic()
+        self.settled_at: float | None = None
+        self.slots = False
+        self.admitted = False
+        self.accounted: Closed | None = None
+        self.responded = False
+        self.event_written = False
+        self.status: int | None = None
+        self.outcome: str | None = None
+        self.refusal: str | None = None
+        self.estimate: int | None = None
+        self.usage: Usage | None = None
+        self.upstream_status: int | None = None
+        self.relayed: bool | None = None
+
+
 def make_handler(recorder: Recorder):
     state = recorder.state
-    shared = recorder.shared
+    budget = recorder.shared
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -257,80 +636,215 @@ def make_handler(recorder: Recorder):
         def log_message(self, fmt, *args):  # noqa: A003 -- base class signature
             pass
 
-        def _send(
-            self, status: int, payload: bytes, content_type: str = "application/json"
-        ) -> None:
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
-                self.wfile.write(payload)
-
-        def _refuse(self, status: int, message: str, request_id: str | None = None) -> None:
-            body = json.dumps({"error": {"message": message, "type": "recorder"}}).encode()
-            self.close_connection = True
-            self._send(status, body)
-            with contextlib.suppress(OSError):
-                append_jsonl(
-                    state.events,
-                    {
-                        "at": iso(),
-                        "event": "close",
-                        "id": request_id,
-                        "agent": state.slug,
-                        "status": status,
-                        "refusal": message,
-                    },
-                )
-
+        # -- the one exit -----------------------------------------------------
         def do_GET(self):  # noqa: N802 -- base class API
-            self._refuse(405, "this socket accepts POST /api/v1/chat/completions only")
+            exchange = Exchange(next_rid())
+            try:
+                self._refuse(
+                    exchange,
+                    405,
+                    "method_not_allowed",
+                    "this socket accepts POST /api/v1/chat/completions only",
+                )
+            finally:
+                self._finish(exchange)
 
         def do_POST(self):  # noqa: N802 -- base class API
-            started = time.monotonic()
+            exchange = Exchange(next_rid())
+            try:
+                self._post(exchange)
+            except Exception as error:  # noqa: BLE001 -- the client still gets a status
+                # Only the exception's type is kept: its text can carry a URL.
+                log(f"{state.slug}: {exchange.rid}: internal error: {type(error).__name__}")
+                if exchange.responded:
+                    exchange.outcome = "internal_error"
+                    self.close_connection = True
+                else:
+                    self._refuse(
+                        exchange,
+                        500,
+                        "internal_error",
+                        "the recorder failed while handling this request "
+                        f"({type(error).__name__})",
+                    )
+            finally:
+                self._finish(exchange)
+
+        def _finish(self, exchange: Exchange) -> None:
+            """Release what this request holds, then write its one `close`.
+
+            A request that was admitted and never closed in the budget -- an
+            exception got there first -- is closed here: cancelled if nothing
+            was sent, settled at its estimate if anything may have been.
+            """
+            try:
+                if exchange.admitted and exchange.accounted is None:
+                    self._account(exchange, Usage(UNKNOWN))
+            finally:
+                if exchange.slots:
+                    exchange.slots = False
+                    TOTAL_SLOTS.release()
+                    state.slots.release()
+                self._write_close(exchange)
+
+        def _account(self, exchange: Exchange, usage: Usage) -> None:
+            exchange.accounted = budget.close(exchange.rid, usage)
+            exchange.settled_at = time.monotonic()
+
+        def _write_close(self, exchange: Exchange) -> None:
+            if exchange.event_written:
+                return
+            exchange.event_written = True
+            record = {
+                "at": iso(),
+                "event": "close",
+                "id": exchange.rid,
+                "agent": state.slug,
+                "status": exchange.status,
+            }
+            if exchange.refusal is not None:
+                record["refusal"] = exchange.refusal
+            accounted = exchange.accounted
+            if accounted is not None:
+                record["duration_seconds"] = round(exchange.settled_at - exchange.started, 3)
+                settled = accounted.kind == "settled" and exchange.usage is not None
+                record["usage"] = exchange.usage.raw if settled else None
+            record["outcome"] = exchange.outcome
+            if exchange.estimate is not None:
+                record["estimate"] = exchange.estimate
+            if accounted is not None:
+                record["usage_class"] = accounted.usage_class or "none"
+                record["charged_tokens"] = accounted.charge
+                if accounted.late:
+                    record["late_adjustment"] = list(accounted.late)
+            if exchange.upstream_status is not None:
+                record["upstream_status"] = exchange.upstream_status
+            if exchange.relayed is not None:
+                record["relayed"] = exchange.relayed
+            try:
+                append_jsonl(state.events, record)
+            except Exception as error:  # noqa: BLE001 -- the last resort is the container log
+                fallback = {
+                    "id": exchange.rid,
+                    "agent": state.slug,
+                    "outcome": exchange.outcome,
+                    "status": exchange.status,
+                    "close_unrecorded": type(error).__name__,
+                }
+                print(json.dumps(fallback), file=sys.stderr, flush=True)
+
+        # -- replies ----------------------------------------------------------
+        def _relay(self, status: int, headers: dict, payload: bytes) -> bool:
+            """Write one response. False if the client was no longer there."""
+            try:
+                self.send_response(status)
+                for name, value in headers.items():
+                    self.send_header(name, value)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            except OSError:
+                self.close_connection = True
+                return False
+            return True
+
+        def _refuse(self, exchange: Exchange, status: int, outcome: str, message: str) -> None:
+            exchange.status, exchange.outcome, exchange.refusal = status, outcome, message
+            body = json.dumps(
+                {"error": {"message": message, "type": "recorder", "code": outcome}}
+            ).encode()
+            self.close_connection = True
+            exchange.responded = True
+            exchange.relayed = self._relay(status, {"Content-Type": "application/json"}, body)
+
+        def _take_slots(self) -> bool:
+            """One of this socket's slots, then one of the fleet's, waiting a bounded time.
+
+            The socket's own slot is taken first so a busy socket waits on itself
+            without holding fleet capacity while it does.
+            """
+            deadline = time.monotonic() + INFLIGHT_WAIT_SECONDS
+            if not state.slots.acquire(timeout=INFLIGHT_WAIT_SECONDS):
+                return False
+            if TOTAL_SLOTS.acquire(timeout=max(0.0, deadline - time.monotonic())):
+                return True
+            state.slots.release()
+            return False
+
+        # -- the request ------------------------------------------------------
+        def _post(self, exchange: Exchange) -> None:
             path = self.path.split("?", 1)[0]
             if not path.endswith(ROUTE_SUFFIX):
                 self._refuse(
+                    exchange,
                     404,
+                    "not_found",
                     f"no route {self.path!r}; this socket serves a chat-completions "
                     f"endpoint, most simply at {ROUTE}",
                 )
                 return
-            transfer = self.headers.get("Transfer-Encoding")
-            if transfer:
-                self._refuse(411, "requests must carry a content-length")
+            if self.headers.get("Transfer-Encoding"):
+                self._refuse(
+                    exchange, 411, "length_required", "requests must carry a content-length"
+                )
                 return
             raw_length = self.headers.get("Content-Length")
             try:
                 length = int(raw_length or "")
             except ValueError:
-                self._refuse(400, "content-length must be a whole number")
+                self._refuse(
+                    exchange, 400, "bad_content_length", "content-length must be a whole number"
+                )
                 return
             if length < 0:
-                self._refuse(400, "content-length must not be negative")
+                self._refuse(
+                    exchange, 400, "bad_content_length", "content-length must not be negative"
+                )
                 return
             if length > REQUEST_MAX_BYTES:
-                self._refuse(413, f"request body must be at most {REQUEST_MAX_BYTES} bytes")
+                self._refuse(
+                    exchange,
+                    413,
+                    "body_too_large",
+                    f"request body must be at most {REQUEST_MAX_BYTES} bytes",
+                )
                 return
             body = self.rfile.read(length)
 
             marker = REFUSE_DIR / f"refuse-{state.slug}.marker"
             if marker.exists():
-                request_id = os.urandom(8).hex()
                 self._refuse(
+                    exchange,
                     503,
+                    "refused_by_operator",
                     "this socket is refusing every request: an operator marker is in "
                     f"place ({marker.name})",
-                    request_id,
                 )
                 return
 
-            request_id = os.urandom(8).hex()
             try:
                 parsed = json.loads(body.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 parsed = {"raw_body": body.decode("utf-8", "ignore")[:2000]}
+            forwarded = body
+            if not upstream_supports_streaming():
+                # Drop the streaming request rather than let it garble the
+                # record. This only governs what is asked for.
+                try:
+                    asked = json.loads(body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    asked = None
+                if isinstance(asked, dict) and asked.pop("stream", None) is not None:
+                    asked.pop("stream_options", None)
+                    forwarded = json.dumps(asked).encode("utf-8")
+            # The estimate is over what is actually sent: the same bytes the
+            # upstream will bill for its prompt.
+            exchange.estimate = max(1, len(forwarded) // 4)
+
+            if not self._take_slots():
+                self._refuse(exchange, 429, "inflight", refusal_message(Refused("inflight", None)))
+                return
+            exchange.slots = True
 
             model = parsed.get("model") if isinstance(parsed, dict) else None
             messages = parsed.get("messages") if isinstance(parsed, dict) else None
@@ -339,57 +853,22 @@ def make_handler(recorder: Recorder):
                 {
                     "at": iso(),
                     "event": "open",
-                    "id": request_id,
+                    "id": exchange.rid,
                     "agent": state.slug,
                     "model": model,
                     "messages": len(messages) if isinstance(messages, list) else 0,
+                    "bytes_in": len(body),
+                    "bytes_forwarded": len(forwarded),
+                    "estimate": exchange.estimate,
                 },
             )
 
             # Reserve against the ceilings before spending anything upstream.
-            estimate = max(1, len(body) // 4)
-            allowed, wait = state.requests.check()
-            if not allowed:
-                self._refuse(
-                    429,
-                    f"rate limited: at most {state.requests.limit} request(s) per hour on this "
-                    f"socket; next available in {wait} second(s)",
-                    request_id,
-                )
+            decision = budget.admit(exchange.rid, state.slug, exchange.estimate)
+            if isinstance(decision, Refused):
+                self._refuse(exchange, 429, decision.reason, refusal_message(decision))
                 return
-            allowed, wait = state.per_agent_tokens.check(estimate)
-            if not allowed:
-                self._refuse(
-                    429,
-                    f"rate limited: at most {state.per_agent_tokens.limit} token(s) per hour on "
-                    f"this socket; next available in {wait} second(s)",
-                    request_id,
-                )
-                return
-            allowed, wait = shared.check(estimate)
-            if not allowed:
-                self._refuse(
-                    429,
-                    f"rate limited: at most {shared.limit} token(s) per hour across the fleet; "
-                    f"next available in {wait} second(s)",
-                    request_id,
-                )
-                return
-            state.requests.charge()
-            state.per_agent_tokens.charge(estimate)
-            shared.charge(estimate)
-
-            if not upstream_supports_streaming():
-                # Drop the streaming request rather than let it garble the
-                # record. A streaming *response* from the upstream is relayed as
-                # it arrives; this only governs what is asked for.
-                try:
-                    asked = json.loads(body.decode("utf-8"))
-                except (UnicodeDecodeError, json.JSONDecodeError):
-                    asked = None
-                if isinstance(asked, dict) and asked.pop("stream", None) is not None:
-                    asked.pop("stream_options", None)
-                    body = json.dumps(asked).encode("utf-8")
+            exchange.admitted = True
 
             headers = {}
             for name, value in self.headers.items():
@@ -402,111 +881,166 @@ def make_handler(recorder: Recorder):
             if key:
                 headers["Authorization"] = f"Bearer {key}"
 
-            status, response_headers, payload = 0, {}, b""
+            upstream = UnixUpstream(UPSTREAM_SOCKET) if UPSTREAM_SOCKET else UrllibUpstream()
             try:
-                if UPSTREAM_SOCKET:
-                    status, response_headers, payload = send_over_unix(
-                        UPSTREAM_SOCKET, upstream_url(), headers, body
-                    )
-                else:
-                    request = urllib.request.Request(
-                        upstream_url(), data=body, headers=headers, method="POST"
-                    )
-                    with urllib.request.urlopen(request, timeout=UPSTREAM_TIMEOUT) as response:
-                        status = response.status
-                        response_headers = dict(response.headers.items())
-                        payload = response.read()
-            except urllib.error.HTTPError as error:
-                status = error.code
-                response_headers = dict(error.headers.items()) if error.headers else {}
-                payload = error.read() if error.fp else b""
+                upstream.connect()
             except Exception as error:  # noqa: BLE001 -- reported to the client as 502
-                log(f"{state.slug}: upstream failure: {type(error).__name__}: {error}")
-                self._refuse(502, f"the recorder could not reach the upstream: {error}", request_id)
-                self._settle(request_id, started, None, 0)
+                # Nothing was sent: the reservation is cancelled and refunded.
+                self._account(exchange, Usage(UNKNOWN))
+                log(f"{state.slug}: {exchange.rid}: upstream connect failed: {type(error).__name__}")
+                self._refuse(
+                    exchange,
+                    502,
+                    "upstream_connect",
+                    f"the recorder could not connect to the upstream ({type(error).__name__})",
+                )
                 return
+            try:
+                if not budget.begin_forward(exchange.rid):
+                    self._refuse(
+                        exchange, 503, "shutting_down", "the recorder is not forwarding requests"
+                    )
+                    return
+                status, response_headers, payload = upstream.exchange(headers, forwarded)
+            except Exception as error:  # noqa: BLE001 -- reported to the client as 502
+                # Bytes may have reached the provider: the estimate stays charged.
+                self._account(exchange, Usage(UNKNOWN))
+                log(f"{state.slug}: {exchange.rid}: upstream failure: {type(error).__name__}")
+                self._refuse(
+                    exchange,
+                    502,
+                    "upstream_transport",
+                    f"the recorder could not reach the upstream ({type(error).__name__})",
+                )
+                return
+            finally:
+                upstream.close()
 
+            exchange.upstream_status = status
             response_data = decode_payload(payload)
+            exchange.usage = extract_usage(response_data)
+            # Settle before the transcript and the relay, so the accounting is
+            # right even when both of those fail.
+            self._account(exchange, exchange.usage)
+            exchange.status = status
+            exchange.outcome = "ok" if 200 <= status < 300 else "upstream_http"
+
             append_jsonl(
                 state.transcript,
                 {
                     "at": iso(),
                     "agent": state.slug,
-                    "id": request_id,
+                    "id": exchange.rid,
                     "request": parsed,
                     "response": response_data,
                     "status": status,
                 },
             )
-            usage = None
-            if isinstance(response_data, dict):
-                usage = response_data.get("usage")
-            spent = 0
-            if isinstance(usage, dict) and isinstance(usage.get("total_tokens"), int):
-                spent = usage["total_tokens"]
-                # Replace the estimate with what was actually billed.
-                state.per_agent_tokens.charge(max(0, spent - estimate))
-            self._settle(request_id, started, usage, status)
-
             out_headers = {
                 name: value
                 for name, value in response_headers.items()
                 if name.lower() not in FRAMING
             }
-            self.send_response(status)
-            for name, value in out_headers.items():
-                self.send_header(name, value)
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
-                self.wfile.write(payload)
-
-        def _settle(self, request_id: str, started: float, usage, status: int) -> None:
-            append_jsonl(
-                state.events,
-                {
-                    "at": iso(),
-                    "event": "close",
-                    "id": request_id,
-                    "agent": state.slug,
-                    "status": status,
-                    "duration_seconds": round(time.monotonic() - started, 3),
-                    "usage": usage if isinstance(usage, dict) else None,
-                },
-            )
+            exchange.responded = True
+            exchange.relayed = self._relay(status, out_headers, payload)
 
     return Handler
 
 
-def send_over_unix(
-    socket_path: str, url: str, headers: dict, body: bytes
-) -> tuple[int, dict, bytes]:
-    """One HTTP exchange over a unix socket, hand-rolled.
-
-    Written out rather than pulled from a library because there is very little
-    to it and the framing rules are the point: the upstream may answer with a
-    content-length or with chunked encoding, and a recorder that mishandled the
-    second would silently truncate a streamed completion in the record.
-    """
-    import http.client
-    from urllib.parse import urlsplit
-
+def request_path(url: str) -> str:
     target = urlsplit(url)
-    request_path = target.path or "/"
+    path = target.path or "/"
     if target.query:
-        request_path += "?" + target.query
+        path += "?" + target.query
+    return path
 
-    connection = http.client.HTTPConnection("localhost", timeout=UPSTREAM_TIMEOUT)
-    connection.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    connection.sock.settimeout(UPSTREAM_TIMEOUT)
-    connection.sock.connect(socket_path)
-    try:
-        connection.request("POST", request_path, body=body, headers=headers)
+
+class UnixUpstream:
+    """One HTTP exchange over a unix socket, connected before anything is sent.
+
+    Connecting is a separate step because it decides the accounting: a connect
+    that fails has sent nothing, so the reservation is refunded; once bytes may
+    have left, the estimate stays charged whatever happens. `auto_open` is off
+    so http.client can never reconnect behind that decision. The upstream may
+    answer with a content-length or with chunked encoding; http.client reads
+    both, and a recorder that mishandled the second would silently truncate a
+    streamed completion in the record.
+    """
+
+    def __init__(self, socket_path: str) -> None:
+        self.socket_path = socket_path
+        self.connection: http.client.HTTPConnection | None = None
+
+    def connect(self) -> None:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            sock.settimeout(UPSTREAM_TIMEOUT)
+            sock.connect(self.socket_path)
+        except BaseException:
+            sock.close()
+            raise
+        connection = http.client.HTTPConnection("localhost", timeout=UPSTREAM_TIMEOUT)
+        connection.auto_open = 0
+        connection.sock = sock
+        self.connection = connection
+
+    def exchange(self, headers: dict, body: bytes) -> tuple[int, dict, bytes]:
+        connection = self.connection
+        connection.request("POST", request_path(upstream_url()), body=body, headers=headers)
         response = connection.getresponse()
         return response.status, dict(response.getheaders()), response.read()
-    finally:
-        with contextlib.suppress(OSError):
-            connection.close()
+
+    def close(self) -> None:
+        if self.connection is not None:
+            with contextlib.suppress(OSError):
+                self.connection.close()
+
+
+class UrllibUpstream:
+    """The network path, through urllib, until it is replaced (SV-016 R-B2).
+
+    urllib connects inside `urlopen`, after the send gate, so a connect failure
+    here cannot be told from a send failure. It is counted the safe way: as
+    possibly sent, the estimate kept, never refunded.
+    """
+
+    def connect(self) -> None:
+        pass
+
+    def exchange(self, headers: dict, body: bytes) -> tuple[int, dict, bytes]:
+        request = urllib.request.Request(upstream_url(), data=body, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=UPSTREAM_TIMEOUT) as response:
+                return response.status, dict(response.headers.items()), response.read()
+        except urllib.error.HTTPError as error:
+            payload = error.read() if error.fp else b""
+            return error.code, dict(error.headers.items()) if error.headers else {}, payload
+
+    def close(self) -> None:
+        pass
+
+
+def _is_count(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def extract_usage(response) -> Usage:
+    """What a decoded JSON response says it cost, if it says so in whole numbers.
+
+    `total_tokens` when it is a non-negative integer (a boolean is not one);
+    otherwise prompt plus completion when both are; otherwise unknown, and the
+    estimate stands. The raw dict is kept either way for the record.
+    """
+    usage = response.get("usage") if isinstance(response, dict) else None
+    if not isinstance(usage, dict):
+        return Usage(UNKNOWN)
+    total = usage.get("total_tokens")
+    if _is_count(total):
+        return Usage(KNOWN, total, usage)
+    prompt, completion = usage.get("prompt_tokens"), usage.get("completion_tokens")
+    if _is_count(prompt) and _is_count(completion):
+        return Usage(KNOWN, prompt + completion, usage)
+    return Usage(UNKNOWN, None, usage)
 
 
 def decode_payload(payload: bytes):
@@ -564,15 +1098,37 @@ def main() -> int:
     recorder's own sockets are swept, because a second recorder may be serving
     other agents in the same directory.
     """
-    shared = SharedTokens(env_int("RECORDER_TOKEN_GLOBAL_HOURLY_MAX", 20_000_000))
+    shared = Budget(env_int("RECORDER_TOKEN_GLOBAL_HOURLY_MAX", 20_000_000))
+    # Every allowance starts empty in a new process; this line is how a reader
+    # tells one boot's request ids from the next. It is never written into an
+    # agent's events, and no `close` is ever written for a previous boot.
+    record_diagnostic({"event": "recorder_start", "boot": BOOT, "pid": os.getpid()})
     SOCKET_DIR.mkdir(parents=True, exist_ok=True)
     configured = slugs_from_env("AGENT_SLUGS")
     recorders: dict[str, Recorder] = {}
+    refusals_reported: set[str] = set()
     waiting_reported = False
     while True:
         wanted = configured or discover_slugs()
         for slug in wanted:
             if slug in recorders:
+                continue
+            reason = None
+            if not SLUG_PATTERN.fullmatch(slug):
+                reason = "slug_pattern"
+            elif not shared.register(
+                slug,
+                env_int("RECORDER_HOURLY_MAX", 1200),
+                env_int("RECORDER_TOKEN_HOURLY_MAX", 4_000_000),
+            ):
+                reason = "max_slugs"
+            if reason is not None:
+                # Reported once per reason, and without the name: a name an
+                # agent announced is not something to copy into the record.
+                if reason not in refusals_reported:
+                    refusals_reported.add(reason)
+                    record_diagnostic({"event": "slug_refused", "reason": reason})
+                    log(f"not serving an announced agent: {reason}")
                 continue
             with contextlib.suppress(OSError):
                 (SOCKET_DIR / f"{slug}.sock").unlink()
