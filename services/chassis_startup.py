@@ -84,7 +84,6 @@ class Opening:
     stop: str | None = None
     detail: dict | None = None
     had_memory: bool = False
-    foreign_texts: frozenset = frozenset()
 
 
 class StartupStop(Exception):
@@ -417,16 +416,26 @@ class _Context:
         if intent_status == "unreadable":
             raise StartupStop("recovery_intent_unreadable", None, "intent")
         ack = self.ack
-        identity = read_identity(session_dir, lineage, ops)
+        live = read_identity(session_dir, lineage, ops)  # checked allocation high-water, or None
+        identity = live  # the reservation the outcome is derived from
         if intent is not None:
+            # SV021-08: the frozen transaction input is validated as a whole
+            # (schema, domains, checksum, lineage) before any of it is used.
+            intent = _validated_intent(intent, lineage)
             p0, extra, original_tail = self._from_intent(scan, intent)
-            ack = intent.get("ack")
-            # The reservation this recovery's outcome was derived from, before
-            # it was raised: re-deriving must give the same records.
-            identity = intent.get("identity_reserved")
+            ack = intent["ack"]
+            # Re-deriving the already-started outcome uses the frozen value;
+            # the live reservation can only have stayed equal (nothing reserves
+            # while an intent is pending) -- a lower live value is not
+            # reconcilable and stops.
+            identity = intent["identity_reserved"]
+            if live is not None and identity is not None and live < identity:
+                raise StartupStop("identity_inconsistent", {"live": live, "frozen": identity}, "intent")
             scan0 = cp.LedgerScan(p0, p0[-1].seq, p0[-1].chain, original_tail, intent["segment"], intent["offset"])
         else:
             p0, extra, scan0 = scan.records, (), scan
+        # What IDENTITY is carried forward as: never below either checked value.
+        high_water = max((v for v in (live, identity) if v is not None), default=None)
         tail_ack = ack if ack and ack.get("reason") == "ledger_tail_ambiguous" else None
         tail = cp.classify_tail(scan0)
         plan = cp.plan_recovery(scan0, tail, read_blob=read_blob, acknowledgement=tail_ack)
@@ -458,12 +467,12 @@ class _Context:
 
         # Set the tail aside only under a durable intent (see the module docstring).
         if scan0.tail and intent is None:
-            intent = {
+            intent = _sealed_intent({
                 "lineage_id": lineage, "last_seq": scan0.last_seq, "chain": scan0.last_chain,
                 "segment": scan0.tail_segment, "offset": scan0.tail_offset,
                 "tail_sha256": sha256(scan0.tail), "tail_bytes": len(scan0.tail), "ack": tail_ack,
                 "identity_reserved": identity,
-            }
+            })
             cp.write_bytes_durable(session_dir / RECOVERING, json.dumps(intent, sort_keys=True).encode(), ops=ops)
         if scan0.tail and scan.records[-1].seq == scan0.last_seq and scan.tail == scan0.tail:
             result = cp.quarantine_tail(session_dir, scan, plan, self.quarantine, ops=ops)
@@ -494,7 +503,7 @@ class _Context:
                 raise StartupStop("replay_mismatch", {"seq": record.seq, "error": str(error)[:200]}) from error
         session = Session(
             session_dir, self.home_dir, writer, replay, ops=ops, lifecycle=self.lifecycle,
-            checkpoints=decision.checkpoints, identity_reserved=identity, **self.session_kwargs,
+            checkpoints=decision.checkpoints, identity_reserved=high_water, **self.session_kwargs,
         )
         session.since_records = decision.suffix_records + len(extra)
         for type_name, payload in core[len(extra):]:
@@ -515,10 +524,11 @@ class _Context:
         # SV021-01: the reservation now covers every turn this ledger used and
         # the next one, durably, before the duty can cause any request.
         used = [r.payload["turn_seq"] for r in now.records if r.type_name == "REQUEST_SENT"]
-        session.reserve_turns(max([*used, session.state.requests_next["turn_seq"]]), exact=True)
-        foreign = frozenset(m.get("content") for m in session.messages if m.get("role") == "user") if decision.case == "A8" else frozenset()
+        target = max([*used, session.state.requests_next["turn_seq"], high_water or 0])
+        session.identity_reserved = live  # what the file actually holds: rewrite it if missing or lower
+        session.reserve_turns(target, exact=True)
         had_memory = bool(session.messages) or bool(session.state.notes_pending)
-        return Opening(decision.case, session, had_memory=had_memory, foreign_texts=foreign)
+        return Opening(decision.case, session, had_memory=had_memory)
 
     def _from_intent(self, scan: cp.LedgerScan, intent: dict):
         """The prefix the intent names, the records written after it, and its original tail."""
@@ -580,7 +590,7 @@ class _Context:
         kind, bound, binder = _binding([*p0, *extra], newest)
         carried = binder is not None and binder in extra and binder.type_name in (*SWITCH_TYPES, "EXTERNAL_DELETE")
         known = {r.payload["conv"]["sha256"]: checkpoint_tuple(r) for r in checkpoints}
-        decision = _Decision("", strict, conv, newest, suffix, known, len(suffix), carried=carried)
+        decision = _Decision("", strict, conv, newest, suffix, known, len(suffix), carried=carried, kind=kind, bound=bound)
         if not format2:
             consumed = kind not in ("checkpoint", "start") and (
                 (conv.status == "ok" and conv.sha == bound) or (conv.status == "absent" and bound is None)
@@ -664,6 +674,16 @@ class _Context:
             name = "EXTERNAL_EDIT" if case == "A11" else "LEGACY_REIMPORT"
             if case == "A8":
                 payload["unmerged_suffix"] = [unmerged[0], unmerged[1]] if unmerged else None
+                # SV021-10: the pending generations this original list already
+                # shows, recorded with the reimport itself (not re-derived later
+                # from whatever the list then holds).
+                shown = {m.get("content") for m in messages if m.get("role") == "user"}
+                foreign = []
+                for entry in state.notes_pending:
+                    data = session.read_blob(entry["blob"])
+                    if data is not None and rp.NOTE_PREFIX + data.decode("utf-8") in shown:
+                        foreign.append(entry["gen"])
+                payload["foreign_gens"] = foreign
             if messages:
                 data = rp.conversation_bytes(messages)
                 session._commit(name, lambda blob: {**payload, "blob": blob}, blob=data, replay_bytes=len(data))
@@ -688,9 +708,15 @@ class _Context:
         if case == "A14":
             # Replace the unreadable file without rotating it into
             # conversation.prev.json, which still holds a bound base: with the
-            # newest checkpoint's own bytes (bound; the suffix replays on top),
-            # or, before any checkpoint, with the replay (A10 next time).
+            # newest checkpoint's own bytes (the suffix replays on top), or,
+            # before any checkpoint, with the replay.
             data = decision.restore if decision.restore is not None else rp.conversation_bytes(session.messages)
+            # SV021-09: the runtime-installed file is the source binding from
+            # now on -- recorded first, so a crash before the bytes land
+            # re-enters A14 (still unreadable) and finds it already recorded.
+            # It binds the file only; the logical conversation is unchanged.
+            if not (decision.kind == "restored" and decision.bound == sha256(data)):
+                session._commit("RECOVERY", {"kind": "conversation_restored", "detail": {"conv_sha": sha256(data)}})
             try:
                 cp.write_bytes_durable(self.session_dir / "conversation.json", data, ops=self.ops)
             except cp.PersistenceFailure as error:
@@ -725,6 +751,8 @@ class _Decision:
     carried: bool = False  # the binding switch is this recovery's own and carried its notices
     adopt: tuple | None = None  # A10: ("ADOPT", file bytes), written before the core
     restore: bytes | None = None  # A14: the newest checkpoint's bytes
+    kind: str = ""  # the latest binding transition's kind and its file hash (None: absent)
+    bound: str | None = None
 
 
 def _binding(records, newest):
@@ -744,6 +772,8 @@ def _binding(records, newest):
             kind, bound, binder = name, None, record
         elif name == "RECOVERY" and payload.get("kind") == "conversation_adopted":
             kind, bound, binder = "adopted", payload["detail"].get("conv_sha"), record
+        elif name == "RECOVERY" and payload.get("kind") == "conversation_restored":
+            kind, bound, binder = "restored", payload["detail"].get("conv_sha"), record
     return kind, bound, binder
 
 
@@ -753,6 +783,60 @@ def _same_record(record, planned) -> bool:
     if name == "ADOPT":
         return record.type_name == "RECOVERY" and record.payload.get("kind") == "conversation_adopted"
     return (record.type_name, record.payload) == (name, _wire(payload))
+
+
+INTENT_KEYS = frozenset(
+    {"lineage_id", "last_seq", "chain", "segment", "offset", "tail_sha256", "tail_bytes", "ack", "identity_reserved", "check"}
+)
+
+
+def _intent_check(body: dict) -> str:
+    return sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode())
+
+
+def _sealed_intent(body: dict) -> dict:
+    """RECOVERING's content with a SHA-256 over every other field (SV021-08)."""
+    return {**body, "check": _intent_check(body)}
+
+
+def _validated_intent(intent: dict, lineage: str) -> dict:
+    """The frozen transaction input, or a stop before anything is used, copied or truncated.
+
+    Every field is checked for its domain, and the checksum binds them all --
+    the lineage, the prefix anchor (seq and chain), the original tail's place,
+    size and hash, the acknowledgement and the reservation the outcome was
+    derived from.
+    """
+
+    def bad(why: str):
+        raise StartupStop("recovery_intent_invalid", {"field": why}, "intent")
+
+    if set(intent) != INTENT_KEYS:
+        bad("keys")
+    body = {key: value for key, value in intent.items() if key != "check"}
+    if intent["check"] != _intent_check(body):
+        bad("check")
+    if intent["lineage_id"] != lineage:
+        bad("lineage_id")
+    if not (rp.counter(intent["last_seq"], minimum=1) and rp.is_hex64(intent["chain"])):
+        bad("prefix anchor")
+    if not (rp.counter(intent["segment"]) and intent["segment"] <= cp.MAX_SEGMENT_NO and rp.counter(intent["offset"])):
+        bad("tail place")
+    if not (rp.is_hex64(intent["tail_sha256"]) and rp.counter(intent["tail_bytes"], minimum=1)):
+        bad("tail identity")
+    reserved = intent["identity_reserved"]
+    if reserved is not None and not rp.counter(reserved):
+        bad("identity_reserved")
+    ack = intent["ack"]
+    if ack is not None and not (
+        isinstance(ack, dict)
+        and ack.get("reason") == "ledger_tail_ambiguous"
+        and ack.get("resolution") == "continue-conservative"
+        and isinstance(ack.get("ack_id"), str)
+        and ack.get("tail_sha256") == intent["tail_sha256"]
+    ):
+        bad("ack")
+    return intent
 
 
 def _replay(messages, state: SessionState, records, read_blob, *, lenient: bool = False) -> Replay:

@@ -215,6 +215,8 @@ class SessionState:
             need(is_hex64(entry["blob"]) and is_hex64(entry["mirror_sha256"]), "notes.pending hashes")
             need(counter(entry["bytes"]) and counter(entry["written_seq"], minimum=1), "notes.pending counters")
             need(entry["source"] in NOTE_SOURCES, "notes.pending source")
+            need(entry.get("foreign", True) is True, "notes.pending foreign")  # only ever present as true
+            need(set(entry) <= {"gen", "blob", "bytes", "source", "written_seq", "mirror_sha256", "foreign"}, "notes.pending keys")
             expected += 1
         need(expected == notes["next_gen"], "notes.next_gen follows the pending generations")
         for key in ("handoff_md_sha256", "adopted_mirror_sha256"):
@@ -528,6 +530,14 @@ class Replay:
     def _on_legacy_reimport(self, record, payload) -> None:
         self._epoch(payload, step=1)
         self._switch_base(payload, "LEGACY_REIMPORT")
+        # SV021-10: the pending generations the reimported list already shows
+        # (an older runtime appended them). The fact belongs to those exact
+        # generations and survives in pending state until adoption consumes it.
+        pending = {entry["gen"]: entry for entry in self.state.notes_pending}
+        for gen in payload.get("foreign_gens", []):
+            if gen not in pending:
+                raise ReplayMismatch(f"LEGACY_REIMPORT marks generation {gen!r}, which is not pending")
+            pending[gen]["foreign"] = True
         legacy = payload.get("legacy")
         if legacy is not None:
             if legacy.get("status") not in LEGACY_STATUSES:
@@ -575,6 +585,11 @@ class Replay:
                 raise ReplayMismatch("conversation_adopted's hash does not match its blob")
             self.messages[:] = messages
             self.state.recap_folded = min(self.state.recap_folded, len(messages))
+        elif kind == "conversation_restored":
+            # A14 (SV021-09): which bytes the runtime put back in the file. It
+            # binds the file for authority decisions; memory is unchanged.
+            if not isinstance(detail, dict) or not is_hex64(detail.get("conv_sha")):
+                raise ReplayMismatch("conversation_restored names no file hash")
         elif kind == "note_dropped_pending_limit":
             # SV021 addition: v2 1.4.6 names the drop but no record; without
             # one, a drop after the newest checkpoint would vanish on replay.

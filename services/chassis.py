@@ -1306,7 +1306,7 @@ class Chassis:
         """
         session = self.session
         session.adopt_file_edit()
-        adopted = session.adopt_notes(foreign_texts=opening.foreign_texts)
+        adopted = session.adopt_notes()
         seeded = False
         if not session.messages:
             bootstrap = getattr(sys.modules.get("duty"), "bootstrap", None)

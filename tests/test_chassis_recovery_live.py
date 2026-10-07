@@ -100,7 +100,7 @@ def resume(opening: st.Opening):
     """What the chassis's resume does after startup: notes, an opening if empty, a checkpoint."""
     session = opening.session
     session.adopt_file_edit()
-    session.adopt_notes(foreign_texts=opening.foreign_texts)
+    session.adopt_notes()
     if not session.messages:
         session.append_message("user", "OPENING")
     session.checkpoint()
@@ -566,7 +566,8 @@ def test_a14_o2_2_an_unreadable_file_is_rebuilt_from_the_previous_base(tmp_path)
     expected = list(opening.session.messages)
     opening.session.close()
     again = root.start()
-    assert again.classification == "A9" and again.session.messages == expected
+    # SV021-09: bound by A14's recorded restore (A9t), with identical memory.
+    assert again.classification == "A9t" and again.session.messages == expected
     assert [m["content"] for m in expected].count(st.A14_NOTICE) == 1
     assert any(name.startswith("conversation-") for name in root.corrupt())
 
@@ -1384,3 +1385,326 @@ def test_sv021_06_a_256_call_response_owes_its_notice_from_turn_response_on(tmp_
     assert "INVOKING" not in root.types(), "recovery invoked nothing"
     checkpoints = [r for r in root.records() if r.type_name == "CHECKPOINT"]
     assert checkpoints[-1].payload["state"]["active_group"] is None
+
+
+# ===========================================================================
+# SV-021 correction 2: regressions for Astra SV021-08, -09, -10
+# (written and run against the reviewed code first; checkpoint-002)
+# ===========================================================================
+def hidden_request_at_turn_20(root: Root):
+    """P ends after turn 19; request 20 is sent, then its header is damaged: an ambiguous tail."""
+    session = establish(root)
+    for _turn in range(18):
+        respond(session, content="t")
+    session.checkpoint()
+    hidden = session.next_label()
+    session.send(lambda: None)
+    session.close()
+    damage_from(root.segment(), root.records()[-1].seq)
+    assert root.start().stop == "ledger_tail_ambiguous"
+    st.acknowledge(root.session_dir, "ledger_tail_ambiguous", "continue-conservative")
+    return hidden
+
+
+def crash_after_intent(root: Root) -> None:
+    ops = FaultOps()
+    ops.faults.append(("write", lambda p: "/corrupt/." in p, Crash()))  # RECOVERING is durable; nothing copied yet
+    with pytest.raises(Crash):
+        root.start(ops=ops)
+    assert (root.session_dir / st.RECOVERING).exists()
+
+
+def test_sv021_08_a_lowered_number_in_a_pending_intent_never_reissues_a_label(tmp_path):
+    """Astra SV021-08: a one-digit change in RECOVERING while the checked IDENTITY stays higher."""
+    root = Root(tmp_path)
+    hidden = hidden_request_at_turn_20(root)
+    reserved = cs.read_identity(root.session_dir, LINEAGE)
+    assert reserved == 64 and turn_of(hidden) == 20
+    crash_after_intent(root)
+    intent = root.session_dir / st.RECOVERING
+    text = intent.read_text()
+    assert '"identity_reserved": 64' in text
+    intent.write_text(text.replace('"identity_reserved": 64', '"identity_reserved": 14'))
+    opening = root.start()
+    assert (cs.read_identity(root.session_dir, LINEAGE) or 0) >= reserved, "the checked high-water mark was lowered"
+    if opening.stop is not None:
+        assert opening.session is None and "SYNTH" not in root.types() and "possible_duplicate_spend" not in str(
+            [r.payload for r in root.records()]
+        ), "a stop must come before any recovery record"
+        return
+    assert turn_of(opening.session.next_label()) > reserved, f"{opening.session.next_label()} vs hidden {hidden}"
+
+
+def a10_then_unbound(root: Root):
+    """C(B) -> append N -> die after CK4 installs B+N -> A10 (adoption recorded), no further checkpoint."""
+    session = establish(root)
+    session.append_message("user", "N")
+    ops = FaultOps()
+    session.ops = session.writer.ops = ops
+    ops.paths[session.writer.fd] = str(root.segment())
+    ops.faults.append(("sync_dir", lambda p: p.endswith("/session"), Crash()))
+    with pytest.raises(Crash):
+        session.checkpoint()
+    session.close()
+    opening = root.start()
+    assert opening.classification == "A10"
+    opening.session.close()
+
+
+def test_sv021_09_a14_after_an_a10_adoption_keeps_memory_across_restarts(tmp_path):
+    """Astra SV021-09: C(B) -> CK4(B+N) -> A10 -> damage -> A14 -> two more starts, no checkpoint between."""
+    root = Root(tmp_path)
+    a10_then_unbound(root)
+    (root.session_dir / "conversation.json").write_bytes(b"damaged")
+    opening = root.start()
+    assert opening.classification == "A14"
+    expected = list(opening.session.messages)
+    assert [m["content"] for m in expected][-2:] == ["N", st.A14_NOTICE]
+    opening.session.close()
+    for _restart in range(2):
+        opening = root.start()
+        assert opening.session.messages == expected, opening.classification
+        assert opening.session.state.history_epoch == 1 and "EXTERNAL_EDIT" not in root.types()
+        opening.session.close()
+
+
+def test_sv021_09_a14_after_an_external_edit_keeps_memory_across_restarts(tmp_path):
+    root = Root(tmp_path)
+    session = establish(root)
+    partial_turn(session, 6)
+    session.checkpoint()
+    session.close()
+    write_list(root, ["X"])
+    opening = root.start()
+    assert opening.classification == "A11"
+    opening.session.close()
+    (root.session_dir / "conversation.json").write_bytes(b"damaged")
+    opening = root.start()
+    assert opening.classification == "A14"
+    expected = list(opening.session.messages)
+    assert [m["content"] for m in expected] == ["X", st.A14_NOTICE]
+    opening.session.close()
+    for _restart in range(2):
+        opening = root.start()
+        assert opening.session.messages == expected, opening.classification
+        assert root.types().count("EXTERNAL_EDIT") == 1 and opening.session.state.history_epoch == 2
+        opening.session.close()
+
+
+def test_sv021_10_a_crash_after_a_reimport_keeps_its_foreign_note_adoption(tmp_path):
+    """Astra SV021-10: C-K6 with a crash after A8 and before note adoption, then A8t twice."""
+    root = Root(tmp_path)
+    session = establish(root)
+    session.write_note("N1", header="# Handoff")
+    session.write_note("N2", header="# Handoff")
+    session.checkpoint()
+    session.close()
+    n1, n2 = rp.NOTE_PREFIX + "# Handoff\n\nN1\n", rp.NOTE_PREFIX + "# Handoff\n\nN2\n"
+    old = [*BASE, {"role": "user", "content": n1}, {"role": "user", "content": n2}, {"role": "assistant", "content": "old 1"}]
+    (root.session_dir / "conversation.json").write_text(json.dumps(old, indent=2) + "\n")
+    meta = json.loads(root.file("run.json"))
+    for key in ("format", "writer", "checkpoint", "history_epoch"):
+        meta.pop(key)
+    (root.session_dir / "run.json").write_text(json.dumps(meta))
+    opening = root.start()
+    assert opening.classification == "A8"
+    # A genuinely new generation with equal text, written after the reimport, before adoption.
+    assert opening.session.write_note("N1", header="# Handoff") == 3
+    opening.session.close()  # dies before note adoption
+    for _restart in range(2):
+        opening = root.start()
+        assert opening.classification == "A8t"
+        opening.session.close()
+    session = resume(root.start())
+    contents = [m["content"] for m in session.messages]
+    assert contents.count(n2) == 1, "N2 was already in the old runtime's list"
+    assert contents.count(n1) == 2, "the old copy of N1 and the new generation 3 -- not three, not one"
+    notes = [r.payload for r in root.records() if r.type_name == "MSG_APPEND" and r.payload.get("kind") == "note"]
+    assert [(p["gen"], bool(p.get("foreign"))) for p in notes] == [(1, True), (2, True), (3, False)]
+
+
+# -- SV021-08: the frozen witness and the live high-water mark (post-fix) --
+def run_to_completion_after(root: Root, reserved: int, hidden: str):
+    opening = root.start()
+    assert opening.stop is None, opening
+    assert turn_of(opening.session.next_label()) > reserved, f"{opening.session.next_label()} vs hidden {hidden}"
+    assert cs.read_identity(root.session_dir, LINEAGE) >= reserved, "never lowered"
+    assert not (root.session_dir / st.RECOVERING).exists()
+    closures = [r for r in root.records() if r.payload.get("kind") == "possible_duplicate_spend"]
+    assert len(closures) == 1, "the outcome was written once"
+    return opening
+
+
+@pytest.mark.parametrize("live", ["missing", "bad-check", "foreign-lineage"])
+def test_sv021_08_a_valid_pending_intent_is_its_own_checked_witness(tmp_path, live):
+    root = Root(tmp_path)
+    hidden = hidden_request_at_turn_20(root)
+    crash_after_intent(root)
+    path = root.session_dir / cs.IDENTITY
+    if live == "missing":
+        path.unlink()
+    elif live == "bad-check":
+        path.write_text(path.read_text().replace('"turns_reserved_through": 64', '"turns_reserved_through": 1064'))
+    else:
+        path.write_bytes(cs.identity_bytes("another", 10**9))
+    run_to_completion_after(root, 64, hidden)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("identity_reserved", 14), ("identity_reserved", 640), ("last_seq", 3), ("tail_bytes", 1), ("offset", 0),
+     ("lineage_id", "other"), ("ack", None), ("check", "0" * 64), ("drop-check", None)],
+)
+def test_sv021_08_an_altered_pending_intent_stops_before_any_change(tmp_path, field, value):
+    root = Root(tmp_path)
+    hidden_request_at_turn_20(root)
+    crash_after_intent(root)
+    path = root.session_dir / st.RECOVERING
+    intent = json.loads(path.read_text())
+    if field == "drop-check":
+        intent.pop("check")
+    else:
+        intent[field] = value
+    path.write_text(json.dumps(intent, sort_keys=True))
+    before = root.snapshot()
+    opening = root.start()
+    assert (opening.stop, opening.session) == ("recovery_intent_invalid", None)
+    after = root.snapshot()
+    after.pop("session/STOPPED")
+    assert after == before, "no copy, truncation, record or IDENTITY change"
+
+
+def test_sv021_08_a_live_reservation_below_the_frozen_one_is_not_reconciled(tmp_path):
+    root = Root(tmp_path)
+    hidden_request_at_turn_20(root)
+    crash_after_intent(root)
+    (root.session_dir / cs.IDENTITY).write_bytes(cs.identity_bytes(LINEAGE, 30))  # valid, but lower
+    before = root.snapshot()
+    opening = root.start()
+    assert opening.stop == "identity_inconsistent"
+    after = root.snapshot()
+    after.pop("session/STOPPED")
+    assert after == before
+
+
+def test_sv021_08_a_second_crash_inside_the_recovery_still_converges(tmp_path):
+    root = Root(tmp_path)
+    hidden = hidden_request_at_turn_20(root)
+    crash_after_intent(root)
+    ops = FaultOps()
+    writes = {"n": 0}
+
+    def second_record(path):
+        if path.endswith(".svl"):
+            writes["n"] += 1
+            return writes["n"] == 2  # after the first outcome record
+        return False
+
+    ops.faults.append(("write", second_record, Crash()))
+    with pytest.raises(Crash):
+        root.start(ops=ops)
+    assert (root.session_dir / st.RECOVERING).exists()
+    run_to_completion_after(root, 64, hidden)
+
+
+# -- SV021-09: cuts around A14's binding and restore, and a real edit back --
+def a14_with_cut(root: Root, operation: str, matches):
+    a10_then_unbound(root)
+    (root.session_dir / "conversation.json").write_bytes(b"damaged")
+    ops = FaultOps()
+    ops.faults.append((operation, matches, Crash()))
+    with pytest.raises(Crash):
+        root.start(ops=ops)
+
+
+def nth_segment_write(n: int):
+    seen = {"n": 0}
+
+    def matches(path):
+        if path.endswith(".svl"):
+            seen["n"] += 1
+            return seen["n"] == n
+        return False
+
+    return matches
+
+
+@pytest.mark.parametrize(
+    "cut",
+    ["after-notice-before-binding", "after-binding-before-restore"],
+)
+def test_sv021_09_a14_cuts_converge_without_an_edit(tmp_path, cut):
+    root = Root(tmp_path)
+    if cut == "after-notice-before-binding":
+        a14_with_cut(root, "write", nth_segment_write(2))  # the notice is written; the binding is not
+    else:
+        a14_with_cut(root, "rename", lambda p: p.endswith("/conversation.json"))
+    expected = None
+    for _restart in range(3):
+        opening = root.start()
+        assert opening.session is not None, opening
+        contents = [m["content"] for m in opening.session.messages]
+        assert contents[-2:] == ["N", st.A14_NOTICE] and contents.count(st.A14_NOTICE) == 1
+        assert "EXTERNAL_EDIT" not in root.types() and opening.session.state.history_epoch == 1
+        expected = expected or opening.session.messages
+        assert opening.session.messages == expected
+        opening.session.close()
+    restores = [r for r in root.records() if r.payload.get("kind") == "conversation_restored"]
+    assert len(restores) == 1
+
+
+def test_sv021_09_a14_before_any_checkpoint_binds_its_replay(tmp_path):
+    root = Root(tmp_path)
+    opening = root.start()
+    opening.session.append_message("user", "OPENING")
+    opening.session.close()
+    write_list(root, ["X"])  # an edit before the first checkpoint ...
+    root.start().session.close()
+    (root.session_dir / "conversation.json").write_bytes(b"damaged")  # ... then damage
+    opening = root.start()
+    assert opening.classification == "A14"
+    expected = list(opening.session.messages)
+    opening.session.close()
+    for _restart in range(2):
+        opening = root.start()
+        assert opening.classification == "A9t" and opening.session.messages == expected
+        opening.session.close()
+
+
+def test_sv021_09_an_edit_back_to_the_restored_bytes_after_a_new_binding_is_an_edit(tmp_path):
+    root = Root(tmp_path)
+    a10_then_unbound(root)
+    (root.session_dir / "conversation.json").write_bytes(b"damaged")
+    root.start().session.close()  # A14: restores B and binds it
+    restored = root.file("conversation.json")
+    session = resume(root.start())  # a new binding: the next checkpoint
+    expected_before = list(session.messages)
+    session.close()
+    (root.session_dir / "conversation.json").write_bytes(restored)  # the user puts B back
+    opening = root.start()
+    assert opening.classification == "A11", "a real edit back to an older file is an edit"
+    assert opening.session.messages == json.loads(restored) != expected_before
+
+
+# -- SV021-10: the per-generation mark survives a checkpoint taken before adoption --
+def test_sv021_10_the_foreign_mark_is_checkpoint_state_until_consumed(tmp_path):
+    root = Root(tmp_path)
+    session = establish(root)
+    session.write_note("N1", header="# Handoff")
+    session.checkpoint()
+    session.close()
+    n1 = rp.NOTE_PREFIX + "# Handoff\n\nN1\n"
+    (root.session_dir / "conversation.json").write_text(json.dumps([*BASE, {"role": "user", "content": n1}], indent=2) + "\n")
+    meta = json.loads(root.file("run.json"))
+    for key in ("format", "writer", "checkpoint", "history_epoch"):
+        meta.pop(key)
+    (root.session_dir / "run.json").write_text(json.dumps(meta))
+    opening = root.start()
+    assert opening.classification == "A8"
+    opening.session.checkpoint()  # checkpointed before adoption
+    opening.session.close()
+    newest = [r for r in root.records() if r.type_name == "CHECKPOINT"][-1]
+    assert newest.payload["state"]["notes"]["pending"][0]["foreign"] is True
+    session = resume(root.start())
+    assert [m["content"] for m in session.messages].count(n1) == 1
+    assert session.state.notes_pending == []

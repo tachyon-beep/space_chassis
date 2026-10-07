@@ -472,21 +472,19 @@ class Session:
         )
         return gen
 
-    def adopt_notes(self, *, foreign_texts: frozenset = frozenset()) -> list[int]:
+    def adopt_notes(self) -> list[int]:
         """Append every pending generation once, in order; then any drop notice.
 
-        `foreign_texts` (A8 only): note message texts already in a list an older
-        runtime wrote; those generations advance the watermark without being
-        appended again (`adopted_by_foreign_runtime`).
+        A generation a LEGACY_REIMPORT found already in an older runtime's list
+        carries a durable `foreign` mark (SV021-10): it advances the watermark
+        without being appended again (`adopted_by_foreign_runtime`). The mark
+        is per generation, never by text, so a later generation with equal
+        text is still appended.
         """
         self._require_boundary("note adoption")
         adopted = []
         for entry in list(self.state.notes_pending):
-            text = None
-            if foreign_texts:
-                data = self.read_blob(entry["blob"])
-                text = data.decode("utf-8") if data is not None else None
-            foreign = text is not None and rp.NOTE_PREFIX + text in foreign_texts
+            foreign = entry.get("foreign") is True
             payload = {"kind": "note", "gen": entry["gen"], "blob": entry["blob"], "epoch": self.state.history_epoch}
             if foreign:
                 payload["foreign"] = True
