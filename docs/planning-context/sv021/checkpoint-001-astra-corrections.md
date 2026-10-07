@@ -1,6 +1,6 @@
 # SV-021 correction 1 — Astra SV021-01 … SV021-07
 
-2026-10-08, Australia/Sydney. Against reviewed head `2717d7c5f6adc40c6326142efa9a40a62e3aeced`, runtime/tests `3b145c6aea18a0fc537de9cd74fe1adc539039f6`, review `SV-021-Astra-initial-review.md`. Working-tree changes, uncommitted (no Git calls were made; the coordinator commits). Same model, allowance and limits; the approved bounded runner only; temporary roots, injected faults, local stub; no provider, deployment, real stop acknowledgement, pump, H/T/Q or GC change.
+2026-10-08, Australia/Sydney. Against reviewed head `2717d7c5f6adc40c6326142efa9a40a62e3aeced`, runtime/tests `3b145c6aea18a0fc537de9cd74fe1adc539039f6`, review `SV-021-Astra-initial-review.md`. Runtime/test changes subsequently committed by the coordinator at `06fbc40e4df3287f8995bb54713ce316164b29d7`; the worker made no Git calls. Same model, allowance and limits; the approved bounded runner only; temporary roots, injected faults, local stub; no provider, deployment, real stop acknowledgement, pump, H/T/Q or GC change.
 
 Method: for each finding a discriminating regression was written first, using only APIs that existed at the reviewed commit, and run **against the unmodified reviewed code**, one node per runner command; then the fix; then the batches in RECEIPT.md §6.
 

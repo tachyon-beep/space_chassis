@@ -123,3 +123,23 @@ During the post-fix runs, `test_o4_8_257…` failed once on its exact payload pi
 | C9 | the 5 local-stub `test_run_end_to_end.py` nodes | 5 passed |
 
 Total 488 selected passes, no failures, no full-suite run. The pre-correction negative controls (§1) were not repeated; the 12 pre-fix failures above are this correction's negative evidence.
+
+## 7. Correction 2 runs (SV021-08…10; final tree)
+
+Runtime/test correction committed by the coordinator at `f3812dc9d351a231a0f0879f86c9807f0a6a6634` after worker exit 0, without changing source/test bytes. Independent re-review pending.
+
+Pre-fix (each node alone on reviewed runtime/tests `06fbc40`): SV021-08 failed (IDENTITY lowered 64 → 20), SV021-09 A10 and external-edit variants failed (`A11` on restart), SV021-10 failed (N2 appended twice). Details: `checkpoint-002-astra-corrections.md`. After the fixes the first recovery-file run failed once on `test_a14_o2_2…`'s classification label (`A9` → `A9t`, listed there); no other failure.
+
+| # | Targets | Result |
+|---|---|---|
+| D1 | `tests/test_chassis_recovery_live.py` | 97 passed (92 in-process + 5 real script restarts) |
+| D2 | `tests/test_chassis_replay.py tests/test_chassis_session.py` | 61 passed |
+| D3 | `tests/test_chassis_notes.py tests/test_chassis_checkpoint.py` | 23 passed |
+| D4 | `tests/test_chassis_adoption.py` | 50 passed |
+| D5 | accepted foundation: ledger, recovery, durability | 114 passed |
+| D6 | `tests/test_chassis_termination.py` | 67 passed |
+| D7 | groups, wire, supervisor flap, metadata | 65 passed |
+| D8 | the 22 retained `test_chassis.py` + 7 `test_services.py` nodes | 29 passed |
+| D9 | the 5 local-stub `test_run_end_to_end.py` nodes | 5 passed |
+
+Total 511 selected passes, no failures, no full-suite run.
