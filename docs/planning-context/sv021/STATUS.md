@@ -1,38 +1,34 @@
 # SV-021 status
 
-**Integrated adoption implemented on the isolated WIP branch; committed; awaiting independent review.** 465 selected passes across 9 bounded runs (RECEIPT.md §1); no failures on the final tree.
+**Correction 1 for Astra SV021-01…07 committed at `06fbc40e4df3287f8995bb54713ce316164b29d7`; awaiting independent re-review.** Reviewed head `2717d7c5f6adc40c6326142efa9a40a62e3aeced` (runtime/tests `3b145c6aea18a0fc537de9cd74fe1adc539039f6`). Not accepted; passing tests are not acceptance.
 
-Base: accepted `437b52d765269dbfb127505e27d6b8dca4ed99e6` (branch `sv016/recorder-cleared`, read from `.git/refs`). Foundation acceptance and its limits: `docs/planning-context/sv020/ASTRA-ACCEPTANCE.md`.
+Base: accepted `437b52d765269dbfb127505e27d6b8dca4ed99e6`. Foundation acceptance and its limits: `docs/planning-context/sv020/ASTRA-ACCEPTANCE.md`.
 
-## Coordinator checkpoint
+## Coordinator checkpoint (reviewed commit, preserved)
 
-The worker completed with exit 0. Its two repository-location Git checks were denied by its CLI, and it made no commits. The coordinator used the already-authorized commit workflow after the worker stopped: runtime/tests `3b145c6aea18a0fc537de9cd74fe1adc539039f6`. No runtime/test bytes were changed by committing. R1–R9 results below refer to the tested files committed here; the final foundation docstring-only edit was followed by another 114-pass foundation run. No redundant full repetition was performed solely to assign a commit ID. Astra reviews immutable objects next. No merge or deployment occurred.
+The worker completed with exit 0. Its two repository-location Git checks were denied by its CLI, and it made no commits. The coordinator used the already-authorized commit workflow after the worker stopped: runtime/tests `3b145c6aea18a0fc537de9cd74fe1adc539039f6`. No runtime/test bytes were changed by committing. R1–R9 results refer to the tested files committed there. Astra reviewed immutable objects: changes needed (SV021-01…07). No merge or deployment occurred.
 
-Files changed or added relative to `437b52d`:
+## Correction 1
 
-- new: `services/chassis_envelope.py`, `services/chassis_replay.py`, `services/chassis_session.py`, `services/chassis_startup.py`
-- new: `tests/test_chassis_adoption.py`, `tests/test_chassis_replay.py`, `tests/test_chassis_session.py`, `tests/test_chassis_checkpoint.py`, `tests/test_chassis_notes.py`, `tests/test_chassis_recovery_live.py`
-- modified: `services/chassis.py`, `services/chassis_persistence.py`, `tests/test_chassis_recovery.py` (one frontier assertion), `tests/test_chassis_metadata.py` (first test, deliberately)
-- new docs: `docs/planning-context/sv021/STATUS.md`, `docs/planning-context/sv021/RECEIPT.md`
+All seven findings fixed, each with a regression written first and run against the reviewed code: 12 regression nodes failed there as the review's traces predict. Final corrected tree: 488 selected passes across 9 bounded runs, no failures (RECEIPT.md §6). Finding → fix → regression map, pre-fix outcomes, changed assertions and new deviations: `checkpoint-001-astra-corrections.md`.
 
-## Development checkpoints (combined into one coherent runtime/test commit)
+- SV021-01: durable `IDENTITY` reservation before every REQUEST_SENT; TC4 allocates above it; no valid reservation → `identity_unproven` stop before any change. Length formula removed.
+- SV021-02: CK3 keeps a bound snapshot in `.prev.json` and `prev` names what that file holds; A14 restores the newest checkpoint's verified bytes.
+- SV021-03: LEGACY_IMPORT carries its unadopted note as a pending generation in the same record.
+- SV021-04/-05: the file's authority is the latest binding transition (checkpoint, switch, deletion, A10 adoption record), not switch-history membership.
+- SV021-06: refusal and omitted-call notices are appended by the reducer as part of the records that owe them.
+- SV021-07: `history()` returns a deep copy.
 
-- **A — K-E2 pure adoption.** `chassis_envelope.py`; `chassis.py` re-imports the moved SV019 helpers (same function objects); `test_chassis_adoption.py` (pure part). Inactive.
-- **B — state + replay reducer.** `chassis_replay.py`, `test_chassis_replay.py`. Inactive.
-- **C — session owner.** `chassis_session.py`, `test_chassis_session.py`. Inactive.
-- **D — startup authority, recovery transaction, acknowledgements.** `chassis_startup.py`; foundation edits in `chassis_persistence.py` + `test_chassis_recovery.py`; `test_chassis_recovery_live.py` (simulations), `test_chassis_notes.py`, `test_chassis_checkpoint.py`. Inactive.
-- **E — activation.** `chassis.py` (every mutation through the session; startup before the socket and the duty; `--acknowledge-stop`), `test_chassis_metadata.py`, the runtime tests in `test_chassis_adoption.py`, the real script-restart section of `test_chassis_recovery_live.py`, the TERMINATION-order and authority fixes found by E's runs.
+Files touched by correction 1 (relative to `3b145c6`): `services/chassis.py`, `services/chassis_envelope.py`, `services/chassis_persistence.py` (`install_conversation(rotate=)` and docs), `services/chassis_replay.py`, `services/chassis_session.py`, `services/chassis_startup.py`; `tests/test_chassis_adoption.py`, `tests/test_chassis_checkpoint.py`, `tests/test_chassis_notes.py`, `tests/test_chassis_recovery_live.py`, `tests/test_chassis_session.py`; docs `STATUS.md`, `RECEIPT.md`, `checkpoint-001-astra-corrections.md`. The worker made no Git call; the coordinator committed runtime/tests at `06fbc40e4df3287f8995bb54713ce316164b29d7` after exit 0, without changing their bytes.
 
-A–D were developed and tested while `chassis.py` imported nothing from them except the moved helpers; E is one step. Committing E without A–D, or D without E's fixes (TERMINATION before DONE; the `unpublished`/`run_json_missing` authority), would ship a known defect.
+## Activation boundary
 
-## Activation boundary (what is live after E)
+As in the reviewed commit (RECEIPT §1–§5), plus the correction: request identity is reserved durably before each request; startup converges on every repeated start through recorded bindings without a startup checkpoint.
 
-Live in `chassis.run()`: startup classification A0–A15 (with v2 tail classes, previous-base replay, A15) before the recorder socket or the duty is touched; REQUEST_SENT before request bytes, with the request sized locally first; response adoption (TURN_RESPONSE / RESPONSE_REFUSED) before any tool; INVOKING before each tool body; blob before DONE; every message, note, history replacement, recap fold, termination and checkpoint as ledger records through one owner; CK1–CK6; threshold checkpoints and segment rotation at unit boundaries; FSYNC_FAILED attempted once on any persistence failure; `format: 2`/`writer`/`checkpoint` published at CK5 with the CHECKPOINT that follows.
+Staged / not claimed (unchanged): destructive GC disabled (no C-G1/O2-4, no bounded total disk); v2 1.4.7 numeric bounds unclaimed; only three acknowledgement resolutions (others, and `identity_unproven`, refused without change); no recorder-side label check, provider compatibility, deployment or power-loss evidence. Process-death evidence is separate from power-loss evidence.
 
-Not live / deferred: destructive GC (disabled; retains everything; `retained_refs` is computed and tested only); acknowledgement resolutions other than the three in RECEIPT §3 (refused, no change); no claim of the v2 1.4.7 numeric recovery bounds, bounded total disk, C-G1/O2-4, recorder-side label recording, provider compatibility, deployment or power-loss behaviour. Details: RECEIPT.md §3 and §5.
+## Next
 
-## If work resumes
-
-The worker reports a consistent implementation and the selected checks pass. Independent Astra review is pending; acceptance is not assumed. The coordinator will preserve the review and route any corrections back to Opus. Candidate follow-ups (not started): GC execution with C-G1/O2-4 crash tests; the deferred acknowledgement resolutions; closing the remaining 1.4.7 domain assumptions before any bound is claimed; a recorder-in-the-loop restart test for the label portion of C-1a/O1-6.
+Independent Astra review of the immutable correction is next. No unresolved blocker in this correction: safe identity evidence is established by the durable reservation; where it is absent (pre-correction lineages, or a damaged/missing IDENTITY at a TC4), startup stops before any effect.
 
 No push, main merge, deployment, account change or paid-overage use by this session.

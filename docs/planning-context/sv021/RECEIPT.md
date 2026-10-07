@@ -1,5 +1,7 @@
 # SV-021 receipt — integrated K-D1/K-D2 adoption (with K-E2 bounds, K-F1 identities, K-G2 replay)
 
+> **Correction 1 (Astra SV021-01…07) supersedes parts of §3 and §4**: request identity after TC4 (now the durable IDENTITY reservation, not the length formula), previous-base retention and the A14 repair (now restores the newest checkpoint's bytes), the file-authority rule (latest binding transition), legacy-import notes, notice obligations and the history copy. See `checkpoint-001-astra-corrections.md` and §6 below. §1–§5 describe the reviewed commit `3b145c6`.
+
 2026-10-08, Australia/Sydney. Base `437b52d765269dbfb127505e27d6b8dca4ed99e6`. Runtime/test checkpoint `3b145c6aea18a0fc537de9cd74fe1adc539039f6`, committed by the coordinator after the worker stopped (see STATUS.md). Awaiting independent review. Opus 5.5, the approved bounded runner only, temporary roots, the local stub model over unix sockets. No provider, deployment, pump, H/T/Q, account or settings change. No real stop was acknowledged: `acknowledge()`/`--acknowledge-stop` ran only on temporary test roots.
 
 ## 1. Runs (final tree, one command at a time)
@@ -99,3 +101,25 @@ Other tests were not individually mutation-checked.
 ## 5. Not claimed
 
 GC is disabled (no GC_INTENT/GC_DONE execution): no C-G1/O2-4 pass, no bounded total disk; segments and blobs are retained. `retained_refs` (refs(C_n) ∪ refs(C_p) ∪ refs(retained suffix)) is tested complete for what replay reads, not used. Thresholds (256 records / 8 MiB) and unit-boundary rotation are active, but the v2 1.4.7 bounds (358/717 records, 25,166,144/50,352,266 bytes) are **not claimed**: they also assume fields this runtime does not bound (e.g. RECOVERY detail sizes, notice texts, admission texts) and the U_r composition differs (§3). Counter domains: every integer the ledger header or a COUNTER_FIELDS key carries is ≤ 12 digits, refused before writing; checkpoint state counters are validated on read. No recorder-side label check (the recorder strips/records the label, R-B1; here only the stub and fake client saw it): the external label portion of C-1a/O1-6 is not claimed. No power-loss, kernel/storage, provider-compatibility, deployment or full-suite result.
+
+## 6. Correction 1 runs (final corrected tree)
+
+Runtime/test correction committed by the coordinator at `06fbc40e4df3287f8995bb54713ce316164b29d7` after worker exit 0; committing changed no source/test bytes. Independent re-review pending.
+
+Pre-fix evidence (each regression node alone, on the unmodified reviewed code) is in `checkpoint-001-astra-corrections.md`: 12 regression nodes failed as the review's traces predict (SV021-01 ×2 incl. a real-process run, -02 ×3, -03, -04, -05, -06 ×3, -07); one coverage cut (`…legacy_note_is_appended…`) passed before and after.
+
+During the post-fix runs, `test_o4_8_257…` failed once on its exact payload pin (the new `notice` key) and was updated as listed there; no other failure occurred. Final batches, one command at a time, same runner:
+
+| # | Targets | Result |
+|---|---|---|
+| C1 | `tests/test_chassis_adoption.py` | 50 passed |
+| C2 | `tests/test_chassis_replay.py tests/test_chassis_session.py` | 61 passed (31 + 30) |
+| C3 | `tests/test_chassis_notes.py tests/test_chassis_checkpoint.py` | 23 passed (13 + 10) |
+| C4 | `tests/test_chassis_recovery_live.py` | 74 passed (69 in-process + 5 real script restarts) |
+| C5 | accepted foundation: ledger, recovery, durability | 114 passed |
+| C6 | `tests/test_chassis_termination.py` (incl. 14 script-mode runs) | 67 passed |
+| C7 | groups, wire, supervisor flap, metadata | 65 passed |
+| C8 | the 22 retained `test_chassis.py` + 7 `test_services.py` nodes | 29 passed |
+| C9 | the 5 local-stub `test_run_end_to_end.py` nodes | 5 passed |
+
+Total 488 selected passes, no failures, no full-suite run. The pre-correction negative controls (§1) were not repeated; the 12 pre-fix failures above are this correction's negative evidence.
