@@ -8,7 +8,41 @@ The frozen launch matrix is **58 new + 50 retained = 108 cases in ten final comm
 
 ---
 
-# SV-028 status: correction round 2 complete, awaiting independent Astra re-review. Not implemented. Not accepted.
+# SV-028 status: implemented and tested; awaiting the coordinator's commit and an independent immutable Astra review. Not accepted.
+
+**Result:** 108/108 selected cases passed in the ten frozen final batches `[14, 1, 1, 9, 10, 1, 22, 35, 1, 14]` (58 new, 50 retained).
+- **Pre-fix:** B0 passed; D1, D2 and D3 failed at their predicted behaviour assertions on the unchanged runtime.
+- **One fixture-only failure:** the first F7 attempt failed on the `N19[sealed-after-rename-fence]` cut predicate, which also matched `E`'s read of the planted pre-existing `.ACKNOWLEDGED.*.tmp` copy. The predicate was narrowed and F7 was rerun: 22 passed.
+- **Files changed:** `services/chassis_startup.py`, `services/chassis.py` (CLI `home_dir`), new `tests/test_chassis_bootstrap_preserving.py`, and the reviewed `SUPPORTED` tuple in `tests/test_chassis_acknowledgements.py`.
+- **Details:** commands, mutation outcomes and limits are in [RECEIPT.md](RECEIPT.md).
+
+## Governing implementation qualifications (ASTRA-DESIGN-ACCEPTANCE.md, SHA-256 `5228c567…4171f`, recorded as supplied)
+
+The architecture was accepted at design head `8e30cf86`, subject to mandatory L1–L7. These supersede conflicting prose in DESIGN.md and the history below.
+
+| Id | Qualification |
+|---|---|
+| **L1** | A post-boundary retry must re-establish the readable inherited MANIFEST's dependencies explicitly, **before** any cleanup, child `mkdir` or copy: `fsync(MANIFEST)`, then `fsync` of the partial set, `preserved/` and `session/`. The inventory is never rewritten. A failure takes the Phase A persistence boundary |
+| **L2** | Phase B validates its binding against the carrier and witness plus the **preserved** `session/STOPPED` entry (size/hash, membership, parsed reason/witness, recomputed `stop_sha256`, `stop_id`, `ack_id`). Live STOPPED is never required or recreated. The carrier-free route stays self-contained |
+| **L3** | Failure statements describe the actual completed prefix:<br>• a pure admission refusal changes nothing;<br>• a later refusal (e.g. a mid-copy source change) leaves the inventory and earlier copies in place;<br>• a persistence failure propagates, the marker is attempted best-effort, and no further transaction step runs, though earlier renames and unlinks stay visible;<br>• a pre-seal `E` failure never publishes a carrier or removes STOPPED;<br>• Phase A never removes the live conversation |
+| **L4** | P12/P13 capacity admission runs on **every** lifecycle branch (none, pre-boundary, post-boundary, sealed) before any cleanup, fsync, allocation or publication. `F = U − D + A`; the invocation peak is `max(U, F)`; verified cleanup may reduce pre-existing over-cap usage, after which allocation is admitted only if `F ≤ cap` |
+| **L5** | The finite fixtures are the immutable baseline (`SV-028-prior-assertion-baseline.md`), overridden by correction 2 and L1–L7. Diagnostic precedence: a missing inventoried source gives `preserved_source_missing`; an added path gives `preserved_domain_changed` |
+| **L6** | The `PreserveOps` model re-resolves directory identities after every undo; it never resurrects descendants of a removed, unfenced directory. The omitted-fence mutation must lose the reused entry under the **sealed** name |
+| **L7** | Wording: after a source mismatch, the acknowledgement "cannot complete while the fixed-inventory checks fail" (not "never"); the marker is best-effort; the Phase A steps are A1–A8 plus the L1 fence |
+
+## Frozen implementation matrix (from `sv016-context/SV-028-bounded-targets.json`; frozen before any run)
+
+- **Pre-fix, on the unchanged runtime, one node per command:**
+  - B0 = `tests/test_chassis_recovery_live.py::test_c_k3_a12_a_deleted_list_is_a_clean_slate_with_everything_kept` (expected: pass);
+  - D1 = `…bootstrap_preserving.py::test_sv028_bootstrap_preserving_starts_exactly_one_new_epoch[run-end]` (expected: fails at the acceptance call, `LedgerError … not implemented`);
+  - D2 = `…::test_sv028_every_envelope_refusal_names_its_reason_and_changes_nothing` (expected: fails at its first reason-token match);
+  - D3 = `…::test_sv028_cli_bootstrap_preserving_behind_the_first_request_barrier` (expected: fails at `returncode == 0`, base exits 2).
+- **Final:** ten serial commands of sizes `[14, 1, 1, 9, 10, 1, 22, 35, 1, 14]` = **108 cases** (58 new in `tests/test_chassis_bootstrap_preserving.py`, 50 retained), using exactly the manifest's literal node ids.
+- **The only existing-test edit:** the `SUPPORTED` tuple in `tests/test_chassis_acknowledgements.py:56–62`.
+
+---
+
+# SV-028 status (history): correction round 2 complete, awaiting independent Astra re-review. Not implemented. Not accepted.
 
 - **Base:** `05cc4f8616c108855246c8c8ea13a571eb9731c8`.
 - **Governing residual review:** [ASTRA-DESIGN-CORRECTION-1-REVIEW.md](ASTRA-DESIGN-CORRECTION-1-REVIEW.md). Its SHA-256 is recorded as supplied (`64d8377115b5eb71d12249c9182470d9ad9858d3413880cdde2e6b74acfa5a14`) and not recomputed: hashing is outside Read/Grep/Write/Edit.
@@ -63,7 +97,7 @@ Stated limits (DESIGN §15):
 - RSS is unproved; aggregate reads are listed;
 - capacity is an admission rule over logical sizes;
 - a Phase A or Phase B EIO leaves FSYNC_FAILED and a stopped session (SV023-02 class);
-- a post-boundary source change leaves this acknowledgement permanently unable to complete, with its partial set kept and counted;
+- [superseded by L7] after a post-boundary source change this acknowledgement cannot complete while the fixed-inventory checks fail, with its partial set kept and counted; the marker is best-effort;
 - M-6 is out of model.
 
 ### Execution log

@@ -1,6 +1,30 @@
 # SV-028 design (correction round 2): one narrowly admitted `bootstrap-preserving` acknowledgement
 
-**Status: corrected design only, for independent Astra re-review. Not implemented. No test was run. No runtime or test file was changed.**
+## Governing implementation qualifications (accepted design; implemented, awaiting independent review)
+
+Astra accepted this architecture at design head `8e30cf86` ([ASTRA-DESIGN-ACCEPTANCE.md](ASTRA-DESIGN-ACCEPTANCE.md)), subject to mandatory L1–L7. These supersede conflicting prose below.
+
+| Id | Qualification | Where implemented |
+|---|---|---|
+| L1 | A post-boundary retry explicitly re-establishes the readable inherited MANIFEST before any cleanup, child `mkdir` or copy: `fsync(MANIFEST)`, then `fsync` of the partial set, `preserved/` and `session/`. The inventory is never rewritten | `_establish_inventory` |
+| L2 | Phase B binds the stop through the **preserved** `session/STOPPED`, never the removed live one: membership, size/hash, parsed reason and witness, recomputed `stop_sha256`/`stop_id`/`ack_id`, then the full inventory binding. The carrier-free route stays self-contained | `preserving_verification` |
+| L3 | Failures describe their completed prefix:<br>• pure admission refusals write nothing;<br>• a later refusal keeps the inventory and the copies made so far;<br>• a persistence failure attempts the best-effort marker and stops further steps;<br>• a pre-seal `E` failure never seals or publishes;<br>• Phase A never touches the live conversation | §7.4 / §8.3; `_acknowledge_preserving` |
+| L4 | Exact capacity on **every** lifecycle branch before any mutation: `F = U − D + A`; invocation peak `max(U, F)`; verified owned cleanup may reduce pre-existing over-cap usage | `_acknowledge_preserving` P13 |
+| L5 | Finite fixtures from the immutable assertion baseline, overridden by correction 2. Diagnostic precedence: missing source, then added path, then changed bytes | `_verify_sources` |
+| L6 | The namespace model re-resolves directory identities after every undo and never resurrects descendants of a removed directory | `PreserveOps` / `host_loss_names` (test harness) |
+| L7 | "cannot complete while the fixed-inventory checks fail"; the marker is best-effort; the steps are A1–A8 plus the L1 fence | §7.2, §7.4, §13 |
+
+**Implementation calibrations** (engineering choices made while implementing; nothing semantic changed):
+- **Phase A ordering.** P1–P10 run first, then the preserved/ usage walk and the lifecycle, then the branch's inventory work, then P14 and P13. All of this is pure and precedes every write.
+- **Phase A persistence failure.** It attempts `FSYNC_FAILED`, as v2 §1.4.9 requires for any session sync error.
+- **Phase B B0 ordering.** The owned-prefix check precedes the evidence-equality check, so a plan mismatch reports `own_prefix`.
+- **Refusal tokens.** These are the leading words of each `AcknowledgementRefused` message.
+
+See [RECEIPT.md](RECEIPT.md) for the evidence.
+
+---
+
+**Historical status line (round 2): corrected design only, for independent Astra re-review. Not implemented. No test was run. No runtime or test file was changed.**
 
 This is a standalone proposal that replaces correction round 1. The governing reviews are preserved unchanged:
 - [ASTRA-INITIAL-DESIGN-REVIEW.md](ASTRA-INITIAL-DESIGN-REVIEW.md) (SV028-01…05);
@@ -318,7 +342,7 @@ A post-boundary retry deletes owned scratch **only after** all live sources veri
 
 A source that changed from X to Y therefore refuses. It never replaces an already-copied X, and nothing is deleted. A destination copy whose bytes differ from its entry may be deleted and rewritten **only if** its live source verified in this admission, so the surviving live original is the evidence. A sealed set is never compared with the live domain again (post-seal changes cannot affect it) and is never modified.
 
-The consequence is stated plainly: after a post-boundary refusal, this acknowledgement can never complete. Its partial set is kept, never deleted, and counts toward capacity. The session stays stopped. The operator may still use `continue-from-bound` after an external repair; SV023's path does not inspect `preserved/`.
+The consequence is stated plainly (L7): after a post-boundary refusal, this acknowledgement cannot complete while the fixed-inventory checks fail. There is no durable terminal-refusal marker; an exact restoration of the original source bytes would let them pass, but this package neither performs one nor ever switches to a new snapshot. Its partial set is kept, never deleted, and counts toward capacity. The session stays stopped. The operator may still use `continue-from-bound` after an external repair; SV023's path does not inspect `preserved/`.
 
 ### 7.3 Set layout and `MANIFEST` schema
 
@@ -362,7 +386,17 @@ It is serialized canonically (sorted keys, compact separators).
 - FSYNC_FAILED is attempted in `session/` (best-effort);
 - the CLI exits 44.
 
-**Nothing is renamed, published or deleted.** STOPPED and the live conversation are untouched. If the marker exists, later retries refuse `transaction_open` (P2) and starts stop A0 (STOPPED). This is an inherited bounded fail-closed outcome (the SV023-02 class); no stronger claim is made about a later fsync after an error (E-K2).
+**The transaction stops at the failing step (L3).**
+- A **pre-seal** `E` failure never seals, publishes a carrier or removes STOPPED.
+- A **late** failure leaves its completed prefix visible:
+  - a seal-fence error follows the seal rename;
+  - a carrier-fence error leaves a readable carrier;
+  - a STOPPED-retirement fence error follows the unlink.
+- `write_bytes_durable`'s own temp cleanup and the best-effort marker attempt are the only operations after the failure.
+- Phase A never removes the live conversation.
+- If the marker's own write returned, later retries refuse `transaction_open` (P2) and starts obey the existing STOPPED/FSYNC_FAILED priorities. The marker's persistence is best-effort, not guaranteed after an arbitrary I/O failure.
+
+This is an inherited bounded fail-closed outcome (the SV023-02 class); no stronger claim is made about a later fsync after an error (E-K2).
 
 ### 7.5 Capacity with exact deltas (SV028-07)
 
@@ -581,7 +615,7 @@ The comparison uses `wire(x) = x.to_wire(next_seq=1)`. Physical sequence and cha
 
 | File | Change |
 |---|---|
-| `services/chassis_startup.py` | **Registry (§4).**<br>**`acknowledge`:** `home_dir`.<br>**Envelopes:** carrier, evidence, context.<br>**New pure functions:** `preserving_plan`, `preserving_admission`, `preservation_domain`, `preserved_usage`, `inventory_bytes` / `inventory_problem`, `set_lifecycle`, `owned_scratch`, `preserving_evidence`.<br>**New mutation:** `_acknowledge_preserving` (A1–A9, §8.2) and `_establish_set_dependencies` (`E`).<br>**`_Context`:** `_verify_preserving`, the BP decision, `_establish_owned_durability` (B3), `_finish_case("BP")`, the carrier-free path.<br>**`_consume_ack`:** treat the preserving receipt like the witnessed one |
+| `services/chassis_startup.py` | **Registry (§4).**<br>**`acknowledge`:** `home_dir`.<br>**Envelopes:** carrier, evidence, context.<br>**New pure functions:** `preserving_plan`, `preserving_admission`, `preservation_domain`, `preserved_usage`, `inventory_bytes` / `inventory_problem`, `set_lifecycle`, `owned_scratch`, `preserving_evidence`.<br>**New mutation:** `_acknowledge_preserving` (A1–A8 plus the L1 inherited-inventory fence, §8.2) and `_establish_set_dependencies` (`E`).<br>**`_Context`:** `_verify_preserving`, the BP decision, `_establish_owned_durability` (B3), `_finish_case("BP")`, the carrier-free path.<br>**`_consume_ack`:** treat the preserving receipt like the witnessed one |
 | `services/chassis.py` | CLI passes `home_dir=chassis.home_dir` (`:1765`) |
 | other services | none |
 | `tests/test_chassis_acknowledgements.py` | the one `SUPPORTED` tuple (§4) |
@@ -753,7 +787,8 @@ Commands `[14, 1, 1, 9, 10, 1, 17, 35, 1, 14]`: **53 new + 50 retained = 103 cas
 3. **Capacity** is an admission rule over measured logical sizes, not a quota or a block-allocation bound.
 4. **Inherited fail-closed outcomes:**
    - a Phase A or Phase B persistence failure leaves FSYNC_FAILED and the session stopped (SV023-02 class);
-   - a post-boundary source change makes this acknowledgement permanently unable to complete; its partial set is kept and counted;
+   - after a post-boundary source change this acknowledgement cannot complete while the fixed-inventory checks fail (L7); its partial set is kept and counted;
+   - the FSYNC_FAILED marker is best-effort: its persistence is conditional on its own write returning;
    - a post-activation M-6 conflict stops;
    - carrier temps can accumulate.
 5. **M-6:** `preserved/` is agent-reachable and is a reliability aid, not evidence.
