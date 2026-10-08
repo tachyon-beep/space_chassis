@@ -27,6 +27,8 @@ Plans 4 (operator surfaces) and 5 (retirement and words) follow.
 - **`/build` is a disk-backed per-agent volume, wiped at start, not tmpfs.** Spec 5 lists it as tmpfs, but a tmpfs counts against the 3 GB memory limit and a Rust build would starve it. Aurora's own answer is a disk-backed volume that the entrypoint empties, which gives the same lifetime. 3b gives it a bounded image.
 - **The unbounded-volume reference.** `warn_if_unbounded` compares each mount root's device with that of `/vendor/registry`, a plain host bind in this image. Aurora compares with `/vendor`, which space does not mount whole.
 - **`containers/agent.env` is left alone.** The new entrypoint does not read it, and `serve_vehicle.sh` sources it, guarded. Plan 5 retires what no longer applies.
+- **Server logs go to `$RUN_DIR/logs`, a tmpfs, not `/state`.** Spec 3.2 says "tmpfs for the run and log directories". Logs in the agent's durable store would grow without bound. The pump loop's own output stays on the container log, as in Aurora.
+- **Each start empties `/work` before reseeding it,** as Aurora's further-host loop does. On a tmpfs that is fresh at container start it changes nothing, but it costs nothing either.
 
 ## Global Constraints
 
@@ -53,8 +55,8 @@ Plans 4 (operator surfaces) and 5 (retirement and words) follow.
 
 1. **A read-only root.** The Debian `/usr/bin` Postgres tools are `pg_wrapper` shims that need a writable `/etc/postgresql`. The entrypoint uses `/usr/lib/postgresql/*/bin/` through a glob (overridable as `PG_BIN`), and puts the server socket in `$RUN_DIR` (default `/run/agent`) with `-k`. (Task 2: `test_postgres_is_initialised_once_under_state_and_started_from_the_versioned_bin`)
 2. **A second start must not re-run `initdb`** over a cluster that already exists in `/state`, which would destroy the agent's database. (Task 2: same test, with the cluster present)
-3. **A server that fails to start must not stop the container.** The world's servers are the agent's to use, not a precondition for the watchdog. (Task 2: `test_a_server_that_fails_to_start_does_not_stop_the_handoff`)
-4. **A pump that crashes is restarted** by its loop, and that loop is started before the `exec`, in the background. (Task 2: `test_a_crashing_pump_is_restarted_by_the_loop`, `test_the_pump_starts_before_the_watchdog_takes_the_container`)
+3. **A server that fails to start must not stop or delay the container.** The world's servers are the agent's to use, not a precondition for the watchdog. The Postgres chain (`initdb`, start, wait, `createdb`) runs as one backgrounded subshell. A stale `postmaster.pid` from a container that was killed is removed first, since nothing else can hold that data directory in a fresh container. (Task 2: `test_a_server_that_fails_to_start_does_not_stop_the_handoff`, `test_a_stale_postmaster_pid_is_cleared_before_postgres_starts`)
+4. **A pump that crashes is restarted** by its loop, and that loop is started before the `exec`, in the background. (Task 2: `test_a_crashing_pump_is_restarted_by_the_loop`, `test_the_pump_loop_is_started_before_the_exec`)
 5. **The seed cannot carry a test session or the tests**, and the build context cannot carry them into the image either. (Task 3: `test_the_dockerignore_keeps_test_leftovers_and_tests_out_of_the_image`)
 
 ---
@@ -111,41 +113,57 @@ Plans 4 (operator surfaces) and 5 (retirement and words) follow.
 - **Behaviour, in order:**
   1. **Mount-root warnings.** For each root in `MOUNT_ROOTS` that is a directory, if `stat -c %d` matches `UNBOUNDED_REFERENCE`'s, write `warning: <root> shares a filesystem with the host; its size boundary is absent` to stderr. Each check is guarded, so it never ends the script.
   2. **Wipe the build area.** Empty `BUILD_DIR`'s contents with `chmod -R u+rwX` then `find -mindepth 1 -maxdepth 1 -exec rm -rf {} +`, guarded.
-  3. **Start the servers,** each guarded and in the background:
-     - **Postgres.** If `$STATE_DIR/postgres/PG_VERSION` is absent, run `"$PG_BIN/initdb" -D "$STATE_DIR/postgres" --auth=trust -U "$(id -un)"`. Then start `"$PG_BIN/postgres" -D "$STATE_DIR/postgres" -k "$RUN_DIR" -c listen_addresses=127.0.0.1`, logging to `$STATE_DIR/logs/postgres.log`. Wait up to 10 s for `"$PG_BIN/pg_isready" -h "$RUN_DIR"`, then run `"$PG_BIN/createdb" -h "$RUN_DIR" chassis`, guarded.
-     - **NATS:** `nats-server -a 127.0.0.1 -p 4222 -m 8222 -sd "$STATE_DIR/nats"`.
-     - **Redis:** `redis-server --bind 127.0.0.1 --port 6379 --dir "$STATE_DIR/redis" --save '' --appendonly no`.
-     - Logs go to `$STATE_DIR/logs/`.
+  3. **Start the servers,** each guarded, after `mkdir -p "$STATE_DIR/nats" "$STATE_DIR/redis" "$RUN_DIR/logs"`:
+     - **Postgres,** as one backgrounded subshell:
+       1. If `$STATE_DIR/postgres/PG_VERSION` is absent, run `"$PG_BIN/initdb" -D "$STATE_DIR/postgres" --auth=trust -U "$(id -un)"`.
+       2. Otherwise run `rm -f "$STATE_DIR/postgres/postmaster.pid"`.
+       3. Run `"$PG_BIN/postgres" -D "$STATE_DIR/postgres" -k "$RUN_DIR" -c listen_addresses=127.0.0.1 >> "$RUN_DIR/logs/postgres.log" 2>&1 &`.
+       4. Wait up to 10 s for `"$PG_BIN/pg_isready" -h "$RUN_DIR"`.
+       5. Run `"$PG_BIN/createdb" -h "$RUN_DIR" chassis`, guarded. It needs no `-U`, because the OS user is the superuser `initdb` created.
+     - **NATS:** `nats-server -a 127.0.0.1 -p 4222 -m 8222 -sd "$STATE_DIR/nats" >> "$RUN_DIR/logs/nats.log" 2>&1 &`.
+     - **Redis:** `redis-server --bind 127.0.0.1 --port 6379 --dir "$STATE_DIR/redis" --save '' --appendonly no >> "$RUN_DIR/logs/redis.log" 2>&1 &`.
   4. **Start the pump loop:** `( while true; do "$PYTHON" "$PUMP_BIN" || true; sleep "$PUMP_RESTART_SECONDS"; done ) &`.
-  5. **Reseed the harness:** `cp -r "$SEED_DIR/." "$WORK_DIR/"`, then `cd "$WORK_DIR"`.
+  5. **Reseed the harness:** empty `$WORK_DIR` (`find -mindepth 1 -maxdepth 1 -exec rm -rf {} +`, guarded), then `cp -r "$SEED_DIR/." "$WORK_DIR/"` and `cd "$WORK_DIR"`.
   6. **Hand off:** `exec "$PYTHON" watchdog.py`.
 - **What it no longer does:**
   - no `.fleet` announcement, no `.seeded` marker, no home seeding;
   - no sourcing of `/etc/agent.env`, no supervisor loop, no diode entry;
   - no `/state` reads beyond the servers' own directories.
 
-- [ ] **Step 1: Write the failing tests.** Use a `world` fixture: a temp root holding `seed/` (with a `watchdog.py` marker file), `work/`, `state/`, `build/` (with one file and a read-only subdirectory), `run/`, `pgbin/` and `bin/`. Stub executables write their argv, cwd and an order stamp to `calls.log`:
-  - `bin/python` exits 0 for the watchdog and 1 for the pump on its first call;
-  - `pgbin/initdb` creates `PG_VERSION`;
-  - `pgbin/postgres`, `pgbin/pg_isready` (exit 0), `pgbin/createdb`, `bin/nats-server` and `bin/redis-server` only record.
+- [ ] **Step 1: Write the failing tests.**
 
-  Run the entrypoint with `sh containers/entrypoint.sh`, the overrides pointing into the fixture, `PATH=bin:$PATH`, `PUMP_RESTART_SECONDS=0`, and a 20 s timeout. The tests:
-  - `test_the_seed_is_copied_into_work_and_the_watchdog_runs_from_there`: `work/watchdog.py` exists, and the `python watchdog.py` call's cwd is `work/`.
-  - `test_the_watchdog_is_the_one_exec_and_the_last_line`: read as text, the last non-blank line is `exec "$PYTHON" watchdog.py`, and `exec` appears once.
-  - `test_the_pump_starts_before_the_watchdog_takes_the_container`: in `calls.log`, the first pump call is stamped before the watchdog call, and the loop line ends in `&`.
-  - `test_a_crashing_pump_is_restarted_by_the_loop`: `python pump.py` appears at least twice in `calls.log` after a short wait, because the stub fails the first time.
+  **Harness.** The entrypoint backgrounds a pump loop, so it cannot run under `subprocess.run` with captured pipes: the loop inherits them, and the run never sees EOF. Instead:
+  - **The `world` fixture:** a temp root holding `seed/` (with a `watchdog.py` marker file), `work/` (holding one stale file), `state/`, `build/` (with one file and a read-only subdirectory), `run/`, `pgbin/` and `bin/`.
+  - **Starting the entrypoint:** `subprocess.Popen(["sh", "containers/entrypoint.sh"], env=..., start_new_session=True, stdout=<file>, stderr=<file>)` with the overrides pointing into the fixture, `PATH=bin:$PATH` and `PUMP_RESTART_SECONDS=0.05`.
+  - **Waiting:** `wait(timeout=20)` for the exec'd watchdog stub, then poll `calls.log` with a 10 s deadline for anything a background process produces.
+  - **Teardown:** `os.killpg(proc.pid, signal.SIGTERM)`, guarded, so no loop or stub outlives the test.
+
+  **The stubs** write their argv, cwd and an order stamp to `calls.log`:
+  - `bin/python`: for the watchdog it records and exits 0. For the pump, it exits 1 on its first call and then `exec sleep 60`, so the restarted pump blocks instead of spinning.
+  - `pgbin/initdb` creates `PG_VERSION`.
+  - `pgbin/pg_isready` exits 0.
+  - `pgbin/postgres`, `pgbin/createdb`, `bin/nats-server` and `bin/redis-server` record and exit 0.
+
+  **The tests:**
+  - `test_the_seed_replaces_work_and_the_watchdog_runs_from_there`: `work/watchdog.py` exists, the stale file is gone, and the `python watchdog.py` call's cwd is `work/`.
+  - `test_the_watchdog_is_the_one_exec_and_the_last_line`: read as text, the last non-blank line is `exec "$PYTHON" watchdog.py`, and exactly one line, stripped, starts with `exec `. That is Aurora's form; `find -exec` is not a line start.
+  - `test_the_pump_loop_is_started_before_the_exec`:
+    - Read as text, the loop line ends in `&` and its index is below the `exec` line's.
+    - Dynamically, both the pump and the watchdog were called. There is no timing assertion, because the two race.
+  - `test_a_crashing_pump_is_restarted_by_the_loop`: `python pump.py` appears at least twice in `calls.log` before the deadline.
   - `test_the_build_area_is_emptied_without_being_removed`: `build/` exists and is empty, the read-only subdirectory included.
   - `test_postgres_is_initialised_once_under_state_and_started_from_the_versioned_bin`:
-    - The first run calls `pgbin/initdb -D <state>/postgres` and `pgbin/postgres` with `-D <state>/postgres -k <run>`.
+    - The first run calls `pgbin/initdb -D <state>/postgres`, then `pgbin/postgres` with `-D <state>/postgres -k <run>`, then `pgbin/createdb` (polled for).
     - A second run, with `PG_VERSION` now present, calls `postgres` and not `initdb`.
-  - `test_nats_and_redis_keep_their_data_under_state`: `nats-server … -sd <state>/nats` and `redis-server … --dir <state>/redis` are called with `127.0.0.1`.
-  - `test_a_server_that_fails_to_start_does_not_stop_the_handoff`: make `pgbin/initdb`, `nats-server` and `redis-server` exit 1. The watchdog call still happens.
-  - `test_a_mount_root_on_the_host_filesystem_draws_the_factual_warning`: set `MOUNT_ROOTS` to one directory on the same filesystem as `UNBOUNDED_REFERENCE`, both inside `tmp_path`. stderr carries exactly the warning sentence, and the watchdog still runs. With `UNBOUNDED_REFERENCE` pointing at `/proc`, a different filesystem, there is no warning.
-  - `test_the_entrypoint_names_state_only_for_the_servers`: every line of `entrypoint.sh` that mentions `STATE_DIR` or `/state` matches `postgres|nats|redis|logs|MOUNT_ROOTS|STATE_DIR=`.
+  - `test_a_stale_postmaster_pid_is_cleared_before_postgres_starts`: with `PG_VERSION` and a `postmaster.pid` present beforehand, the `.pid` file is gone by the time `postgres` is called. The `postgres` stub records whether it existed.
+  - `test_nats_and_redis_keep_their_data_under_state`: `nats-server … -sd <state>/nats` and `redis-server … --dir <state>/redis` are called with `127.0.0.1`, and `<state>/nats`, `<state>/redis` and `<run>/logs` exist afterwards.
+  - `test_a_server_that_fails_to_start_does_not_stop_the_handoff`: make `pgbin/initdb`, `nats-server` and `redis-server` exit 1. The watchdog call still happens within the wait.
+  - `test_a_mount_root_on_the_host_filesystem_draws_the_factual_warning`: set `MOUNT_ROOTS` to one directory on the same filesystem as `UNBOUNDED_REFERENCE`, both inside `tmp_path`. The warning sentence is *in* stderr, and the watchdog still runs. With `UNBOUNDED_REFERENCE=/proc`, a different filesystem, the sentence is absent.
+  - `test_the_entrypoint_names_state_only_for_the_servers`: every non-comment line of `entrypoint.sh` that mentions `STATE_DIR` or `/state` matches `postgres|nats|redis|MOUNT_ROOTS|STATE_DIR[:=]`.
   - `test_no_harness_or_recorder_module_names_state`: none of `harness/{agent,chassis,watchdog}.py`, `pump/pump.py` or `recorder/{proxy,recorder_streams,core_caps}.py` contains `"/state"`. This is Aurora's rule, kept for the modules.
 - [ ] **Step 2:** Run `python3 -m pytest tests/test_agent_entrypoint.py -p no:cacheprovider`. Expected: the behaviour tests fail against the current entrypoint, which sources `/etc/agent.env`, seeds once with a marker and runs a supervisor loop. `test_no_harness_or_recorder_module_names_state` passes already; it is a guard on the vendored modules.
 - [ ] **Step 3:** Rewrite `containers/entrypoint.sh` to the behaviour above, with a header comment that says what it decides and why, in this repository's style: why `exec`, why reseed every start, why the servers are guarded. `#!/bin/sh` and `set -u`, without `set -e` around guarded steps.
-- [ ] **Step 4:** Run `python3 -m pytest tests -p no:cacheprovider`. Expected: `112 passed`, which is the 101 existing tests plus 11 here. `test_vehicle_reconciliation.py` is unaffected.
+- [ ] **Step 4:** Run `python3 -m pytest tests -p no:cacheprovider`. Expected: `113 passed`, which is the 101 existing tests plus 12 here. `test_vehicle_reconciliation.py` is unaffected.
 - [ ] **Step 5:** Run `uvx ruff check . --no-cache` (expected: clean). Commit: `containers: an entrypoint in Aurora's form, with the world's servers under /state`.
 
 ---
@@ -179,15 +197,28 @@ Plans 4 (operator surfaces) and 5 (retirement and words) follow.
   - `test_the_image_runs_as_uid_and_gid_1000`: `groupadd --gid 1000 agent`, then `useradd … --uid 1000 --gid 1000 … agent`, then `USER agent`.
   - `test_the_environment_keeps_agent_writable_files_off_every_image_owned_process`: the ENV block sets `PYTHONNOUSERSITE=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `HOME=/home/agent`, `CARGO_HOME=/build/.cargo`, `CARGO_TARGET_DIR=/build/target` and `XDG_CACHE_HOME=/build/.cache`.
   - `test_every_mountpoint_is_made_and_owned_by_the_agent`: the `mkdir -p` and `chown` lines cover each mountpoint above.
-  - `test_the_image_carries_no_aurora_world`: no `filigree`, `books`, `garden`, `sense` or `video` anywhere in `Dockerfile.agent`.
+  - `test_the_image_carries_no_aurora_world`: no `filigree`, `books`, `garden`, `sense` or `video` in `Dockerfile.agent`, matched on word boundaries so that `license` does not count as `sense`.
   - `test_the_dockerignore_keeps_test_leftovers_and_tests_out_of_the_image`: `.dockerignore` excludes `harness/tests/`, `harness/session_context.json`, `harness/tombstones/`, `recorder/tests/` and `pump/tests/`.
 - [ ] **Step 2:** Run `python3 -m pytest tests/test_agent_image.py -p no:cacheprovider`. Expected: all fail against the current Dockerfile.
-- [ ] **Step 3: Rewrite `Dockerfile.agent`.**
-  - **Keep:** the apt and pip layers and the cargo `config.toml`, unchanged; the two pinned vehicle lines byte-identical; the brief COPY; `/opt/services`; the `chmod` and `__pycache__` cleanup.
-  - **Seed layer:** the explicit six-file COPY, then a `RUN` under `USER agent` with `WORKDIR /opt/agent` that builds the seed repository as in Global Constraints.
-  - **Elsewhere:** the pump and recorder COPYs, the ENV block, and the mountpoints. `WORKDIR /work` and `ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]` as before.
-  - **`.dockerignore`:** add the five exclusions.
-- [ ] **Step 4:** Run `python3 -m pytest tests -p no:cacheprovider`. Expected: `120 passed`, which is 112 plus 8, with `test_vehicle_reconciliation.py` passing unchanged. Then run `python3 -m pytest harness/tests recorder/tests pump/tests` as separate processes. Expected: 210, 394 and 100, unchanged.
+- [ ] **Step 3: Rewrite `Dockerfile.agent`,** in this order:
+  1. The apt and pip layers and the cargo `config.toml`, unchanged.
+  2. `groupadd --gid 1000 agent` and `useradd --create-home --uid 1000 --gid 1000 --shell /bin/bash agent`, before any `COPY --chown=agent:agent`.
+  3. As root, `mkdir -p` and `chown agent:agent` for every mountpoint, `/work` included, so that `WORKDIR /work` does not create it root-owned.
+  4. The COPYs:
+     - the six-file seed into `/opt/agent/`;
+     - `pump/pump.py` to `/usr/local/bin/pump.py`;
+     - the recorder's three files to `/usr/local/lib/recorder/`;
+     - the brief to `/opt/brief/`;
+     - `services/` to `/opt/services/`;
+     - the two pinned vehicle lines, byte-identical;
+     - the entrypoint, and `containers/agent.env` to `/etc/agent.env`.
+  5. The existing `chmod` and `__pycache__` cleanup.
+  6. The ENV block. Keep `PYTHONDONTWRITEBYTECODE=1`, `PYTHONUNBUFFERED=1` and `LANG=C.UTF-8`, and add the six hardening variables. Drop the old supervisor's `AGENT_USER`, `AGENT_HOME`, `WORK_DIR`, `SEED_DIR` and `DIARY_DIR`, since the entrypoint's defaults carry those paths.
+  7. `USER agent`, `WORKDIR /opt/agent`, then the seed `RUN`: Aurora's `git -c commit.gpgsign=false commit`, after the repo-local identity.
+  8. `WORKDIR /work` and `ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]`.
+
+  In `.dockerignore`, add the five exclusions.
+- [ ] **Step 4:** Run `python3 -m pytest tests -p no:cacheprovider`. Expected: `121 passed`, which is 113 plus 8, with `test_vehicle_reconciliation.py` passing unchanged. Then run `python3 -m pytest harness/tests recorder/tests pump/tests` as separate processes. Expected: 210, 394 and 100, unchanged.
 - [ ] **Step 5:** Run `uvx ruff check . --no-cache` (expected: clean). Commit: `image: Aurora's seed repository, the pump and the recorder in the agent image`.
 
 ---
@@ -195,6 +226,11 @@ Plans 4 (operator surfaces) and 5 (retirement and words) follow.
 ## What this plan does not do
 
 - **No `docker build` and no running container (3c).** The Postgres version under `/usr/lib/postgresql/*/bin` is verified when 3c first builds the image, and "the image builds and `pg_isready` answers on `$RUN_DIR`" is a 3c acceptance item.
-- **No compose, volumes, loop images, roster or `prepare_host.sh` (3b).**
+- **No compose, volumes, loop images, roster or `prepare_host.sh` (3b).** These are handed to 3b, because they decide whether this image starts:
+  - agents become `read_only: true`, with tmpfs at `/run/agent`, `/tmp`, `/home/agent` and `/work`;
+  - every mount is a per-agent bind;
+  - `LLM_SOCKET_PATH` moves to Aurora's default, `/llm/sock/core.sock`, inside each agent's own socket bind, replacing today's `/llm/sock/${slug}.sock`;
+  - the `/shared` bind;
+  - the recorder service runs `python /usr/local/lib/recorder/proxy.py`, with `TRANSCRIPT_DIR` (not `TRANSCRIPTS_DIR`) and `LLM_BASE_URL:-` empty by default, so the key is not lost.
 - **No console seed (3c).** It needs `STREAM_MODEL_ALLOW_*` in `.env.example`, which is absent today, so the default seed would declare no streams.
 - **No change to `containers/agent.env`, `serve_vehicle.sh` or the old services (plan 5).**
