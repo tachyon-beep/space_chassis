@@ -1,3 +1,11 @@
+# Independent acceptance — SV028
+
+OpenAI Astra accepted immutable `13f56f5b72d084c54a96635c184e3b0a2c8e041a` (runtime correction `22324cf84a5c0f98f3a9259b75fa73869c01bb06`). See [ASTRA-ACCEPTANCE.md](ASTRA-ACCEPTANCE.md). SV028-09/10 are closed; **111 selected cases passed in eleven final commands**, after three valid pre-correction controls/discriminators.
+
+Scope: the one witnessed `conversation_unreadable_unbound` + `bootstrap-preserving` pair over the admitted state-neutral suffix. Fixed inventory, independent archive copies, dependency fences, exact logical continuation, physical header replay and accurate late-copy diagnostics are accepted in temporary-root engineering scope. Numerical replay/RSS/aggregate-read guarantees, kernel power-loss evidence, real-session operations, providers, merge/deployment and held policy remain outside acceptance. Historical pending/rejected sections below are retained as provenance and superseded only by this bounded acceptance.
+
+---
+
 # SV-028 implementation review: bounded correction required
 
 Astra reviewed `517de5b4a41bded9b58a7be54199eee7b814d112`. [ASTRA-IMPLEMENTATION-REVIEW.md](ASTRA-IMPLEMENTATION-REVIEW.md) requires **SV028-09**, a preserving-specific logical cursor that retains physical header replay/accounting/sync, and **SV028-10**, stage-accurate late-copy refusal diagnostics. This is an availability defect and a diagnostic defect; no data-loss claim is made. Existing 108 selected cases passed but did not exercise the new header sequence.
