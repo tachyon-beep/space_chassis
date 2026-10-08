@@ -171,10 +171,13 @@ def test_the_build_area_is_emptied_without_being_removed(world):
 
 def test_postgres_is_initialised_once_under_state_and_started_from_the_versioned_bin(world):
     data = world.root / "state" / "postgres"
+    staging = world.root / "state" / "postgres.init"
     world.run()
     assert world.wait_for(lambda lines: any(line.startswith("createdb ") for line in lines))
     lines = world.lines()
-    assert any(line.startswith(f"initdb -D {data} ") for line in lines)
+    assert any(line.startswith(f"initdb -D {staging} ") for line in lines)
+    assert (data / "PG_VERSION").exists()
+    assert not staging.exists()
     assert any(line.startswith(f"postgres -D {data} -k {world.root / 'run'} ") for line in lines)
     world.calls.write_text("")
     world.run()
@@ -220,6 +223,47 @@ def test_a_server_that_fails_to_start_does_not_stop_the_handoff(world):
         _stub(path, "exit 1\n")
     world.run()
     assert _watchdog_calls(world.lines())
+
+
+def test_a_server_that_hangs_does_not_delay_the_handoff(world):
+    # Every server blocks and postgres never answers: the watchdog must still take the container
+    # at once, so each server, and the whole postgres chain, has to be in the background.
+    for path in (
+        world.root / "pgbin" / "postgres",
+        world.root / "bin" / "nats-server",
+        world.root / "bin" / "redis-server",
+    ):
+        _stub(path, "exec sleep 60\n")
+    _stub(world.root / "pgbin" / "pg_isready", "exit 1\n")
+    started = time.monotonic()
+    world.run()
+    assert time.monotonic() - started < 5
+    assert _watchdog_calls(world.lines())
+
+
+def test_a_first_initdb_killed_midway_is_redone_from_scratch_at_the_next_start(world):
+    # initdb writes PG_VERSION before it has built anything else, and a SIGKILL skips its own
+    # cleanup; the staging directory is what keeps that half-built cluster from being started.
+    _stub(world.root / "pgbin" / "initdb", 'mkdir -p "$2" && : > "$2/PG_VERSION" && kill -9 $$\n')
+    world.run()
+    assert world.wait_for(lambda lines: any(line.startswith("initdb ") for line in lines))
+    time.sleep(0.3)
+    assert not (world.root / "state" / "postgres" / "PG_VERSION").exists()
+    _stub(world.root / "pgbin" / "initdb", 'mkdir -p "$2" && : > "$2/PG_VERSION"\n')
+    world.calls.write_text("")
+    world.run()
+    assert world.wait_for(lambda lines: any(line.startswith("postgres -D") for line in lines))
+    assert any(line.startswith("initdb ") for line in world.lines())
+    assert (world.root / "state" / "postgres" / "PG_VERSION").exists()
+
+
+def test_a_postgres_that_never_answers_says_so_on_the_container_log(world):
+    _stub(world.root / "pgbin" / "pg_isready", "exit 1\n")
+    world.run(PG_READY_TRIES="2")
+    end = time.monotonic() + 10
+    while time.monotonic() < end and "postgres did not answer" not in world.stderr():
+        time.sleep(0.1)
+    assert "postgres did not answer" in world.stderr()
 
 
 def test_a_mount_root_on_the_host_filesystem_draws_the_factual_warning(world):

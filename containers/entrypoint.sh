@@ -11,10 +11,12 @@
 #      left behind.
 #   3. start the servers the world carries: postgres, nats, redis. They are present, running and
 #      *empty* -- deciding what any of it is for is the first real question the mission has, and
-#      this script will not answer it. Their data lives under STATE_DIR, the agent's own durable
-#      store, because a database that forgets at every restart is not a database; their logs live
-#      on the run tmpfs, because logs in the durable store grow without bound. Each is guarded:
-#      a server that will not start is the agent's to notice, not a reason to stop the world.
+#      this script will not answer it. Postgres keeps its cluster under STATE_DIR, the agent's own
+#      durable store, so its databases outlive a restart. Redis runs with persistence off and NATS
+#      without JetStream, as they always have here: their directories under STATE_DIR are where
+#      either would keep data if it were configured to. Logs live on the run tmpfs, because logs in
+#      the durable store grow without bound. Each server is guarded and in the background: one
+#      that will not start is the agent's to notice, not a reason to stop or delay the world.
 #   4. start the pump, in a loop that restarts it, so work the agent scheduled keeps running
 #      while the agent is mid-conversation, dead, or being repaired.
 #   5. reseed /work from the image and exec the watchdog. The seed is a git repository with
@@ -36,6 +38,7 @@ set -u
 : "${MOUNT_ROOTS:=/state /shared /diode /pump /build /telemetry /llm/console /llm/sock}"
 : "${UNBOUNDED_REFERENCE:=/vendor/registry}"
 : "${PUMP_RESTART_SECONDS:=5}"
+: "${PG_READY_TRIES:=20}"
 if [ -z "${PG_BIN:-}" ]; then
     for candidate in /usr/lib/postgresql/*/bin; do
         PG_BIN=$candidate
@@ -69,15 +72,25 @@ mkdir -p "$STATE_DIR/nats" "$STATE_DIR/redis" "$RUN_DIR/logs" 2>/dev/null || tru
     if [ -e "$STATE_DIR/postgres/PG_VERSION" ]; then
         rm -f "$STATE_DIR/postgres/postmaster.pid"
     else
-        "$PG_BIN/initdb" -D "$STATE_DIR/postgres" --auth=trust -U "$(id -un)" \
+        # initdb writes PG_VERSION before it has built anything else, and a SIGKILL during the
+        # first start skips its own cleanup. Building aside and moving into place only on
+        # success means a half-built cluster is never the one that gets started.
+        rm -rf "$STATE_DIR/postgres.init" "$STATE_DIR/postgres"
+        "$PG_BIN/initdb" -D "$STATE_DIR/postgres.init" --auth=trust -U "$(id -un)" \
             >> "$RUN_DIR/logs/postgres.log" 2>&1 || exit 0
+        mv "$STATE_DIR/postgres.init" "$STATE_DIR/postgres" || exit 0
     fi
     "$PG_BIN/postgres" -D "$STATE_DIR/postgres" -k "$RUN_DIR" -c listen_addresses=127.0.0.1 \
         >> "$RUN_DIR/logs/postgres.log" 2>&1 &
     tries=0
     until "$PG_BIN/pg_isready" -q -h "$RUN_DIR" 2>/dev/null; do
         tries=$((tries + 1))
-        [ "$tries" -ge 20 ] && exit 0
+        if [ "$tries" -ge "$PG_READY_TRIES" ]; then
+            # The server's own log is on the run tmpfs; this line is what survives on the
+            # container's log.
+            echo "postgres did not answer on $RUN_DIR; see $RUN_DIR/logs/postgres.log" >&2
+            exit 0
+        fi
         sleep 0.5
     done
     # One empty database owned by this user, whom initdb made the superuser, so a client can
