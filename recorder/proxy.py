@@ -638,9 +638,14 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             if fleet is not None:
                 declared = registry.state()["streams"].get(stream)
                 if declared is not None:
+                    # Reserve on the body the stream will forward, composed from its declaration,
+                    # so the fleet holds what the stream itself holds.
+                    composed, error = recorder_streams.compose_body(
+                        req_body, declared["settings"], recorder_streams.reasoning_allowance()
+                    )
                     refused, fleet_ticket = fleet.reserve(
                         recorder_streams.reservation_for(
-                            req_body, declared["tokens"]["allowance"]
+                            req_body if error else composed, declared["tokens"]["allowance"]
                         )
                     )
             if refused is None:

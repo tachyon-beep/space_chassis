@@ -27,10 +27,10 @@ def test_a_core_request_without_max_tokens_reserves_the_response_reserve():
     assert refused is None
     assert caps.used()["tokens"] == estimate_prompt_tokens(body) + 32768
 
-    capped = b'{"messages":[],"max_tokens":100}'
+    large = b'{"messages":[],"max_tokens":100000}'
     caps = core_caps.CoreCaps(10, 10**9, clock=Clock())
-    caps.admit(capped)
-    assert caps.used()["tokens"] == estimate_prompt_tokens(capped) + 100
+    caps.admit(large)
+    assert caps.used()["tokens"] == estimate_prompt_tokens(large) + 100000
 
 
 def test_the_per_agent_request_ceiling_refuses_the_next_request_in_the_hour():
@@ -179,3 +179,37 @@ def test_a_ledger_path_without_an_agent_slug_is_refused(tmp_path, monkeypatch):
     caps, ledger = core_caps.caps_from_environment()
     assert ledger is None
     assert isinstance(caps, core_caps.CoreCaps)
+
+
+def test_a_core_request_cannot_reserve_less_than_the_response_reserve():
+    # The agent writes its own chassis, so the body's max_tokens is its claim; a duplicate key
+    # can even differ between this parser and the upstream's. The reserve is a floor.
+    for body in (b'{"max_tokens":1}', b'{"max_tokens":100000,"max_tokens":1}'):
+        caps = core_caps.CoreCaps(10, 10**9, clock=Clock())
+        caps.admit(body)
+        assert caps.used()["tokens"] == estimate_prompt_tokens(body) + 32768, body
+
+
+def test_an_unreachable_ledger_refuses_with_503_instead_of_raising(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    path.mkdir()
+    refused, ticket = core_caps.FleetLedger(str(path), "a", 10**9).reserve(10)
+    assert refused == (503, "fleet ledger unavailable")
+    assert ticket is None
+
+
+def test_a_ledger_whose_directory_cannot_be_made_still_constructs(tmp_path):
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    ledger = core_caps.FleetLedger(str(blocker / "ledger.jsonl"), "a", 10**9)
+    assert ledger.reserve(10)[0] == (503, "fleet ledger unavailable")
+
+
+def test_a_settle_that_cannot_reach_the_ledger_keeps_the_reservation_and_returns(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    ledger = core_caps.FleetLedger(str(path), "a", 10**9)
+    _, ticket = ledger.reserve(10)
+    path.unlink()
+    path.mkdir()
+    ledger.settle(ticket, 3)
+    path.rmdir()

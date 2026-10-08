@@ -22,6 +22,7 @@ import fcntl
 import json
 import math
 import os
+import sys
 import threading
 import time
 import uuid
@@ -30,8 +31,8 @@ from recorder_streams import (
     BUDGET_WINDOW,
     check_budget,
     check_token_budget,
+    estimate_prompt_tokens,
     rate_limited_message,
-    reservation_for,
     token_limited_message,
 )
 
@@ -40,6 +41,24 @@ DEFAULT_TOKEN_ALLOWANCE = 200_000_000
 DEFAULT_FLEET_TOKEN_ALLOWANCE = 2_000_000_000
 DEFAULT_RESPONSE_RESERVE = 32768
 COMPACT_SLACK_LINES = 1024
+LEDGER_UNAVAILABLE = (503, "fleet ledger unavailable")
+
+
+def core_reservation(body, response_reserve):
+    """What a core request holds while in flight: the prompt estimate plus a response floor.
+
+    The agent writes its own chassis, so a max_tokens in the body is only its claim, and a
+    duplicate key can even read differently here and upstream. A larger claim raises the hold;
+    nothing lowers it below the response reserve.
+    """
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        data = None
+    claimed = data.get("max_tokens") if isinstance(data, dict) else None
+    if isinstance(claimed, bool) or not isinstance(claimed, int) or claimed < 0:
+        claimed = 0
+    return estimate_prompt_tokens(body) + max(response_reserve, claimed)
 
 
 def _valid_tokens(tokens):
@@ -63,7 +82,10 @@ class FleetLedger:
         self._thread_lock = threading.Lock()
         directory = os.path.dirname(path)
         if directory:
-            os.makedirs(directory, exist_ok=True)
+            # A directory that cannot be made is reported on the first reserve, as a refusal,
+            # rather than stopping the recorder that would have recorded it.
+            with contextlib.suppress(OSError):
+                os.makedirs(directory, exist_ok=True)
 
     @contextlib.contextmanager
     def _locked(self):
@@ -129,7 +151,18 @@ class FleetLedger:
         )
 
     def reserve(self, tokens):
-        """Hold tokens against the fleet's hour. Returns (refusal, ticket)."""
+        """Hold tokens against the fleet's hour. Returns (refusal, ticket).
+
+        A ledger that cannot be read or written refuses with a 503: cost containment fails
+        closed, and the refusal is answered and recorded like any other.
+        """
+        try:
+            return self._reserve(tokens)
+        except OSError as e:
+            print(f"fleet ledger unavailable: {e}", file=sys.stderr, flush=True)
+            return LEDGER_UNAVAILABLE, None
+
+    def _reserve(self, tokens):
         with self._locked():
             now = self._clock()
             live, lines, stale = self._read(now)
@@ -146,6 +179,14 @@ class FleetLedger:
         """Replace a reservation with what was spent. Unknown usage leaves the reservation."""
         if ticket is None or not _valid_tokens(tokens):
             return
+        try:
+            self._settle(ticket, tokens)
+        except OSError as e:
+            # The upstream has already answered: the exchange must still be recorded and
+            # delivered, so a ledger that has gone away keeps the reservation and says so.
+            print(f"fleet ledger settle failed, reservation kept: {e}", file=sys.stderr, flush=True)
+
+    def _settle(self, ticket, tokens):
         with self._locked():
             now = self._clock()
             live, lines, stale = self._read(now)
@@ -190,7 +231,7 @@ class CoreCaps:
 
     def admit(self, body):
         """Charge one core request. Returns (refusal, ticket)."""
-        reserved = reservation_for(body, self.response_reserve)
+        reserved = core_reservation(body, self.response_reserve)
         with self._lock:
             now = self._clock()
             tokens_ok, tokens = check_token_budget(self._tokens, now, self.token_allowance)

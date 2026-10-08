@@ -191,3 +191,59 @@ def test_without_caps_the_core_socket_behaves_as_aurora_s(tmp_path, transcripts,
     assert first.status_code == second.status_code == 200
     assert len(upstream.calls) == 2
     assert len((transcripts / "transcript.jsonl").read_text().strip().splitlines()) == 2
+
+
+def test_a_ledger_failure_at_admission_is_a_recorded_503(tmp_path, transcripts, upstream):
+    ledger_path = tmp_path / "ledger.jsonl"
+    ledger_path.mkdir()
+    ledger = core_caps.FleetLedger(str(ledger_path), "a", 10**9)
+    caps = core_caps.CoreCaps(10, 10**9, ledger=ledger)
+    path, instance = _serve(tmp_path, "core", core_caps=caps, fleet=ledger)
+    try:
+        response = _post(path, {"model": "m", "messages": []})
+    finally:
+        _stop(instance)
+    assert response.status_code == 503
+    assert upstream.calls == []
+    assert len((transcripts / "transcript.jsonl").read_text().strip().splitlines()) == 1
+
+
+def test_a_ledger_failure_after_the_upstream_answered_still_records_the_exchange(
+    tmp_path, transcripts, upstream
+):
+    ledger_path = tmp_path / "ledger.jsonl"
+    ledger = core_caps.FleetLedger(str(ledger_path), "a", 10**9)
+    caps = core_caps.CoreCaps(10, 10**9, ledger=ledger)
+
+    def break_the_ledger():
+        ledger_path.unlink()
+        ledger_path.mkdir()
+
+    upstream.during = break_the_ledger
+    path, instance = _serve(tmp_path, "core", core_caps=caps, fleet=ledger)
+    try:
+        response = _post(path, {"model": "m", "messages": []})
+    finally:
+        _stop(instance)
+    assert response.status_code == 200
+    assert len((transcripts / "transcript.jsonl").read_text().strip().splitlines()) == 1
+    assert caps.used()["tokens"] == 8
+
+
+def test_a_declared_stream_s_fleet_reservation_is_the_composed_one(tmp_path, transcripts, upstream):
+    # The stream's declaration, not the agent's request, decides what goes upstream, so the
+    # fleet must hold what the stream holds: the composed body's reservation.
+    registry = recorder_streams.StreamRegistry()
+    registry.apply({"aux": {"budget": 10, "token_budget": 10**6, "max_tokens": 50000}}, {})
+    fleet = core_caps.FleetLedger(str(tmp_path / "ledger.jsonl"), "a", 10**12)
+    held = []
+    upstream.during = lambda: held.append(
+        (fleet.used(), registry.state()["streams"]["aux"]["tokens"]["used"])
+    )
+    path, instance = _serve(tmp_path, "aux", registry=registry, fleet=fleet)
+    try:
+        assert _post(path, {"model": "m", "messages": [], "max_tokens": 1}).status_code == 200
+    finally:
+        _stop(instance)
+    assert held[0][0] == held[0][1]
+    assert held[0][0] > 50000
