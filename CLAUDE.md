@@ -23,6 +23,7 @@ sh scripts/prepare_host.sh                             # roster into operator/ a
 python3 scripts/volume_images.py check                 # are the bounded volume images mounted and ready (no root needed)
 python3 scripts/build_compose.py                       # regenerate docker-compose.yml from the volume manifest; commit both
 python3 scripts/status.py --verbose                    # one line per agent, from the record
+python3 scripts/journal.py --once                      # the operator journal: /work/.git, /shared, restarts, watchdog lines
 sh scripts/verify_containment.sh --all                 # safety claims vs. a running stack
 
 python3 endurance/run_local.py endurance/scenarios/short.json    # fastest end-to-end proof
