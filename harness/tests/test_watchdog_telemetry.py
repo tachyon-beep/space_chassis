@@ -1,0 +1,211 @@
+import io
+import os
+
+import watchdog
+
+
+def _make_work(tmp_path):
+    src = tmp_path / "work"
+    src.mkdir()
+    (src / "agent.py").write_text("AGENT\n", encoding="utf-8")
+    (src / "tombstones").mkdir()
+    (src / "tombstones" / "incarnation-1.txt").write_text("note\n", encoding="utf-8")
+    (src / "__pycache__").mkdir()
+    (src / "__pycache__" / "junk.pyc").write_text("x", encoding="utf-8")
+    (src / ".git").mkdir()
+    (src / ".git" / "HEAD").write_text("ref\n", encoding="utf-8")
+    return src
+
+
+def test_mirror_copies_tree_and_excludes(tmp_path):
+    src = _make_work(tmp_path)
+    dest_root = tmp_path / "telemetry"
+    dest_root.mkdir()
+    watchdog.mirror_work(src=str(src), dest_root=str(dest_root))
+    dest = dest_root / "work"
+    assert (dest / "agent.py").read_text(encoding="utf-8") == "AGENT\n"
+    assert (dest / "tombstones" / "incarnation-1.txt").exists()
+    assert not (dest / "__pycache__").exists()
+    assert not (dest / ".git").exists()
+
+
+def test_mirror_reflects_deletions(tmp_path):
+    src = _make_work(tmp_path)
+    dest_root = tmp_path / "telemetry"
+    dest_root.mkdir()
+    watchdog.mirror_work(src=str(src), dest_root=str(dest_root))
+    (src / "agent.py").unlink()
+    watchdog.mirror_work(src=str(src), dest_root=str(dest_root))
+    assert not (dest_root / "work" / "agent.py").exists()
+    assert (dest_root / "work" / "tombstones").exists()
+
+
+def test_mirror_does_not_follow_symlinks(tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("private\n", encoding="utf-8")
+    src = _make_work(tmp_path)
+    os.symlink(str(secret), str(src / "link.txt"))
+    dest_root = tmp_path / "telemetry"
+    dest_root.mkdir()
+    watchdog.mirror_work(src=str(src), dest_root=str(dest_root))
+    copied = dest_root / "work" / "link.txt"
+    assert os.path.islink(copied)
+    assert not copied.is_file() or os.readlink(copied) == str(secret)
+
+
+def test_mirror_missing_dest_root_is_a_noop(tmp_path):
+    src = _make_work(tmp_path)
+    watchdog.mirror_work(src=str(src), dest_root=str(tmp_path / "absent"))
+    assert not (tmp_path / "absent").exists()
+
+
+def test_tee_stream_appends_and_echoes(tmp_path, capsys):
+    log = tmp_path / "agent_stdout.log"
+    stream = io.BytesIO(b"alpha\nbeta\n")
+    watchdog._tee_stream(stream, str(log), max_bytes=1000)
+    assert log.read_bytes() == b"alpha\nbeta\n"
+    out = capsys.readouterr().out
+    assert "alpha" in out and "beta" in out
+
+
+def test_tee_stream_caps_log_size(tmp_path, capsys):
+    log = tmp_path / "agent_stdout.log"
+    log.write_bytes(b"x" * 100)
+    stream = io.BytesIO(b"tail-line\n")
+    watchdog._tee_stream(stream, str(log), max_bytes=80)
+    content = log.read_bytes()
+    assert content.endswith(b"tail-line\n")
+    assert len(content) <= 40 + len(b"tail-line\n")
+
+
+def test_tee_stream_survives_unwritable_log(tmp_path, capsys):
+    stream = io.BytesIO(b"still echoed\n")
+    watchdog._tee_stream(stream, str(tmp_path / "no" / "dir" / "log"), max_bytes=80)
+    assert "still echoed" in capsys.readouterr().out
+
+
+def test_mirror_replaces_a_planted_symlink_at_the_tmp_path(tmp_path):
+    # A symlink parked at work.tmp must not wedge the mirror forever: it is
+    # removed as a link, never followed, and mirroring proceeds.
+    src = _make_work(tmp_path)
+    dest_root = tmp_path / "telemetry"
+    dest_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "kept.txt").write_text("kept\n", encoding="utf-8")
+    os.symlink(str(outside), str(dest_root / "work.tmp"))
+
+    watchdog.mirror_work(src=str(src), dest_root=str(dest_root))
+
+    assert (dest_root / "work" / "agent.py").read_text(encoding="utf-8") == "AGENT\n"
+    assert not os.path.lexists(dest_root / "work.tmp")
+    assert (outside / "kept.txt").read_text(encoding="utf-8") == "kept\n"
+
+
+def test_mirror_sweeps_content_outside_its_own_manifest(tmp_path):
+    # The telemetry volume is written only by the watchdog; anything another
+    # process parks at the volume root is removed on the next mirror pass.
+    src = _make_work(tmp_path)
+    dest_root = tmp_path / "telemetry"
+    dest_root.mkdir()
+    squat = dest_root / "memory"
+    squat.mkdir()
+    (squat / "notes.md").write_text("kept?\n", encoding="utf-8")
+    (dest_root / "stray.txt").write_text("stray\n", encoding="utf-8")
+
+    watchdog.mirror_work(src=str(src), dest_root=str(dest_root))
+
+    assert not squat.exists()
+    assert not (dest_root / "stray.txt").exists()
+    assert (dest_root / "work" / "agent.py").read_text(encoding="utf-8") == "AGENT\n"
+
+
+def test_mirror_sweep_removes_a_symlink_as_a_link_and_never_follows(tmp_path):
+    src = _make_work(tmp_path)
+    dest_root = tmp_path / "telemetry"
+    dest_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "kept.txt").write_text("kept\n", encoding="utf-8")
+    os.symlink(str(outside), str(dest_root / "stash"))
+
+    watchdog.mirror_work(src=str(src), dest_root=str(dest_root))
+
+    assert not os.path.lexists(dest_root / "stash")
+    assert (outside / "kept.txt").read_text(encoding="utf-8") == "kept\n"
+
+
+def _special_tree(tmp_path, monkeypatch, kind):
+    """Build a work tree holding one special file named 'special' beside regular files."""
+    import pytest
+
+    src = _make_work(tmp_path)
+    (src / "sub").mkdir()
+    (src / "sub" / "kept.txt").write_text("kept\n", encoding="utf-8")
+    if kind == "fifo":
+        try:
+            os.mkfifo(str(src / "special"))
+            os.mkfifo(str(src / "sub" / "special"))
+        except PermissionError:
+            pytest.skip("mkfifo not permitted")
+        return src, []
+    import socket
+
+    monkeypatch.chdir(src)
+    socks = []
+    for rel in ("special", os.path.join("sub", "special")):
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        socks.append(s)
+        try:
+            s.bind(rel)
+        except PermissionError:
+            for c in socks:
+                c.close()
+            pytest.skip("unix socket bind not permitted")
+        except OSError as exc:
+            for c in socks:
+                c.close()
+            pytest.skip(f"unix socket bind failed: {exc}")
+    return src, socks
+
+
+def _run_special_case(tmp_path, monkeypatch, kind):
+    src, socks = _special_tree(tmp_path, monkeypatch, kind)
+    try:
+        dest_root = tmp_path / "telemetry"
+        dest_root.mkdir()
+        monkeypatch.chdir(tmp_path)
+        watchdog.mirror_work(src=str(src), dest_root=str(dest_root))
+    finally:
+        for s in socks:
+            s.close()
+    dest = dest_root / "work"
+    assert (dest / "agent.py").read_text(encoding="utf-8") == "AGENT\n"
+    assert (dest / "sub" / "kept.txt").read_text(encoding="utf-8") == "kept\n"
+    assert not os.path.lexists(dest / "special")
+    assert not os.path.lexists(dest / "sub" / "special")
+    assert not (dest_root / "work.tmp").exists()
+
+
+def test_mirror_skips_fifo(tmp_path, monkeypatch):
+    _run_special_case(tmp_path, monkeypatch, "fifo")
+
+
+def test_mirror_skips_unix_socket(tmp_path, monkeypatch):
+    _run_special_case(tmp_path, monkeypatch, "socket")
+
+
+def test_mirror_failure_prints_one_line(tmp_path, monkeypatch, capsys):
+    src = _make_work(tmp_path)
+    dest_root = tmp_path / "telemetry"
+    dest_root.mkdir()
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(watchdog.shutil, "copytree", boom)
+    watchdog.mirror_work(src=str(src), dest_root=str(dest_root))
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert "telemetry mirror" in err
+    assert "disk full" in err

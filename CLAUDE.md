@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 git submodule update --init --recursive                # the vehicle is a submodule; do this first
 python3 -m pytest -q                                   # whole suite, no Docker needed
 python3 -m pytest tests/test_chassis.py -q             # one file
+python3 -m pytest harness/tests -q                     # the Aurora harness: its own process until plan 5 retires services/chassis.py
 python3 -m pytest tests/test_chassis.py::test_a_conversation_round_trips -q
 python3 -m pytest docs/deep_research/vehicle/tests/test_vehicle_config.py -q   # the vehicle's referee
 

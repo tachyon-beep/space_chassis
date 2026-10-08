@@ -9,7 +9,8 @@ line-length = 100
 target-version = "py312"
 # The vendored crate registry carries whatever Python its crates happen to
 # ship, which is not this project's code and not this project's business.
-exclude = ["vendor", ".scratch", "endurance/runs"]
+# `harness/` is vendored from Aurora at 42faf41 and kept close to upstream so it can be re-synced.
+exclude = ["vendor", ".scratch", "endurance/runs", "harness"]
 
 [tool.ruff.lint]
 # The services here are deliberately standard-library-first. E501 is off
