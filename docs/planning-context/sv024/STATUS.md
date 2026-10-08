@@ -1,5 +1,12 @@
 # SV-024 status
 
+**Accepted within the isolated temporary-fixture engineering scope.** Independent acceptance: [ASTRA-ACCEPTANCE.md](ASTRA-ACCEPTANCE.md), reviewed head `9e792a56d9db4292fe7b358442c39031e78735c2`, runtime/tests `9bdfb37a5518687666f414b7579d245e3c6a7c95`. SV024-01 and SV024-02 are closed. Final validation: 161 pass executions representing159 unique cases. Earlier statuses below are historical and superseded here.
+
+Acceptance covers declared simulated post-GC segment-name/data outcomes, inherited bytes before checkpoint publication, and recoverable input evidence before intent publication. No real power-loss or unsimulated reversion, exact replay-bound, real-session, merge/deployment, provider or held policy claim. Coverage qualification: the retained numeric `after-first-record` fsync cut moved to truncation after the new prerequisite; its old cut placement is not claimed. A test-only semantic-cut repair is staged with SV025 before future evidence advertises that cut again.
+
+---
+
+
 ## Correction 1 (Astra SV024-02) — complete; awaiting the coordinator's checkpoint and Astra re-review. Not accepted.
 
 SV024-02 is fixed in `services/chassis_startup.py`. Before a new RECOVERING is published, `_fence_intent_inputs` fsyncs the anchor's and the tail's segments and fences ledger/. A failure there is a persistence failure with no intent, copy or truncation. SV024-01 is unchanged.
