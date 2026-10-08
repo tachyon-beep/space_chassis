@@ -1,3 +1,9 @@
+# Design accepted for bounded implementation
+
+Astra accepted revision1 architecture at `01efe835c8d90d5a2308c36ab8eeb9c9b5c359df`, with the required launch qualifications now at the top of [DESIGN.md](DESIGN.md). See [ASTRA-DESIGN-ACCEPTANCE.md](ASTRA-DESIGN-ACCEPTANCE.md). The implementation remains unstarted and unaccepted at this checkpoint. Original design findings are preserved in [ASTRA-INITIAL-DESIGN-REVIEW.md](ASTRA-INITIAL-DESIGN-REVIEW.md).
+
+---
+
 # SV-026 status
 
 ## Revision 1 (answers SV-026-Astra-design-review.md): complete, awaiting the coordinator's commit/backup and Astra's immutable re-review. Not implemented. Not accepted.
@@ -31,7 +37,7 @@ Retained as Astra found them sound, now stated as the design rather than options
   - test 6 changes one assertion;
   - tests 1–3 unchanged.
 - Retained guards: **97** named nodes.
-- Total: 161 nodes in 13 post-fix commands (R1a … R11).
+- Total: 161 nodes in 12 post-fix commands (R1a … R11).
 - Discriminators: P1 (expected pass on the base), P2–P10 (expected failures on the base) and the staged CB pair S1/S2.
 
 Runner limits are unchanged: CPU 120 s / wall 180 s / AS 512 MiB; aggregate CPU 50 %, 2 GiB, 64 tasks, nice 15; one test process and one literal command per message. A command that exceeds the wall cap is split by node list and reported. No cap is raised.

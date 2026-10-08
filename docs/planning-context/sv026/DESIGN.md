@@ -1,3 +1,15 @@
+# Reviewed implementation qualifications
+
+OpenAI Astra accepted the bounded C1–C14 architecture at immutable design head `01efe835c8d90d5a2308c36ab8eeb9c9b5c359df`. [ASTRA-DESIGN-ACCEPTANCE.md](ASTRA-DESIGN-ACCEPTANCE.md) governs the following corrections to the proposal below. This is design acceptance only; implementation and numerical guarantees are not accepted.
+
+- A12's after-CK5 parameter cuts **before the follow-up CHECKPOINT frame write**, not at fsync. Assert the missing frame, outstanding GC work, replacement checkpoint without ended, no spent-intent reexecution and previous-base recoverability. Do not force A10: identical conversation hashes may correctly select A9. Preserve the ordinary A14 notice while checking the restored underlying conversation/file.
+- Pre-fix and staged controls must fail at the intended behavior assertion, not missing APIs, imports, arity or setup. CB must reach the production metadata callback and demonstrate wrong context_tokens under a coherent old callback contract before the fix.
+- A11 restart-after-GC can fail on the base without a header because startup loses byte accounting. Only the same-process controls can be described as already passing without a header.
+- Planned final coverage is 48 new +16 bounds +97 retained =161 cases in **12 commands**. Discriminators, staged controls and justified conditional cases are separate. These are proposed counts, not executed passes.
+- R-D rotation deferral and unmeasured partial-I/O limits remain visible. Canonical bounds, source literals/oracles, history/previous-base semantics and all existing operational/policy holds remain unchanged.
+
+---
+
 # SV-026 design (revision 1): replay-work accounting and closed-unit threshold checks
 
 **Status: revised design for independent review. Not implemented. No test was run.**
@@ -451,7 +463,7 @@ The runner stops at the first failure, so discriminators run one node per comman
 | R10 | G6 + G7 | 16 passed |
 | R11 | G8 | 8 passed |
 
-That is 48 + 16 + 97 = 161 nodes in 13 commands, plus the discriminators. A command that hits the wall cap is split by node list and reported. No cap is raised, no meaningful case is removed, and no fixture is weakened.
+That is 48 + 16 + 97 = 161 nodes in 12 commands, plus the discriminators. A command that hits the wall cap is split by node list and reported. No cap is raised, no meaningful case is removed, and no fixture is weakened.
 
 ---
 
