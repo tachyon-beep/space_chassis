@@ -1,6 +1,46 @@
 # SV029 design — the two residual §1.4.7 inequalities (design only)
 
-Base: accepted head `7936b665c4653ff61ec227ddd3d1589da31f3abe`. Nothing here was executed. No runtime, test, oracle, literal or generator change is proposed or authorized. The proposed package is **test-only**, in a new module, and leaves every accepted test unchanged.
+Base: accepted head `7936b665c4653ff61ec227ddd3d1589da31f3abe`. Nothing here was executed. No runtime, oracle, literal, generator or **existing-test** change is proposed or authorized. The proposed package is **test-only**: it creates one new test module and leaves every accepted test unchanged. *(Line corrected per L6; the draft said "no test change".)*
+
+## Governing corrections after the Astra design review (L1–L6)
+
+Astra accepted this architecture at `c2cb7eb` with mandatory launch qualifications L1–L6 (`ASTRA-DESIGN-REVIEW.md`). They govern over the draft text below, which is kept unchanged as history except for line 3. The implementation follows these corrections.
+
+- **L1: per-start counter.** §5.4's blanket "`since_records == N_j + 1`" is replaced by `N_j + delta_new_core`, where the delta is the number of core records that start writes. The values asserted at checkpoint entry, before installation, are:
+
+  | Fixture/start | Entry replay `N_j` (B's own frame excluded) | New core | Counter at checkpoint entry |
+  |---|---:|---:|---:|
+  | N3, N4: first dying start (A10) | 256 | 1 adoption | 257 |
+  | N3: edited dying starts j = 2…109 (A11) | j + 255 | 1 edit | j + 256 |
+  | N3: final unchanged start 110 (A9t) | 365 | 0 | 365 |
+  | N4: unchanged dying starts 2…4 (A9t) | 257 | 0 | 257 |
+  | N4: final unchanged start 5 (A9t) | 257 | 0 | 257 |
+
+  Other L1 requirements:
+  - The pre-start endpoint is fixed before startup, so a start's own commits never enter `N_j`.
+  - Exact classifications are captured by a pass-through probe on `_finish_case`, together with core types and counts.
+  - The physical applies run from B's own frame, so B is applied; `N_j` excludes it.
+  - Each death hook must fire exactly once.
+- **L2: measurement.** Measured starts pass the observer returned by `watch()` as `ops`. The checkpoint-write death wrapper is used only to build the prefix. Read multiplicity is asserted independently of `interval_work`:
+  - N1 must show 63 returned interval reads (56 message blobs and 7 edit blobs), each with a distinct name and a distinct applying seq.
+  - The raw returned-byte sum must equal the logical sum.
+  - Each message's UTF-8 length, escaped length, hash and record reference are checked.
+- **L3: lifetimes and cuts.**
+  - `establish(root)`'s session is closed.
+  - Every writer an abandoned start opened is closed after `Crash`; a pass-through wrapper on `LedgerWriter.continue_after` collects them.
+  - The prefix cut is proved: there is no checkpoint frame, CK3/CK4/CK5 state is as expected, and B is unchanged.
+  - The local death is at **entry** to `cp.install_conversation`, before any install work. It is distinct from the retained `[ck2-temp-A9]` cut, which comes later, at the temporary file's fsync.
+- **L4: resources.** §8 omitted the repeated previous-base reconstruction in N1's own build, which these corrected figures include:
+  - N1's later A11 starts replay 8+16+24+32+40+48 = 168 MiB of earlier message blobs. With 56 MiB of live re-reads and 56 MiB at the final A14, that makes **280 MiB of cumulative message-blob return work** (cumulative, not peak memory and not the final recovery quantity).
+  - N2's disk peak is **≈ 40 MiB**: 16 MiB of blobs, the old 8 MiB current file and a 16 MiB install temporary coexist before CK2 completes.
+  - RSS and wall figures are estimates only. All caps are unchanged.
+- **L5: targets.** The command set is the frozen 12-case manifest: 4 new and 8 retained nodes in two commands. §7's `--collect-only` step is **removed**; the two parameter IDs are supported statically by `tests/test_chassis_recovery_live.py:623–635`.
+- **L6: claims.**
+  - STATUS and receipts stay conditional on execution.
+  - Final recovery work is distinguished from build and lifetime work, and simulated in-process interruption from subprocess or host loss.
+  - "No default cap bounds the growth" means that no admission, quarantine, threshold or segment cap stops this finite 108-edit schedule. It is not a claim of unbounded growth in a finite domain.
+  - PR-N is an unproved research obligation, not a repaired guarantee.
+  - §10 is too categorical: further measurement and reachable-shape analysis remain engineering work. Only changing a canonical bound, adding a schedule premise, or changing retention or threshold semantics needs contract/design closure.
 
 ## 0. Outcome in one table
 

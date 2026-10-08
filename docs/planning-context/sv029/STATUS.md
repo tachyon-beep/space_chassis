@@ -1,4 +1,32 @@
-# Current status: SV029 design accepted with launch qualifications; tests not yet implemented
+# Current status: SV029 implemented and executed (12/12 in the two manifest commands); awaiting independent immutable Astra review. Not accepted.
+
+The test-only package follows the accepted design under L1–L6. It adds one new module, `tests/test_chassis_replay_residual.py`, with 4 nodes. Runtime code, existing tests, canonical sources, literals and the generator are unchanged. [RECEIPT.md](RECEIPT.md) has the commands and the asserted values. DESIGN.md now opens with the governing L1–L6 corrections; the draft below them is kept as history.
+
+| Inequality (SV015v2 §1.4.7, defaults) | Executed result, conditional on review |
+|---|---|
+| Previous base, bytes `< 50,352,266` | **N1:** final A14 from the retained base A, spanning 7 default threshold intervals, read 56 distinct 1 MiB message blobs = **58,720,256 B**, beyond the bound regardless of frame counting. Each interval stayed under the newest-row bound. Control **N2** (immediate previous base): 8,388,608 B of blobs, total < 25,166,144 |
+| Newest base, records `≤ 358` | **N3:** after a threshold checkpoint that died before its frame, 108 edited starts each dying at install entry. The final start replayed **365** records after B's frame, from B's bytes, with no previous base. Control **N4** (no edits): 257 records, constant |
+
+**What these results are not:**
+
+- They are counterexamples to the canonical numbers, not replacement bounds.
+- N3 holds under its stated repeated edit-and-death schedule. The bound under PR-N (one interruption, no external change) is still unproved and still not refuted.
+- The crashes are simulated in-process.
+- RSS, latency, total I/O, `U_r`/`U_b`, `T_origin` and every SV025–SV028 nonclaim remain open.
+
+**Contract decisions this exposes, not taken here:**
+
+- **D1:** how the previous-base row treats a retained base that spans `k` intervals.
+- **D2:** whether the newest-records row quantifies over repeated crash/edit schedules, or needs a premise such as PR-N plus a `U_r` proof.
+- **D3:** whether the threshold should ever count previous-base work.
+
+Further measurement or analysis of these remains engineering work. Changing a bound, its premises, retention semantics or threshold scope needs explicit contract/design closure.
+
+There was no merge, deployment, real-session operation, provider call, policy choice or cap change.
+
+---
+
+# SV029 status (history): design accepted with launch qualifications; tests not yet implemented
 
 Independent Astra review accepted the bounded architecture at c2cb7ebae13ac02c524b974c880a9379bde006b9. [ASTRA-DESIGN-REVIEW.md](ASTRA-DESIGN-REVIEW.md) L1–L6 govern implementation over earlier draft expectations. The matrix remains four new and eight retained cases, two serial commands, unchanged caps. Numerical evidence awaits execution and immutable review.
 
