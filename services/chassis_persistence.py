@@ -1138,6 +1138,9 @@ class LedgerWriter:
         # Whether this writer's fsyncs of session/ and ledger/ have returned:
         # names this process found (ledger/, segments) are not durable until then.
         self.namespace_fenced = False
+        # Whether this writer continued after bytes an earlier process wrote,
+        # found readable but not necessarily synced, and has not fsynced since.
+        self.inherited = False
         self.blobs = BlobStore(self.session_dir / "blobs", ops=self.ops)
 
     # -- starting -------------------------------------------------------------
@@ -1173,7 +1176,9 @@ class LedgerWriter:
         session/ and ledger/ (SV020-01): a complete segment found readable may
         be one whose rotation died before its directory fsync, and its name is
         not durable until a fence returns. A fence failure raises
-        PersistenceFailure and no writer is returned.
+        PersistenceFailure and no writer is returned. The bytes it continues
+        after are readable, not necessarily durable: `sync_inherited` makes
+        them so before a checkpoint names them (SV024).
         """
         if scan.stop or scan.tail:
             raise LedgerError("the ledger has an unresolved tail or stop; recover first")
@@ -1193,6 +1198,7 @@ class LedgerWriter:
         except OSError as error:
             raise PersistenceFailure(f"the newest segment could not be opened: {error}") from error
         writer.segment_bytes = last.offset + last.length
+        writer.inherited = True
         return writer
 
     def open_segment(self, *, reuse_empty: bool = False) -> None:
@@ -1206,6 +1212,7 @@ class LedgerWriter:
         before any byte is written.
         """
         self._usable()
+        self.sync_inherited()  # never rotate away from bytes no fsync covered
         self._fence_namespace()
         number = self.segment_no + 1
         path = self.ledger_dir / segment_name(number)
@@ -1248,6 +1255,7 @@ class LedgerWriter:
             self.ops.fsync(self.fd)
         except OSError as error:
             self._fail(None, error)
+        self.inherited = False  # the returned fsync covers the whole file
         record = Record(self.next_seq, type_name, payload, chain, offset, len(frame), self.segment_no)
         self.segment_bytes += len(frame)
         self.chain, self.next_seq = chain, self.next_seq + 1
@@ -1290,6 +1298,25 @@ class LedgerWriter:
             with contextlib.suppress(OSError):
                 self.ops.close(self.fd)
             self.fd = None
+
+    def sync_inherited(self) -> None:
+        """fsync the segment bytes this writer continued after but did not write (SV024).
+
+        `continue_after` found them readable, which is not durable (M-1/M-2):
+        the process that wrote them may have died before their fsync returned
+        -- a rotation's header, for one. Called before anything outside the
+        ledger names them (CK5's covers_seq) and before rotating away from
+        them; a returned fsync of this writer's own append covers them too. A
+        failure is a sync error: the writer is broken.
+        """
+        self._usable()
+        if not self.inherited:
+            return
+        try:
+            self.ops.fsync(self.fd)
+        except OSError as error:
+            self._fail(None, error)
+        self.inherited = False
 
     def _fence_namespace(self) -> None:
         """fsync(session/) for the ledger/ name, then fsync(ledger/) for the segment names.

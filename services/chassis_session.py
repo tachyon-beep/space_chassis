@@ -570,6 +570,13 @@ class Session:
         self._usable()
         if self.replay.group is not None or self.queue:
             raise SessionInvariant("a checkpoint is never written inside a tool group or with queued messages (CKG)")
+        try:
+            # SV024: CK5's covers_seq names only durable records. Bytes the
+            # writer continued after were readable at this start, not
+            # necessarily synced (a rotation header whose fsync never returned).
+            self.writer.sync_inherited()
+        except cp.PersistenceFailure as error:
+            self._fail(error)
         data = rp.conversation_bytes(self.messages)
         rotate, prev = self._retained_prev()
         try:
