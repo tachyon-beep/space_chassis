@@ -92,7 +92,10 @@ def test_the_override_points_each_recorder_at_the_stub_and_keeps_the_fake_diode_
     smoke, _ = stack
     text = smoke.override_text()
     for n in (1, 2, 3):
-        assert f"  recorder_{n}:\n    depends_on: [stub]" in text
+        assert (
+            f"  recorder_{n}:\n    image: {stack_module.SMOKE_IMAGE}\n    depends_on: [stub]"
+            in text
+        )
     assert '      RECORDER_HOURLY_MAX: "4"' in text
     assert "networks: !override [windowside]" in text
     assert 'VERIFY_STUB_DELAY_SECONDS: "2.0"' in text
@@ -151,3 +154,75 @@ def test_wait_for_raises_with_what_it_was_waiting_for():
     with pytest.raises(TimeoutError, match="waited 0.2s for the impossible"):
         stack_module.wait_for(lambda: False, timeout=0.2, every=0.05, what="the impossible")
     assert stack_module.wait_for(lambda: 7, timeout=1, what="seven") == 7
+
+
+def test_every_docker_call_is_bounded_so_a_wedged_daemon_cannot_hang_the_suite(stack):
+    smoke, runner = stack
+    smoke.prepare()
+    smoke.compose("ps")
+    smoke.exec("agent_1", "true")
+    smoke.build()
+    for argv, kwargs in runner.calls:
+        assert kwargs.get("timeout"), argv
+    builds = [kwargs["timeout"] for argv, kwargs in runner.calls if "build" in argv]
+    others = [kwargs["timeout"] for argv, kwargs in runner.calls if "build" not in argv]
+    assert min(builds) > max(others)
+
+
+def test_the_smoke_stack_builds_and_runs_its_own_image_tag(stack):
+    smoke, _ = stack
+    text = smoke.override_text()
+    services = ["stub", "diode"] + [
+        f"{kind}_{n}" for kind in ("agent", "recorder") for n in (1, 2, 3)
+    ]
+    sys.path.insert(0, str(ROOT / "tests"))
+    import compose_text  # noqa: PLC0415
+
+    parsed = compose_text.services(text)
+    for service in services:
+        assert parsed[service]["image"] == stack_module.SMOKE_IMAGE, service
+    assert stack_module.SMOKE_IMAGE != "space-chassis-agent"
+    assert ":" in stack_module.SMOKE_IMAGE
+
+
+def test_the_smoke_build_leaves_the_operator_s_console_seed_as_it_found_it(tmp_path, monkeypatch):
+    seed = tmp_path / "llm_console_seed.json"
+    seed.write_text('{"operator": true}\n')
+    monkeypatch.setattr(stack_module, "CONSOLE_SEED", seed)
+    seen = []
+
+    def runner(argv, **kwargs):
+        if "build_console_seed.py" in " ".join(argv):
+            seed.write_text('{"example": true}\n')
+        if "build" in argv:
+            seen.append(seed.read_text())
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=runner)
+    smoke._torn_down = True
+    smoke.build()
+    assert seen == ['{"example": true}\n']
+    assert seed.read_text() == '{"operator": true}\n'
+
+    seed.unlink()
+    smoke.build()
+    assert not seed.exists()
+
+
+def test_an_interrupted_teardown_is_retried_by_the_next_down(tmp_path):
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        if "down" in argv and len([a for a in calls if "down" in a]) == 1:
+            raise KeyboardInterrupt
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=runner)
+    smoke.prepare()
+    with pytest.raises(KeyboardInterrupt):
+        smoke.down()
+    assert smoke.root.exists()
+    smoke.down()
+    assert sum("down" in argv for argv in calls) == 2
+    assert not smoke.root.exists()

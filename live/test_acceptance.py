@@ -51,7 +51,9 @@ def test_the_per_agent_cap_refuses_and_the_agent_pauses_with_jitter(stack):
             return False
 
     wait_for(refused, timeout=180, every=3, what="a 429 for agent_3 in its transcript")
-    wait_in_log(stack, 3, 0, r"action pause", timeout=180)
+    # In agent_3's own log the refusal comes before the pause, so a pause from anything else
+    # (a chassis that started before its recorder listened) cannot pass for the cap's.
+    wait_in_log(stack, 3, 0, r"429 .*request\(s\) per hour", r"action pause", timeout=180)
     assert watchdog_alive(stack, 3)
 
 
@@ -265,7 +267,7 @@ def test_nothing_planted_in_home_state_or_shared_runs_in_image_owned_processes(s
         " && printf '[core]\\n\\thooksPath = /shared/hooks\\n' > \"$HOME/.gitconfig\"",
     )
     markers = stack.volumes / "shared" / "data" / "markers"
-    assert not markers.exists() or not any(markers.iterdir())
+    _assert_no_markers(markers)
 
     # A reset is an elective restore, so the watchdog's git runs whatever phase 9.5 left: a kill
     # here, inside rescue's probation, would exhaust the ladder and reseed with cp, not git.
@@ -280,6 +282,38 @@ def test_nothing_planted_in_home_state_or_shared_runs_in_image_owned_processes(s
         r"agent (starting|resuming)",
         timeout=90,
     )
-    assert not markers.exists() or not any(markers.iterdir()), sorted(
-        path.name for path in markers.iterdir()
+    _assert_no_markers(markers)
+
+    # The pump, restarted by the entrypoint's loop with the plants in place.
+    pumps = sh(stack, 2, "pgrep -f '[p]ump\\.py' || true").split()
+    assert pumps, "agent_2 runs no pump"
+    stack.exec("agent_2", "pkill", "-f", "pump\\.py")
+    wait_for(
+        lambda: set(sh(stack, 2, "pgrep -f '[p]ump\\.py' || true").split()) - set(pumps),
+        timeout=30,
+        every=1,
+        what="agent_2's pump to be restarted",
     )
+    _assert_no_markers(markers)
+
+    # A reseeded watchdog, booting with the /state and /shared plants still on their volumes (HOME
+    # is a tmpfs, so its plants go with the old container): a broken rescue exhausts the ladder.
+    restarts = stack.restart_count("agent_2")
+    at = mark(stack, 2)
+    commit_and_tag(stack, 2, BROKEN, "rescue", "a broken rescue, to reseed with the plants")
+    kill_agent(stack, 2)
+    wait_for(
+        lambda: stack.restart_count("agent_2") > restarts,
+        timeout=90,
+        every=2,
+        what="agent_2 to reseed with the plants in place",
+    )
+    wait_in_log(
+        stack, 2, at, r"started from the image seed", r"agent starting autonomous loop", timeout=120
+    )
+    _assert_no_markers(markers)
+
+
+def _assert_no_markers(markers) -> None:
+    found = sorted(path.name for path in markers.iterdir()) if markers.exists() else []
+    assert not found, found
