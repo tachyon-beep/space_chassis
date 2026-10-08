@@ -379,8 +379,26 @@ def take_stop(root: HomeRoot) -> tuple[bytes, dict]:
     return stopped, witness
 
 
-def make(path: Path, variant: str = "run-end", *, pending_note=True, planted=False, corrupt_leaf=False, suffix=None, extra_run_ends=0) -> Ctx:
+def cut_rotation_before_its_header(root: HomeRoot) -> None:
+    """The real writer rotates and dies before writing the new segment's header: an empty newest segment (O2-5).
+
+    `LedgerWriter.rotate_if_full` with an injected one-byte segment: the new
+    file is created O_EXCL, and the process dies at its header frame's write.
+    """
+    scan = cp.scan_segments(cp.read_segments(root.session_dir / "ledger"), LINEAGE)
+    ops = PreserveOps(root.path)
+    ops.crash_when = lambda call, path, frame: call == "write" and frame == "01"
+    ops.armed = True
+    writer = cp.LedgerWriter.continue_after(root.session_dir, LINEAGE, scan, ops=ops, segment_max=1)  # [injected]
+    with pytest.raises(Crash):
+        writer.rotate_if_full()
+    ops.abandon()
+
+
+def make(path: Path, variant: str = "run-end", *, pending_note=True, planted=False, corrupt_leaf=False, suffix=None, extra_run_ends=0, empty_successor=False) -> Ctx:
     root, state, epoch, cb_tuple, cb_bytes = build(path, variant, pending_note=pending_note, suffix=suffix, extra_run_ends=extra_run_ends)
+    if empty_successor:
+        cut_rotation_before_its_header(root)
     saved_prev = root.file("conversation.prev.json") if (root.session_dir / "conversation.prev.json").exists() else None
     plant(root, planted=planted, corrupt_leaf=corrupt_leaf)
     (root.session_dir / "conversation.json").write_bytes(DAMAGED)
@@ -502,11 +520,12 @@ def converge(ctx: Ctx, previous: PreserveOps | None = None):
     return opening
 
 
-def snapshot_unchanged(ctx: Ctx, call, match: str) -> None:
+def snapshot_unchanged(ctx: Ctx, call, match: str) -> str:
     before = ctx.root.snapshot()
-    with pytest.raises(cp.LedgerError, match=match):
+    with pytest.raises(cp.LedgerError, match=match) as refused:
         call()
     assert ctx.root.snapshot() == before, f"{match}: the refused command changed the store"
+    return str(refused.value)
 
 
 def armed(ctx: Ctx, previous: PreserveOps | None = None) -> PreserveOps:
@@ -735,7 +754,9 @@ def test_sv028_every_envelope_refusal_names_its_reason_and_changes_nothing(tmp_p
                 patch.setattr(st, "CONVERSATION_READ_MAX", len(DAMAGED) - 1)  # [injected]
             elif mutate is not None:
                 mutate(ctx)
-            snapshot_unchanged(ctx, lambda: ctx.acknowledge(**call), token)
+            message = snapshot_unchanged(ctx, lambda: ctx.acknowledge(**call), token)
+            # SV028-10 control: a pure-admission refusal really changed nothing, and says so.
+            assert message.endswith("nothing was changed"), (case, message)
 
 
 def _own_set_mid_transaction(ctx, predicate):
@@ -1656,21 +1677,59 @@ def test_sv028_late_phase_a_io_failure_preserves_the_completed_prefix(tmp_path, 
     assert receipts(ctx.root) == [] and effects(ctx.root) == ctx.effects
 
 
-def test_sv028_a_source_change_during_copy_keeps_the_published_inventory_and_prior_copies(tmp_path):
-    ctx = make(tmp_path, planted=True)
-    inventory = inventory_of(ctx)
-    ops = PreserveOps(ctx.root.path)
+def _late_copy_refusal(ctx: Ctx, at_boundary, *, ops: PreserveOps | None = None) -> tuple[str, list]:
+    """Run the command; right after the STOPPED copy lands (before agent-notes is read), apply `at_boundary`.
+
+    Returns (the refusal message, what existed at that boundary). The
+    boundary is after the published inventory and at least one earlier copy.
+    """
+    ops = ops or PreserveOps(ctx.root.path)
     real = ops.rename
     stop_copy = f"{ctx.rel(ctx.partial)}/session/STOPPED"
+    seen = []
 
     def rename(source, target):
         real(source, target)
         if ops.rel(target) == stop_copy:
-            (ctx.session_dir / "agent-notes.txt").write_bytes(b"changed during the copy")
+            seen.append(((ctx.partial / "MANIFEST").is_file(), (ctx.partial / "session" / "STOPPED").is_file()))
+            at_boundary(ops)
 
     ops.rename = rename
-    with pytest.raises(cp.LedgerError, match="preserved_source_changed"):
+    with pytest.raises(cp.LedgerError) as refused:
         ctx.acknowledge(ops)
+    return str(refused.value), seen
+
+
+def _assert_late_refusal(ctx: Ctx, message: str, seen: list, token: str) -> None:
+    """SV028-10: a late refusal names its stage and what it kept; it never claims that nothing changed."""
+    assert seen == [(True, True)], "the inventory and an earlier copy existed before the late failure"
+    assert message.startswith(token), message
+    assert "nothing was changed" not in message, message
+    assert "the published inventory and the copies already made are kept" in message, message
+    assert not (ctx.session_dir / "ACKNOWLEDGED").exists() and (ctx.session_dir / "STOPPED").exists(), "no carrier"
+    assert ctx.root.file("conversation.json") == DAMAGED and receipts(ctx.root) == [], "no activation, no live deletion"
+    assert (ctx.partial / "MANIFEST").is_file() and (ctx.partial / "session" / "STOPPED").is_file(), "the prefix is retained"
+
+
+def test_sv028_a_source_change_during_copy_keeps_the_published_inventory_and_prior_copies(tmp_path, monkeypatch):
+    # Companions at the same late-copy boundary: the source vanishes, is over the bound [injected], cannot be read.
+    for name, apply, token in (
+        ("missing", lambda c, ops: (c.session_dir / "agent-notes.txt").unlink(), "preserved_source_missing"),
+        ("over-limit", lambda c, ops: monkeypatch.setattr(st, "PRESERVED_FILE_MAX", 4), "preserved_file_too_large"),
+        ("read-error", "read-error", "preservation_unsupported_shape"),
+    ):
+        ctx = make(tmp_path / name, planted=True)
+        ops = PreserveOps(ctx.root.path)
+        if apply == "read-error":
+            def apply(c, ops, real_read=ops.read, target=str(ctx.session_dir / "agent-notes.txt")):
+                ops.read = lambda path, limit: (_ for _ in ()).throw(OSError(errno.EIO, "injected")) if str(path) == target else real_read(path, limit)
+        message, seen = _late_copy_refusal(ctx, lambda o, c=ctx, a=apply: a(c, o), ops=ops)
+        monkeypatch.undo()
+        _assert_late_refusal(ctx, message, seen, token)
+    ctx = make(tmp_path / "changed", planted=True)
+    inventory = inventory_of(ctx)
+    message, seen = _late_copy_refusal(ctx, lambda ops: (ctx.session_dir / "agent-notes.txt").write_bytes(b"changed during the copy"))
+    _assert_late_refusal(ctx, message, seen, "preserved_source_changed")
     manifest = (ctx.partial / "MANIFEST").read_bytes()
     paths = [entry["path"] for entry in json.loads(manifest)["entries"]]
     assert "session/agent-notes.txt" in paths and sha(inventory["session/agent-notes.txt"][0]) in manifest.decode()
@@ -1683,3 +1742,63 @@ def test_sv028_a_source_change_during_copy_keeps_the_published_inventory_and_pri
     assert ctx.root.file("conversation.json") == DAMAGED and receipts(ctx.root) == []
     snapshot_unchanged(ctx, ctx.acknowledge, "preserved_source_changed")
     assert (ctx.partial / "MANIFEST").read_bytes() == manifest, "the published inventory is never rewritten"
+
+
+# ===========================================================================
+# SV028-09: an own torn replacement header is physical, never a logical plan position
+# ===========================================================================
+@pytest.mark.parametrize("case", ["uninterrupted", "header-only-restart", "carrier-retired-restart"])
+def test_sv028_an_own_torn_header_preserves_the_logical_recovery_plan(tmp_path, case):
+    ctx = make(tmp_path, empty_successor=True)
+    ledger = ctx.witness["ledger"]
+    successor = ctx.session_dir / "ledger" / cp.segment_name(ledger["end_segment"])
+    assert ledger["end_segment"] == ledger["last_segment"] + 1 and ledger["end_offset"] == 0, ledger
+    assert successor.is_file() and successor.stat().st_size == 0, "the real writer left an empty successor"
+    inventory = inventory_of(ctx)
+    assert f"session/ledger/{successor.name}" in inventory and inventory[f"session/ledger/{successor.name}"][0] == b""
+    ctx.acknowledge()
+    # Phase B's writer reuses the empty successor; its genuine header write tears (a strict prefix, M-1).
+    last = ctx.root.records()[-1]
+    assert last.segment == ledger["last_segment"] and last.seq == ledger["last_seq"]
+    header, _chain = cp.encode_frame(
+        last.seq + 1, "LEDGER_HEADER",
+        {"lineage_id": LINEAGE, "segment_no": ledger["end_segment"], "first_seq": last.seq + 1, "prev_chain": last.chain}, last.chain,
+    )
+    fragment = header[:70]
+    successor.write_bytes(fragment)
+    scan = cp.scan_segments(cp.read_segments(ctx.session_dir / "ledger"), LINEAGE)
+    assert (scan.tail, scan.tail_segment, scan.tail_offset) == (fragment, ledger["end_segment"], 0)
+    assert cp.classify_tail(scan).kind == "TC1", "provably incomplete: only the torn own header"
+    if case == "uninterrupted":
+        opening = ctx.root.start()
+    else:
+        p1 = armed(ctx)
+        if case == "header-only-restart":
+            p1.crash_when = lambda call, path, frame: call == "write" and frame == "10"  # the receipt: after the header
+        else:
+            p1.crash_when = lambda call, path, frame: call == "unlink" and p1.rel(path) == "session/RECOVERING"
+        crash(ctx, p1, start_with(ctx))
+        headers = [r for r in ctx.root.records() if r.type_name == "LEDGER_HEADER" and r.seq > ledger["last_seq"]]
+        assert len(headers) == 1 and headers[0].segment == ledger["end_segment"], "the replacement header is durable"
+        assert (ctx.session_dir / "RECOVERING").exists(), "the intent is still present"
+        if case == "header-only-restart":
+            assert owned(ctx) == [] and (ctx.session_dir / "ACKNOWLEDGED").exists(), "no logical record yet; the carrier held"
+        else:
+            assert not (ctx.session_dir / "ACKNOWLEDGED").exists(), "the carrier was retired"
+            assert [r.type_name for r in owned(ctx)] == [*plan_types(ctx), "RECOVERY"]
+            assert not (ctx.session_dir / "conversation.json").exists()
+        opening = ctx.root.start()
+    assert (opening.classification, opening.stop) == ("BP", None), opening  # the unchanged runtime: recovery_intent_mismatch
+    opening.session.close()
+    headers = [r for r in ctx.root.records() if r.type_name == "LEDGER_HEADER" and r.seq > ledger["last_seq"]]
+    assert len(headers) == 1 and headers[0].seq == ledger["last_seq"] + 1, "exactly one physical replacement header"
+    assert_activated(ctx, torn=True)  # one logical Π, then T; epoch+1 once; §11 state; no effect; carrier and intent retired
+    tear = owned(ctx)[-1].payload
+    assert tear["detail"]["tail_sha256"] == sha(fragment) and tear["detail"]["bytes"] == len(fragment)
+    assert tear["detail"]["declared_type"] == "01", "T is bound to the original header fragment"
+    assert [n for n in ctx.root.corrupt() if n.startswith(f"ledger-{ledger['end_segment']:06d}-0-")], "the fragment is kept"
+    assert_preserved(ctx.sealed, inventory)
+    count = len(ctx.root.records())
+    again = ctx.root.start()
+    assert again.classification == "A12t" and len(ctx.root.records()) == count, "a later ordinary restart writes nothing"
+    again.session.close()

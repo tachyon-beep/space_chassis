@@ -422,11 +422,25 @@ SWITCH_RECORDS = (*SWITCH_TYPES, "EXTERNAL_DELETE")
 
 
 class AcknowledgementRefused(cp.LedgerError):
-    """A witnessed resolution whose evidence does not verify. Nothing was changed."""
+    """A refused acknowledgement, its message stating its stage.
+
+    A refusal during admission or verification (`_refuse`) happened before any
+    write: nothing was changed. A late refusal while bootstrap-preserving
+    copies its inventory (`_refuse_late`, SV028-10) happens after the inventory
+    and earlier copies were made durable; it says so, and keeps them.
+    """
 
 
 def _refuse(why: str):
     raise AcknowledgementRefused(f"{why}; nothing was changed")
+
+
+def _refuse_late(why: str):
+    """A refusal after archive mutation began: the transaction stops here, with its completed prefix (L3)."""
+    raise AcknowledgementRefused(
+        f"{why}; the transaction stopped while copying: the published inventory and the copies already made are kept"
+        "; no carrier was published, nothing was activated, and STOPPED, the ledger and the live conversation are untouched"
+    )
 
 
 def _sealed(body: dict) -> dict:
@@ -873,15 +887,17 @@ def preservation_domain(session_dir: Path, home_dir: Path) -> list[tuple[str, Pa
     return sorted(found)
 
 
-def _read_source(ops, path: Path, rel: str, limit: int) -> bytes:
+def _read_source(ops, path: Path, rel: str, limit: int, *, late: bool = False) -> bytes:
+    """One bounded read of a source. `late`: during copying, after the inventory -- the refusal says what was kept."""
+    refuse = _refuse_late if late else _refuse
     try:
         return ops.read(str(path), limit)
     except cp.ReadTooLarge:
-        _refuse(f"preserved_file_too_large: {rel} is over {limit} bytes")
+        refuse(f"preserved_file_too_large: {rel} is over {limit} bytes")
     except FileNotFoundError:
-        _refuse(f"preserved_source_missing: {rel} is gone")
+        refuse(f"preserved_source_missing: {rel} is gone")
     except OSError as error:
-        _refuse(f"preservation_unsupported_shape: {rel} cannot be read ({type(error).__name__})")
+        refuse(f"preservation_unsupported_shape: {rel} cannot be read ({type(error).__name__})")
 
 
 def _inventory(domain, ops) -> list[dict]:
@@ -1116,9 +1132,9 @@ def _write_copy(source: Path, dest: Path, data: bytes, ops) -> None:
 
 def _copy_entry(session_dir: Path, home_dir: Path, set_dir: Path, entry: dict, ops) -> None:
     source = _source(session_dir, home_dir, entry["path"])
-    data = _read_source(ops, source, entry["path"], PRESERVED_FILE_MAX)  # read #2
+    data = _read_source(ops, source, entry["path"], PRESERVED_FILE_MAX, late=True)  # read #2, after the boundary
     if len(data) != entry["bytes"] or sha256(data) != entry["sha256"]:
-        _refuse(f"preserved_source_changed: {entry['path']} changed after the inventory; the inventory and earlier copies are kept")
+        _refuse_late(f"preserved_source_changed: {entry['path']} changed after the inventory")
     _write_copy(source, set_dir / entry["path"], data, ops)
 
 
@@ -1822,7 +1838,9 @@ class _Context:
             ]
         core = [*planned[len(own):], *tail_records]
         if preserving.carrier is None:
-            if len(extra) != len(core) or not all(_same_record(record, item) for record, item in zip(extra, core)):
+            # SV028-09: completeness is logical; a replacement header the strict scan accepted is physical only.
+            logical = [record for record in extra if record.type_name != "LEDGER_HEADER"]
+            if len(logical) != len(core) or not all(_same_record(record, item) for record, item in zip(logical, core)):
                 raise StartupStop("recovery_intent_mismatch", {"problem": "a retired activation must already be complete"}, "intent")
             if os.path.lexists(self.session_dir / "conversation.json"):
                 raise StartupStop("recovery_intent_mismatch", {"problem": "the conversation is present after a retired activation"}, "intent")
@@ -2089,16 +2107,23 @@ class _Context:
 
         writer = cp.LedgerWriter.continue_after(session_dir, lineage, now, ops=ops)
         replay = decision.replay
-        for index, record in enumerate(extra):
-            if index < len(core) and not _same_record(record, core[index]):
-                raise StartupStop("recovery_intent_mismatch", {"seq": record.seq}, "intent")
+        # SV028-09: for a preserving recovery a LEDGER_HEADER is physical -- validated by the strict scan,
+        # replayed (charged) and synced like every record -- but never a logical position of Π + T. Every
+        # other mechanism keeps its records' positions exactly as before (logical is extra).
+        logical = tuple(r for r in extra if r.type_name != "LEDGER_HEADER") if preserving is not None else extra
+        position = 0
+        for record in extra:
+            if preserving is None or record.type_name != "LEDGER_HEADER":
+                if position < len(core) and not _same_record(record, core[position]):
+                    raise StartupStop("recovery_intent_mismatch", {"seq": record.seq}, "intent")
+                position += 1
             try:
                 replay.apply(record)
             except ReplayMismatch as error:
                 raise StartupStop("replay_mismatch", {"seq": record.seq, "error": str(error)[:200]}) from error
-        if receipt is not None and len(extra) > len(core):
+        if receipt is not None and len(logical) > len(core):
             # SV023-03: a witnessed recovery writes exactly its core; nothing more is its own.
-            raise StartupStop("recovery_intent_mismatch", {"seq": extra[len(core)].seq}, "intent")
+            raise StartupStop("recovery_intent_mismatch", {"seq": logical[len(core)].seq}, "intent")
         if collecting is not None and not extra:
             # The intent's own fixed list, re-run idempotently -- never a fresh
             # scan -- before this start can write a blob. (With `extra`, its
@@ -2116,7 +2141,7 @@ class _Context:
         session.since_records += replay.work_records
         session.since_bytes += replay.work_bytes
         session.since_unmeasured += replay.work_unmeasured
-        for type_name, payload in core[len(extra):]:
+        for type_name, payload in core[len(logical):]:
             if type_name == "ADOPT":
                 data = payload
                 session._commit(
@@ -2126,7 +2151,7 @@ class _Context:
                 )
             else:
                 session._commit(type_name, payload)
-        after_core = extra[len(core):]
+        after_core = logical[len(core):]
         self._finish_case(session, decision, plan, core, after_core)
         if intent is not None:
             # Records an earlier start wrote under this intent were read here,
