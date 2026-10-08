@@ -4,6 +4,7 @@ A fake runner stands in for subprocess.run, so nothing here starts a container. 
 docker call is `compose config -q`, which only parses the generated override against the base.
 """
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -120,7 +121,7 @@ def test_every_compose_call_names_the_smoke_project_and_env_file(stack):
     argv = runner.calls[-1][0]
     assert argv[:4] == ["docker", "compose", "-p", smoke.project]
     assert smoke.project.startswith("space_chassis_smoke_")
-    assert argv[-8:] == [
+    assert argv[-10:] == [
         "stub",
         "recorder_1",
         "recorder_2",
@@ -129,6 +130,8 @@ def test_every_compose_call_names_the_smoke_project_and_env_file(stack):
         "agent_2",
         "agent_3",
         "diode",
+        "fleet_monitor",
+        "review",
     ]
 
 
@@ -226,3 +229,37 @@ def test_an_interrupted_teardown_is_retried_by_the_next_down(tmp_path):
     smoke.down()
     assert sum("down" in argv for argv in calls) == 2
     assert not smoke.root.exists()
+
+
+def _resolved(smoke) -> dict:
+    """The smoke project as compose resolves it: the base file, the override and the env file."""
+    real = stack_module.SmokeStack(3, root=smoke.root)
+    real._torn_down = True
+    result = real.compose("config", "--format", "json", check=False)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)["services"]
+
+
+def test_prepare_makes_the_bind_sources_the_monitor_and_review_need(stack):
+    smoke, _ = stack
+    smoke.prepare()
+    services = _resolved(smoke)
+    for name in ("fleet_monitor", "review"):
+        binds = [v for v in services[name]["volumes"] if v["type"] == "bind"]
+        assert binds, name
+        for bind in binds:
+            source = Path(bind["source"])
+            if source.is_relative_to(smoke.root):
+                assert source.is_dir(), (name, bind["source"])
+    monitor = services["fleet_monitor"]["environment"]
+    assert monitor["AGENT_SLUGS"] == "agent_1,agent_2,agent_3"
+    assert monitor["QUIET_SECONDS"] == "20"
+    assert services["fleet_monitor"]["image"] == stack_module.SMOKE_IMAGE
+
+
+def test_the_smoke_review_publishes_no_port(stack):
+    smoke, _ = stack
+    smoke.prepare()
+    review = _resolved(smoke)["review"]
+    assert not review.get("ports")
+    assert review["image"] == stack_module.SMOKE_IMAGE

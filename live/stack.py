@@ -40,6 +40,7 @@ import volume_images  # noqa: E402
 
 ALLOWED_VARIABLES = ("PATH", "HOME", "USER", "LANG", "XDG_RUNTIME_DIR")
 SMOKE_IMAGE = "space-chassis-agent:smoke"
+DECLARED_AGENTS = 10
 CONSOLE_SEED = REPO / "llm_console_seed.json"
 DOCKER_TIMEOUT_SECONDS = 120
 BUILD_TIMEOUT_SECONDS = 3600
@@ -105,6 +106,12 @@ class SmokeStack:
             (self.volumes / name / "data").mkdir(parents=True, exist_ok=True)
         for slug in self.slugs:
             (self.volumes / "diode" / "data" / slug / "output").mkdir(parents=True, exist_ok=True)
+        # The monitor and the review panel bind every agent the compose file declares, under its
+        # default slug, and docker refuses a missing bind source: the absent agents' records are
+        # empty directories.
+        for n in range(self.agents + 1, DECLARED_AGENTS + 1):
+            for kind in ("transcripts", "telemetry"):
+                (self.volumes / f"{kind}_agent_{n}" / "data").mkdir(parents=True, exist_ok=True)
         self.cues.mkdir(parents=True, exist_ok=True)
         (self.root / "smoke.env").write_text(self.env_text(), encoding="utf-8")
         (self.root / "override.yml").write_text(self.override_text(), encoding="utf-8")
@@ -156,6 +163,17 @@ class SmokeStack:
             "    volumes:",
             "      - ./contract/fake_diode.py:/opt/fake/fake_diode.py:ro",
             "    networks: !override [windowside]",
+            "  fleet_monitor:",
+            f"    image: {SMOKE_IMAGE}",
+            "    environment:",
+            f"      AGENT_SLUGS: {','.join(self.slugs)}",
+            '      MONITOR_INTERVAL_SECONDS: "5"',
+            '      QUIET_SECONDS: "20"',
+            "  review:",
+            f"    image: {SMOKE_IMAGE}",
+            "    ports: !reset []",
+            "    environment:",
+            f"      AGENT_SLUGS: {','.join(self.slugs)}",
         ]
         return "\n".join(lines) + "\n"
 
@@ -230,7 +248,7 @@ class SmokeStack:
         services = ["stub"]
         services += [f"recorder_{n}" for n in range(1, self.agents + 1)]
         services += [f"agent_{n}" for n in range(1, self.agents + 1)]
-        services.append("diode")
+        services += ["diode", "fleet_monitor", "review"]
         self.compose("up", "-d", *services)
 
     def start(self) -> None:
