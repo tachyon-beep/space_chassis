@@ -66,6 +66,7 @@ class PreparedTree:
         shutil.copy(ROOT / "scripts" / "roster.py", scripts / "roster.py")
         (self.repo / "vendor" / "registry").mkdir(parents=True)
         (self.repo / ".env.example").write_text("OPENROUTER_API_KEY=\n", encoding="utf-8")
+        self.declare(3)
         fields = {
             "log": self.log,
             "root": self.root,
@@ -80,6 +81,11 @@ class PreparedTree:
         ):
             path.write_text(text.format(**fields), encoding="utf-8")
             path.chmod(0o755)
+
+    def declare(self, count: int) -> None:
+        """A compose file declaring count agents, as scripts/build_compose.py would."""
+        services = "".join(f"  agent_{n}:\n    image: x\n" for n in range(1, count + 1))
+        (self.repo / "docker-compose.yml").write_text(f"services:\n{services}", encoding="utf-8")
 
     def run(self, mounted=(), **stubs) -> subprocess.CompletedProcess:
         env = {k: v for k, v in os.environ.items() if not k.startswith(("SPACE_", "FLEET_"))}
@@ -124,6 +130,7 @@ def test_prepare_host_refuses_without_the_crate_registry(tmp_path) -> None:
 
 def test_prepare_host_copies_an_old_roster_into_the_operator_directory_once(tmp_path) -> None:
     tree = _tree(tmp_path)
+    tree.declare(2)
     old = tree.root / "work"
     subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "roster.py"), "--count", "2", "--seed", "3"]
@@ -236,3 +243,16 @@ def test_a_failing_check_exits_1(tmp_path) -> None:
     tree = _tree(tmp_path)
 
     assert tree.run(check=1).returncode == 1
+
+
+def test_a_roster_of_a_different_size_than_the_compose_declares_is_refused(tmp_path) -> None:
+    # Every service binds images named for agents 1..N of the committed compose; the monitor and the
+    # review panel bind them all, so a smaller roster would stop even a bare `compose up`.
+    tree = _tree(tmp_path)
+    tree.declare(10)
+
+    result = tree.run()
+
+    assert result.returncode == 1
+    assert "declares 10 agents" in result.stderr
+    assert not any(call.startswith("volume_images.py plan") for call in tree.calls())

@@ -55,6 +55,18 @@ else
     echo "   seed $ROSTER_SEED (rerun with REROLL=1 to draw again)"
 fi
 
+# docker-compose.yml declares a fixed number of agents, and every one of its services binds images
+# named for agents 1..N -- the monitor and the review panel bind them all -- so a roster of any other
+# size would leave even a bare `compose up` unable to start. Regenerate the compose for another size
+# (scripts/build_compose.py) rather than drawing one here.
+declared=$(grep -c '^  agent_[0-9][0-9]*:$' docker-compose.yml || true)
+drawn=$(sed -n 's/^FLEET_COUNT=//p' .env | tail -n 1)
+if [ "$drawn" != "$declared" ]; then
+    echo "   the roster names ${drawn:-no} agents, but docker-compose.yml declares $declared agents;" >&2
+    echo "   draw $declared (ROSTER_COUNT=$declared REROLL=1), or regenerate the compose for $drawn" >&2
+    exit 1
+fi
+
 ROOT=$("$PYTHON" scripts/volume_images.py root)
 
 echo "== the old layout"
