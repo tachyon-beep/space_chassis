@@ -1,3 +1,11 @@
+# Independent acceptance — SV025
+
+Accepted by OpenAI Astra at immutable head `2ce8bad76c23a86d0962df90525c0c1509bbd126` (test commit `082d5efa3f56bac2b27b85498bf9c049c3cbddbc`). See [ASTRA-ACCEPTANCE.md](ASTRA-ACCEPTANCE.md) for the precise evidence levels and [ASTRA-INITIAL-REVIEW.md](ASTRA-INITIAL-REVIEW.md) for closed findings.
+
+This is acceptance of the test/evidence package, not a numerical recovery guarantee or runtime change. Two exact inequalities have executed default-constant counterexamples; the two others and the aggregate turn maxima remain unproved. Corrected bounds16 passed in one command; unchanged maintenance8 retain their earlier evidence, not24 fresh executions. Services remain unchanged from accepted SV024. All real-session, deployment, source/oracle and product-policy holds remain.
+
+---
+
 # SV-025 status
 
 ## Correction 1 (Astra SV025-01, SV025-02 and two wording items): complete, C1 16 passed. Not accepted.
