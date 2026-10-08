@@ -944,15 +944,21 @@ class _Context:
         # What IDENTITY is carried forward as: never below either checked value.
         high_water = max((v for v in (live, identity) if v is not None), default=None)
         tail_ack = ack if ack and ack.get("reason") == "ledger_tail_ambiguous" else None
-        if tail_ack is not None and intent is None and not scan0.tail:
-            # SV023-04: the acknowledged tail is gone. Only this same transaction
-            # can have set it aside, and then its receipt -- bound to that tail
-            # -- is recorded and only the carrier is left to retire. Otherwise
-            # the permission names bytes that are not here: it grants nothing.
-            if not any(r.type_name == "RECOVERY_ACK" and r.payload == _wire(tail_ack) for r in p0):
-                raise StartupStop("acknowledgement_unverified", {"ack_id": tail_ack["ack_id"], "problem": "the acknowledged tail is not in the ledger"}, "ACK")
-            tail_ack = None
         tail = cp.classify_tail(scan0)
+        if tail_ack is not None and intent is None:
+            # SV023-04/-05: whether this permission was already used is decided by
+            # its exact recorded receipt (bound to its own tail), whatever the
+            # tail is now. Used: it is never applied to another tail; only its
+            # carrier is left to retire. Unused: it applies only to its own
+            # acknowledged bytes. A different tail that would continue under it
+            # (TC0-TC2) is refused before any change; one that stops anyway (TC3,
+            # A2, another TC4) keeps its own ordinary stop, unacknowledged.
+            if any(r.type_name == "RECOVERY_ACK" and r.payload == _wire(tail_ack) for r in p0):
+                tail_ack = None
+            elif not (scan0.tail and sha256(scan0.tail) == tail_ack["tail_sha256"]):
+                if tail.kind in ("TC0", "TC1", "TC2"):
+                    raise StartupStop("acknowledgement_unverified", {"ack_id": tail_ack["ack_id"], "problem": "the acknowledged tail is not the ledger's"}, "ACK")
+                tail_ack = None
         plan = cp.plan_recovery(scan0, tail, read_blob=read_blob, acknowledgement=tail_ack)
         if plan.action == "stop":
             if plan.stop_reason == "ledger_tail_ambiguous":
@@ -1001,6 +1007,9 @@ class _Context:
 
         # Set the tail aside only under a durable intent (see the module docstring).
         if scan0.tail and intent is None:
+            if tail_ack is not None and tail_ack.get("tail_sha256") != sha256(scan0.tail):
+                # SV023-05: an intent's acknowledgement is always for that intent's own tail.
+                raise SessionInvariant("a recovery intent whose acknowledgement names another tail")
             body = {
                 "lineage_id": lineage, "last_seq": scan0.last_seq, "chain": scan0.last_chain,
                 "segment": scan0.tail_segment, "offset": scan0.tail_offset,

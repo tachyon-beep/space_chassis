@@ -1435,3 +1435,119 @@ def test_sv023_04_tc4_keeps_its_conservative_closure_and_identity_across_mixed_c
     assert len(notices) == 1 and "tools may have run" in notices[0].payload["text"]
     assert opening.session.next_label() == f"{LINEAGE}:{reserved + 1}:1"
     assert not (root.session_dir / st.ACKNOWLEDGED).exists() and not (root.session_dir / st.RECOVERING).exists()
+
+
+# ===========================================================================
+# SV-023 correction 2: Astra SV023-05 (written and run against the reviewed code first; checkpoint-002)
+# ===========================================================================
+DAMAGED_MSG_NOTICE = "[runtime] a damaged MSG_APPEND record was lost at recovery"
+
+
+def tc4_consumed_then_notice_damaged(path: Path):
+    """A real TC4 recovery, cut after RECOVERING's durable removal and before the carrier's; then M-3 changes
+    one body byte of its final MSG_APPEND (header and length intact), which classifies TC2."""
+    root = Root(path)
+    establish(root).close()
+    reserved = cs.read_identity(root.session_dir, LINEAGE)
+    with open(root.segment(), "ab") as handle:
+        handle.write(bytes(300))
+    assert root.start().stop == "ledger_tail_ambiguous"
+    st.acknowledge(root.session_dir, "ledger_tail_ambiguous", "continue-conservative")
+    carrier = json.loads((root.session_dir / st.ACKNOWLEDGED).read_text())
+    counts = effects(root)
+    p1 = AckOps()
+    p1.crash_when = lambda call, path, frame: call == "unlink" and path.endswith(st.ACKNOWLEDGED)
+    p1.armed = True
+    with pytest.raises(Crash):
+        root.start(ops=p1)
+    p1.abandon()
+    assert not (root.session_dir / st.RECOVERING).exists() and (root.session_dir / st.ACKNOWLEDGED).exists()
+    assert [r.payload for r in root.records() if r.type_name == "RECOVERY_ACK"] == [carrier], "consumed: its exact receipt"
+    last = root.records()[-1]
+    assert last.type_name == "MSG_APPEND" and last.payload["kind"] == "notice"
+    data = bytearray(root.segment().read_bytes())
+    body = data[last.offset + cp.HEADER_BYTES : last.offset + cp.HEADER_BYTES + len(cp.canonical_body(last.payload))]
+    position = last.offset + cp.HEADER_BYTES + bytes(body).index(b"tools")
+    data[position] = ord("T")
+    root.segment().write_bytes(bytes(data))
+    segments = cp.read_segments(root.session_dir / "ledger")
+    scan = cp.scan_segments(segments, LINEAGE)
+    tail = cp.classify_tail(scan)
+    assert (tail.kind, tail.declared_type, scan.records[-1].seq) == ("TC2", "MSG_APPEND", last.seq - 1)
+    return root, p1, carrier, reserved, counts, bytes(data[last.offset :])
+
+
+def assert_consumed_once_and_tail_recovered(root: Root, carrier: dict, reserved: int, counts: tuple, damaged: bytes) -> None:
+    records = root.records()
+    assert [r.payload for r in records if r.type_name == "RECOVERY_ACK"] == [carrier], "only the original tail-bound receipt"
+    spend = [r.payload for r in records if r.type_name == "RECOVERY" and r.payload["kind"] == "possible_duplicate_spend"]
+    assert len(spend) == 1 and spend[0]["detail"]["next"] == {"turn_seq": reserved + 1, "attempt": 1}, "one conservative transition"
+    final = [r.payload for r in records if r.type_name == "RECOVERY" and r.payload["kind"] == "damaged_final"]
+    digest = __import__("hashlib").sha256(damaged).hexdigest()
+    assert len(final) == 1 and final[0]["detail"]["type"] == "0a" and final[0]["detail"]["tail_sha256"] == digest
+    notices = [r.payload["text"] for r in records if r.type_name == "MSG_APPEND" and r.payload.get("kind") == "notice"]
+    assert notices.count(DAMAGED_MSG_NOTICE) == 1, "the ordinary damaged-message recovery"
+    copies = [n for n in root.corrupt() if n.startswith("ledger-") and digest[:16] in n]
+    assert len(copies) == 1 and (root.session_dir / "corrupt" / copies[0]).read_bytes() == damaged
+    assert effects(root) == counts, "no request or tool"
+    assert cs.read_identity(root.session_dir, LINEAGE) == reserved + 1, "the high-water is the conservative one, once"
+    for name in (st.ACKNOWLEDGED, st.RECOVERING, st.STOPPED, st.FSYNC_FAILED):
+        assert not (root.session_dir / name).exists(), name
+    opening = root.start()
+    assert opening.stop is None and opening.session.next_label() == f"{LINEAGE}:{reserved + 1}:1"
+    assert len(root.records()) == len(records), "a further start writes nothing"
+
+
+def test_sv023_05_a_consumed_tc4_permission_is_not_applied_to_an_independent_damaged_tail(tmp_path):
+    root, p1, carrier, reserved, counts, damaged = tc4_consumed_then_notice_damaged(tmp_path)
+    p2 = AckOps(p1)
+    opening = root.start(ops=p2)
+    assert opening.stop is None, opening
+    opening.session.close()
+    host_loss(p2)
+    assert_consumed_once_and_tail_recovered(root, carrier, reserved, counts, damaged)
+
+
+def test_sv023_05_an_interrupted_independent_tail_recovery_has_no_acknowledgement_and_converges(tmp_path):
+    root, p1, carrier, reserved, counts, damaged = tc4_consumed_then_notice_damaged(tmp_path)
+    p2 = AckOps(p1)
+    p2.crash_when = lambda call, path, frame: p2.log[-2:] == [("rename", st.RECOVERING, None), ("sync_dir", "session", None)]
+    p2.armed = True
+    with pytest.raises(Crash):  # immediately after the new RECOVERING is durable
+        root.start(ops=p2)
+    p2.abandon()
+    intent = json.loads((root.session_dir / st.RECOVERING).read_text())
+    assert intent["ack"] is None, "the independent TC2 transaction carries no acknowledgement"
+    assert intent["tail_sha256"] == __import__("hashlib").sha256(damaged).hexdigest()
+    p3 = AckOps(p2)  # first restart: dies again inside the quarantine, before truncation
+    p3.crash_when = lambda call, path, frame: call == "truncate"
+    p3.armed = True
+    with pytest.raises(Crash):
+        root.start(ops=p3)
+    p3.abandon()
+    host_loss(p3)
+    p4 = AckOps(p3)  # second restart completes
+    opening = root.start(ops=p4)
+    assert opening.stop is None, opening
+    opening.session.close()
+    host_loss(p4)
+    assert_consumed_once_and_tail_recovered(root, carrier, reserved, counts, damaged)
+
+
+def test_sv023_05_control_without_a_recorded_receipt_a_different_present_tail_is_refused(tmp_path):
+    root = Root(tmp_path)
+    establish(root).close()
+    end = root.segment().stat().st_size
+    with open(root.segment(), "ab") as handle:
+        handle.write(bytes(300))
+    assert root.start().stop == "ledger_tail_ambiguous"
+    st.acknowledge(root.session_dir, "ledger_tail_ambiguous", "continue-conservative")
+    os.truncate(root.segment(), end)
+    with open(root.segment(), "ab") as handle:
+        handle.write(b"SVL1 0000")  # a different, torn (TC1) tail, not the acknowledged bytes
+    assert cp.classify_tail(cp.scan_segments(cp.read_segments(root.session_dir / "ledger"), LINEAGE)).kind == "TC1"
+    before = root.snapshot()
+    opening = root.start()
+    assert opening.stop == "acknowledgement_unverified", opening
+    _only_stop_changed(before, root.snapshot())
+    assert root.types().count("RECOVERY_ACK") == 0 and not (root.session_dir / st.RECOVERING).exists()
