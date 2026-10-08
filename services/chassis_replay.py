@@ -274,22 +274,56 @@ def retain_originals(originals: list, added: list) -> list:
     return kept
 
 
-class Replay:
-    """Messages + state + open group, advanced one record at a time by `apply`."""
+def uncharged(record) -> bool:
+    """A replay interval's origin (SV026): the newest CHECKPOINT's own frame, or the genesis header (seq 1)."""
+    return record.type_name == "CHECKPOINT" or (record.type_name == "LEDGER_HEADER" and record.seq == 1)
 
-    def __init__(self, messages: list, state: SessionState, read_blob, *, lenient: bool = False) -> None:
+
+class Replay:
+    """Messages + state + open group, advanced one record at a time by `apply`.
+
+    It also sums the replay work it performs (SV026, v2 1.4.7): one record and
+    its frame for every record except an interval origin, plus the blob bytes
+    each fetch obtained -- before the hash decision -- while applying it.
+    Fetches whose amount is unknown (an I/O error) are counted, not guessed.
+    """
+
+    def __init__(self, messages: list, state: SessionState, read_blob=None, *, lenient: bool = False, fetch_blob=None) -> None:
+        if (read_blob is None) == (fetch_blob is None):
+            raise TypeError("a Replay takes exactly one of read_blob and fetch_blob")
         self.messages = messages
         self.state = state
         self.group: Group | None = None
-        self.read_blob = read_blob  # sha -> bytes | None
+        # sha -> bytes | None; or sha -> chassis_persistence.BlobRead, which reports what each read cost
+        self.fetch_blob = fetch_blob
+        self.read_blob = read_blob or (lambda sha: fetch_blob(sha).data)
         # Lenient: the base list is unknown (it is about to be replaced by an
         # external edit, deletion or reimport), so checks against its length
         # are skipped; the state and group are still exact.
         self.lenient = lenient
+        self.work_records = 0  # lifetime sums of this instance's replay work
+        self.work_bytes = 0
+        self.work_unmeasured = 0
+        self._obtained = 0  # for the record being applied
+        self._unmeasured = 0
 
     # -- helpers -------------------------------------------------------------
+    def _read(self, sha: str) -> bytes | None:
+        """The one blob read path of the reducer: the payload, its cost added to this record's work."""
+        if self.fetch_blob is None:
+            data = self.read_blob(sha)
+            obtained = len(data) if data is not None else None
+        else:
+            result = self.fetch_blob(sha)
+            data, obtained = result.data, result.obtained
+        if obtained is None:
+            self._unmeasured += 1
+        else:
+            self._obtained += obtained
+        return data
+
     def _blob(self, sha: str, what: str) -> bytes:
-        data = self.read_blob(sha)
+        data = self._read(sha)
         if data is None:
             raise ReplayMismatch(f"the blob for {what} ({sha}) is missing or damaged")
         return data
@@ -353,8 +387,13 @@ class Replay:
     def apply(self, record) -> None:
         name, payload = record.type_name, record.payload
         handler = getattr(self, f"_on_{name.lower()}", None)
+        self._obtained = self._unmeasured = 0
         if handler is not None:
-            handler(record, payload)
+            handler(record, payload)  # a refusal raises here: nothing is charged
+        if not uncharged(record):
+            self.work_records += 1
+            self.work_bytes += record.length + self._obtained
+            self.work_unmeasured += self._unmeasured
 
     def _on_request_sent(self, record, payload) -> None:
         self._require_boundary("REQUEST_SENT")
@@ -409,7 +448,7 @@ class Replay:
         group = self.group
         if group is None or group.turn_seq != payload["turn_seq"] or payload["call_index"] not in group.invoking:
             raise ReplayMismatch(f"DONE {payload['turn_seq']}/{payload['call_index']} without its INVOKING")
-        data = self.read_blob(payload["blob"])
+        data = self._read(payload["blob"])
         if data is not None:
             text = data.decode("utf-8", "replace")
         elif payload["outcome"] == "returned":

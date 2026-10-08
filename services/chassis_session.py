@@ -25,7 +25,14 @@ this run held.
 * **Collection (SV-022).** With `collect=True`, each checkpoint is followed at
   once by one bounded GC unit (`chassis_gc`): GC_INTENT (synced) -> the
   intent's unlinks and fences -> GC_DONE. A refused plan deletes nothing; a
-  failed unlink or fence is a persistence failure like any other.
+  failed unlink or fence is a persistence failure like any other. A GC unit
+  that reaches the threshold gets one non-collecting follow-up checkpoint.
+* **Replay work (SV026).** `since_records`/`since_bytes` are the work a replay
+  of the interval does after its origin (the newest checkpoint's own frame,
+  or the genesis header): every later frame, headers included, and the blob
+  bytes the reducer obtained. A start rebuilds them from its selected replay.
+  The threshold is checked after each closed unit: direct units, adoption and
+  drops, the startup transaction, and GC.
 """
 
 from __future__ import annotations
@@ -144,8 +151,12 @@ class Session:
         self.identity_reserved = identity_reserved
         self.records_max = records_max
         self.bytes_max = bytes_max
+        # The replay work outstanding since the interval origin (SV026): records
+        # and frame-plus-obtained-blob bytes, and the blob fetches whose amount
+        # is unknown (when nonzero, since_bytes is the measured part only).
         self.since_records = 0
         self.since_bytes = 0
+        self.since_unmeasured = 0
         self.queue: list[tuple[str, str]] = []
         self.broken = False
         self.marker_written: bool | None = None
@@ -156,10 +167,15 @@ class Session:
             lambda _messages, data, rotate: cp.install_conversation(self.session_dir, data, ops=self.ops, rotate=rotate)
         )
         # The legacy run.json keys (agent, name, run, turn, ...); CK5 adds the rest.
-        self.meta_source = meta_source or dict
+        # `meta_source(messages)` is given the list this checkpoint installs
+        # (SV026): at a startup checkpoint, its owner does not hold the session yet.
+        self.meta_source = meta_source or (lambda _messages: {})
         # SV-022 activation boundary: only the chassis's run passes collect=True.
         self.collect = collect
         self.gc_batch_max = gc_batch_max
+        # A header this writer already wrote (a reused segment's) is charged;
+        # the genesis header is the origin and is not.
+        self._claim_headers()
 
     @classmethod
     def start_fresh(cls, session_dir: Path, home_dir: Path, lineage_id: str, *, ops: cp.DurableOps | None = None, **kwargs) -> Session:
@@ -175,7 +191,7 @@ class Session:
             # writing; a failed mkdir is still a session persistence failure.
             cp.mark_fsync_failed(session_dir, f"{type(error).__name__}: {error}", ops=ops)
             raise
-        replay = Replay([], SessionState(lineage_id), lambda sha: writer.blobs.get(sha, BLOB_READ_MAX))
+        replay = Replay([], SessionState(lineage_id), fetch_blob=lambda sha: writer.blobs.fetch(sha, BLOB_READ_MAX))
         return cls(session_dir, home_dir, writer, replay, ops=ops, identity_reserved=0, **kwargs)
 
     # -- views ---------------------------------------------------------------
@@ -213,8 +229,12 @@ class Session:
             self.marker_written = cp.mark_fsync_failed(self.session_dir, f"{type(error).__name__}: {error}", ops=self.ops)
         raise PersistenceFailure(f"{type(error).__name__}: {error}") from error
 
-    def _commit(self, type_name: str, payload, *, blob: bytes | None = None, replay_bytes: int = 0) -> cp.Record:
-        """Append one synced record (its blob first), then apply the reducer to it."""
+    def _commit(self, type_name: str, payload, *, blob: bytes | None = None) -> cp.Record:
+        """Append one synced record (its blob first), then apply the reducer to it.
+
+        The record is charged what that apply did (SV026): its frame and the blob
+        bytes the reducer obtained -- the same measure a later replay applies.
+        """
         self._usable()
         try:
             if blob is None:
@@ -223,16 +243,31 @@ class Session:
                 record = self.writer.append_with_blob(type_name, blob, payload)
         except cp.PersistenceFailure as error:
             self._fail(error)
+        replay = self.replay
+        before = (replay.work_records, replay.work_bytes, replay.work_unmeasured)
         try:
-            self.replay.apply(record)
+            replay.apply(record)
         except rp.ReplayMismatch as error:
             # Durable, but not a record this state could have produced: stop
             # here; the next start's replay refuses it the same way.
             self.broken = True
             raise SessionInvariant(f"{type_name}: {error}") from error
-        self.since_records += 1
-        self.since_bytes += record.length + replay_bytes
+        self.since_records += replay.work_records - before[0]
+        self.since_bytes += replay.work_bytes - before[1]
+        self.since_unmeasured += replay.work_unmeasured - before[2]
         return record
+
+    def _claim_headers(self) -> None:
+        """Charge the LEDGER_HEADERs the writer has durably written since the last claim (SV026).
+
+        A header is an actual frame of the interval replay walks; only the
+        genesis header (seq 1) is an interval origin and is not charged.
+        """
+        for seq, length in self.writer.take_opened_headers():
+            if seq == 1:
+                continue
+            self.since_records += 1
+            self.since_bytes += length
 
     def _put_blob(self, data: bytes) -> str:
         self._usable()
@@ -336,7 +371,6 @@ class Session:
                 "replaced_chars": info["replaced_chars"],
             },
             blob=data,
-            replay_bytes=len(data),
         )
 
     def end_group(self, call: envelope.StoredCall, stop: BaseException, *, ended_text: str, how: str, termination=None) -> None:
@@ -380,7 +414,7 @@ class Session:
         if len(data) <= INLINE_TEXT_BYTES:
             self._commit("MSG_APPEND", {**payload, "text": text})
         else:
-            self._commit("MSG_APPEND", lambda blob: {**payload, "blob": blob}, blob=data, replay_bytes=len(data))
+            self._commit("MSG_APPEND", lambda blob: {**payload, "blob": blob}, blob=data)
 
     def append_message(self, kind: str, text) -> None:
         """A direct say/note/notice: one MSG_APPEND unit (<= 1 MiB escaped, v2 1.4.6)."""
@@ -423,6 +457,7 @@ class Session:
             raise ValueError("a handoff note must be text")
         if len(self.state.notes_pending) >= rp.MAX_PENDING_NOTES:
             self._drop_note(len(note.encode("utf-8", "replace")))
+            self.threshold_boundary()  # a closed unit unless inside a tool group (SV026)
             return None
         text, _info = envelope.truncate_marked(note.strip(), self.caps.note)
         file_text = f"{header}\n\n{text}\n"
@@ -468,6 +503,7 @@ class Session:
             return None
         if len(self.state.notes_pending) >= rp.MAX_PENDING_NOTES:
             self._drop_note(len(data))
+            self.threshold_boundary()
             return None
         stored, _info = envelope.truncate_marked(data.decode("utf-8", "replace"), self.caps.note)
         blob = stored.encode("utf-8")
@@ -477,6 +513,7 @@ class Session:
             lambda key: {"gen": gen, "blob": key, "bytes": len(blob), "sha256": key, "source": "file_edit", "mirror_sha256": digest},
             blob=blob,
         )
+        self.threshold_boundary()
         return gen
 
     def adopt_notes(self) -> list[int]:
@@ -487,6 +524,10 @@ class Session:
         without being appended again (`adopted_by_foreign_runtime`). The mark
         is per generation, never by text, so a later generation with equal
         text is still appended.
+
+        Each generation, and the notice, is one closed unit (SV026): the
+        watermark, the pending generations and their marks are checkpoint
+        state, so a threshold checkpoint between them is a consistent resume.
         """
         self._require_boundary("note adoption")
         adopted = []
@@ -495,11 +536,13 @@ class Session:
             payload = {"kind": "note", "gen": entry["gen"], "blob": entry["blob"], "epoch": self.state.history_epoch}
             if foreign:
                 payload["foreign"] = True
-            self._commit("MSG_APPEND", payload, replay_bytes=0 if foreign else entry["bytes"])
+            self._commit("MSG_APPEND", payload)
             if not foreign:
                 adopted.append(entry["gen"])
+            self.threshold_boundary()
         if self.state.notes_dropped:
             self._append("notice", rp.DROPPED_NOTE_NOTICE.format(count=rp.MAX_PENDING_NOTES), reports="note_dropped_pending_limit")
+            self.threshold_boundary()
         return adopted
 
     # -- history and recap -----------------------------------------------------------
@@ -521,7 +564,6 @@ class Session:
             "HISTORY_REPLACED",
             lambda blob: {"epoch": epoch, "new_blob": blob, "new_count": count, "new_sha256": digest},
             blob=data,
-            replay_bytes=len(data),
         )
         self.checkpoint()
 
@@ -533,20 +575,38 @@ class Session:
         self._commit("RECAP_FOLD", {"from": start, "to": end, "lines": lines})
 
     # -- checkpoints (CK1-CK6), thresholds and rotation -----------------------------
+    def _over(self) -> bool:
+        return self.since_records >= self.records_max or self.since_bytes >= self.bytes_max
+
     def unit_end(self) -> None:
         """After a unit: checkpoint on the v2 1.4.1 threshold, else rotate a full segment."""
         if self.broken or self.replay.group is not None or self.queue:
             return
-        if self.since_records >= self.records_max or self.since_bytes >= self.bytes_max:
+        if self._over():
             self.checkpoint()
         else:
             self._rotate()
+
+    def threshold_boundary(self) -> None:
+        """After a unit that is not a rotation point -- startup, adoption, a drop (SV026).
+
+        The same guards and threshold as `unit_end`, but it never rotates (R-D):
+        a full segment rotates at the next `unit_end` or the end of the next
+        checkpoint, as before.
+        """
+        if self.broken or self.replay.group is not None or self.queue:
+            return
+        if self._over():
+            self.checkpoint()
 
     def _rotate(self) -> None:
         try:
             self.writer.rotate_if_full()
         except cp.PersistenceFailure as error:
             self._fail(error)
+        # A new header is charged to the interval it opens in, and is evaluated
+        # at the next closed unit: it never triggers a checkpoint itself.
+        self._claim_headers()
 
     def _retained_prev(self) -> tuple[bool, dict | None]:
         """CK3's choice (SV021-02): keep a bound snapshot as conversation.prev.json, and name it.
@@ -565,8 +625,15 @@ class Session:
             return False, dict(kept)
         return True, dict(current) if current is not None else None
 
-    def checkpoint(self, ended: dict | None = None) -> cp.Record:
-        """CK1 serialize; CK2-CK4 install (a bound prev kept); CK5 run.json; CK6 CHECKPOINT."""
+    def checkpoint(self, ended: dict | None = None, *, follow_up: bool = False) -> cp.Record:
+        """CK1 serialize; CK2-CK4 install (a bound prev kept); CK5 run.json; CK6 CHECKPOINT.
+
+        Then, with `collect`, one GC unit. A GC unit is a unit too (v2 1.4.1):
+        if its two records reach the threshold, exactly one follow-up
+        checkpoint is written at once, with the same `ended`. The follow-up
+        never collects (GC after CK6 is optional), so it cannot re-enter; it is
+        the record returned, and the one rotation happens after it (SV026 G2).
+        """
         self._usable()
         if self.replay.group is not None or self.queue:
             raise SessionInvariant("a checkpoint is never written inside a tool group or with queued messages (CKG)")
@@ -588,7 +655,7 @@ class Session:
             raise SessionInvariant("the installed conversation is not the serialized list")
         covers = self.writer.next_seq - 1
         conv = {"sha256": conv_sha, "bytes": len(data)}
-        meta = dict(self.meta_source())
+        meta = dict(self.meta_source(self.messages))
         meta.update(
             {
                 "format": FORMAT,
@@ -616,13 +683,14 @@ class Session:
         }
         record = self._commit("CHECKPOINT", payload)
         self.checkpoints[conv_sha] = checkpoint_tuple(record)
-        self.since_records = self.since_bytes = 0
-        if self.collect:
-            self._collect(record)
+        self.since_records = self.since_bytes = self.since_unmeasured = 0
+        collected = self.collect and not follow_up and self._collect(record)
+        if collected and self._over():
+            return self.checkpoint(ended, follow_up=True)
         self._rotate()
         return record
 
-    def _collect(self, newest: cp.Record) -> None:
+    def _collect(self, newest: cp.Record) -> bool:
         """One GC unit right after CK6 (v2 1.4.5): GC_INTENT -> unlinks and fences -> GC_DONE.
 
         The plan is made from the ledger as read back and verified now, never
@@ -630,21 +698,22 @@ class Session:
         refusal deletes nothing and the run goes on. Once the intent is
         durable, a failed unlink or fence breaks the session (FSYNC_FAILED
         attempted once, no GC_DONE, no further effect); the next start finishes
-        the same intent. It never checkpoints, so it cannot recurse.
+        the same intent. It never checkpoints itself. True only once its
+        GC_DONE is durable: only then may `checkpoint` write its one follow-up.
         """
         blocked = [name for name in GC_BLOCKERS if (self.session_dir / name).exists()]
         if blocked:
             self.lifecycle("gc_refused", reason=f"unresolved: {', '.join(blocked)}")
-            return
+            return False
         try:
             scan = cp.scan_segments(cp.read_segments(self.writer.ledger_dir, ops=self.ops), self.lineage_id)
         except OSError as error:
             self.lifecycle("gc_refused", reason=f"ledger unreadable: {type(error).__name__}")
-            return
+            return False
         last = scan.records[-1] if scan.records else None
         if scan.stop or scan.tail or last is None or (last.seq, last.chain) != (newest.seq, newest.chain):
             self.lifecycle("gc_refused", reason="the ledger read back does not end at this checkpoint")
-            return
+            return False
         try:
             plan = gc.plan_collection(
                 scan.records, active_segment=self.writer.segment_no, blob_names=gc.blob_names(self.writer.blobs.dir),
@@ -653,12 +722,12 @@ class Session:
             problem = None if plan is None else gc.intent_problem(plan.payload, scan.records, active_segment=self.writer.segment_no)
         except gc.GCRefused as refusal:
             self.lifecycle("gc_refused", reason=refusal.reason)
-            return
+            return False
         if plan is None:
-            return
+            return False
         if problem:
             self.lifecycle("gc_refused", reason=problem)
-            return
+            return False
         intent = self._commit("GC_INTENT", plan.payload)
         try:
             gc.unlink_intent(self.session_dir, plan.payload, self.ops)
@@ -673,6 +742,7 @@ class Session:
             "gc_collected", intent_seq=intent.seq, records_through=floor,
             segments=len(plan.payload["segments"]), blobs=len(plan.payload["blobs"]), leftover=plan.leftover,
         )
+        return True
 
     def record_run_end(self, exit_code: int, reason: str) -> None:
         """RUN_END, best-effort (v2 1.2): a failure here changes no exit."""

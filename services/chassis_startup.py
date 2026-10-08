@@ -917,10 +917,11 @@ class _Context:
             }
         if conv.status == "ok":
             data = rp.conversation_bytes(messages)
-            session._commit("LEGACY_IMPORT", lambda blob: {**payload, "blob": blob}, blob=data, replay_bytes=len(data))
+            session._commit("LEGACY_IMPORT", lambda blob: {**payload, "blob": blob}, blob=data)
         else:
             session._commit("LEGACY_IMPORT", payload)
         self._consume_ack(session)
+        session.threshold_boundary()  # SV026: the import is a closed unit
         classification = "A5" if conv.status == "ok" else "A4"
         return Opening(classification, session, had_memory=bool(messages) or note_text is not None)
 
@@ -942,7 +943,9 @@ class _Context:
         format2 = authority != "rollback"
         ops, session_dir = self.ops, self.session_dir
         blobs = cp.BlobStore(session_dir / "blobs", ops=ops)
-        read_blob = lambda sha: blobs.get(sha, BLOB_READ_MAX)  # noqa: E731
+        read_blob = lambda sha: blobs.get(sha, BLOB_READ_MAX)  # noqa: E731 -- planning reads: not replay work
+        # SV026: the selected replay's reads, each reporting what it obtained.
+        fetch_blob = lambda sha: blobs.fetch(sha, BLOB_READ_MAX)  # noqa: E731
         intent_status, intent = _read_json_object(ops, session_dir / RECOVERING, cp.MAX_MARKER_READ)
         if intent_status == "unreadable":
             raise StartupStop("recovery_intent_unreadable", None, "intent")
@@ -1020,7 +1023,7 @@ class _Context:
         # SV-023: only a strictly clean end with no transaction of its own can witness an A14 stop.
         self.clean_end = scan0 if intent is None and tail.kind == "TC0" and collecting is None else None
 
-        decision = self._classify_base(p0, extra, format2, lineage, read_blob)
+        decision = self._classify_base(p0, extra, format2, lineage, read_blob, fetch_blob=fetch_blob)
         if self.witnessed is not None and decision.case not in ("A9", "A9t"):
             raise StartupStop("acknowledgement_unverified", {"problem": f"classified {decision.case}"}, "ACK")
         try:
@@ -1100,7 +1103,12 @@ class _Context:
             session_dir, self.home_dir, writer, replay, ops=ops, lifecycle=self.lifecycle,
             checkpoints=decision.checkpoints, identity_reserved=high_water, **self.session_kwargs,
         )
-        session.since_records = decision.suffix_records + len(extra)
+        # SV026: the work of the selected replay -- the suffix after its origin
+        # and this transaction's readable extras -- added to any reuse header
+        # the session already claimed; each record committed below adds its own.
+        session.since_records += replay.work_records
+        session.since_bytes += replay.work_bytes
+        session.since_unmeasured += replay.work_unmeasured
         for type_name, payload in core[len(extra):]:
             if type_name == "ADOPT":
                 data = payload
@@ -1108,7 +1116,6 @@ class _Context:
                     "RECOVERY",
                     lambda blob: {"kind": "conversation_adopted", "detail": {"conv_sha": sha256(data), "blob": blob}},
                     blob=data,
-                    replay_bytes=len(data),
                 )
             else:
                 session._commit(type_name, payload)
@@ -1133,6 +1140,11 @@ class _Context:
         target = max([*used, session.state.requests_next["turn_seq"], high_water or 0])
         session.identity_reserved = live  # what the file actually holds: rewrite it if missing or lower
         session.reserve_turns(target, exact=True)
+        # SV026: the startup transaction is one closed unit. Only now -- after
+        # the extras' syncs, the carrier and RECOVERING retired durably, and
+        # IDENTITY covering every used turn -- may its threshold checkpoint be
+        # written: under an intent it would be an unplanned extra.
+        session.threshold_boundary()
         had_memory = bool(session.messages) or bool(session.state.notes_pending)
         return Opening(decision.case, session, had_memory=had_memory)
 
@@ -1175,7 +1187,14 @@ class _Context:
         return p0, extra, data
 
     # -- base classification (A8-A14) ------------------------------------------------
-    def _classify_base(self, p0, extra, format2: bool, lineage: str, read_blob) -> _Decision:
+    def _classify_base(self, p0, extra, format2: bool, lineage: str, read_blob, *, fetch_blob=None) -> _Decision:
+        """The base decision and its one selected replay.
+
+        `read_blob(sha) -> bytes | None` is the accepted reader. With
+        `fetch_blob` (SV026, recovery's own call) every candidate replay reads
+        through it instead, so the selected one reports the work it did.
+        """
+        reader = {"fetch_blob": fetch_blob} if fetch_blob is not None else {"read_blob": read_blob}
         session_dir = self.session_dir
         conv = read_conversation(session_dir / "conversation.json", self.ops)
         prev = read_conversation(session_dir / "conversation.prev.json", self.ops)
@@ -1187,16 +1206,16 @@ class _Context:
         newest_bytes = None  # C_n's exact bytes, when some file or the previous base yields them
         try:
             if newest is None:
-                strict = _replay([], SessionState(lineage), p0, read_blob)
+                strict = _replay([], SessionState(lineage), p0, **reader)
                 state_n = None
             else:
                 state_n = SessionState.from_wire(newest.payload["state"])
                 base = next((f for f in (conv, prev) if f.status == "ok" and f.sha == newest.payload["conv"]["sha256"]), None)
                 if base is not None:
                     newest_bytes = base.data
-                    strict = _replay(json.loads(base.data), state_n.copy(), suffix, read_blob)
+                    strict = _replay(json.loads(base.data), state_n.copy(), suffix, **reader)
                 else:
-                    strict, newest_bytes = self._previous_base(p0, newest, state_n, (conv, prev), suffix, read_blob)
+                    strict, newest_bytes = self._previous_base(p0, newest, state_n, (conv, prev), suffix, reader)
         except rp.StateError as error:
             raise StartupStop("checkpoint_state_invalid", {"error": str(error)[:200]}) from error
         except ReplayMismatch as error:
@@ -1204,7 +1223,7 @@ class _Context:
 
         def lenient() -> Replay:
             try:
-                return _replay([], state_n.copy(), suffix, read_blob, lenient=True)
+                return _replay([], state_n.copy(), suffix, lenient=True, **reader)
             except ReplayMismatch as error:
                 raise StartupStop("replay_mismatch", {"error": str(error)[:200]}) from error
 
@@ -1220,7 +1239,7 @@ class _Context:
         # interval records or blobs, so it is never offered as a later `prev`.
         collected = max((r.payload["records_through"] for r in p0 if r.type_name == "GC_INTENT"), default=0)
         known = {r.payload["conv"]["sha256"]: checkpoint_tuple(r) for r in checkpoints if r.seq > collected}
-        decision = _Decision("", strict, conv, newest, suffix, known, len(suffix), carried=carried, kind=kind, bound=bound)
+        decision = _Decision("", strict, conv, newest, suffix, known, carried=carried, kind=kind, bound=bound)
         if not format2:
             consumed = kind not in ("checkpoint", "start") and (
                 (conv.status == "ok" and conv.sha == bound) or (conv.status == "absent" and bound is None)
@@ -1261,10 +1280,12 @@ class _Context:
             decision.replay = lenient()
         return decision
 
-    def _previous_base(self, p0, newest, state_n: SessionState, files, suffix, read_blob):
+    def _previous_base(self, p0, newest, state_n: SessionState, files, suffix, reader: dict):
         """A14's previous base (v2 1.4.4): replay through C_n, verify its hash, then the suffix.
 
         Returns (replay, C_n's bytes) or (None, None) when no file holds the named previous base.
+        The interval runs on its own instance (`middle`); the returned replay
+        holds only the suffix's work, the interval the newest threshold governs (SV026).
         """
         prev_info = newest.payload["prev"]
         if not prev_info:
@@ -1275,11 +1296,11 @@ class _Context:
             return None, None
         state_p = SessionState.from_wire(older.payload["state"])
         interval = [r for r in p0 if prev_info["covers_seq"] < r.seq <= newest.payload["covers_seq"]]
-        middle = _replay(json.loads(base.data), state_p, interval, read_blob)
+        middle = _replay(json.loads(base.data), state_p, interval, **reader)
         middle_bytes = rp.conversation_bytes(middle.messages)
         if sha256(middle_bytes) != newest.payload["conv"]["sha256"]:
             raise StartupStop("replay_mismatch", {"at": newest.payload["covers_seq"]}, "A14")
-        replay = Replay(middle.messages, state_n.copy(), read_blob)
+        replay = Replay(middle.messages, state_n.copy(), **reader)
         for record in suffix:
             replay.apply(record)
         return replay, middle_bytes
@@ -1317,7 +1338,7 @@ class _Context:
                 payload["foreign_gens"] = foreign
             if messages:
                 data = rp.conversation_bytes(messages)
-                session._commit(name, lambda blob: {**payload, "blob": blob}, blob=data, replay_bytes=len(data))
+                session._commit(name, lambda blob: {**payload, "blob": blob}, blob=data)
             else:
                 session._commit(name, payload)
             return
@@ -1394,7 +1415,6 @@ class _Decision:
     newest: object
     suffix: list
     checkpoints: dict  # conversation sha -> the `prev` tuple of its newest CHECKPOINT
-    suffix_records: int
     carried: bool = False  # the binding switch is this recovery's own and carried its notices
     adopt: tuple | None = None  # A10: ("ADOPT", file bytes), written before the core
     restore: bytes | None = None  # A14: the newest checkpoint's bytes
@@ -1516,8 +1536,9 @@ def witnessed_context_problem(context, last_seq: int) -> str | None:
     return None
 
 
-def _replay(messages, state: SessionState, records, read_blob, *, lenient: bool = False) -> Replay:
-    replay = Replay(messages, state, read_blob, lenient=lenient)
+def _replay(messages, state: SessionState, records, read_blob=None, *, lenient: bool = False, fetch_blob=None) -> Replay:
+    """`read_blob` for verification replays (witness evidence); `fetch_blob` for the base decision's candidates (SV026)."""
+    replay = Replay(messages, state, read_blob, lenient=lenient, fetch_blob=fetch_blob)
     for record in records:
         replay.apply(record)
     return replay

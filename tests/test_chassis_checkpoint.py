@@ -56,7 +56,7 @@ def test_the_conversation_stays_a_plain_list_in_todays_serialization(tmp_path):
 def test_run_json_keeps_the_legacy_keys_and_mirrors_the_checkpoint(tmp_path):
     root = Root(tmp_path)
     session = establish(root)
-    session.meta_source = lambda: {"agent": "a", "name": "n", "run": "r", "turn": 3}
+    session.meta_source = lambda _messages: {"agent": "a", "name": "n", "run": "r", "turn": 3}
     record = session.checkpoint(ended={"exit": 0, "reason": "finish", "at": "t", "run": "r"})
     meta = json.loads(root.file("run.json"))
     assert {k: meta[k] for k in ("agent", "name", "run", "turn")} == {"agent": "a", "name": "n", "run": "r", "turn": 3}

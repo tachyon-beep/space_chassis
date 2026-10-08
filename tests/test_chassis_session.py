@@ -76,7 +76,7 @@ TWO = [("call_a", "read_file", '{"path": "x"}'), ("call_b", "write_file", '{"pat
 # ---------------------------------------------------------------------------
 def test_a_session_replays_exactly_and_its_checkpoint_binds_the_file(tmp_path):
     session = open_fresh(tmp_path)
-    session.meta_source = lambda: {"agent": "a", "turn": 1}
+    session.meta_source = lambda _messages: {"agent": "a", "turn": 1}
     session.append_message("user", "OPENING")
     turn(session, TWO)
     record = session.checkpoint()

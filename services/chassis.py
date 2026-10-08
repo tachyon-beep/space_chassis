@@ -1020,8 +1020,13 @@ class Chassis:
         """
         self.session.checkpoint(ended=ended)
 
-    def _meta_fields(self) -> dict:
-        """run.json's existing keys; the session adds the ledger's."""
+    def _meta_fields(self, messages: list[dict] | None = None) -> dict:
+        """run.json's existing keys; the session adds the ledger's.
+
+        `messages`: the list the checkpoint installs. A startup checkpoint
+        (SV026) runs before `run()` holds the session, when `self.messages` is
+        still the empty pre-session list.
+        """
         return {
             "agent": self.slug,
             "name": self.name,
@@ -1029,7 +1034,7 @@ class Chassis:
             "turn": self.turn,
             "model": self.model,
             "updated": iso(),
-            "context_tokens": estimate_tokens(self.messages),
+            "context_tokens": estimate_tokens(self.messages if messages is None else messages),
             "context_window": self.context_window,
             "usage": dict(self.usage_totals),
             "entry": str(self.entry),
@@ -1129,6 +1134,10 @@ class Chassis:
         recovers it from the ledger, without a model call or a tool. A
         diagnostic stop ends the run 44 there; recovery's own records (call
         outcomes, notices, base switches) are durable before the duty loads.
+        Startup is a closed unit (SV026): if the work outstanding since the last
+        checkpoint reaches the threshold, it ends in one ordinary checkpoint,
+        with run.json metadata of the recovered conversation, before the duty
+        loads. That checkpoint writes back only what the ledger already holds.
         """
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.home_dir.mkdir(parents=True, exist_ok=True)
@@ -1138,19 +1147,7 @@ class Chassis:
         if problem:
             raise DutyFault(f"invalid_caps: {problem}")
         try:
-            opening = chassis_startup.open_session(
-                self.session_dir,
-                self.home_dir,
-                lifecycle=self.record,
-                repair=self._repair_adopted,
-                new_lineage=lambda: uuid.uuid4().hex[:16],
-                install=self.carried.install,
-                meta_source=self._meta_fields,
-                # SV-022 activation (isolated WIP branch): each checkpoint is
-                # followed by one bounded collection of obsolete segments and
-                # blobs. A pending collection is finished at startup regardless.
-                collect=True,
-            )
+            opening = self._open_session()
         except PersistenceFailure as failure:
             return self._end_before_main(EXIT_ENVIRONMENT, "persistence_failure", str(failure))
         if opening.stop is not None:
@@ -1283,6 +1280,29 @@ class Chassis:
                 flush=True,
             )
         return exit_code
+
+    def _open_session(self, **overrides):
+        """Startup with this run's own callbacks (SV-013 A0-A15).
+
+        `overrides` exists for bounded tests only (an injected threshold): the
+        production call passes none. The callbacks here may run before
+        `run()` holds the session -- a startup threshold checkpoint (SV026) --
+        so none of them may read the conversation through `self`.
+        """
+        return chassis_startup.open_session(
+            self.session_dir,
+            self.home_dir,
+            lifecycle=self.record,
+            repair=self._repair_adopted,
+            new_lineage=lambda: uuid.uuid4().hex[:16],
+            install=self.carried.install,
+            meta_source=self._meta_fields,
+            # SV-022 activation (isolated WIP branch): each checkpoint is
+            # followed by one bounded collection of obsolete segments and
+            # blobs. A pending collection is finished at startup regardless.
+            collect=True,
+            **overrides,
+        )
 
     def _end_before_main(self, exit_code: int, reason: str, note: str) -> int:
         """A run that ends at startup: nothing was loaded, nothing is written back."""

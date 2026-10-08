@@ -925,12 +925,20 @@ class DurableOps:
         with open(path, "rb") as handle:
             data = handle.read(limit + 1)
         if len(data) > limit:
-            raise ReadTooLarge(f"{Path(path).name} is larger than {limit} bytes")
+            raise ReadTooLarge(f"{Path(path).name} is larger than {limit} bytes", obtained=len(data))
         return data
 
 
 class ReadTooLarge(OSError):
-    """A store file exceeds the read bound its caller set."""
+    """A store file exceeds the read bound its caller set.
+
+    `obtained`: the bytes the refused read had already returned (its `limit + 1`
+    probe), so the work is reported without reading again (SV026); None if unknown.
+    """
+
+    def __init__(self, message: str, obtained: int | None = None) -> None:
+        super().__init__(message)
+        self.obtained = obtained
 
 
 # Read bounds [CM], chosen here. A segment rotates at a unit boundary once it
@@ -1077,13 +1085,40 @@ class BlobStore:
         return sha
 
     def get(self, sha: str, limit: int = MAX_BLOB_READ) -> bytes | None:
+        return self.fetch(sha, limit).data
+
+    def fetch(self, sha: str, limit: int = MAX_BLOB_READ) -> BlobRead:
+        """One bounded read, with what it returned and what it cost (SV026); `get` is its payload."""
         if not isinstance(sha, str) or not HEX64.fullmatch(sha):
-            return None
+            return BlobRead(None, "bad_name", 0)
         try:
             data = self.ops.read(str(self.dir / sha), limit)
-        except OSError:  # missing, unreadable, or over the bound: the payload is lost
-            return None
-        return data if hashlib.sha256(data).hexdigest() == sha else None
+        except FileNotFoundError:
+            return BlobRead(None, "missing", 0)
+        except ReadTooLarge as error:  # over the bound: the payload is lost, its probe was read
+            if error.obtained is None:
+                return BlobRead(None, "io_error", None)
+            return BlobRead(None, "over_limit", error.obtained)
+        except OSError:  # unreadable: how much was read before the error is unknown
+            return BlobRead(None, "io_error", None)
+        if hashlib.sha256(data).hexdigest() != sha:
+            return BlobRead(None, "rejected_hash", len(data))
+        return BlobRead(data, "accepted", len(data))
+
+
+@dataclass(frozen=True)
+class BlobRead:
+    """A blob read as the reader saw it (SV026).
+
+    `obtained` is the bytes this process read before deciding: the whole file
+    for `accepted` and `rejected_hash`, the `limit + 1` probe for `over_limit`,
+    0 for `missing` and `bad_name`, and None for `io_error`, whose amount is
+    unknown and is never reported as zero.
+    """
+
+    data: bytes | None
+    outcome: str
+    obtained: int | None
 
 
 def segment_name(number: int) -> str:
@@ -1141,6 +1176,9 @@ class LedgerWriter:
         # Whether this writer continued after bytes an earlier process wrote,
         # found readable but not necessarily synced, and has not fsynced since.
         self.inherited = False
+        # (seq, frame length) of each LEDGER_HEADER this writer wrote, durably,
+        # that its session has not yet charged to the replay interval (SV026).
+        self.opened_headers: list[tuple[int, int]] = []
         self.blobs = BlobStore(self.session_dir / "blobs", ops=self.ops)
 
     # -- starting -------------------------------------------------------------
@@ -1239,7 +1277,14 @@ class LedgerWriter:
             with contextlib.suppress(OSError):
                 self.ops.close(self.fd)
         self.fd, self.segment_no, self.segment_bytes = fd, number, len(frame)
+        # Claimable only now: written, the file fsynced and its name fenced.
+        self.opened_headers.append((self.next_seq, len(frame)))
         self.chain, self.next_seq = chain, self.next_seq + 1
+
+    def take_opened_headers(self) -> list[tuple[int, int]]:
+        """The headers written since the last call, for the session's replay accounting (SV026)."""
+        taken, self.opened_headers = self.opened_headers, []
+        return taken
 
     # -- appending ------------------------------------------------------------
     def append(self, type_name: str, payload: dict) -> Record:

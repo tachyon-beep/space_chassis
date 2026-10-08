@@ -33,9 +33,12 @@ the reads the runtime actually made while `Replay.apply` ran for a given seq.
 `since_bytes` is only compared against these numbers, never used as their
 oracle.
 
-The restart, external-edit and older-prev tests pass by asserting that a
-canonical premise is contradicted. A pass there is a counterexample, not a
-guarantee (docs/planning-context/sv025/RECEIPT.md).
+The external-edit and older-prev tests pass by asserting that a canonical
+premise is contradicted. A pass there is a counterexample, not a guarantee
+(docs/planning-context/sv025/RECEIPT.md). SV026 fixed restart accounting, so
+the restart test now asserts the repaired behavior, and the external-edit
+witness is taken in the real crash window before the startup threshold
+checkpoint (docs/planning-context/sv026/).
 """
 
 from __future__ import annotations
@@ -53,6 +56,7 @@ import chassis_replay as rp
 import chassis_session as cs
 import chassis_startup as st
 import pytest
+from test_chassis_durability import Crash
 from test_chassis_recovery_live import Root, establish, respond
 
 # SV-015-literal-values-v2.json, copied; neither it nor its generator is edited or run.
@@ -485,17 +489,21 @@ def test_sv025_positive_an_ordinary_unit_crosses_the_byte_threshold_once(tmp_pat
     session.close()
 
 
-def test_sv025_a_restart_forgets_outstanding_suffix_bytes(tmp_path, watch):
-    """Records since C_n are rebuilt at startup; their bytes are not, so the suffix grows past bytes_max unchecked."""
+def test_sv025_a_restart_carries_outstanding_suffix_bytes(tmp_path, watch):
+    """SV026 replaced SV025's structural counterexample (a restart forgot the suffix's bytes).
+
+    The restart rebuilds exactly what the dead process had counted after C_n's
+    frame, and the threshold fires across the restart at the fourth unit.
+    """
     root = Root(tmp_path)
     establish(root).close()
     opening = root.start(bytes_max=SMALL)
     session = opening.session
-    assert (opening.classification, session.since_records, session.since_bytes) == ("A9", 1, 0)
+    assert (opening.classification, session.since_records, session.since_bytes) == ("A9", 0, 0), "C_n's frame is the origin"
     session.append_message("user", TEXT)
     session.append_message("user", TEXT)
     carried = session.since_bytes
-    assert carried < SMALL
+    assert carried == 12_428 < SMALL, "SV025's executed value for these two units"
     session.close()  # process death before any checkpoint
     ck = newest_checkpoint(root)
 
@@ -506,22 +514,22 @@ def test_sv025_a_restart_forgets_outstanding_suffix_bytes(tmp_path, watch):
     outstanding = interval_work(observer, walked, ck.payload["covers_seq"], max(walked))
     assert opening.classification == "A9"
     assert (outstanding.records, outstanding.blob_bytes) == (3, 2 * len(TEXT)), "C_n's frame and both messages, replayed"
-    assert outstanding.total - walked[ck.seq][1] == carried, "after C_n's frame: exactly what the dead process had counted"
-    assert (session.since_records, session.since_bytes) == (3, 0), "records rebuilt from the suffix; bytes restart at zero"
+    assert (session.since_records, session.since_bytes) == (2, carried) == (2, outstanding.total - walked[ck.seq][1])
     session.append_message("user", TEXT)
+    assert newest_checkpoint(root).seq == ck.seq, "three units stay below the threshold"
     session.append_message("user", TEXT)
-    assert session.since_bytes == carried < SMALL
+    walked = frames(root)
+    new = newest_checkpoint(root)
+    assert new.seq == max(walked) > ck.seq, "the fourth unit, across the restart, checkpoints at once"
+    crossing = sum(walked[seq][1] for seq in walked if ck.seq < seq < new.seq) + 4 * len(TEXT)
+    one_unit = walked[new.seq - 1][1] + len(TEXT)
+    assert SMALL <= crossing < SMALL + one_unit
+    assert (session.since_records, session.since_bytes) == (0, 0)
     session.close()
 
-    observer = watch()
-    opening = root.start(ops=observer, bytes_max=SMALL)
-    walked = frames(root)
-    outstanding = interval_work(observer, walked, ck.payload["covers_seq"], max(walked))
-    assert [type_hex for type_hex, _length in walked.values()].count("0d") == 2, "no checkpoint was written while it grew"
-    assert newest_checkpoint(root).seq == ck.seq
-    assert (outstanding.records, outstanding.blob_bytes) == (5, 4 * len(TEXT))
-    # The contradiction: replay work after C_n's frame is past bytes_max, and no threshold ever fired.
-    assert outstanding.total - walked[ck.seq][1] >= SMALL > carried
+    opening = root.start(bytes_max=SMALL)
+    assert opening.classification == "A9" and newest_checkpoint(root).seq == new.seq
+    assert (opening.session.since_records, opening.session.since_bytes) == (0, 0)
     opening.session.close()
 
 
@@ -531,8 +539,15 @@ def test_sv025_a_restart_forgets_outstanding_suffix_bytes(tmp_path, watch):
 TARGET = 27 * 1024 * 1024  # 28,311,552 bytes of valid ASCII list, below the 64 MiB conversation and blob read bounds
 
 
-def test_sv025_a_27_mib_external_edit_blob_alone_exceeds_the_newest_byte_bound(tmp_path, watch):
-    """An accepted external edit puts the whole list in a suffix blob that replay opens: one blob > 25,166,144 bytes."""
+def test_sv025_a_27_mib_external_edit_blob_alone_exceeds_the_newest_byte_bound(tmp_path, watch, monkeypatch):
+    """An accepted external edit puts the whole list in a suffix blob that replay opens: one blob > 25,166,144 bytes.
+
+    SV026: startup now closes its unit with a threshold check, so the A11
+    start checkpoints at once. The witness is therefore taken in the real
+    pre-checkpoint crash window: that start dies at CK2 entry of its threshold
+    checkpoint, after EXTERNAL_EDIT's fsync returned and before any checkpoint
+    byte, and the next start replays the 27 MiB blob before its own checkpoint.
+    """
     root = Root(tmp_path)
     establish(root).close()
     filler = TARGET - len(rp.conversation_bytes([{"role": "user", "content": ""}]))
@@ -542,40 +557,55 @@ def test_sv025_a_27_mib_external_edit_blob_alone_exceeds_the_newest_byte_bound(t
     (root.session_dir / "conversation.json").write_bytes(data)
     del data
     prev_bytes = len(root.file("conversation.prev.json"))
+    entries = []
+    original = cs.Session.checkpoint
+
+    def logged(self, *args, **kwargs):
+        entries.append((self.since_records, self.since_bytes))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(cs.Session, "checkpoint", logged)
+
+    def die(*_args, **_kwargs):
+        raise Crash()
 
     observer = watch()
-    opening = root.start(ops=observer)
-    session = opening.session
+    with monkeypatch.context() as m:
+        m.setattr(cp, "install_conversation", die)  # process death at CK2 entry
+        with pytest.raises(Crash):
+            root.start(ops=observer)
     walked = frames(root)
     edit = max(walked)
-    assert opening.classification == "A11" and walked[edit][0] == "13", "the last record is the EXTERNAL_EDIT"
+    assert walked[edit][0] == "13", "the last record is the EXTERNAL_EDIT: no checkpoint byte was written"
     assert observer.of("blob") == [("blob", edited, TARGET, edit)], "the live reducer re-reads the blob it has just written"
-    # Startup evaluates no threshold: the counter is past RECOVERY_BYTES_MAX and nothing checkpoints.
-    assert session.since_bytes == walked[edit][1] + TARGET >= session.bytes_max == cs.RECOVERY_BYTES_MAX
-    assert rp.conversation_sha(session.messages) == edited
-    session.close()
-    del opening, session
+    # The startup unit crossed the default threshold and its checkpoint began.
+    assert entries == [(1, walked[edit][1] + TARGET)] and entries[0][1] >= cs.RECOVERY_BYTES_MAX
 
+    entries.clear()
+    newest = newest_checkpoint(root)  # C_n, before this start writes its own threshold checkpoint
     observer = watch()
     opening = root.start(ops=observer)
     session = opening.session
     assert opening.classification == "A9t"
-    assert frames(root) == walked, "the restart wrote nothing"
-    newest = newest_checkpoint(root)
     suffix = interval_work(observer, walked, newest.payload["covers_seq"], edit)
     # Neither file holds C_n, so this went through _previous_base: A's interval, then the suffix, each record once.
-    assert observer.applies == list(range(newest.payload["prev"]["covers_seq"] + 1, edit + 1))
+    assert [seq for seq in observer.applies if seq <= edit] == list(range(newest.payload["prev"]["covers_seq"] + 1, edit + 1))
     assert observer.of("blob") == [("blob", edited, TARGET, edit)]
     assert (suffix.records, suffix.blob_bytes, suffix.distinct_blob_bytes, suffix.blob_calls) == (2, TARGET, TARGET, 1)
     # The contradiction: the suffix after C_n alone is past the newest-row bound.
     assert suffix.total > suffix.blob_bytes >= NEWEST_BYTES_LT
-    # Separate I/O, not the suffix quantity: the base-file reads (the excluded term) and the scanner.
+    # The counter rebuilt at this start is that suffix after C_n's frame (the origin); it crosses, so one checkpoint.
+    assert entries == [(1, suffix.total - walked[newest.seq][1])]
+    after = frames(root)
+    assert {seq: after[seq] for seq in walked} == walked and [after[seq][0] for seq in after if seq > edit] == ["0d"]
+    # Separate I/O, not the suffix quantity: the base-file reads (the excluded term), the checkpoint's own
+    # hashing of both files (CK3's choice), and the scanner.
     assert observer.of("conversation") == [
         ("conversation", "conversation.json", TARGET, None),
         ("conversation", "conversation.prev.json", prev_bytes, None),
-    ]
+    ] * 2
     assert [read[:3] for read in observer.of("segment")] == [("segment", "000000.svl", sum(n for _t, n in walked.values()))] * 2
-    assert (session.since_records, session.since_bytes) == (2, 0)
+    assert (session.since_records, session.since_bytes) == (0, 0)
     assert rp.conversation_sha(session.messages) == edited
     session.close()
 
@@ -601,7 +631,8 @@ def test_sv025_the_retained_previous_base_can_be_older_than_the_last_checkpoint(
         session = opening.session
         for i in range(MESSAGES):
             session.append_message("user", f"round {k} message {i}")
-        assert session.since_records == MESSAGES + 2 < cs.RECOVERY_RECORDS_MAX, "no threshold checkpoint fired"
+        # SV026: C_n's own frame is the interval origin, so the EXTERNAL_EDIT and the messages are counted.
+        assert session.since_records == MESSAGES + 1 < cs.RECOVERY_RECORDS_MAX, "no threshold checkpoint fired"
         record = session.checkpoint()
         assert record.payload["prev"] == a, "the retained file still holds A's bytes, so prev names A"
         final = list(session.messages)
