@@ -1,3 +1,11 @@
+# SV-028 implementation review: bounded correction required
+
+Astra reviewed `517de5b4a41bded9b58a7be54199eee7b814d112`. [ASTRA-IMPLEMENTATION-REVIEW.md](ASTRA-IMPLEMENTATION-REVIEW.md) requires **SV028-09**, a preserving-specific logical cursor that retains physical header replay/accounting/sync, and **SV028-10**, stage-accurate late-copy refusal diagnostics. This is an availability defect and a diagnostic defect; no data-loss claim is made. Existing 108 selected cases passed but did not exercise the new header sequence.
+
+Correction authority: add the exact three header cases and their pre-fix control/failures; strengthen late-copy message companions inside the existing node; retain the same 108 cases and run the three new cases as one additional final command (**111 selected cases in 11 commands**). Keep old-pair semantics, pure-refusal wording and resource limits. Runtime acceptance remains pending; no new design or owner gate.
+
+---
+
 # SV-028 governing implementation authority
 
 Astra accepted the architecture at `8e30cf865764f565ba4bf255a9b92f8492cdcf18`, subject to **L1–L7 in [ASTRA-DESIGN-ACCEPTANCE.md](ASTRA-DESIGN-ACCEPTANCE.md)**. Those exact qualifications supersede contradictory historical design/status text. This is bounded implementation authority only; runtime acceptance is pending.
