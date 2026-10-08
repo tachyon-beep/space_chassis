@@ -32,34 +32,39 @@ RUN mkdir -p /.cargo \
     && printf '[source.crates-io]\nreplace-with = "local"\n\n[source.local]\nlocal-registry = "/vendor/registry"\n' \
        > /.cargo/config.toml
 
-RUN useradd --create-home --uid 1000 --shell /bin/bash agent
+# One user for the agent and its recorder, uid and gid 1000: the vehicle and the existing volumes
+# are owned by it, and the recorder's socket is 0660, so the two must share both.
+RUN groupadd --gid 1000 agent \
+    && useradd --create-home --uid 1000 --gid 1000 --shell /bin/bash agent
 
 # Runtime mountpoints, pre-created under the uid that will mount them: a volume
 # created against a missing mountpoint would come up root-owned, and the
-# container drops every capability.
-RUN mkdir -p /work /home/agent /diary /transcripts /diode /pump /telemetry /vendor \
-             /run/agent \
-    && chown -R agent:agent /work /home/agent /diary /diode /pump \
-    && chmod 0755 /transcripts /telemetry
+# container drops every capability. /vendor stays root's, mounted read-only.
+RUN mkdir -p /work /state /shared /diode /pump /build /telemetry /llm/sock /llm/console \
+             /run/agent /home/agent /vendor /opt/agent \
+    && chown agent:agent /work /state /shared /diode /pump /build /telemetry /llm/sock /llm/console \
+             /run/agent /home/agent /opt/agent
 
-# The seed. /opt/agent is the floor the supervisor restores from: the agent can
-# overwrite every file in /work and cannot touch this copy.
-# Where the duty lives, and what a fresh world is seeded from. The duty is the
-# fleet's; everything here is replaceable by them.
-COPY --chown=agent:agent tasks/ /opt/agent/
+# The seed. /opt/agent becomes a git repository below, and the entrypoint copies it into /work at
+# every start: it is the harness the agent runs and rewrites, and the floor below its rescue tag.
+# Only the six runtime files, by name -- the harness's tests and anything they leave behind are
+# not facts about the agent's world.
+COPY --chown=agent:agent harness/agent.py harness/chassis.py harness/command_runtime.py harness/watchdog.py harness/system_prompt.txt harness/user_prompt.txt /opt/agent/
+# The process scheduler and the recorder live outside the seed, so they are never copied into the
+# agent's workspace: the pump runs from the image, and the recorder reuses this image as its own.
+COPY --chown=agent:agent pump/pump.py /usr/local/bin/pump.py
+COPY --chown=agent:agent recorder/proxy.py recorder/recorder_streams.py recorder/core_caps.py /usr/local/lib/recorder/
 # The briefing, read-only.
 COPY --chown=agent:agent brief/ /opt/brief/
-# The operator side: the recorder, the supervisor, the pump, the watcher, and
-# the runtime the supervisor launches. Read-only, and mounted into the recorder
-# container as its entrypoint too.
+# The operator side that has not yet moved to the Aurora harness: the watcher and the review panel
+# run from here until the port retires them.
 COPY --chown=agent:agent services/ /opt/services/
 
 # **The vehicle, which is the far side of the window.** `docs/deep_research/vehicle/` is the
 # configuration the reference console serves: it is baked here rather than mounted, for the same
 # reason the services are -- the image is self-contained and the copy is read-only, so the thing
 # serving the window cannot be edited by anything reading it. It lives under `docs/` in the
-# repository because the separate repository `simulator-design.md` section 2 decides on does not
-# exist yet; nothing here imports it, and nothing here needs to.
+# repository because it is vendored there as a submodule; nothing here imports it.
 COPY --chown=agent:agent docs/deep_research/vehicle/ /opt/vehicle/
 
 # The entrypoint and the world's constants. Both are read by every process in
@@ -74,20 +79,33 @@ COPY containers/serve_vehicle.sh /usr/local/bin/serve_vehicle.sh
 COPY containers/agent.env /etc/agent.env
 RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/serve_vehicle.sh \
     && chmod 0644 /etc/agent.env \
-    && find /opt -name __pycache__ -type d -prune -exec rm -rf {} +
+    && find /opt /usr/local/lib/recorder -name __pycache__ -type d -prune -exec rm -rf {} +
 
-ENV AGENT_USER=agent \
-    AGENT_HOME=/home/agent \
-    WORK_DIR=/work \
-    SEED_DIR=/opt/agent \
-    DIARY_DIR=/diary \
-    CARGO_HOME=/work/.cargo \
-    CARGO_TARGET_DIR=/work/target \
-    XDG_CACHE_HOME=/home/agent/.cache \
-    PYTHONDONTWRITEBYTECODE=1 \
+# Nothing an agent can write is on an image-owned process's import or config path: no user
+# site-packages, no global git config (the ladder's git calls and the pump run as this user), and
+# HOME is a tmpfs in compose. Cargo builds land on the build volume, never in the seed repository.
+ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PYTHONNOUSERSITE=1 \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    HOME=/home/agent \
+    CARGO_HOME=/build/.cargo \
+    CARGO_TARGET_DIR=/build/target \
+    XDG_CACHE_HOME=/build/.cache \
     LANG=C.UTF-8
 
-WORKDIR /work
 USER agent
+WORKDIR /opt/agent
+# The seed repository: one commit, tagged baseline and rescue, with a repo-local identity because
+# there is no global config. experimental starts absent; every tag is the agent's to move.
+RUN git init -q \
+    && git config user.email "agent@localhost" \
+    && git config user.name "agent" \
+    && printf 'tombstones/\nsession_context.json\n' > .gitignore \
+    && git add -A \
+    && git -c commit.gpgsign=false commit -q -m "baseline" \
+    && git tag baseline \
+    && git tag rescue
+
+WORKDIR /work
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

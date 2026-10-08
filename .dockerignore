@@ -31,3 +31,11 @@ vendor/kitchen/target/
 
 .env
 *.log
+
+# Patterns are anchored at the context root, so `tests/` above leaves these in. The harness's,
+# recorder's and pump's tests never reach an image, nor what the harness tests leave behind.
+harness/tests/
+harness/session_context.json
+harness/tombstones/
+recorder/tests/
+pump/tests/
