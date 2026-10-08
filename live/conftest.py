@@ -21,6 +21,7 @@ from stack import REPO, SmokeStack, wait_for  # noqa: E402
 
 EVIDENCE = REPO / ".scratch" / "live-evidence"
 START_SECONDS = 300
+TRANSCRIPT_HEAD_BYTES = 2 << 20
 
 
 def pytest_collection_modifyitems(items):
@@ -36,6 +37,15 @@ def _keep_evidence(smoke: SmokeStack) -> None:
     for service in services:
         result = smoke.compose("logs", "--no-color", "--timestamps", service, check=False)
         (EVIDENCE / f"{service}.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+    # The head of each transcript, for fixtures: bodies only, never a header, and a dummy key.
+    for n in range(1, smoke.agents + 1):
+        source = smoke.volumes / f"transcripts_agent_{n}" / "data" / "agent_life_transcript.jsonl"
+        try:
+            with open(source, "rb") as handle:
+                head = handle.read(TRANSCRIPT_HEAD_BYTES)
+        except OSError:
+            continue
+        (EVIDENCE / f"transcript_agent_{n}.jsonl").write_bytes(head)
     ps = smoke.compose("ps", "--all", check=False)
     (EVIDENCE / "ps.txt").write_text(ps.stdout + ps.stderr, encoding="utf-8")
 

@@ -1,34 +1,31 @@
 #!/usr/bin/env python3
 """The review panel: what an operator can read, and nothing else.
 
-The fleet monitor answers "is the world working". This answers "what did that
-agent actually think", which is a different question and needs a different
-view: the conversation, the reasoning, every tool call with the result that
-came back, what each turn cost, and how the supervisor and the pump treated it.
+The fleet monitor answers "is the world working". This answers "what did that agent actually
+think", which is a different question and needs a different view: the conversation, the reasoning,
+every tool call with the result that came back, and what each turn cost.
 
 Four properties are deliberate.
 
-* **It reads the record, never the agents.** Everything here comes from files
-  written by other processes: the recorder's transcript, the supervisor's
-  lifecycle log, the pump's state. An agent's account of itself is not
-  evidence, and this panel does not ask for one.
-* **It cannot change anything.** Every mount is read-only, the container's
-  root filesystem is read-only, and there is no code path in this file that
-  opens a file under the record for writing. A test asserts it at the source
-  level, in the spirit of the recorder's "no header is ever written" check.
-* **It has no route outward.** It sits on its own internal network with no
-  gateway -- not the fleet's network, not the model's. It needs an address only
-  so the operator's browser can reach it.
-* **It stays cheap as the record grows.** This world's transcripts already run
-  to fifteen megabytes after seventeen turns, because every request repeats the
-  whole conversation. Nothing here reads a file whole: the newest turns are
-  taken from a byte-bounded tail, parsed forward from a line boundary, and
-  cached against the file's size and modification time.
+* **It reads the record, never the agents.** The turns come from the recorder's transcript, which
+  each agent's recorder writes on a volume the agent cannot see; the fleet view comes from the
+  monitor's fleet.json, derived from the same transcripts. What the agent writes about itself -- its
+  recovery note in the mirror -- is shown, labelled as the agent's own claim, and read without
+  following a link it planted.
+* **It cannot change anything.** Every mount is read-only, the container's root filesystem is
+  read-only, and there is no code path in this file that opens a file for writing. A test asserts
+  it at the source level.
+* **It has no route outward.** It sits on its own internal network with no gateway -- not the
+  fleet's network, not the model's. It needs an address only so the operator's browser can reach it.
+* **It stays cheap as the record grows.** Every request repeats the whole conversation, so a
+  transcript grows fast. Nothing here reads a file whole: the newest turns are taken from a
+  byte-bounded tail, parsed forward from a line boundary, and cached against the file's size and
+  modification time.
 
-The last point is what makes the panel usable, and it is also the subtle part.
-A turn's new material is not stored as a delta -- it is the difference between
-two consecutive requests. Reassembling it means knowing how many messages each
-request carried, which the recorder's `open` events record exactly.
+A turn is one transcript line: the request the agent sent and the reply it got. The chassis
+condenses and clips what it sends, so one request is not a prefix of the next; what is new in a
+request is what follows its last assistant message, and a call's result is paired, by its id, from
+the next request on the same stream.
 """
 
 from __future__ import annotations
@@ -49,13 +46,13 @@ SERVICES_DIR = Path(os.environ.get("SERVICES_DIR", "/opt/services"))
 if str(SERVICES_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICES_DIR))
 
-from common import env_int, iso, read_bounded, read_json  # noqa: E402
+import health  # noqa: E402
+from common import env_int, iso, read_json, slugs_from_env  # noqa: E402
 
 TRANSCRIPTS_DIR = Path(os.environ.get("TRANSCRIPTS_DIR", "/transcripts"))
 TELEMETRY_DIR = Path(os.environ.get("TELEMETRY_DIR", "/telemetry"))
-WORK_DIR = Path(os.environ.get("WORK_DIR", "/work"))
-HOME_ROOT = Path(os.environ.get("HOME_ROOT", "/home"))
-PUMP_ROOT = Path(os.environ.get("PUMP_ROOT", "/pump"))
+MIRROR_DIR = Path(os.environ.get("MIRROR_DIR", "/telemetry/agents"))
+CLAIM = health.CLAIM_LABEL
 
 # How much of a file's tail is read to serve one page. A turn's line holds the
 # whole conversation, so a turn costs roughly the size of the conversation:
@@ -86,14 +83,6 @@ REASONING_FIELDS = ("reasoning_content", "reasoning")
 # ---------------------------------------------------------------------------
 def transcript_path(slug: str) -> Path:
     return TRANSCRIPTS_DIR / slug / "agent_life_transcript.jsonl"
-
-
-def events_path(slug: str) -> Path:
-    return TRANSCRIPTS_DIR / slug / "events.jsonl"
-
-
-def lifecycle_path(slug: str) -> Path:
-    return TELEMETRY_DIR / "agents" / slug / "lifecycle.jsonl"
 
 
 def file_state(path: Path) -> tuple[int, int]:
@@ -202,38 +191,6 @@ def read_lines(
     total = len(records)
     trimmed = total > max_records
     return (records[-max_records:], position > 0 or trimmed, total)
-
-
-def load_events(slug: str, max_bytes: int = MAX_BYTES) -> dict[str, dict]:
-    """The recorder's `open`/`close` events, keyed by request id.
-
-    `open` carries the message count of each request, which is what makes a
-    turn's delta exact rather than a guess. `close` carries the status and the
-    elapsed time. Both are optional: an events file that is absent, truncated
-    or malformed leaves the corresponding fields null, and the panel says so
-    rather than refusing to show the turn.
-    """
-    records, _more, _total = read_lines(events_path(slug), max_bytes=max_bytes, max_records=10_000)
-    events: dict[str, dict] = {}
-    for record in records:
-        if record.get("__unparseable__"):
-            continue
-        key = record.get("id")
-        if not isinstance(key, str):
-            continue
-        entry = events.setdefault(key, {})
-        kind = record.get("event")
-        if kind == "open":
-            entry["messages"] = record.get("messages")
-            entry["model"] = record.get("model")
-            entry["opened_at"] = record.get("at")
-        elif kind == "close":
-            entry["status"] = record.get("status")
-            entry["duration_seconds"] = record.get("duration_seconds")
-            entry["usage"] = record.get("usage")
-            if record.get("refusal"):
-                entry["refusal"] = record["refusal"]
-    return events
 
 
 # ---------------------------------------------------------------------------
@@ -375,39 +332,19 @@ def pair_tool_results(calls: list[dict], following_request: dict | None) -> list
     return calls
 
 
-def new_messages(
-    request: dict, previous_request: dict | None, previous_count: int | None
-) -> list[dict]:
-    """The messages this request carried that the previous one did not.
-
-    Exact when the previous request is in the window: the message counts are
-    known, so the new messages are the tail of the list. When it is not -- the
-    first turn of a window -- the caller gets everything, labelled as such,
-    rather than a silent misattribution.
-    """
-    messages = request.get("messages")
-    if not isinstance(messages, list):
-        return []
-    if previous_request is None:
-        return []
-    previous = previous_request.get("messages")
-    if not isinstance(previous, list) or previous_count is None:
-        return messages[previous_count:] if previous_count else messages
-    return messages[len(previous) :]
+def incoming(messages: list) -> list[dict]:
+    """What this request delivers: the tool results and user messages after its last reply."""
+    last = -1
+    for index, message in enumerate(messages):
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            last = index
+    return [m for m in messages[last + 1 :] if isinstance(m, dict) and m.get("role") != "system"]
 
 
-def turn_from(
-    record: dict,
-    index: int,
-    previous_request: dict | None,
-    following_request: dict | None,
-    events: dict[str, dict],
-) -> dict:
-    """One turn, as the panel shows it: what was new, and what came back."""
+def turn_from(record: dict, index: int, following_request: dict | None, slug: str) -> dict:
+    """One turn, as the panel shows it: what arrived, what came back, and what it cost."""
     request = record.get("request") if isinstance(record.get("request"), dict) else {}
     response = record.get("response") if isinstance(record.get("response"), dict) else {}
-    request_id = record.get("id")
-    event = events.get(request_id, {}) if isinstance(request_id, str) else {}
 
     choices = response.get("choices")
     choice = (
@@ -415,29 +352,28 @@ def turn_from(
     )
     message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
 
-    pointer = f"/api/agent/{record.get('agent', '')}/turn/{index}/raw"
+    pointer = f"/api/agent/{slug}/turn/{index}/raw"
     calls = pair_tool_results(extract_calls(message, pointer), following_request)
 
     messages = request.get("messages") if isinstance(request.get("messages"), list) else []
-    previous_count = event.get("messages")
-    fresh = new_messages(request, previous_request, previous_count)
-
     tools = request.get("tools") if isinstance(request.get("tools"), list) else []
-    usage = response.get("usage") if isinstance(response.get("usage"), dict) else event.get("usage")
+    usage = response.get("usage")
+    error = response.get("error")
+    error_text = None
+    if isinstance(error, dict):
+        error_text = error.get("message") if isinstance(error.get("message"), str) else ""
 
     return {
         "index": index,
-        # A page's index is a position inside the loaded window and moves as the
-        # window does; the request id is stable for the life of the record and
-        # is what anyone quoting a turn should use.
-        "id": request_id,
-        "at": record.get("at"),
-        "status": record.get("status", event.get("status")),
-        "refusal": event.get("refusal"),
-        "duration_seconds": event.get("duration_seconds"),
+        "at": record.get("timestamp"),
+        "stream": record.get("stream", health.CORE),
+        "refused": health.is_cap_refusal(record),
+        "error": clip(error_text, TEXT_CAP, pointer) if error_text is not None else None,
         "usage": usage if isinstance(usage, dict) else None,
         "finish_reason": choice.get("finish_reason"),
-        "model": request.get("model") or event.get("model"),
+        "model": request.get("model"),
+        "fresh": health.is_fresh_start(messages),
+        "system_hash": health.system_prompt_hash(request),
         "tools_offered": len(tools),
         "tools_offered_names": [
             t.get("function", {}).get("name")
@@ -448,18 +384,10 @@ def turn_from(
         "reasoning": clip(reasoning_text(message), TEXT_CAP, pointer),
         "tool_calls": calls,
         "new_messages": [
-            {
-                "role": m.get("role"),
-                "text": clip(message_text(m), TEXT_CAP, pointer),
-                "tool_calls": len(m.get("tool_calls") or [])
-                if isinstance(m.get("tool_calls"), list)
-                else 0,
-            }
-            for m in fresh
-            if isinstance(m, dict)
+            {"role": m.get("role"), "text": clip(message_text(m), TEXT_CAP, pointer)}
+            for m in incoming(messages)
         ],
         "context_messages": len(messages),
-        "delta_known": previous_request is not None,
         "unparseable": bool(record.get("__unparseable__")),
     }
 
@@ -500,24 +428,26 @@ class Conversation:
                 return self
             try:
                 records, more, _count = tail_jsonl(self.path, MAX_BYTES, CACHE_TURNS)
-                events = load_events(self.slug, MAX_BYTES)
-                self.turns = self._build(records, events)
+                self.turns = self._build(records)
                 self.more_available = more or len(records) >= CACHE_TURNS
             except OSError as error:
                 self.error = f"could not read the transcript: {error}"
                 self.turns, self.more_available = [], False
             return self
 
-    def _build(self, records: list[dict], events: dict[str, dict]) -> list[dict]:
-        requests = [
-            record.get("request") if isinstance(record.get("request"), dict) else {}
-            for record in records
-        ]
+    def _build(self, records: list[dict]) -> list[dict]:
+        """Each line a turn; a call's result comes from the next request on the same stream."""
         turns: list[dict] = []
         for offset, record in enumerate(records):
-            previous = requests[offset - 1] if offset > 0 else None
-            following = requests[offset + 1] if offset + 1 < len(requests) else None
-            turns.append(turn_from(record, offset, previous, following, events))
+            stream = record.get("stream", health.CORE)
+            following = None
+            for later in records[offset + 1 :]:
+                if later.get("stream", health.CORE) == stream and isinstance(
+                    later.get("request"), dict
+                ):
+                    following = later["request"]
+                    break
+            turns.append(turn_from(record, offset, following, self.slug))
         return turns
 
     def page(self, limit: int, before: int | None) -> tuple[list[dict], int]:
@@ -563,79 +493,52 @@ def conversation(slug: str) -> Conversation:
 # ---------------------------------------------------------------------------
 # The fleet, and the rest of the record
 # ---------------------------------------------------------------------------
-def announce_dir() -> Path:
-    return Path(os.environ.get("ANNOUNCE_DIR", str(WORK_DIR / ".fleet")))
-
-
 def discover_slugs() -> list[str]:
-    """Every agent that has ever run, from the record rather than a list.
-
-    Same reasoning as the recorder and the monitor: the names are drawn at
-    random, so repeating them in configuration is a way to go stale. Here the
-    transcript directory is also the list of agents that have actually spoken.
-    """
+    """The agents: AGENT_SLUGS when set, else every transcript or mirror bind it was given."""
+    configured = slugs_from_env("AGENT_SLUGS")
+    if configured:
+        return configured
     found: set[str] = set()
-    if TRANSCRIPTS_DIR.is_dir():
-        found |= {p.name for p in TRANSCRIPTS_DIR.iterdir() if p.is_dir()}
-    agents = TELEMETRY_DIR / "agents"
-    if agents.is_dir():
-        found |= {p.name for p in agents.iterdir() if p.is_dir()}
-    announced = announce_dir()
-    if announced.is_dir():
-        found |= {p.stem for p in announced.glob("*.agent")}
+    for root in (TRANSCRIPTS_DIR, MIRROR_DIR):
+        with contextlib.suppress(OSError):
+            found |= {p.name for p in root.iterdir() if p.is_dir()}
     return sorted(found)
 
 
+def monitor_rows() -> dict[str, dict]:
+    """The monitor's published view, by slug: liveness and signals, from the transcripts."""
+    snapshot = read_json(TELEMETRY_DIR / "fleet.json") or {}
+    agents = snapshot.get("agents") if isinstance(snapshot, dict) else None
+    if not isinstance(agents, list):
+        return {}
+    return {a["slug"]: a for a in agents if isinstance(a, dict) and isinstance(a.get("slug"), str)}
+
+
 def fleet_rows() -> list[dict]:
-    rows = []
-    for slug in discover_slugs():
-        rows.append(agent_row(slug))
-    return rows
+    published = monitor_rows()
+    return [agent_row(slug, published.get(slug)) for slug in discover_slugs()]
 
 
-def agent_row(slug: str) -> dict:
-    """One agent's operational facts, from the record."""
+def agent_row(slug: str, published: dict | None = None) -> dict:
+    """One agent: the monitor's signals, the panel's own view of the transcript, and its claim."""
+    if published is None:
+        published = monitor_rows().get(slug) or {}
     view = conversation(slug).refresh()
-    lifecycle, _more, _count = tail_jsonl(lifecycle_path(slug), 512 * 1024, 400)
-    ends = [r for r in lifecycle if r.get("event") == "run_end" and not r.get("__unparseable__")]
-    decisions = [r for r in lifecycle if r.get("event") == "decision"]
-    handoffs = [r for r in lifecycle if r.get("event") == "handoff"]
-    meta = read_json(HOME_ROOT / slug / "session" / "run.json") or {}
-    pump = read_json(PUMP_ROOT / slug / "state.json") or {}
-    entries = pump.get("entries") if isinstance(pump.get("entries"), dict) else {}
-    running = [
-        name
-        for name, record in entries.items()
-        if isinstance(record, dict) and record.get("running")
-    ]
-    last = ends[-1] if ends else {}
-    summary = read_bounded(HOME_ROOT / slug / "HANDOFF.md", 4096)
-
-    context_window = meta.get("context_window")
-    context_tokens = meta.get("context_tokens")
-    pressure = None
-    if isinstance(context_window, int) and context_window > 0 and isinstance(context_tokens, int):
-        pressure = min(1.0, round(context_tokens / context_window, 4))
-
+    note = health.read_claim(MIRROR_DIR / slug, "work/tombstones/recovery_note.txt")
     return {
         "slug": slug,
+        "liveness": published.get("liveness", "unknown"),
+        "signals": published.get("signals") if isinstance(published.get("signals"), dict) else {},
+        "claims": {
+            "recovery_note": health.claim(
+                note.decode("utf-8", errors="replace").strip() if note is not None else None
+            )
+        },
         "turns_loaded": len(view.turns),
         "approximate_total": view.approximate_total,
         "more_available": view.more_available,
         "transcript_bytes": view.total_bytes,
         "transcript_error": view.error,
-        "runs": sum(1 for r in lifecycle if r.get("event") == "run_start"),
-        "last_exit": last.get("exit"),
-        "last_note": (last.get("note") or "")[:SUMMARY_CAP],
-        "last_tier": (decisions[-1].get("tier") if decisions else None),
-        "handoffs": len(handoffs),
-        "handoff_present": bool(summary),
-        "handoff_head": (summary.decode("utf-8", "ignore")[:SUMMARY_CAP] if summary else ""),
-        "context_pressure": pressure,
-        "model": meta.get("model"),
-        "turn_checkpoint": meta.get("turn"),
-        "pump_running": running,
-        "pump_entries": len(entries),
         "modified_at": (
             time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(view.state[1] / 1e9))
             if view.state[1]
@@ -649,10 +552,15 @@ def fleet_summary(rows: list[dict]) -> dict:
         "at": iso(),
         "agents": len(rows),
         "turns": sum(row["turns_loaded"] for row in rows),
-        "runs": sum(row["runs"] for row in rows),
         "bytes": sum(row["transcript_bytes"] for row in rows),
-        "exits": sorted({row["last_exit"] for row in rows if row["last_exit"] is not None}),
+        "liveness": {
+            state: sum(1 for row in rows if row["liveness"] == state) for state in health_states()
+        },
     }
+
+
+def health_states() -> tuple[str, ...]:
+    return ("active", "capped", "idle-watchdog", "stale", "unknown")
 
 
 # ---------------------------------------------------------------------------
@@ -707,18 +615,6 @@ def position_label(index: int, loaded: int, approximate_total: int | None) -> st
     return f"turn {index + 1} of about {approximate_total}"
 
 
-def pressure_label(pressure) -> str:
-    """How full the conversation is against the window it is sent in.
-
-    Worth showing because it is the number that predicts, better than anything
-    else here, when an agent is about to start losing the beginning of its own
-    conversation. An em dash means the checkpoint has not said yet.
-    """
-    if not isinstance(pressure, float | int):
-        return "—"
-    return f"{int(round(pressure * 100))}%"
-
-
 def page(title: str, body: str, *, refresh: int | None = None) -> bytes:
     meta = f'<meta http-equiv="refresh" content="{refresh}">' if refresh else ""
     return (
@@ -729,13 +625,23 @@ def page(title: str, body: str, *, refresh: int | None = None) -> bytes:
     ).encode()
 
 
+def _claim_cell(claim: dict | None, cap: int = SUMMARY_CAP) -> str:
+    value = claim.get("value") if isinstance(claim, dict) else None
+    if value is None:
+        return "<span class=meta>—</span>"
+    text = str(value).splitlines()[0] if str(value) else ""
+    return f"<span class=warn title='{esc(CLAIM)}'>{esc(text[:cap])}*</span>"
+
+
 def render_fleet(rows: list[dict], summary: dict) -> bytes:
+    states = ", ".join(f"{count} {state}" for state, count in summary["liveness"].items() if count)
     head = (
         "<h1>space_chassis — the fleet</h1>"
-        f"<p class=note>{esc(summary['agents'])} agent(s), {esc(summary['runs'])} run(s), "
+        f"<p class=note>{esc(summary['agents'])} agent(s): {esc(states) or 'none seen'}; "
         f"{esc(summary['turns'])} turn(s) in view, "
         f"{summary['bytes'] / 1e6:.1f} MB of transcript. Read-only: this panel opens the "
-        "record, and nothing it does can change it.</p>"
+        "record, and nothing it does can change it. Liveness and signals are the monitor's, "
+        f"from the recorders' transcripts; * marks {esc(CLAIM)}.</p>"
     )
     if not rows:
         return page(
@@ -744,40 +650,47 @@ def render_fleet(rows: list[dict], summary: dict) -> bytes:
             "conversation appears here.</p>",
             refresh=10,
         )
-    cells = "".join(
-        "<tr>"
-        f"<td><a href='/agent/{esc(r['slug'])}'>{esc(r['slug'])}</a></td>"
-        f"<td>{esc(r['runs'])}</td>"
-        f"<td>{esc(r['turns_loaded'])}{'…' if r['more_available'] else ''}</td>"
-        f"<td class='{'ok' if r['last_exit'] in (0, 42) else 'bad' if r['last_exit'] else 'meta'}'>"
-        f"{esc(r['last_exit'])}</td>"
-        f"<td>{esc(r['last_tier'])}</td>"
-        f"<td>{pressure_label(r['context_pressure'])}</td>"
-        f"<td>{', '.join(esc(x) for x in r['pump_running']) or '—'}</td>"
-        f"<td>{r['transcript_bytes'] / 1e6:.1f} MB</td>"
-        "</tr>"
-        for r in rows
-    )
+
+    def cells(r: dict) -> str:
+        signals = r["signals"]
+        spend = signals.get("spend") if isinstance(signals.get("spend"), dict) else {}
+        caps = signals.get("caps") if isinstance(signals.get("caps"), dict) else {}
+        state = r["liveness"]
+        kind = "ok" if state == "active" else "bad" if state == "stale" else "warn"
+        return (
+            "<tr>"
+            f"<td><a href='/agent/{esc(r['slug'])}'>{esc(r['slug'])}</a></td>"
+            f"<td class={kind}>{esc(state)}</td>"
+            f"<td>{esc(signals.get('incarnations', '—'))}</td>"
+            f"<td>{esc(spend.get('requests', '—'))}/{esc(caps.get('requests', '—'))}</td>"
+            f"<td>{esc(signals.get('refusals', '—'))}</td>"
+            f"<td>{esc(signals.get('tool_errors', '—'))}/{esc(signals.get('tool_results', '—'))}</td>"
+            f"<td>{esc(r['turns_loaded'])}{'…' if r['more_available'] else ''}</td>"
+            f"<td>{r['transcript_bytes'] / 1e6:.1f} MB</td>"
+            f"<td>{_claim_cell(r['claims'].get('recovery_note'))}</td>"
+            "</tr>"
+        )
+
     table = (
-        "<table><tr><th>agent</th><th>runs</th><th>turns</th><th>last exit</th><th>tier</th>"
-        "<th>window</th><th>scheduled</th><th>transcript</th></tr>" + cells + "</table>"
+        "<table><tr><th>agent</th><th>liveness</th><th>incarnations</th><th>hour / cap</th>"
+        "<th>refusals</th><th>tool errors</th><th>turns</th><th>transcript</th>"
+        "<th>last note*</th></tr>" + "".join(cells(r) for r in rows) + "</table>"
     )
     return page("space_chassis — the fleet", head + table, refresh=15)
 
 
 def render_turn(turn: dict, slug: str, position: str | None = None) -> str:
     pos = position or f"#{turn['index']}"
-    status = turn.get("status")
-    status_class = "ok" if status == 200 else ("bad" if status and status >= 400 else "meta")
     usage = turn.get("usage") or {}
     tokens = usage.get("total_tokens")
-    pieces = [
-        f"<b>{esc(pos)}</b> ",
-        f"<span class=meta>{esc(turn['at'])}</span> ",
-        f"<span class={status_class}>status {esc(status)}</span> ",
-    ]
-    if turn.get("duration_seconds") is not None:
-        pieces.append(f"<span class=meta>{turn['duration_seconds']}s</span> ")
+    pieces = [f"<b>{esc(pos)}</b> ", f"<span class=meta>{esc(turn['at'])}</span> "]
+    if turn.get("stream") not in (None, health.CORE):
+        pieces.append(f"<span class=meta>stream {esc(turn['stream'])}</span> ")
+    if turn.get("fresh"):
+        pieces.append("<span class=ok>new conversation</span> ")
+    if turn.get("error") is not None:
+        label = "refused" if turn.get("refused") else "error"
+        pieces.append(f"<span class=bad>{label}: {esc(turn['error'])}</span> ")
     if tokens:
         pieces.append(
             f"<span class=meta>{esc(tokens)} tokens "
@@ -791,8 +704,6 @@ def render_turn(turn: dict, slug: str, position: str | None = None) -> str:
         pieces.append(f"<span class=meta>→ {names}</span>")
     if turn.get("reasoning"):
         pieces.append(" <span class=meta>[thought]</span>")
-    if turn.get("refusal"):
-        pieces.append(f" <span class=bad>{esc(turn['refusal'])}</span>")
 
     if turn.get("unparseable"):
         return (
@@ -837,11 +748,6 @@ def render_turn(turn: dict, slug: str, position: str | None = None) -> str:
         body.append(f"<pre class=task>{esc(message.get('text'))}</pre>")
     if not body:
         body.append("<p class=note>This turn carries no new text.</p>")
-    if not turn.get("delta_known"):
-        body.append(
-            "<p class=note>This is the oldest turn in the loaded window, so what was new in "
-            "it cannot be separated from what came before.</p>"
-        )
     if turn.get("tools_offered"):
         names = ", ".join(esc(n) for n in (turn.get("tools_offered_names") or []) if n)
         body.append(
@@ -860,21 +766,23 @@ def render_turn(turn: dict, slug: str, position: str | None = None) -> str:
 
 def render_agent(row: dict, turns: list[dict], limit: int, before: int | None) -> bytes:
     slug = row["slug"]
+    signals = row["signals"]
+    spend = signals.get("spend") if isinstance(signals.get("spend"), dict) else {}
     head = [
         f"<h1>{esc(slug)}</h1>",
         "<p class=note>",
-        f"{esc(row['runs'])} run(s) · last exit "
-        f"<span class='{'ok' if row['last_exit'] in (0, 42) else 'meta'}'>"
-        f"{esc(row['last_exit'])}</span>",
-        f" · tier {esc(row['last_tier'])}",
+        f"{esc(row['liveness'])} · {esc(signals.get('incarnations', '—'))} incarnation(s) · "
+        f"{esc(spend.get('requests', '—'))} request(s) this hour · "
+        f"{esc(signals.get('refusals', '—'))} refusal line(s)",
         f" · {row['transcript_bytes'] / 1e6:.1f} MB of transcript",
         f" · <a href='/'>fleet</a> · <a href='/api/agent/{esc(slug)}'>json</a>",
         "</p>",
     ]
-    if row.get("last_note"):
+    note = row["claims"].get("recovery_note", {}).get("value")
+    if note:
         head.append(
-            f"<p class=note>the last run ended: {esc(row['last_note'])} "
-            "(this is the supervisor's record, not the agent's account)</p>"
+            f"<p class=warn>last recovery note*: {esc(note[:TEXT_CAP])}<br>"
+            f"<span class=meta>* {esc(CLAIM)}: written inside the agent's container</span></p>"
         )
     if row.get("transcript_error"):
         head.append(f"<p class=bad>{esc(row['transcript_error'])}</p>")
