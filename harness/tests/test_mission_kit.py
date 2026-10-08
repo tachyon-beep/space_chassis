@@ -74,3 +74,46 @@ def test_run_marks_truncated_output():
 def test_git_works_through_run(tmp_path):
     out = agent.run(f"git init -q {tmp_path} && git -C {tmp_path} status --short")
     assert out.splitlines()[:2] == ["status: completed", "exit: 0"]
+
+
+def test_read_path_bounds_what_it_returns_not_only_what_it_reads(tmp_path):
+    # Line numbers and replacement characters expand the text; the bound is on the output.
+    for name, data in (("lines.txt", b"\n" * 70_000), ("blob.bin", b"\xff" * 70_000)):
+        p = tmp_path / name
+        p.write_bytes(data)
+        out = agent.read_path(str(p))
+        assert len(out.encode()) < agent.MISSION_KIT_OUTPUT_LIMIT + 200, name
+        assert out.endswith(
+            f"[file is 70000 bytes; output stops at {agent.MISSION_KIT_OUTPUT_LIMIT}]"
+        ), name
+
+
+def test_read_path_reads_a_numbered_line_anywhere_in_a_large_file(tmp_path):
+    p = tmp_path / "long.txt"
+    p.write_text("".join(f"line {i}\n" for i in range(1, 100_001)))
+    assert agent.read_path(str(p), 50_000) == "50000: line 50000\n"
+
+
+def test_read_path_counts_every_line_when_one_is_out_of_range(tmp_path):
+    p = tmp_path / "long.txt"
+    p.write_text("".join(f"line {i}\n" for i in range(1, 100_001)))
+    assert agent.read_path(str(p), 100_001) == (
+        "error: line 100001 is out of range; the file has 100000 lines"
+    )
+
+
+def test_read_path_bounds_a_single_numbered_line(tmp_path):
+    p = tmp_path / "wide.txt"
+    p.write_text("y" * 200_000 + "\n")
+    out = agent.read_path(str(p), 1)
+    assert len(out.encode()) < agent.MISSION_KIT_OUTPUT_LIMIT + 200
+    assert out.endswith(f"[line is longer; output stops at {agent.MISSION_KIT_OUTPUT_LIMIT}]")
+
+
+def test_write_path_refuses_an_unknown_mode_and_leaves_the_file_alone(tmp_path):
+    p = tmp_path / "notes.txt"
+    p.write_text("keep")
+    assert agent.write_path(str(p), "x", mode="add") == (
+        "error: unknown mode 'add'; use overwrite or append"
+    )
+    assert p.read_text() == "keep"

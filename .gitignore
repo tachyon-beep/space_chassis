@@ -32,3 +32,8 @@ vendor/.cargo-home/
 # Filigree issue tracker
 .weft/
 .filigree/
+
+# The harness tests write a session and tombstones into harness/, which becomes the seed every
+# agent boots from (/opt/agent); a tracked session there would boot every agent into it.
+harness/session_context.json
+harness/tombstones/
