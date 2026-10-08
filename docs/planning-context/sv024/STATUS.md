@@ -1,5 +1,32 @@
 # SV-024 status
 
+## Correction 1 (Astra SV024-02) — complete; awaiting the coordinator's checkpoint and Astra re-review. Not accepted.
+
+SV024-02 is fixed in `services/chassis_startup.py`. Before a new RECOVERING is published, `_fence_intent_inputs` fsyncs the anchor's and the tail's segments and fences ledger/. A failure there is a persistence failure with no intent, copy or truncation. SV024-01 is unchanged.
+
+The new regressions were run first on the reviewed runtime: `[name-lost]` and `[name-kept-data-lost]` stopped `recovery_intent_copy_missing` as traced, and the `[segment-fsync]` control found RECOVERING already published. Final serial runs: namespace 28, recovery_live 97, frozen batches 8+6+11+2+8, conditional 1 — 161 passes in 8 commands, with no failures. The cut index of one existing recovery_live node shifted; its assertions are unchanged. Details: `checkpoint-001-astra-corrections.md`.
+
+Initial declaration (kept):
+
+Review: `SV-024-Astra-review.md`, head `d94bc78e3cf69daec028b43fee180f88e559897d`, runtime/tests `0ac2245fc93032146a1fc19060ece18276ce9157`. SV024-01 was accepted for its A15 trace and is kept unchanged. SV024-02 (P2) is open: a durable RECOVERING could be published before the unfenced, unsynced torn header it names was durable.
+
+Provenance: an earlier correction attempt was interrupted after it had read the review and the runtime sources. The coordinator verified that its process and scope were absent, that no completion receipt existed and that the checkout was clean. No edits or tests from that attempt are evidenced. This attempt continues the same task from that state.
+
+**Declared extension of `tests/test_chassis_namespace.py`** (frozen before its first run). There are 6 new cases, so 28 in total, and the original 22 are unchanged.
+
+1. `test_sv024_02_a_partial_header_behind_a_published_intent_converges` — 3 cases. The first process's armed rotation header write stores only 30 bytes, then the process dies (M-1 in-flight write; watermark 0, name unfenced). A restart inherits both maps and dies at its first call after RECOVERING's `rename` + `fsync(session/)` returned, before any quarantine copy. Then:
+   - `name-lost`: host loss `vanish/drop`.
+   - `name-kept-data-lost`: host loss `keep/drop`.
+   - `interrupted-again`: process death only. A third process inherits the maps and dies at its first call after the quarantine `truncate`. Then host loss `vanish/drop` is applied over all three processes.
+
+   The next start converges, with exact fragment evidence (one corrupt/ copy equal to the 30 bytes, one `torn_incomplete`), then the dependent unit and two further starts, all with the existing `recover`/`continue_and_converge` oracle.
+2. `test_sv024_02_a_failed_pre_intent_fence_publishes_nothing` — 2 cases: `segment-fsync` and `ledger-fence`. Same partial header; the restart's pre-intent fence returns EIO. The test expects no RECOVERING published, no corrupt/ copy, no truncation, no `.svl` write, the fragment unchanged, FSYNC_FAILED present and A1 next. After acknowledgement in the temporary root, the start converges.
+3. `test_sv024_01_a_failed_inherited_segment_fsync_publishes_no_checkpoint` — 1 case. After a `before-file-sync` process death, the restart's `sync_inherited` fsync returns EIO inside its first checkpoint. The test expects no CK4/CK5 change (conversation.json, run.json byte-identical), no CHECKPOINT, no new segment created, the session broken, no effect and A1 next.
+
+Expectation on the unmodified reviewed runtime: cases 1 fail (the `recovery_intent_copy_missing` stop or a lost name), cases 2 fail (there is no pre-intent fence), and case 3 passes (SV024-01 is present).
+
+---
+
 **Implementation and bounded validation complete; awaiting the coordinator's checkpoint and independent Astra review. Not accepted.** The integrated O2-5 slice is closed in the fault model, and one evidenced defect (SV024-01: a false A15 after a readable but unsynced rotation header was covered by a durable checkpoint cover) is fixed in `services/chassis_persistence.py` and `services/chassis_session.py`. Final tree: 58 selected passes in 7 serial commands (35 retained + 1 conditional + 22 new), with no failures. Pre-fix failure R1 and mutation M1 are control evidence, not passes. Details, mappings and non-claims: [RECEIPT.md](RECEIPT.md). No Git call; temporary roots only.
 
 ---

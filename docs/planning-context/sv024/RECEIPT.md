@@ -137,3 +137,9 @@ Static note on unselected tests, which were not run. The only behavioural differ
 - SV024-01 also covers a readable but unsynced ordinary record at the end of the continued segment before a checkpoint. That case is **not** separately evidenced.
 - Not examined or claimed: a RECOVERING intent written over a readable but unsynced prefix before `continue_after` (a possibly analogous ordering in `_recover`). It is outside this slice and was not traced.
 - Unchanged and not claimed: exact replay bounds, bootstrap-preserving and lost-ledger resolutions, provider/deployment evidence, merge, H/T/Q, pump.
+
+## 10. Correction 1 (Astra SV024-02)
+
+§1–§9 describe runtime/tests `0ac2245fc93032146a1fc19060ece18276ce9157`. The independent review (`SV-024-Astra-review.md`, head `d94bc78`) accepted SV024-01 for its A15 trace. It found SV024-02: a durable RECOVERING could be published before the unfenced, unsynced torn header it names was durable, so after a host loss the next start stopped `recovery_intent_copy_missing`. §9's caveat about an untraced recovery intent was this case.
+
+The fix is in `services/chassis_startup.py` (`_fence_intent_inputs` before intent publication). Six regressions and controls were added to `tests/test_chassis_namespace.py`; the review's trace and one control failed first on the reviewed runtime. Final: 161 selected passes in 8 serial commands. Details, ordering, failure behaviour, the one shifted cut in an existing node and limits: `checkpoint-001-astra-corrections.md`. Not accepted; awaiting re-review.
