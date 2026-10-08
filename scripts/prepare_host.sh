@@ -55,6 +55,9 @@ else
     echo "   seed $ROSTER_SEED (rerun with REROLL=1 to draw again)"
 fi
 
+echo "== the llm console seed"
+"$PYTHON" scripts/build_console_seed.py
+
 # docker-compose.yml declares a fixed number of agents, and every one of its services binds images
 # named for agents 1..N -- the monitor and the review panel bind them all -- so a roster of any other
 # size would leave even a bare `compose up` unable to start. Regenerate the compose for another size

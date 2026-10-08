@@ -54,6 +54,9 @@ COPY --chown=agent:agent harness/agent.py harness/chassis.py harness/command_run
 # agent's workspace: the pump runs from the image, and the recorder reuses this image as its own.
 COPY --chown=agent:agent pump/pump.py /usr/local/bin/pump.py
 COPY --chown=agent:agent recorder/proxy.py recorder/recorder_streams.py recorder/core_caps.py /usr/local/lib/recorder/
+# The llm console seed, generated from the operator's allow lists on the host by prepare_host.sh
+# The entrypoint copies it into /llm/console only when none exists.
+COPY --chown=agent:agent llm_console_seed.json /usr/local/share/space/llm_console_seed.json
 # The briefing, read-only.
 COPY --chown=agent:agent brief/ /opt/brief/
 # The operator side that has not yet moved to the Aurora harness: the watcher and the review panel
