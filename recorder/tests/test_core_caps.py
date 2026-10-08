@@ -184,10 +184,22 @@ def test_a_ledger_path_without_an_agent_slug_is_refused(tmp_path, monkeypatch):
 def test_a_core_request_cannot_reserve_less_than_the_response_reserve():
     # The agent writes its own chassis, so the body's max_tokens is its claim; a duplicate key
     # can even differ between this parser and the upstream's. The reserve is a floor.
-    for body in (b'{"max_tokens":1}', b'{"max_tokens":100000,"max_tokens":1}'):
+    body = b'{"max_tokens":1}'
+    caps = core_caps.CoreCaps(10, 10**9, clock=Clock())
+    caps.admit(body)
+    assert caps.used()["tokens"] == estimate_prompt_tokens(body) + 32768
+
+
+def test_a_duplicated_max_tokens_reserves_the_largest_of_its_values():
+    # Python keeps the last duplicate key and an upstream may keep the first; holding the
+    # largest leaves no reading of the body that can spend past the reservation.
+    for body in (
+        b'{"max_tokens":100000,"max_tokens":1}',
+        b'{"max_tokens":1,"max_tokens":100000}',
+    ):
         caps = core_caps.CoreCaps(10, 10**9, clock=Clock())
         caps.admit(body)
-        assert caps.used()["tokens"] == estimate_prompt_tokens(body) + 32768, body
+        assert caps.used()["tokens"] == estimate_prompt_tokens(body) + 100000, body
 
 
 def test_an_unreachable_ledger_refuses_with_503_instead_of_raising(tmp_path):

@@ -48,16 +48,25 @@ def core_reservation(body, response_reserve):
     """What a core request holds while in flight: the prompt estimate plus a response floor.
 
     The agent writes its own chassis, so a max_tokens in the body is only its claim, and a
-    duplicate key can even read differently here and upstream. A larger claim raises the hold;
-    nothing lowers it below the response reserve.
+    duplicate key can read differently here and upstream: Python keeps the last, another parser
+    may keep the first. Every occurrence is read, the largest positive integer claim raises the
+    hold, and nothing lowers it below the response reserve.
     """
+    claims = []
+
+    def collect(pairs):
+        claims.extend(
+            value
+            for key, value in pairs
+            if key == "max_tokens" and isinstance(value, int) and not isinstance(value, bool)
+        )
+        return dict(pairs)
+
     try:
-        data = json.loads(body.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        data = None
-    claimed = data.get("max_tokens") if isinstance(data, dict) else None
-    if isinstance(claimed, bool) or not isinstance(claimed, int) or claimed < 0:
-        claimed = 0
+        json.loads(body.decode("utf-8"), object_pairs_hook=collect)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        claims = []
+    claimed = max((value for value in claims if value > 0), default=0)
     return estimate_prompt_tokens(body) + max(response_reserve, claimed)
 
 
