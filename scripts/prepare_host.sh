@@ -1,31 +1,24 @@
 #!/bin/sh
-# Prepare the host for the stack: the durable directories, their ownership, the
-# roster, and the environment file.
+# Prepare the host for the stack: the roster, the environment file, and the bounded volume images.
 #
-# Two of these steps are not tidiness.
+# Every volume an agent or a recorder writes is a preallocated ext4 image, loop-mounted under
+# volumes/ (scripts/volume_images.py is the manifest). This script draws the fleet's names, plans
+# the images against the free disk, creates the ones that are missing, and checks them. Mounting an
+# image and creating its data/ directory need root; this script never runs sudo itself. The image
+# creator tries `sudo -n mount` and otherwise prints the exact commands, and they are collected
+# here into one block for the operator, followed by the /etc/fstab lines that mount them at boot.
 #
-# The directories under ./volumes are bind-mounted into containers that run as
-# uid 1000 and drop every capability, so they cannot chown anything themselves.
-# A bind-mount source that does not exist is created by the Docker daemon as
-# root -- including each agent's home and diary, whose names come from the
-# roster and therefore cannot be known until it has been drawn. So they are all
-# created here, and owned correctly, before compose ever runs. The failure this
-# prevents looks like an agent that cannot write its own home.
+# Exit status: 0 when every image is ready; 2 when the operator has steps to run (the block above
+# says which), or when the old layout must be archived first; 1 on any error.
 #
-# Re-running is safe: existing directories and an existing roster are kept.
+# Re-running is safe: an existing roster is kept (REROLL=1 draws again), existing images are
+# neither reformatted nor shrunk, and a ready image is left alone.
 set -eu
 
 REPO_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$REPO_DIR"
-
-OWNER_UID=${AGENT_UID:-1000}
-OWNER_GID=${AGENT_GID:-1000}
-
-echo "== durable directories"
-for dir in work diode pump transcripts telemetry llm_sock home diary; do
-    mkdir -p "volumes/$dir"
-done
-mkdir -p volumes/telemetry/agents
+PYTHON=${PYTHON:-python3}
+ARCHIVE=volumes.pre-aurora-2026-10-09
 
 echo "== the crate registry"
 if [ ! -d vendor/registry ]; then
@@ -44,100 +37,108 @@ else
 fi
 
 echo "== the roster"
-# The names go into .env, which compose reads with no flags. A separate roster
-# file would need `--env-file` on every command, and a stack started without it
-# hands every agent the fallback name: agent_1 is handed /home/agent_1 while its
-# real directory is /home/mazarine, and it comes up unable to write its home.
-if [ -f volumes/work/roster.json ] && [ "${REROLL:-0}" != "1" ]; then
-    python3 scripts/roster.py --print --work-dir volumes/work
-    python3 scripts/roster.py --work-dir volumes/work --env-file .env >/dev/null
+# The names go into .env, which compose and the volume tooling read with no flags. The roster file
+# itself is the operator's bookkeeping, in operator/. A roster from the old layout, which lived in
+# a volume every agent could write, is carried forward once and validated before it reaches .env.
+mkdir -p operator
+if [ -f volumes/work/roster.json ] && [ ! -f operator/roster.json ]; then
+    cp volumes/work/roster.json operator/roster.json
+    echo "   copied the roster out of volumes/work into operator/"
+fi
+if [ -f operator/roster.json ] && [ "${REROLL:-0}" != "1" ]; then
+    "$PYTHON" scripts/roster.py --roster-dir operator --env-file .env
     echo "   .env refreshed from the existing roster"
 else
     ROSTER_SEED=${ROSTER_SEED:-$(date +%s)}
-    python3 scripts/roster.py --count "${FLEET_COUNT:-10}" --seed "$ROSTER_SEED" \
-        --work-dir volumes/work --env-file .env
+    "$PYTHON" scripts/roster.py --count "${ROSTER_COUNT:-10}" --seed "$ROSTER_SEED" \
+        --roster-dir operator --env-file .env
     echo "   seed $ROSTER_SEED (rerun with REROLL=1 to draw again)"
 fi
 
-echo "== each agent's own directories"
-# The names come from the roster, which is why this runs after it. Each agent
-# gets a home with somewhere for its session and its logs, a diary, and a pump
-# directory with a log directory, because a directory the pump cannot write is a
-# schedule that silently does nothing.
-python3 - "$REPO_DIR" <<'PYTHON'
-import json
-import sys
-from pathlib import Path
+ROOT=$("$PYTHON" scripts/volume_images.py root)
 
-repo = Path(sys.argv[1])
-roster = json.loads((repo / "volumes" / "work" / "roster.json").read_text(encoding="utf-8"))
-for entry in roster["agents"]:
-    slug = entry["slug"]
-    for path in (
-        repo / "volumes" / "home" / slug / "session",
-        repo / "volumes" / "home" / slug / "logs",
-        repo / "volumes" / "diary" / slug,
-        repo / "volumes" / "pump" / slug / "log",
-        repo / "volumes" / "diode" / slug / "output",
-        repo / "volumes" / "telemetry" / "agents" / slug,
-        repo / "volumes" / "telemetry" / "work" / slug,
-    ):
-        path.mkdir(parents=True, exist_ok=True)
-print(f"   {len(roster['agents'])} home(s), diary(s), pump and telemetry directory(ies)")
-PYTHON
-
-if [ "$(id -u)" -eq 0 ]; then
-    chown -R "$OWNER_UID:$OWNER_GID" volumes/work volumes/diode volumes/pump volumes/llm_sock \
-        volumes/home volumes/diary
-    chown -R "$OWNER_UID:$OWNER_GID" volumes/transcripts volumes/telemetry
-    echo "   ownership set to $OWNER_UID:$OWNER_GID"
-fi
-
-# Verify rather than assume. Every one of these is a bind-mount source for a
-# container that runs as uid 1000 and cannot chown anything, and a source owned
-# by anyone else produces a failure that is genuinely hard to read from the
-# outside: the supervisor loses its lifecycle record, the panel shows a fleet
-# with no runs and no exits, and nothing anywhere says why. Failing here is
-# cheap; failing there costs an afternoon.
-bad_ownership=$(python3 - "$REPO_DIR" "$OWNER_UID" <<'PYTHON'
-import os
-import sys
-from pathlib import Path
-
-repo = Path(sys.argv[1])
-want = int(sys.argv[2])
-roots = [
-    "volumes/work", "volumes/diode", "volumes/pump", "volumes/llm_sock",
-    "volumes/transcripts", "volumes/telemetry", "volumes/home", "volumes/diary",
-]
-wrong = []
-for root in roots:
-    base = repo / root
-    if not base.exists():
-        continue
-    for path in [base, *base.rglob("*")]:
-        try:
-            if path.stat().st_uid != want:
-                wrong.append(str(path.relative_to(repo)))
-        except OSError:
-            continue
-print("\n".join(sorted(set(wrong))[:20]))
-PYTHON
-)
-
-if [ -n "$bad_ownership" ]; then
+echo "== the old layout"
+# Before the images, the volumes were plain directories under volumes/. None of these is ever an
+# image mount point now -- per-agent images are <kind>_<slug> -- so any of them means the old tree
+# is still in place. It is archived, never migrated, and only by the operator: this script moves
+# nothing. It must happen before the first image is mounted, while volumes/ can still be moved.
+old=""
+for name in work home diary pump transcripts telemetry llm_sock; do
+    if [ -e "$ROOT/$name" ]; then
+        old="$old $ROOT/$name"
+    fi
+done
+if [ -n "$old" ]; then
+    echo "   the old volume layout is still here:$old"
+    echo "   it holds the stub-model runs from before the Aurora port; archive it, then rerun:"
     echo ""
-    echo "   These directories are not owned by uid $OWNER_UID, and the containers" >&2
-    echo "   that mount them cannot write to them as a result:" >&2
-    printf '     %s\n' $bad_ownership >&2
-    echo "" >&2
-    echo "   The supervisor loses its lifecycle record when this happens, and the" >&2
-    echo "   review panel then shows a fleet with no runs and no exits." >&2
-    echo "   Fix it with:" >&2
-    echo "     sudo chown -R $OWNER_UID:$OWNER_GID $REPO_DIR/volumes" >&2
-    exit 1
+    echo "     mv volumes $ARCHIVE"
+    echo ""
+    exit 2
 fi
-echo "   ownership verified: everything under volumes/ belongs to uid $OWNER_UID"
+echo "   none"
+
+echo "== the images"
+"$PYTHON" scripts/volume_images.py plan || exit 1
+list=$("$PYTHON" scripts/volume_images.py list) || exit 1
+block=$(mktemp)
+trap 'rm -f "$block"' EXIT
+printf '%s\n' "$list" | while read -r name size img mnt; do
+    [ -n "$name" ] || continue
+    set +e
+    output=$(sh scripts/create_volume_image.sh "$name" "$size" "$img" "$mnt" 2>&1)
+    status=$?
+    set -e
+    case $status in
+        0) [ -z "$output" ] || printf '%s\n' "$output" ;;
+        2) printf '%s\n' "$output" >> "$block" ;;
+        *)
+            printf '%s\n' "$output" >&2
+            echo "   creating $name failed with status $status" >&2
+            exit 1
+            ;;
+    esac
+done || exit 1
+
+echo "== each agent's window and telemetry directories"
+# Inside the shared window image each agent binds only its own directory, and inside the operator's
+# telemetry image the review panel binds each agent's telemetry at agents/<slug>. data/ belongs to
+# uid 1000, so these need no root -- but only once the image is really mounted there.
+slugs=$(sed -n 's/^FLEET_SLUGS=//p' .env | tail -n 1 | tr ',' ' ')
+made=0
+for slug in $slugs; do
+    if mountpoint -q "$ROOT/diode" && [ -d "$ROOT/diode/data" ]; then
+        mkdir -p "$ROOT/diode/data/$slug/output"
+        made=1
+    fi
+    if mountpoint -q "$ROOT/operator_telemetry" && [ -d "$ROOT/operator_telemetry/data" ]; then
+        mkdir -p "$ROOT/operator_telemetry/data/agents/$slug"
+        made=1
+    fi
+done
+if [ "$made" = 1 ]; then
+    echo "   made for: $slugs"
+else
+    echo "   not yet: the window and operator telemetry images are not mounted"
+fi
+
+if [ -s "$block" ]; then
+    echo ""
+    echo "steps for the operator:"
+    cat "$block"
+fi
+echo ""
+echo "/etc/fstab lines that mount the images at boot:"
+"$PYTHON" scripts/volume_images.py fstab || exit 1
+
+if [ -s "$block" ]; then
+    echo ""
+    echo "Run the steps above, then rerun scripts/prepare_host.sh."
+    exit 2
+fi
+
+echo ""
+"$PYTHON" scripts/volume_images.py check || exit 1
 
 cat <<'NEXT'
 
@@ -146,7 +147,7 @@ Next:
   2. docker compose --profile fleet up --build
   3. watch it: python3 scripts/status.py
 
-The fleet starts as ten agents on an internal network with no route outward.
-Whether a window exists at all is the diode's business; without one the stack
+The fleet starts as ten agents on an internal network with no route outward, each on its own
+bounded volumes. Whether a window exists at all is the vehicle's business; without one the stack
 still runs and nothing can leave.
 NEXT
