@@ -1,3 +1,13 @@
+# SV-028 governing implementation authority
+
+Astra accepted the architecture at `8e30cf865764f565ba4bf255a9b92f8492cdcf18`, subject to **L1–L7 in [ASTRA-DESIGN-ACCEPTANCE.md](ASTRA-DESIGN-ACCEPTANCE.md)**. Those exact qualifications supersede contradictory historical design/status text. This is bounded implementation authority only; runtime acceptance is pending.
+
+Required: establish inherited inventory before archive mutation; bind Phase B to carrier and preserved STOPPED; report actual completed prefixes after late failure; check capacity on every lifecycle branch and distinguish max(U,F) from post-cleanup F; restore finite prior assertions with source-missing precedence; model ancestor rename reversal correctly; remove permanent-refusal and guaranteed-marker claims.
+
+The frozen launch matrix is **58 new + 50 retained = 108 cases in ten final commands**, plus four pre-fix commands. F7 adds the five exact L1/L3 cases. No broad suite, raised resource cap, provider, real-session operation or owner-policy change. Opus implements; independent immutable Astra implementation review follows.
+
+---
+
 # SV-028 status: correction round 2 complete, awaiting independent Astra re-review. Not implemented. Not accepted.
 
 - **Base:** `05cc4f8616c108855246c8c8ea13a571eb9731c8`.
