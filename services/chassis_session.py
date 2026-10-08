@@ -33,6 +33,10 @@ this run held.
   bytes the reducer obtained. A start rebuilds them from its selected replay.
   The threshold is checked after each closed unit: direct units, adoption and
   drops, the startup transaction, and GC.
+* **Closed boundaries (SV027).** Every closed unit ends in `unit_end`: the
+  threshold checkpoint if it is reached, else the rotation of a full segment
+  (v2 1.4.6) -- so a full segment rotates at its first closed boundary, and one
+  closure writes at most one checkpoint, one follow-up and one header.
 """
 
 from __future__ import annotations
@@ -457,7 +461,7 @@ class Session:
             raise ValueError("a handoff note must be text")
         if len(self.state.notes_pending) >= rp.MAX_PENDING_NOTES:
             self._drop_note(len(note.encode("utf-8", "replace")))
-            self.threshold_boundary()  # a closed unit unless inside a tool group (SV026)
+            self.unit_end()  # a closed unit unless inside a tool group: threshold, then rotation (SV027)
             return None
         text, _info = envelope.truncate_marked(note.strip(), self.caps.note)
         file_text = f"{header}\n\n{text}\n"
@@ -503,7 +507,7 @@ class Session:
             return None
         if len(self.state.notes_pending) >= rp.MAX_PENDING_NOTES:
             self._drop_note(len(data))
-            self.threshold_boundary()
+            self.unit_end()
             return None
         stored, _info = envelope.truncate_marked(data.decode("utf-8", "replace"), self.caps.note)
         blob = stored.encode("utf-8")
@@ -513,7 +517,7 @@ class Session:
             lambda key: {"gen": gen, "blob": key, "bytes": len(blob), "sha256": key, "source": "file_edit", "mirror_sha256": digest},
             blob=blob,
         )
-        self.threshold_boundary()
+        self.unit_end()
         return gen
 
     def adopt_notes(self) -> list[int]:
@@ -525,9 +529,10 @@ class Session:
         is per generation, never by text, so a later generation with equal
         text is still appended.
 
-        Each generation, and the notice, is one closed unit (SV026): the
+        Each generation, and the notice, is one closed unit (SV026, SV027): the
         watermark, the pending generations and their marks are checkpoint
-        state, so a threshold checkpoint between them is a consistent resume.
+        state, so a threshold checkpoint -- or a rotation, which changes none
+        of them -- between them is a consistent resume.
         """
         self._require_boundary("note adoption")
         adopted = []
@@ -539,10 +544,10 @@ class Session:
             self._commit("MSG_APPEND", payload)
             if not foreign:
                 adopted.append(entry["gen"])
-            self.threshold_boundary()
+            self.unit_end()
         if self.state.notes_dropped:
             self._append("notice", rp.DROPPED_NOTE_NOTICE.format(count=rp.MAX_PENDING_NOTES), reports="note_dropped_pending_limit")
-            self.threshold_boundary()
+            self.unit_end()
         return adopted
 
     # -- history and recap -----------------------------------------------------------
@@ -579,25 +584,19 @@ class Session:
         return self.since_records >= self.records_max or self.since_bytes >= self.bytes_max
 
     def unit_end(self) -> None:
-        """After a unit: checkpoint on the v2 1.4.1 threshold, else rotate a full segment."""
+        """The one closed-boundary step: checkpoint on the v2 1.4.1 threshold, else rotate a full segment (v2 1.4.6).
+
+        Every closed unit ends here -- direct units, the startup transaction,
+        adoption and drops (SV027) -- and nothing inside a tool group or with
+        queued messages. `checkpoint` rotates once at its own end, so a closure
+        writes at most one header either way.
+        """
         if self.broken or self.replay.group is not None or self.queue:
             return
         if self._over():
             self.checkpoint()
         else:
             self._rotate()
-
-    def threshold_boundary(self) -> None:
-        """After a unit that is not a rotation point -- startup, adoption, a drop (SV026).
-
-        The same guards and threshold as `unit_end`, but it never rotates (R-D):
-        a full segment rotates at the next `unit_end` or the end of the next
-        checkpoint, as before.
-        """
-        if self.broken or self.replay.group is not None or self.queue:
-            return
-        if self._over():
-            self.checkpoint()
 
     def _rotate(self) -> None:
         try:

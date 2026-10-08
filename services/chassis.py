@@ -1138,6 +1138,8 @@ class Chassis:
         checkpoint reaches the threshold, it ends in one ordinary checkpoint,
         with run.json metadata of the recovered conversation, before the duty
         loads. That checkpoint writes back only what the ledger already holds.
+        Otherwise a full ledger segment is rotated there (SV027): one segment
+        header, before the duty loads.
         """
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.home_dir.mkdir(parents=True, exist_ok=True)

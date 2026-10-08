@@ -921,7 +921,7 @@ class _Context:
         else:
             session._commit("LEGACY_IMPORT", payload)
         self._consume_ack(session)
-        session.threshold_boundary()  # SV026: the import is a closed unit
+        session.unit_end()  # SV026/SV027: the import is a closed unit -- threshold, or rotate a full segment
         classification = "A5" if conv.status == "ok" else "A4"
         return Opening(classification, session, had_memory=bool(messages) or note_text is not None)
 
@@ -1140,11 +1140,12 @@ class _Context:
         target = max([*used, session.state.requests_next["turn_seq"], high_water or 0])
         session.identity_reserved = live  # what the file actually holds: rewrite it if missing or lower
         session.reserve_turns(target, exact=True)
-        # SV026: the startup transaction is one closed unit. Only now -- after
-        # the extras' syncs, the carrier and RECOVERING retired durably, and
-        # IDENTITY covering every used turn -- may its threshold checkpoint be
-        # written: under an intent it would be an unplanned extra.
-        session.threshold_boundary()
+        # SV026/SV027: the startup transaction is one closed unit. Only now --
+        # after the extras' syncs, the carrier and RECOVERING retired durably,
+        # and IDENTITY covering every used turn -- may its threshold checkpoint
+        # or the rotation of a full inherited segment be written: under an
+        # intent either would be an unplanned extra.
+        session.unit_end()
         had_memory = bool(session.messages) or bool(session.state.notes_pending)
         return Opening(decision.case, session, had_memory=had_memory)
 

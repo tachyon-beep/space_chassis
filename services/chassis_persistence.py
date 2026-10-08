@@ -941,9 +941,12 @@ class ReadTooLarge(OSError):
         self.obtained = obtained
 
 
-# Read bounds [CM], chosen here. A segment rotates at a unit boundary once it
-# reaches SEGMENT_MAX, so it can exceed that by one unit's frames; the bound
-# below leaves room for that without claiming a maximal unit shape (K-E2).
+# Read bounds [CM], chosen here. A segment rotates at its first closed unit
+# boundary once it reaches SEGMENT_MAX (SV027), so it can exceed that by what
+# is written before that boundary: the rest of the unit, the closure's
+# checkpoint and GC frames, a startup core, repeated across interrupted
+# starts. None of that is bounded here; the bound below is a chosen slack, not
+# a proved maximum (K-E2).
 MAX_SEGMENT_READ = 2 * SEGMENT_MAX
 MAX_BLOB_READ = 16 * 1024 * 1024  # v2 1.4.6 SET_HISTORY_MAX, the largest blob kind
 MAX_MARKER_READ = 64 * 1024
