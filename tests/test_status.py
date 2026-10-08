@@ -188,3 +188,15 @@ def test_the_mirror_clock_is_the_telemetry_root_not_the_copied_tree(tmp_path):
     os.utime(telemetry, (old, old))
     row = rows(run_status(volumes, "--json", "--quiet-seconds", "60"))["agent_1"]
     assert row["liveness"] == "stale"
+
+
+def test_status_text_output_carries_no_terminal_control_characters(tmp_path):
+    volumes = tmp_path / "volumes"
+    telemetry = make_agent(volumes, "agent_1", transcript_ago=5)
+    note = telemetry / "work" / "tombstones" / "recovery_note.txt"
+    note.write_text("Recovery event 1\x1b]0;pwned\x07\x1b[2J\x9b\n")
+    result = run_status(volumes, "--verbose")
+    assert result.returncode == 0, result.stderr
+    for control in ("\x1b", "\x07", "\x9b"):
+        assert control not in result.stdout
+    assert "Recovery event 1" in result.stdout

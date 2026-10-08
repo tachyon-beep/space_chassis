@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 from pathlib import Path
 
 from common import MAX_READ_BYTES, tail_jsonl
@@ -40,6 +41,8 @@ ERROR_PREFIXES = ("Error parsing JSON arguments", "Error executing tool", "Error
 CAP_WORDS = ("per hour", "across the fleet", "fleet ledger unavailable")
 MAX_ENTRIES = 10000
 RESULT_NAME = re.compile(r"^(\d{8}T\d{6})_(\d{6})Z_.+\.txt$")
+NOTE_BYTES = 64 * 1024
+CLAIM_LABEL = "the agent's own claim"
 
 
 def read_records(path: Path, max_bytes: int = MAX_READ_BYTES) -> list[dict]:
@@ -265,4 +268,158 @@ def signals(records: list, events: list, *, now: float, caps: dict, output_dir) 
             "first_at": min(stamps) if stamps else None,
             "last_at": max(stamps) if stamps else None,
         },
+    }
+
+
+def _walk(root: Path, parts: list[str]) -> int | None:
+    """A directory fd for root/parts, refusing a symlink at every step below root."""
+    try:
+        fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return None
+    try:
+        for part in parts:
+            if part in ("", ".", ".."):
+                raise OSError("unsafe path component")
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def read_claim(root: Path, relative: str, limit: int = NOTE_BYTES) -> bytes | None:
+    """An agent-written file under root, never through a symlink, a FIFO or past limit.
+
+    The agent controls every name below root, so each step is opened with O_NOFOLLOW from the
+    directory before it, and the file itself must be a regular file: a link to the operator's own
+    files, or a FIFO that would hang the reader, reads as nothing.
+    """
+    *parents, name = relative.split("/")
+    fd = _walk(Path(root), parents)
+    if fd is None:
+        return None
+    try:
+        handle = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+    except OSError:
+        os.close(fd)
+        return None
+    try:
+        info = os.fstat(handle)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+            return None
+        chunks, total = [], 0
+        while total <= limit:
+            chunk = os.read(handle, limit + 1 - total)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        return b"".join(chunks) if total <= limit else None
+    except OSError:
+        return None
+    finally:
+        os.close(handle)
+        os.close(fd)
+
+
+def claim_age(root: Path, relative: str, now: float) -> float | None:
+    """The mtime age of an agent-written entry, by lstat through no-follow directories."""
+    *parents, name = relative.split("/")
+    fd = _walk(Path(root), parents)
+    if fd is None:
+        return None
+    try:
+        info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+        return None
+    return max(0.0, now - info.st_mtime)
+
+
+def _note(root: Path, relative: str) -> str | None:
+    raw = read_claim(root, relative)
+    return raw.decode("utf-8", errors="replace").strip() if raw is not None else None
+
+
+def printable(text) -> str:
+    """Agent-written text made safe for a terminal: whitespace to spaces, controls to '?'."""
+    if text is None:
+        return "-"
+    out = []
+    for char in str(text):
+        if char in "\t\n\r":
+            out.append(" ")
+        elif ord(char) < 0x20 or 0x7F <= ord(char) < 0xA0:
+            out.append("?")
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+def claim(value) -> dict:
+    """A value the agent wrote about itself, labelled so no surface shows it as fact."""
+    return {"value": value, "claim": "agent"}
+
+
+def agent_view(
+    transcripts: Path,
+    mirror: Path,
+    output: Path | None,
+    *,
+    now: float,
+    quiet: float,
+    caps: dict,
+    pump_state: Path | None = None,
+) -> dict:
+    """One agent, as status.py and the monitor both see it.
+
+    `transcripts` is the recorder's directory for this agent; `mirror` is the root the watchdog
+    renames `work` into every few seconds -- its own mtime is the watchdog's clock, because the
+    copied tree carries the source's mtimes. Everything read from under `mirror`, and the pump's
+    state, is the agent's claim.
+    """
+    records = read_records(Path(transcripts) / "agent_life_transcript.jsonl")
+    events = read_records(Path(transcripts) / "events.jsonl")
+    found = signals(records, events, now=now, caps=caps, output_dir=output)
+    last = found["last_request_at"]
+    transcript_age = max(0.0, now - last) if last is not None else None
+    mirror = Path(mirror)
+    work = _walk(mirror, ["work"])
+    if work is None:
+        mirror_age = None
+    else:
+        os.close(work)
+        try:
+            mirror_age = max(0.0, now - mirror.stat().st_mtime)
+        except OSError:
+            mirror_age = None
+    claims = {
+        "recovery_note": claim(_note(mirror, "work/tombstones/recovery_note.txt")),
+        "incarnation_note": claim(_note(mirror, "work/tombstones/incarnation_note.txt")),
+        "agent_log_age": claim(claim_age(mirror, "work/agent_stdout.log", now)),
+    }
+    if pump_state is not None:
+        raw = read_claim(Path(pump_state).parent, Path(pump_state).name, MAX_READ_BYTES)
+        try:
+            state = json.loads(raw) if raw is not None else None
+        except ValueError:
+            state = None
+        entries = state.get("entries") if isinstance(state, dict) else None
+        claims["pump_running"] = claim(
+            sum(1 for e in entries.values() if isinstance(e, dict) and e.get("running") is True)
+            if isinstance(entries, dict)
+            else None
+        )
+    return {
+        "liveness": liveness(transcript_age, mirror_age, found["last_capped"], quiet),
+        "transcript_age": transcript_age,
+        "mirror_age": mirror_age,
+        "signals": found,
+        "claims": claims,
     }

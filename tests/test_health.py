@@ -7,6 +7,8 @@ Nothing the agent writes is an input.
 
 import ast
 import datetime as dt
+import json
+import os
 from pathlib import Path
 
 import health
@@ -237,3 +239,56 @@ def test_health_imports_nothing_outside_the_standard_library_and_common():
             names = [(node.module or "").split(".")[0]]
         for name in names:
             assert name == "common" or name in sys.stdlib_module_names or name == "__future__", name
+
+
+def _mirror(tmp_path: Path) -> Path:
+    mirror = tmp_path / "mirror"
+    (mirror / "work" / "tombstones").mkdir(parents=True)
+    return mirror
+
+
+def test_a_claim_that_is_a_symlink_is_never_followed(tmp_path: Path):
+    secret = tmp_path / "operator.env"
+    secret.write_text("OPENROUTER_API_KEY=sk-or-v1-must-not-leak\n")
+    mirror = _mirror(tmp_path)
+    (mirror / "work" / "tombstones" / "recovery_note.txt").symlink_to(secret)
+    (mirror / "work" / "agent_stdout.log").symlink_to(secret)
+    pump = tmp_path / "state.json"
+    pump.symlink_to(secret)
+    view = health.agent_view(
+        tmp_path / "t", mirror, None, now=0, quiet=60, caps={}, pump_state=pump
+    )
+    assert "must-not-leak" not in json.dumps(view)
+    assert view["claims"]["recovery_note"]["value"] is None
+    assert view["claims"]["agent_log_age"]["value"] is None
+
+
+def test_a_symlinked_directory_inside_the_mirror_is_never_followed(tmp_path: Path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "recovery_note.txt").write_text("from outside the mirror\n")
+    mirror = tmp_path / "mirror"
+    (mirror / "work").mkdir(parents=True)
+    (mirror / "work" / "tombstones").symlink_to(elsewhere)
+    view = health.agent_view(tmp_path / "t", mirror, None, now=0, quiet=60, caps={})
+    assert view["claims"]["recovery_note"]["value"] is None
+    swapped = tmp_path / "swapped"
+    swapped.mkdir()
+    (swapped / "work").symlink_to(mirror / "work")
+    assert (
+        health.agent_view(tmp_path / "t", swapped, None, now=0, quiet=60, caps={})["mirror_age"]
+        is None
+    )
+
+
+def test_a_fifo_claim_does_not_block_the_reader(tmp_path: Path):
+    mirror = _mirror(tmp_path)
+    os.mkfifo(mirror / "work" / "tombstones" / "recovery_note.txt")
+    view = health.agent_view(tmp_path / "t", mirror, None, now=0, quiet=60, caps={})
+    assert view["claims"]["recovery_note"]["value"] is None
+
+
+def test_claim_text_loses_its_control_characters_for_display():
+    assert health.printable("note\x1b]0;pwned\x07\x1b[2J end\x9b") == "note?]0;pwned??[2J end?"
+    assert health.printable("tab\tand newline\nkept as spaces") == "tab and newline kept as spaces"
+    assert health.printable(None) == "-"

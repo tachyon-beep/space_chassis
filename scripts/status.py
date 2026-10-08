@@ -41,7 +41,7 @@ sys.path.insert(0, str(PROJECT / "scripts"))
 
 import health  # noqa: E402
 import volume_images  # noqa: E402
-from common import read_bounded, read_json  # noqa: E402
+from common import read_json  # noqa: E402
 from env_file import env_value, source_path  # noqa: E402
 
 ROSTER_PATH = PROJECT / "operator" / "roster.json"
@@ -50,9 +50,8 @@ CAP_SETTINGS = {
     "requests": ("RECORDER_HOURLY_MAX", 2400),
     "tokens": ("RECORDER_TOKEN_HOURLY_MAX", 200000000),
 }
-NOTE_BYTES = 64 * 1024
 DOCKER_TIMEOUT_SECONDS = 20
-CLAIM = "* the agent's own claim"
+CLAIM = f"* {health.CLAIM_LABEL}"
 
 
 def discover(volumes: Path, roster_path: Path) -> list[tuple[str, str, str]]:
@@ -124,22 +123,6 @@ def container_info(compose: list[str], service: str) -> dict | None:
         return None
 
 
-def _age(path: Path, now: float) -> float | None:
-    try:
-        return max(0.0, now - path.stat().st_mtime)
-    except OSError:
-        return None
-
-
-def _note(path: Path) -> str | None:
-    raw = read_bounded(path, NOTE_BYTES)
-    return raw.decode("utf-8", errors="replace").strip() if raw is not None else None
-
-
-def _claim(value) -> dict:
-    return {"value": value, "claim": "agent"}
-
-
 def agent_row(
     slug: str,
     name: str,
@@ -149,40 +132,16 @@ def agent_row(
     caps: dict,
     container: dict | None,
 ) -> dict:
-    transcripts = volumes / f"transcripts_{slug}" / "data"
-    telemetry = volumes / f"telemetry_{slug}" / "data"
-    records = health.read_records(transcripts / "agent_life_transcript.jsonl")
-    events = health.read_records(transcripts / "events.jsonl")
-    output = volumes / "diode" / "data" / slug / "output"
-    signals = health.signals(records, events, now=now, caps=caps, output_dir=output)
-
-    last = signals["last_request_at"]
-    transcript_age = max(0.0, now - last) if last is not None else None
-    mirror_age = _age(telemetry, now) if (telemetry / "work").exists() else None
-
-    pump = read_json(volumes / f"pump_{slug}" / "data" / "state.json")
-    entries = pump.get("entries") if isinstance(pump, dict) else None
-    running = (
-        sum(1 for e in entries.values() if isinstance(e, dict) and e.get("running") is True)
-        if isinstance(entries, dict)
-        else None
+    view = health.agent_view(
+        volumes / f"transcripts_{slug}" / "data",
+        volumes / f"telemetry_{slug}" / "data",
+        volumes / "diode" / "data" / slug / "output",
+        now=now,
+        quiet=quiet,
+        caps=caps,
+        pump_state=volumes / f"pump_{slug}" / "data" / "state.json",
     )
-    tombstones = telemetry / "work" / "tombstones"
-    return {
-        "slug": slug,
-        "name": name,
-        "liveness": health.liveness(transcript_age, mirror_age, signals["last_capped"], quiet),
-        "transcript_age": transcript_age,
-        "mirror_age": mirror_age,
-        "signals": signals,
-        "container": container,
-        "claims": {
-            "recovery_note": _claim(_note(tombstones / "recovery_note.txt")),
-            "incarnation_note": _claim(_note(tombstones / "incarnation_note.txt")),
-            "pump_running": _claim(running),
-            "agent_log_age": _claim(_age(telemetry / "work" / "agent_stdout.log", now)),
-        },
-    }
+    return {"slug": slug, "name": name, **view, "container": container}
 
 
 def _seconds(value: float | None) -> str:
@@ -198,7 +157,7 @@ def _seconds(value: float | None) -> str:
 def _first_line(text: str | None, width: int = 100) -> str:
     if not text:
         return "-"
-    return text.splitlines()[0][:width]
+    return health.printable(text.splitlines()[0][:width])
 
 
 def render(rows: list[dict], verbose: bool) -> str:
@@ -211,7 +170,7 @@ def render(rows: list[dict], verbose: bool) -> str:
         cap = signals["caps"].get("requests")
         container = row["container"]
         parts = [
-            f"{row['name']:<16}",
+            f"{health.printable(row['name']):<16}",
             f"{row['liveness']:<13}",
             f"talked {_seconds(row['transcript_age']):>5} ago",
             f"mirror {_seconds(row['mirror_age']):>5}",
