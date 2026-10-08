@@ -14,6 +14,10 @@ Astra accepted this architecture at design head `8e30cf86` ([ASTRA-DESIGN-ACCEPT
 | L6 | The namespace model re-resolves directory identities after every undo and never resurrects descendants of a removed directory | `PreserveOps` / `host_loss_names` (test harness) |
 | L7 | "cannot complete while the fixed-inventory checks fail"; the marker is best-effort; the steps are A1–A8 plus the L1 fence | §7.2, §7.4, §13 |
 
+**Implementation correction 1** (`ASTRA-IMPLEMENTATION-REVIEW.md`):
+- **SV028-09.** The §5.2 rule ("headers are physical, never logical positions") now also governs `_recover`'s resumed extras and the carrier-free completeness check, through a preserving-specific logical projection. Headers remain strictly scanned, replayed (charged) and synced.
+- **SV028-10.** Copy-time refusals (after the inventory boundary) use a stage-accurate message stating that the inventory and earlier copies are kept and that no carrier, activation or live change happened. Pure-admission refusals keep "nothing was changed" (§7.4 / L3).
+
 **Implementation calibrations** (engineering choices made while implementing; nothing semantic changed):
 - **Phase A ordering.** P1–P10 run first, then the preserved/ usage walk and the lifecycle, then the branch's inventory work, then P14 and P13. All of this is pure and precedes every write.
 - **Phase A persistence failure.** It attempts `FSYNC_FAILED`, as v2 §1.4.9 requires for any session sync error.

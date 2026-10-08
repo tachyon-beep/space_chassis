@@ -1,5 +1,82 @@
 # SV-028 implementation receipt (Opus 5.5 worker)
 
+## Correction 1 (SV028-09, SV028-10): implemented and tested; awaiting independent immutable Astra re-review. Not accepted.
+
+**Inputs**
+- Review-archive base: `78180860cdba9e1afc68abb228a81981fbed379b`.
+- Governing review: `ASTRA-IMPLEMENTATION-REVIEW.md` (SHA-256 `2cba8bda…12b2a`, as supplied).
+- Targets: `sv016-context/SV-028-correction-1-bounded-targets.json`.
+- The design acceptance's L1–L7 continue to govern.
+- All archived reviews are unchanged.
+
+### Changes
+
+| File | Change |
+|---|---|
+| `services/chassis_startup.py` | **SV028-09:** in `_recover`, a preserving recovery projects `extra` onto its *logical* records, excluding `LEDGER_HEADER`, for the comparison with `Π + T`, the "nothing beyond the core" check, the remaining-core slice and `after_core`. `_preserving_decision`'s carrier-free completeness check uses the same projection. Every physical record, headers included, is still validated by the strict scan, replayed (charged) once and synced through `extra`. Every other mechanism keeps `logical = extra`, exactly as before.<br>**SV028-10:** new `_refuse_late`, which names the stage and what is kept ("…the transaction stopped while copying: the published inventory and the copies already made are kept; no carrier was published, nothing was activated, and STOPPED, the ledger and the live conversation are untouched"). It is used by `_copy_entry`'s hash mismatch and, through `_read_source(..., late=True)`, by every copy-time read refusal (missing, over the bound, read error). Pure-admission and old-pair refusals keep `_refuse` ("…; nothing was changed"). The `AcknowledgementRefused` docstring is corrected |
+| `tests/test_chassis_bootstrap_preserving.py` | **New node** `test_sv028_an_own_torn_header_preserves_the_logical_recovery_plan[uninterrupted\|header-only-restart\|carrier-retired-restart]` with a new fixture option `empty_successor` (a cut in the real `LedgerWriter.rotate_if_full` at its header write).<br>**Strengthened** `test_sv028_a_source_change_during_copy_keeps_the_published_inventory_and_prior_copies` with retained-prefix message assertions and missing, over-limit [injected 4-byte bound] and injected-EIO read companions at the same boundary.<br>**N4a** now asserts that each pure-admission refusal ends with "nothing was changed".<br>`snapshot_unchanged` returns the message |
+| docs | this section, STATUS, a DESIGN note |
+
+No other runtime or test file changed. `services/chassis.py` and `tests/test_chassis_acknowledgements.py` are untouched in this correction.
+
+### Pre-fix (unchanged runtime = the reviewed implementation; test changes only; one node per command)
+
+| # | Node | Result |
+|---|---|---|
+| 1 | `…[uninterrupted]` | **passed** (the control) |
+| 2 | `…[header-only-restart]` | **failed as predicted**, at `assert (opening.classification, opening.stop) == ("BP", None)`, with actual `Opening(classification='intent', stop='recovery_intent_mismatch', detail={'seq': 17})`. seq 17 is the replacement header |
+| 3 | `…[carrier-retired-restart]` | **failed as predicted**, at the same assertion, with actual `recovery_intent_mismatch`, `{'problem': 'a retired activation must already be complete'}` |
+
+**Setup facts asserted before each failure:**
+- the real writer left an empty successor;
+- the witness has `end_segment == last_segment + 1` and `end_offset == 0`, and is valid for an actual A14 stop;
+- the empty file is inventoried;
+- a strict 70-byte prefix of the genuine next header classifies TC1;
+- after the first start, exactly one durable replacement header and RECOVERING are present;
+- header-only: no logical record yet, carrier held;
+- carrier-retired: carrier absent, logical `Π + T` present, conversation absent.
+
+No setup, API or import failure occurred. The fixtures needed no correction. The earlier B0 and D1–D3 evidence stands and was not rerun.
+
+### Final (after the runtime correction; eleven serial commands)
+
+| Batch | Cases | Result |
+|---|---|---|
+| F1 | 14 | 14 passed |
+| F2 | 1 | 1 passed |
+| F3 | 1 | 1 passed |
+| F4 | 9 | 9 passed |
+| F5 | 10 | 10 passed |
+| F6 | 1 | 1 passed |
+| F7 | 22 | 22 passed (including the strengthened late-copy node) |
+| R1 | 35 | 35 passed |
+| R2 | 1 | 1 passed |
+| R3 | 14 | 14 passed |
+| SV028-09 | 3 | 3 passed |
+
+**Total:** `[14, 1, 1, 9, 10, 1, 22, 35, 1, 14, 3]` = **111 passed** (61 new + 50 retained), with no failures and no reruns. Altogether 14 runner commands were issued in this correction (3 pre-fix + 11 final), each alone, through the approved runner under the unchanged limits.
+
+### What the new evidence shows, and its limits
+
+- **Header node, after correction:**
+  - exactly one physical replacement header (seq = witnessed end + 1);
+  - logical owned records exactly `Π + T`, with T's `tail_sha256` and byte count those of the original fragment and `declared_type "01"`;
+  - the fragment is kept in `corrupt/`;
+  - epoch e+1 once, and the §11 state and next label;
+  - no request or tool effect;
+  - carrier and RECOVERING retired;
+  - the independent inventory is preserved byte-exactly as new inodes;
+  - a later ordinary restart (A12t) writes nothing.
+- **Late-copy node:** at the late boundary (MANIFEST and the STOPPED copy already exist, as asserted at the moment the fault is injected), each of the four conditions refuses with its token and the retained-prefix message, never "nothing was changed". There is no carrier, receipt or live-conversation change, and the prefix stays. A retry is a pure admission and keeps "nothing was changed".
+- **Not claimed:** RSS, aggregate reads, numerical replay bounds and kernel power-loss behaviour remain unproved, as before. Old mechanisms were not changed to treat headers logically. SV023's witnessed path keeps its prior behaviour, verified by the 36 retained acknowledgement nodes.
+- **Provenance:** Read/Grep/Write/Edit plus the approved runner only. No Git, Python, install, subagent or reviewer. No denial. Filigree not used.
+
+**Stopping for the coordinator's commits/backups and independent Astra re-review.**
+
+---
+
+# Implementation round (history)
+
 **Status:** implemented and tested within the frozen bounded matrix; awaiting the coordinator's commit/backup and an independent immutable Astra review. **Not accepted.**
 
 ## Inputs and scope

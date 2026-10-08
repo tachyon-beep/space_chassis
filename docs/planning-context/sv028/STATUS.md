@@ -16,7 +16,18 @@ The frozen launch matrix is **58 new + 50 retained = 108 cases in ten final comm
 
 ---
 
-# SV-028 status: implemented and tested; awaiting the coordinator's commit and an independent immutable Astra review. Not accepted.
+# SV-028 status: correction 1 (SV028-09, SV028-10) implemented and tested; awaiting independent immutable Astra re-review. Not accepted.
+
+| Finding | Correction | Evidence |
+|---|---|---|
+| **SV028-09** a physical replacement header counted as a logical Π position | A preserving-specific logical projection of `extra` in `_recover` (comparison, beyond-core check, remaining slice, `after_core`) and in the carrier-free completeness check. Headers are still scanned, replayed and synced once; old mechanisms are unchanged | New `…an_own_torn_header_preserves_the_logical_recovery_plan[…]` ×3. **Pre-fix:** `uninterrupted` passed; `header-only-restart` and `carrier-retired-restart` failed with `recovery_intent_mismatch` after complete real setup. **After the fix:** 3/3 passed |
+| **SV028-10** a late-copy refusal claimed "nothing was changed" | `_refuse_late` for the copy-time hash mismatch and every copy-time `_read_source` refusal; pure-admission and old-pair wording unchanged; class docstring corrected | The strengthened late-copy node (changed, missing, over-limit [injected], EIO companions) asserts a retained-prefix message with no "nothing was changed"; N4a asserts the pure-admission wording |
+
+**Final:** 111/111 in eleven commands `[14, 1, 1, 9, 10, 1, 22, 35, 1, 14, 3]`, with no failures. See [RECEIPT.md](RECEIPT.md) (correction 1 section).
+
+---
+
+# SV-028 status (history): implemented and tested; awaiting the coordinator's commit and an independent immutable Astra review. Not accepted.
 
 **Result:** 108/108 selected cases passed in the ten frozen final batches `[14, 1, 1, 9, 10, 1, 22, 35, 1, 14]` (58 new, 50 retained).
 - **Pre-fix:** B0 passed; D1, D2 and D3 failed at their predicted behaviour assertions on the unchanged runtime.
