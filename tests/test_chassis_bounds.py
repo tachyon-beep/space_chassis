@@ -4,7 +4,17 @@ Nothing here changes the runtime, its limits or the canonical oracle. The
 canonical values are copied from `SV-015-literal-values-v2.json`
 (`ledger_frame_max_bytes`, `recovery_bound_defaults`). The maximal shapes are
 rebuilt from the text of its generator (lines 90-117), which was read but never
-run.
+run. They are synthetic: the arithmetic of the generator's source payloads, not
+runtime states.
+
+Three evidence levels for a record size, never substituted for one another
+(SV025-01). A *synthetic* shape is accepted by the encoder only, which checks
+the payload schema and nothing else. A *legal-domain model* additionally
+satisfies the source domains the runtime enforces or emits; a CHECKPOINT state
+must validate and round-trip through `SessionState.to_wire`/`from_wire`. It is
+legal, but it was not driven to through a real history. An *emitted* record
+was written by the actual session code in a temporary root and is measured on
+disk.
 
 Three quantities, never substituted for one another:
 
@@ -12,8 +22,9 @@ Three quantities, never substituted for one another:
   frame bytes plus the bytes of each blob replay opened while applying them,
   one count per (record, blob). This is the quantity v2 1.4.7 bounds.
 * **Distinct blob bytes**: the same blobs, counted once by name.
-* **Read calls**: every `DurableOps.read` a start made (segments, blobs, the
-  conversation files, markers), duplicates included. This is not a suffix
+* **Read calls**: every successful, returned `DurableOps.read` a start made
+  (segments, blobs, the conversation files, markers), duplicates included.
+  Failed or missing-file attempts are not logged. This is not a suffix
   quantity.
 
 The observer does not depend on the writer. Frame lengths come from a byte walk
@@ -33,13 +44,16 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
+import chassis
+import chassis_envelope as envelope
 import chassis_persistence as cp
 import chassis_replay as rp
 import chassis_session as cs
 import chassis_startup as st
 import pytest
-from test_chassis_recovery_live import Root, establish
+from test_chassis_recovery_live import Root, establish, respond
 
 # SV-015-literal-values-v2.json, copied; neither it nor its generator is edited or run.
 CANON_FRAMES = {
@@ -139,49 +153,199 @@ def test_sv025_canonical_maximal_shapes_reproduce_through_the_runtime_encoder():
     assert frame("ORIGINAL_EVICTED", {"sha": Z}) == 189 < CANON_FRAMES["ORIGINAL_EVICTED"]
 
 
-def current_checkpoint() -> dict:
-    """The generator's CHECKPOINT with the state keys this runtime writes (`SessionState.to_wire`)."""
-    payload = generator_shapes(LINEAGE16)["CHECKPOINT"][1]
-    state = payload["state"]
-    state["requests"]["next"] = {"turn_seq": BIG, "attempt": BIG}
-    notes = state["notes"]
-    notes["pending"] = [{**entry, "mirror_sha256": Z, "foreign": True} for entry in notes["pending"]]
-    notes["adopted_mirror_sha256"] = Z
-    notes["dropped_pending_limit"] = BIG
-    return payload
+def h(text: str) -> str:
+    """A distinct 64-hex name per label (live sets are sets: equal names would collapse)."""
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
-CURRENT_SHAPES = [
-    # (id, canonical literal, the runtime payloads, their exact frame sizes)
-    ("request-sent-lineage16", "REQUEST_SENT", lambda: [
-        ("REQUEST_SENT", {"turn_seq": BIG, "attempt": BIG, "label": label(LINEAGE16)}),
-        ("REQUEST_SENT", {"turn_seq": BIG, "attempt": BIG, "label": label("l" * 64)}),  # a legacy run.json lineage
-    ], [216, 264]),
-    ("recovery-spend-next", "RECOVERY", lambda: [
-        ("RECOVERY", {"kind": "possible_duplicate_spend", "detail": {"label": label(LINEAGE16), "next": {"turn_seq": BIG, "attempt": BIG}}}),
-    ], [270]),
-    ("unrun-ended-reason", "UNRUN", lambda: [
-        ("UNRUN", {"call_key": [BIG, 31], "reason": f"not run: the run ended by handoff in call {W}"}),
-    ], [263]),
-    ("done-exception-type", "DONE", lambda: [
-        ("DONE", {**generator_shapes()["DONE"][1], "outcome": "raised:" + "T" * 1000}),
-    ], [1_351]),
-    ("msg-append-inline-control", "MSG_APPEND_inline_4KiB", lambda: [
-        ("MSG_APPEND", {"kind": "notice", "text": "\x01" * cs.INLINE_TEXT_BYTES, "epoch": BIG}),
-    ], [24_739]),
-    ("note-adoption-gen", "MSG_APPEND_blob", lambda: [
-        ("MSG_APPEND", {"kind": "note", "gen": BIG, "blob": Z, "epoch": BIG}),
-    ], [244]),
-    ("checkpoint-current-state", "CHECKPOINT", lambda: [("CHECKPOINT", current_checkpoint())], [21_746]),
+# -- legal-domain models: counters within the 12-digit domain the runtime accepts, every other field as emitted --
+def _request_sent():
+    payloads = [("REQUEST_SENT", {"turn_seq": BIG, "attempt": BIG, "label": cp.request_label(lineage, BIG, BIG)}) for lineage in (LINEAGE16, "l" * 64)]
+    # LINEAGE16 has the length of chassis.run's new lineage, uuid4().hex[:16] (chassis.py:1146).
+    assert st.LINEAGE_ID.fullmatch("l" * 64), "a legacy run.json lineage of 64 characters is accepted (chassis_startup.py:86)"
+    return payloads
+
+
+def _recovery_spend():
+    # derive_core: a request with no response is a possible spend; `next` is requests_next, its attempt + 1.
+    detail = {"label": cp.request_label(LINEAGE16, BIG, BIG - 1), "next": {"turn_seq": BIG, "attempt": BIG}}
+    assert rp.counter(detail["next"]["attempt"], minimum=1) and detail["next"]["attempt"] == (BIG - 1) + 1
+    return [("RECOVERY", {"kind": "possible_duplicate_spend", "detail": detail})]
+
+
+def _unrun_ended():
+    # end_group: a later call is invokable, so its index is below CAP_CALLS (16 by default); its wire id <= 64.
+    index = envelope.DEFAULT_CAPS.calls - 1
+    assert envelope.WIRE_ID.fullmatch(W)
+    return [("UNRUN", {"call_key": [BIG, index], "reason": f"not run: the run ended by handoff in call {W}"})]
+
+
+def _note_adoption():
+    # adopt_notes: one non-foreign generation, whose blob replay opens (chassis_session.py:495).
+    return [("MSG_APPEND", {"kind": "note", "gen": BIG, "blob": h("note"), "epoch": BIG})]
+
+
+LEGAL_MODELS = [
+    # (id, canonical literal, legal-domain payloads, their exact frame sizes)
+    ("request-sent-lineage16", "REQUEST_SENT", _request_sent, [216, 264]),
+    ("recovery-spend-next", "RECOVERY", _recovery_spend, [270]),
+    ("unrun-ended-reason", "UNRUN", _unrun_ended, [263]),
+    ("note-adoption-gen", "MSG_APPEND_blob", _note_adoption, [244]),
 ]
 
 
-@pytest.mark.parametrize(("canonical", "shapes", "expected"), [c[1:] for c in CURRENT_SHAPES], ids=[c[0] for c in CURRENT_SHAPES])
-def test_sv025_current_serializer_shapes_exceed_the_canonical_maxima(canonical, shapes, expected):
-    """Payloads this runtime can write whose frames exceed the literal maximum used in U_b and the bounds."""
-    sizes = [frame(type_name, payload) for type_name, payload in shapes()]
+@pytest.mark.parametrize(("canonical", "payloads", "expected"), [c[1:] for c in LEGAL_MODELS], ids=[c[0] for c in LEGAL_MODELS])
+def test_sv025_legal_domain_models_exceed_the_canonical_maxima(canonical, payloads, expected):
+    """Legal-domain payloads (not driven through a real history) whose frames exceed the literal maximum."""
+    sizes = [frame(type_name, payload) for type_name, payload in payloads()]
     assert sizes == expected
-    assert min(sizes) > CANON_FRAMES[canonical], "the canonical maximal shape does not dominate this runtime payload"
+    assert min(sizes) > CANON_FRAMES[canonical], "the canonical maximal shape does not dominate this legal payload"
+
+
+# -- CHECKPOINT: a valid bounded state through the runtime's own serializer --
+NOTE_BYTES = 64 * K  # a file_edit generation is truncate_marked to NOTE_MAX_E escaped units, so <= 65,536 UTF-8 bytes
+ORIGINAL_BYTES = rp.ORIGINALS_MAX_BYTES // rp.ORIGINALS_MAX_COUNT  # 64 x 65,536 = the 4 MiB aggregate exactly
+
+
+def valid_checkpoint() -> tuple[dict, int]:
+    """(CHECKPOINT payload, its seq): a legal-domain model whose state is built as `SessionState` and serialized by `to_wire`."""
+    covers = BIG - 2  # the record is seq covers + 1, and state.next_seq = covers + 2 <= MAX_COUNTER (chassis_session.py:589, :615)
+    adopted = BIG - 17
+    # The fold point is at most the message count of a list the 64 MiB reader can read back.
+    per_message = len(rp.conversation_bytes([{"role": ""}] * 2)) - len(rp.conversation_bytes([{"role": ""}]))
+    pending = [
+        {"gen": adopted + 1 + i, "blob": h(f"note {i}"), "bytes": NOTE_BYTES, "source": "file_edit",
+         "written_seq": covers - 100 + i, "mirror_sha256": h(f"mirror {i}"), "foreign": True}
+        for i in range(rp.MAX_PENDING_NOTES)
+    ]
+    originals = [
+        {"sha256": h(f"original {i}"), "bytes": ORIGINAL_BYTES, "kind": "assistant_content", "turn_seq": BIG - 64 + i}
+        for i in range(rp.ORIGINALS_MAX_COUNT)
+    ]
+    state = rp.SessionState(
+        lineage_id=LINEAGE16, history_epoch=BIG - 1, recap_folded=st.CONVERSATION_READ_MAX // per_message,
+        requests_next={"turn_seq": BIG, "attempt": BIG},
+        requests_last={"turn_seq": BIG, "attempt": BIG - 1, "label": cp.request_label(LINEAGE16, BIG, BIG - 1), "outcome": "possible_duplicate_spend"},
+        notes_next_gen=adopted + 1 + len(pending), notes_adopted_through=adopted, notes_pending=pending,
+        handoff_md_sha256=pending[-1]["mirror_sha256"], adopted_mirror_sha256=h("adopted mirror"), notes_dropped=BIG,
+        legacy={"status": "legacy_unadopted_unproven", "handoff_sha256": h("legacy")}, originals=originals,
+    )
+    payload = {
+        "covers_seq": covers, "chain_at_cover": h("chain"),
+        "conv": {"sha256": h("conv"), "bytes": st.CONVERSATION_READ_MAX},
+        "prev": {"covers_seq": covers - 300, "conv_sha256": h("prev conv"), "conv_bytes": st.CONVERSATION_READ_MAX, "checkpoint_seq": covers - 299},
+        "run_sha256": h("run"), "state": state.to_wire(next_seq=covers + 2),
+    }
+    return payload, covers + 1
+
+
+def test_sv025_a_valid_current_checkpoint_state_round_trips_and_exceeds_the_literal():
+    """Legal-domain model: validates and round-trips through the actual serializer, then is measured."""
+    payload, seq = valid_checkpoint()
+    wire = payload["state"]
+    assert rp.SessionState.from_wire(wire).to_wire(next_seq=wire["next_seq"]) == wire, "validates and round-trips"
+    notes = wire["notes"]
+    assert [entry["gen"] for entry in notes["pending"]] == list(range(notes["adopted_through"] + 1, notes["next_gen"]))
+    assert len(notes["pending"]) == rp.MAX_PENDING_NOTES and all(entry["bytes"] <= NOTE_BYTES for entry in notes["pending"])
+    sizes = [entry["bytes"] for entry in wire["originals"]]
+    assert len(sizes) == rp.ORIGINALS_MAX_COUNT and max(sizes) <= rp.ORIGINAL_MAX_ITEM and sum(sizes) == rp.ORIGINALS_MAX_BYTES
+    assert wire["blobs_live"] == sorted(set(wire["blobs_live"])) and len(wire["blobs_live"]) == rp.MAX_PENDING_NOTES + rp.ORIGINALS_MAX_COUNT
+    assert len(notes["mirror_sha256s"]) == rp.MAX_PENDING_NOTES + 1
+    prev = payload["prev"]
+    assert prev["covers_seq"] < prev["checkpoint_seq"] <= payload["covers_seq"] < seq == payload["covers_seq"] + 1
+    assert wire["next_seq"] == seq + 1 <= rp.MAX_COUNTER and all(entry["written_seq"] <= payload["covers_seq"] for entry in notes["pending"])
+    assert frame_at(seq, payload) == 21_173 > CANON_FRAMES["CHECKPOINT"]
+
+
+def frame_at(seq: int, payload: dict) -> int:
+    return len(cp.encode_frame(seq, "CHECKPOINT", payload, Z)[0])
+
+
+def _generator_model(payload):
+    # The SV025 first-round model: the generator's synthetic state plus the current keys.
+    state = generator_shapes(LINEAGE16)["CHECKPOINT"][1]["state"]
+    state["requests"]["next"] = {"turn_seq": BIG, "attempt": BIG}
+    state["notes"]["pending"] = [{**entry, "mirror_sha256": Z, "foreign": True} for entry in state["notes"]["pending"]]
+    state["notes"]["adopted_mirror_sha256"], state["notes"]["dropped_pending_limit"] = Z, BIG
+    payload["state"] = state
+
+
+def _noncontiguous_generation(payload):
+    pending = payload["state"]["notes"]["pending"]
+    pending[0]["gen"], pending[1]["gen"] = pending[1]["gen"], pending[0]["gen"]
+
+
+def _repeated_live_set(payload):
+    live = payload["state"]["blobs_live"]
+    payload["state"]["blobs_live"] = [live[0]] * len(live)
+
+
+def _oversize_original(payload):
+    payload["state"]["originals"][0]["bytes"] = rp.ORIGINAL_MAX_ITEM + 1
+
+
+INVALID_STATES = [
+    ("generator-model", _generator_model),
+    ("noncontiguous-generation", _noncontiguous_generation),
+    ("repeated-live-set", _repeated_live_set),
+    ("oversize-original", _oversize_original),
+]
+
+
+@pytest.mark.parametrize("corrupt", [c[1] for c in INVALID_STATES], ids=[c[0] for c in INVALID_STATES])
+def test_sv025_encoder_acceptance_alone_does_not_validate_a_checkpoint_state(corrupt):
+    """Each is encoded without complaint, yet is not a state the runtime can hold: shape validation is insufficient."""
+    payload, seq = valid_checkpoint()
+    corrupt(payload)
+    assert frame_at(seq, payload) > 0, "the encoder's schema check accepts it"
+    with pytest.raises(rp.StateError):
+        rp.SessionState.from_wire(payload["state"])
+
+
+# -- emitted records: written by the actual session code, measured on disk --
+def test_sv025_emitted_records_exceed_the_canonical_maxima(tmp_path):
+    """An inline control-character message and a DONE for an exception with a 1,000-character class name, as written."""
+    root = Root(tmp_path)
+    session = establish(root)
+    session.append_message("user", "\x01" * cs.INLINE_TEXT_BYTES)  # 4,096 UTF-8 bytes: inline, each escaped as \u0001
+
+    error_type = type("T" * 1000, (Exception,), {})
+
+    def boom():
+        raise error_type("boom")
+
+    # chassis.Chassis.invoke_outcome itself turns the exception into (outcome, text); _run_group's order follows.
+    tools = SimpleNamespace(tools=SimpleNamespace(tools={"boom": boom}), operation=lambda *_args, **_fields: None)
+    (call,) = respond(session, calls=[("call_0", "boom", "{}")]).calls
+    outcome, text = session.invoke(call, lambda: chassis.Chassis.invoke_outcome(tools, call.name, call.invoke_arguments))
+    session.record_result(call, outcome, text)
+    session.close()
+
+    walked = frames(root)
+    records = {record.seq: record for record in root.records()}
+    inline = next(r for r in records.values() if r.type_name == "MSG_APPEND" and r.payload.get("text", "").startswith("\x01"))
+    assert "blob" not in inline.payload and inline.payload["text"] == "\x01" * cs.INLINE_TEXT_BYTES
+    assert walked[inline.seq][1] == 24_726 > CANON_FRAMES["MSG_APPEND_inline_4KiB"]
+    done = next(r for r in records.values() if r.type_name == "DONE")
+    assert done.payload["outcome"] == "raised:" + "T" * 1000
+    assert done.payload["stored_E"] == done.payload["original_bytes"] == len(f"error: {'T' * 1000}: boom") <= envelope.DEFAULT_CAPS.result
+    assert walked[done.seq][1] == 1_313 > CANON_FRAMES["DONE"]
+
+
+# -- the default admission split behind the originals count (SV025-02) --
+def test_sv025_default_caps_admit_at_most_18_new_originals_per_response():
+    """Calls 0-15 can each offer one original; calls 16-31 are not_run_call_limit first; content and reasoning only if truncated."""
+    caps = envelope.DEFAULT_CAPS
+    # 32 distinct malformed JSON strings of 603 bytes: over INVALID_ARGS_KEEP_BYTES, under CAP_ARGS.
+    calls = tuple(envelope.RawCall(f"call_{i}", "tool", "{" + f"{i:02d}" + "x" * 600) for i in range(caps.calls_stored))
+    truncated = envelope.adopt_response(envelope.RawResponse("c" * (caps.content + 1), "r" * (caps.reasoning + 1), calls), 7)
+    whole = envelope.adopt_response(envelope.RawResponse("c" * caps.content, "r" * caps.reasoning, calls), 7)
+    assert [call.admit for call in truncated.calls] == ["bad_args"] * caps.calls + ["not_run_call_limit"] * (caps.calls_stored - caps.calls)
+    arguments = [f"tool_calls[{i}].function.arguments" for i in range(caps.calls)]
+    assert [original.field for original in truncated.originals] == ["content", "reasoning_content", *arguments]
+    assert [original.field for original in whole.originals] == arguments, "a field at its cap is not truncated and offers no original"
+    assert len({original.data for original in truncated.originals}) == len(truncated.originals) == 18
+    assert all(len(original.data) <= rp.ORIGINAL_MAX_ITEM for original in truncated.originals), "Session.adopt would retain all 18"
 
 
 # ---------------------------------------------------------------------------
