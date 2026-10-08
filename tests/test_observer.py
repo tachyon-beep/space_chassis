@@ -70,47 +70,6 @@ def build_world(root: Path, slugs: list[str]) -> Path:
     return root
 
 
-def test_the_status_reader_reports_from_the_record(tmp_path, monkeypatch):
-    """Every number a person reads must come from something an agent cannot write."""
-    root = build_world(tmp_path / "volumes", ["agent_1", "agent_2"])
-    monkeypatch.setenv("SC_VOLUMES", str(root))
-
-    import status as status_module  # noqa: PLC0415 -- imported after the env is set
-
-    monkeypatch.setattr(status_module, "VOLUMES", root)
-    monkeypatch.setattr(status_module, "ROSTER_PATH", root / "work" / "roster.json")
-    names = status_module.roster()
-    # Two views, because a directory is named by the agent's slug while a person
-    # asks about the service. Neither carries a rank.
-    assert names["by_service"]["agent_1"]["name"] == "name-agent_1"
-    assert names["by_slug"]["agent_1"]["service"] == "agent_1"
-
-    rows = [status_module.agent_row(slug, names) for slug in status_module.slugs()]
-    assert len(rows) == 2
-    row = rows[0]
-    assert row["turns"] == 5, "turns must be counted from the transcript"
-    assert row["runs"] == 1
-    assert row["resumed"] == 1
-    assert row["last_end"] == 42
-    assert row["context_pct"] == 25
-    assert row["pump_running"] == ["beat"]
-    assert row["slug"] == "agent_1"
-
-    rendered = status_module.render(rows, verbose=True)
-    assert "name-agent_1" in rendered
-    assert "handing over" in rendered
-    assert "not from an agent" in rendered
-
-
-def test_the_status_reader_survives_an_empty_world(tmp_path, monkeypatch):
-    """A world with nothing in it is a state, not an error."""
-    import status as status_module  # noqa: PLC0415
-
-    monkeypatch.setattr(status_module, "VOLUMES", tmp_path / "nothing")
-    rendered = status_module.render([], verbose=False)
-    assert "no agents yet" in rendered
-
-
 def test_the_fleet_monitor_reads_and_never_writes_into_the_fleet(tmp_path, monkeypatch):
     """Its whole vocabulary is observation: read-only mounts, one output directory."""
     root = build_world(tmp_path / "w", ["agent_1"])

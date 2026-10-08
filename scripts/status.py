@@ -1,211 +1,237 @@
 #!/usr/bin/env python3
 """What the fleet is doing, read from the record rather than from the agents.
 
-One line per agent, plus a summary. Every number here comes from a file the
-agents cannot write: the recorder's transcripts, the supervisor's lifecycle
-record, the pump's state, the window's published state. An agent's own account
-of itself is not evidence, and this tool does not ask for one.
+One line per agent. Two clocks decide whether it is alive:
+
+- **the recorder's**: the newest core line in the agent's transcript, which the recorder writes on
+  a volume the agent cannot see. It moves when the agent is talking to its model;
+- **the mirror's**: the telemetry root, where the watchdog renames a fresh copy of `/work` every
+  five seconds whatever the agent is doing. It moves while the watchdog is alive.
+
+Talking recently is `active` (or `capped`, when the last line was the recorder refusing at a cap);
+a quiet transcript with a moving mirror is `idle-watchdog` -- the watchdog is up and the agent is
+not talking, stopped or stuck; both quiet is `stale`, a hung watchdog or a dead container, which
+nothing inside the container will report. The signals (incarnations, resets, refusals, spend
+against the caps) come from services/health.py, over the recorder's lines alone.
+
+What the agent writes about itself -- its recovery and incarnation notes, its log, its pump's state
+-- is shown, and marked `*` as the agent's own claim. It is not evidence, and nothing here treats
+it as such.
 
     python3 scripts/status.py                 # one line per agent
-    python3 scripts/status.py --verbose       # and what each one last did
+    python3 scripts/status.py --verbose       # and the agent's claims
     python3 scripts/status.py --json          # for anything else to read
+    python3 scripts/status.py --quiet-seconds 60 --compose "docker compose -p <project>"
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT / "services"))
+sys.path.insert(0, str(PROJECT / "scripts"))
 
-from common import read_json, tail_jsonl  # noqa: E402
+import health  # noqa: E402
+import volume_images  # noqa: E402
+from common import read_bounded, read_json  # noqa: E402
+from env_file import env_value, source_path  # noqa: E402
 
-VOLUMES = PROJECT / "volumes"
 ROSTER_PATH = PROJECT / "operator" / "roster.json"
+DEFAULT_COMPOSE = "docker compose -p space-chassis"
+CAP_SETTINGS = {
+    "requests": ("RECORDER_HOURLY_MAX", 2400),
+    "tokens": ("RECORDER_TOKEN_HOURLY_MAX", 200000000),
+}
+NOTE_BYTES = 64 * 1024
+DOCKER_TIMEOUT_SECONDS = 20
+CLAIM = "* the agent's own claim"
 
 
-def size_of(path: Path) -> int:
+def discover(volumes: Path, roster_path: Path) -> list[tuple[str, str, str]]:
+    """(slug, name, compose service) per agent: the roster when there is one, else the transcripts."""
+    data = read_json(roster_path) or {}
+    agents = data.get("agents") if isinstance(data, dict) else None
+    found = []
+    if isinstance(agents, list):
+        for entry in agents:
+            if not isinstance(entry, dict):
+                continue
+            service = str(entry.get("agent") or "")
+            slug = str(entry.get("slug") or service)
+            if slug:
+                found.append((slug, str(entry.get("name") or slug), service or slug))
+        if found:
+            return found
     try:
-        return path.stat().st_size
+        names = sorted(
+            path.name.removeprefix("transcripts_")
+            for path in volumes.glob("transcripts_*")
+            if path.is_dir()
+        )
     except OSError:
-        return 0
+        names = []
+    return [(slug, slug, slug) for slug in names]
 
 
-def last_event(path: Path) -> dict:
-    """The newest line of a JSONL file, without reading the whole thing."""
-    records = tail_jsonl(path, max_bytes=64 * 1024)
-    return records[-1] if records else {}
+def caps(env_file: Path) -> dict:
+    """The per-agent caps as compose sets them: the environment, then the env file, then defaults."""
+    found = {}
+    for name, (key, default) in CAP_SETTINGS.items():
+        raw = os.environ.get(key)
+        if raw is None and env_file.is_file():
+            raw = env_value(key, env_file)
+        try:
+            found[name] = int(raw) if raw else default
+        except ValueError:
+            found[name] = default
+    return found
 
 
-def count_lines(path: Path, chunk: int = 1 << 20) -> int:
-    """Count the JSON lines in a file by streaming it, never by loading it.
+def _docker_env() -> dict:
+    keep = ("PATH", "HOME", "USER", "LANG", "XDG_RUNTIME_DIR")
+    return {k: v for k, v in os.environ.items() if k in keep or k.startswith("DOCKER_")}
 
-    These files grow without bound: a transcript records the whole conversation
-    on every turn, so a fleet that has been running a while has transcripts
-    measured in tens of megabytes. A bounded "read the whole thing" helper
-    returns None for those -- which would report a busy agent as having taken no
-    turns at all, the one number an operator most needs to be right.
-    """
-    total = 0
-    tail = b""
+
+def container_info(compose: list[str], service: str) -> dict | None:
+    """The container's state and restart count, from docker; None on any failure."""
     try:
-        with open(path, "rb") as handle:
-            while True:
-                block = handle.read(chunk)
-                if not block:
-                    break
-                block = tail + block
-                lines = block.split(b"\n")
-                tail = lines.pop()
-                total += sum(1 for line in lines if line.strip())
-        if tail.strip():
-            total += 1
+        cid = subprocess.run(
+            [*compose, "ps", "-q", service],
+            capture_output=True,
+            text=True,
+            timeout=DOCKER_TIMEOUT_SECONDS,
+            env=_docker_env(),
+        ).stdout.strip()
+        if not cid:
+            return None
+        out = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Status}} {{.RestartCount}}", cid],
+            capture_output=True,
+            text=True,
+            timeout=DOCKER_TIMEOUT_SECONDS,
+            env=_docker_env(),
+        ).stdout.split()
+        return {"state": out[0], "restarts": int(out[1])}
+    except (OSError, subprocess.SubprocessError, IndexError, ValueError):
+        return None
+
+
+def _age(path: Path, now: float) -> float | None:
+    try:
+        return max(0.0, now - path.stat().st_mtime)
     except OSError:
-        return 0
-    return total
+        return None
 
 
-def roster() -> dict[str, dict[str, str]]:
-    """Two views of the roster, because a directory is named by its slug.
-
-    `by_service` answers "who is agent_4"; `by_slug` answers "what is this
-    directory called". Both are bookkeeping. Neither carries a rank.
-    """
-    data = read_json(ROSTER_PATH) or {}
-    agents = data.get("agents")
-    if not isinstance(agents, list):
-        return {"by_service": {}, "by_slug": {}}
-    by_service: dict[str, dict[str, str]] = {}
-    by_slug: dict[str, dict[str, str]] = {}
-    for entry in agents:
-        if not isinstance(entry, dict):
-            continue
-        service = str(entry.get("agent", ""))
-        slug = str(entry.get("slug") or entry.get("name") or service)
-        record = {"service": service, "name": str(entry.get("name", "")), "slug": slug}
-        if service:
-            by_service[service] = record
-        by_slug[slug] = record
-    return {"by_service": by_service, "by_slug": by_slug}
+def _note(path: Path) -> str | None:
+    raw = read_bounded(path, NOTE_BYTES)
+    return raw.decode("utf-8", errors="replace").strip() if raw is not None else None
 
 
-def slugs() -> list[str]:
-    """Which agents exist, from the directories the world created for them.
+def _claim(value) -> dict:
+    return {"value": value, "claim": "agent"}
 
-    Read from the volumes rather than from the compose file: the question is
-    which agents have ever run, and a container that was never started has no
-    home to report on.
-    """
-    found = sorted(
-        path.name
-        for path in (VOLUMES / "home").glob("*")
-        if path.is_dir() and path.name != ".gitkeep"
+
+def agent_row(
+    slug: str,
+    name: str,
+    volumes: Path,
+    now: float,
+    quiet: float,
+    caps: dict,
+    container: dict | None,
+) -> dict:
+    transcripts = volumes / f"transcripts_{slug}" / "data"
+    telemetry = volumes / f"telemetry_{slug}" / "data"
+    records = health.read_records(transcripts / "agent_life_transcript.jsonl")
+    events = health.read_records(transcripts / "events.jsonl")
+    output = volumes / "diode" / "data" / slug / "output"
+    signals = health.signals(records, events, now=now, caps=caps, output_dir=output)
+
+    last = signals["last_request_at"]
+    transcript_age = max(0.0, now - last) if last is not None else None
+    mirror_age = _age(telemetry, now) if (telemetry / "work").exists() else None
+
+    pump = read_json(volumes / f"pump_{slug}" / "data" / "state.json")
+    entries = pump.get("entries") if isinstance(pump, dict) else None
+    running = (
+        sum(1 for e in entries.values() if isinstance(e, dict) and e.get("running") is True)
+        if isinstance(entries, dict)
+        else None
     )
-    if found:
-        return found
-    return sorted(
-        path.name for path in (VOLUMES / "telemetry" / "agents").glob("*") if path.is_dir()
-    )
-
-
-def agent_row(slug: str, names: dict[str, dict[str, str]]) -> dict:
-    """One agent's facts, from the record.
-
-    `slug` here is the directory's name, which is the name the agent was given.
-    The service a directory belongs to comes from the roster, not from a
-    positional guess: the naming is random, so there is no index to count.
-    """
-    record = names.get("by_slug", {}).get(slug, {})
-    display = record.get("name", "")
-    transcripts = VOLUMES / "transcripts" / slug
-    telemetry = VOLUMES / "telemetry" / "agents" / slug
-    home = VOLUMES / "home" / slug
-    diary = VOLUMES / "diary" / slug
-    pump = VOLUMES / "pump" / slug
-    diode = VOLUMES / "diode" / slug
-
-    meta = read_json(home / "session" / "run.json") or {}
-    ended = last_event(telemetry / "lifecycle.jsonl")
-    decisions = tail_jsonl(telemetry / "lifecycle.jsonl", max_bytes=256 * 1024)
-    run_ends = [record for record in decisions if record.get("event") == "run_end"]
-    resumed = sum(1 for record in decisions if record.get("event") == "run_resumed")
-    pump_state = read_json(pump / "state.json") or {}
-    entries = pump_state.get("entries") if isinstance(pump_state.get("entries"), dict) else {}
-    running = [
-        name
-        for name, record in entries.items()
-        if isinstance(record, dict) and record.get("running")
-    ]
-    # The window is bounded by eviction, so a figure above 100% means the
-    # checkpoint predates the window tightening rather than that anything is
-    # broken. Clamped and labelled, rather than printed as 187%.
-    context = meta.get("context_window")
-    used = meta.get("context_tokens")
-    window_pct = None
-    if isinstance(used, int) and isinstance(context, int) and context > 0:
-        window_pct = min(100, round(100 * used / context))
-
+    tombstones = telemetry / "work" / "tombstones"
     return {
-        "agent": record.get("service", slug),
-        "name": display,
         "slug": slug,
-        "turns": count_lines(transcripts / "agent_life_transcript.jsonl"),
-        "runs": sum(1 for record in decisions if record.get("event") == "run_start"),
-        "resumed": resumed,
-        "last_end": ended.get("exit"),
-        "last_note": (ended.get("note") or "")[:160],
-        "tier": ended.get("tier"),
-        "context_pct": window_pct,
-        "handoff": (home / "HANDOFF.md").exists(),
-        "recap_bytes": size_of(home / "session" / "recap.md"),
-        "diary_bytes": size_of(diary / "diary.md"),
-        "pump_running": running,
-        "window_ready": (diode / "state.json").exists(),
-        "results": len(list((diode / "output").glob("*"))) if (diode / "output").is_dir() else 0,
-        "exit_history": [record.get("exit") for record in run_ends[-12:]],
+        "name": name,
+        "liveness": health.liveness(transcript_age, mirror_age, signals["last_capped"], quiet),
+        "transcript_age": transcript_age,
+        "mirror_age": mirror_age,
+        "signals": signals,
+        "container": container,
+        "claims": {
+            "recovery_note": _claim(_note(tombstones / "recovery_note.txt")),
+            "incarnation_note": _claim(_note(tombstones / "incarnation_note.txt")),
+            "pump_running": _claim(running),
+            "agent_log_age": _claim(_age(telemetry / "work" / "agent_stdout.log", now)),
+        },
     }
+
+
+def _seconds(value: float | None) -> str:
+    if value is None:
+        return "-"
+    if value < 120:
+        return f"{value:.0f}s"
+    if value < 7200:
+        return f"{value / 60:.0f}m"
+    return f"{value / 3600:.1f}h"
+
+
+def _first_line(text: str | None, width: int = 100) -> str:
+    if not text:
+        return "-"
+    return text.splitlines()[0][:width]
 
 
 def render(rows: list[dict], verbose: bool) -> str:
     if not rows:
-        return (
-            "no agents yet: nothing under volumes/home.\n"
-            "Run `sh scripts/prepare_host.sh` and then `docker compose --profile fleet up --build`."
-        )
-    width = max(5, max(len(row["name"] or row["agent"]) for row in rows))
-    lines = [
-        f"{'agent':<9}  {'name':<{width}}  {'turns':>6}  {'runs':>5}  {'res':>4}  "
-        f"{'ctx%':>5}  {'diary':>7}  {'out':>4}  {'window':<6} last"
-    ]
+        return "no agents found under the volume root"
+    lines = []
     for row in rows:
-        lines.append(
-            f"{row['agent']:<9}  {row['name'] or '-':<{width}}  {row['turns']:>6}  {row['runs']:>5}  "
-            f"{row['resumed']:>4}  {row['context_pct'] if row['context_pct'] is not None else '-':>5}  "
-            f"{row['diary_bytes']:>7}  {row['results']:>4}  "
-            f"{'yes' if row['window_ready'] else 'no':<6} {row['last_end']}"
-        )
+        signals = row["signals"]
+        spend = signals["spend"]
+        cap = signals["caps"].get("requests")
+        container = row["container"]
+        parts = [
+            f"{row['name']:<16}",
+            f"{row['liveness']:<13}",
+            f"talked {_seconds(row['transcript_age']):>5} ago",
+            f"mirror {_seconds(row['mirror_age']):>5}",
+            f"incarnations {signals['incarnations']}",
+            f"hour {spend['requests']}/{cap}",
+            f"refusals {signals['refusals']}",
+        ]
+        if container is not None:
+            parts.append(f"{container['state']} restarts {container['restarts']}")
+        lines.append("  ".join(parts))
         if verbose:
-            if row["last_note"]:
-                lines.append(f"{'':<9}  {row['last_note']}")
-            history = ", ".join(str(exit) for exit in row["exit_history"][-8:])
-            pump = ", ".join(row["pump_running"]) or "nothing"
+            claims = row["claims"]
+            lines.append(f"    note*: {_first_line(claims['recovery_note']['value'])}")
+            lines.append(f"    left*: {_first_line(claims['incarnation_note']['value'])}")
             lines.append(
-                f"{'':<9}  exits: {history or '-'} | pump: {pump} | "
-                f"handoff: {'yes' if row['handoff'] else 'no'} | recap: {row['recap_bytes']}b"
+                f"    pump running*: {claims['pump_running']['value']}"
+                f"   log written*: {_seconds(claims['agent_log_age']['value'])} ago"
             )
-    total_turns = sum(row["turns"] for row in rows)
-    total_runs = sum(row["runs"] for row in rows)
-    worst = max((row["context_pct"] or 0) for row in rows)
-    running = sum(len(row["pump_running"]) for row in rows)
-    lines += [
-        "",
-        f"{len(rows)} agent(s), {total_turns} turn(s), {total_runs} run(s), "
-        f"fullest window {worst}%, {running} scheduled process(es) running",
-        "Every number here is read from the record, not from an agent.",
-    ]
+    lines.append("")
+    lines.append(f"{len(rows)} agent(s). {CLAIM}; everything else is read from the record.")
     return "\n".join(lines)
 
 
@@ -213,12 +239,25 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--volumes", type=Path, default=None)
+    parser.add_argument("--quiet-seconds", type=float, default=health.QUIET_SECONDS)
+    parser.add_argument("--compose", default=DEFAULT_COMPOSE)
+    parser.add_argument("--no-docker", action="store_true")
+    parser.add_argument("--env-file", type=Path, default=None)
+    parser.add_argument("--roster", type=Path, default=ROSTER_PATH)
     args = parser.parse_args(argv)
 
-    names = roster()
-    rows = [agent_row(slug, names) for slug in slugs()]
+    env_file = args.env_file if args.env_file is not None else source_path()
+    volumes = args.volumes or volume_images.volumes_root(source=env_file)
+    limits = caps(env_file)
+    compose = shlex.split(args.compose)
+    now = time.time()
+    rows = []
+    for slug, name, service in discover(volumes, args.roster):
+        container = None if args.no_docker else container_info(compose, service)
+        rows.append(agent_row(slug, name, volumes, now, args.quiet_seconds, limits, container))
     if args.json:
-        print(json.dumps({"agents": rows}, indent=2))
+        print(json.dumps({"agents": rows, "claim_label": CLAIM}, indent=2))
         return 0
     print(render(rows, args.verbose))
     return 0
