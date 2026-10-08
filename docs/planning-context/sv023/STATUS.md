@@ -1,5 +1,9 @@
 # SV-023 status
 
+**Correction 2 (Astra SV023-05) complete; awaiting the coordinator's checkpoint and Astra re-review. Not accepted.** Review: `SV-023-Astra-correction-1-review.md` (head `aff9388`, runtime/tests `914bcfe`): SV023-01…04 closed; SV023-05 open. Fix: a no-intent TC4 carrier's consumption is decided by its exact recorded receipt, whatever the current tail. A spent permission is never applied to another tail. An unused one applies only to its exact acknowledged bytes; other continuing tails are refused before any change. No intent is written with an acknowledgement for another tail. Three new nodes failed pre-fix as traced, mutation M6 was run and restored, and the final serial runs gave 97 + 97 + 54 = 248 passes. Details: `checkpoint-002-astra-corrections.md`. Each command was submitted alone; no Git call; temporary roots only.
+
+---
+
 **Correction 1 (Astra SV023-01 … SV023-04) complete; awaiting the coordinator's checkpoint and Astra re-review. Not accepted.** Review: `SV-023-Astra-review.md` (head `b878ed6`, runtime/tests `c5b2ae1`), changes needed. All four findings are fixed in `services/chassis_startup.py`, with regressions written first and run alone on the reviewed runtime. Eight nodes failed as traced, including one further defect in the SV023-04 class found here: a duplicate, tail-unbound TC4 receipt after a plain process death. Final tree: 657 selected passes across 12 bounded commands (94 focused + 563 retained), no failures. Map, pre-fix outcomes, schema and ordering, tests, limits and execution provenance: `checkpoint-001-astra-corrections.md`. No Git call; temporary roots only.
 
 - SV023-01: `read_carrier` classifies ACKNOWLEDGED (absent/old/witnessed/invalid) with types checked before dispatch. A present invalid carrier stops `acknowledgement_unverified` before any change. The old-pair schema is exact; a damaged witnessed envelope is never treated as legacy.
