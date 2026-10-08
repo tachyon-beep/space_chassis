@@ -2,6 +2,8 @@
 # registry; it must never carry a run's leftovers, a fleet's home, or a
 # database of anything.
 volumes/
+# The volume images live beside volumes/, preallocated and large: never source, never context.
+volume-images/
 endurance/runs/
 tests/
 docs/

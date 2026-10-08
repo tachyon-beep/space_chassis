@@ -1,6 +1,8 @@
 # Runtime artifacts. The durable world lives under ./volumes and is created by
 # scripts/prepare_host.sh; none of it is source.
 volumes/
+# The volume images live beside volumes/, preallocated and large: never source, never context.
+volume-images/
 *.log
 
 # The operator's environment holds the one credential in the world.
