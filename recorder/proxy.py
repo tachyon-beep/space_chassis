@@ -12,6 +12,7 @@ import os
 import sys
 import datetime
 
+import core_caps
 import recorder_streams
 
 SOCKET_PATH = os.environ.get("LLM_SOCKET_PATH", "/llm/sock/core.sock")
@@ -625,8 +626,27 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
         refused = None
         ticket = None
-        if registry is not None and stream != "core":
-            req_body, refused, ticket = registry.admit(stream, req_body)
+        fleet_ticket = None
+        caps = getattr(self.server, "core_caps", None)
+        fleet = getattr(self.server, "fleet", None)
+        if stream == "core":
+            if caps is not None:
+                refused, ticket = caps.admit(req_body)
+        elif registry is not None:
+            # The fleet is asked before the stream's own hour is charged, so a fleet refusal
+            # costs the stream nothing, as Aurora's own shared-pool refusal costs no request.
+            if fleet is not None:
+                declared = registry.state()["streams"].get(stream)
+                if declared is not None:
+                    refused, fleet_ticket = fleet.reserve(
+                        recorder_streams.reservation_for(
+                            req_body, declared["tokens"]["allowance"]
+                        )
+                    )
+            if refused is None:
+                req_body, refused, ticket = registry.admit(stream, req_body)
+                if refused is not None and fleet is not None:
+                    fleet.settle(fleet_ticket, 0)
 
         try:
             req_data = json.loads(req_body.decode("utf-8"))
@@ -740,15 +760,19 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             close_fields["usage"] = recorded
         log_event("close", stream, **close_fields)
 
+        # An upstream that answered with an error status generated nothing,
+        # so the request settles at zero. A request whose usage is unknown
+        # for any other reason - a relay that broke, a transport failure
+        # after the request may have been received - keeps its reservation.
+        spent = usage.get("total_tokens") if isinstance(usage, dict) else None
+        if isinstance(spent, bool) or not isinstance(spent, (int, float)):
+            spent = 0 if upstream_refused else None
         if registry is not None and stream != "core":
-            # An upstream that answered with an error status generated nothing,
-            # so the request settles at zero. A request whose usage is unknown
-            # for any other reason - a relay that broke, a transport failure
-            # after the request may have been received - keeps its reservation.
-            spent = usage.get("total_tokens") if isinstance(usage, dict) else None
-            if isinstance(spent, bool) or not isinstance(spent, (int, float)):
-                spent = 0 if upstream_refused else None
             registry.settle(stream, ticket, spent)
+            if fleet is not None:
+                fleet.settle(fleet_ticket, spent)
+        elif stream == "core" and caps is not None:
+            caps.settle(ticket, spent)
 
         self.log_transcript(req_data, res_data, stream=stream)
 
@@ -1005,6 +1029,9 @@ def sweep_stale_sockets(sock_dir, keep):
             pass
 
 
+_FLEET = None
+
+
 def bind_stream(registry, servers, sock_dir, name):
     """Bind one declared stream's socket and start serving it."""
     path = os.path.join(sock_dir, f"{name}.sock")
@@ -1015,6 +1042,7 @@ def bind_stream(registry, servers, sock_dir, name):
         return
     server.stream_name = name
     server.registry = registry
+    server.fleet = _FLEET
     try:
         threading.Thread(target=server.serve_forever, daemon=True).start()
     except BaseException:
@@ -1118,10 +1146,19 @@ def main():
     print(f"Logging to:    {TRANSCRIPT_FILE}")
     print("-" * 60)
 
+    global _FLEET
+    try:
+        caps, _FLEET = core_caps.caps_from_environment()
+    except ValueError as e:
+        print(f"error: {e}")
+        sys.exit(1)
+
     registry = recorder_streams.StreamRegistry()
     core = UnixHTTPServer(socket_path, ProxyHTTPRequestHandler)
     core.stream_name = "core"
     core.registry = registry
+    core.core_caps = caps
+    core.fleet = _FLEET
     sweep_stale_sockets(sock_dir, keep={os.path.basename(socket_path)})
     recorder_streams.write_readme(sock_dir)
     recorder_streams.write_models(sock_dir)
