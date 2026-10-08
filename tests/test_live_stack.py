@@ -1,0 +1,153 @@
+"""live/stack.py, offline: the files it writes and the docker calls it would make.
+
+A fake runner stands in for subprocess.run, so nothing here starts a container. The one real
+docker call is `compose config -q`, which only parses the generated override against the base.
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "live"))
+
+import stack as stack_module  # noqa: E402
+
+
+class Runner:
+    def __init__(self, fail_on: str | None = None):
+        self.calls = []
+        self.fail_on = fail_on
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append((argv, kwargs))
+        if self.fail_on and self.fail_on in argv:
+            raise subprocess.CalledProcessError(1, argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+
+@pytest.fixture
+def stack(tmp_path):
+    runner = Runner()
+    smoke = stack_module.SmokeStack(
+        3, {3: {"RECORDER_HOURLY_MAX": "4"}}, root=tmp_path / "smoke", runner=runner
+    )
+    yield smoke, runner
+    smoke._torn_down = True
+
+
+def test_prepare_makes_every_bind_source_for_three_agents(stack):
+    smoke, _ = stack
+    smoke.prepare()
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import volume_images  # noqa: PLC0415
+
+    for name in volume_images.names(["agent_1", "agent_2", "agent_3"]):
+        assert (smoke.volumes / name / "data").is_dir(), name
+    for slug in ("agent_1", "agent_2", "agent_3"):
+        assert (smoke.volumes / "diode" / "data" / slug / "output").is_dir()
+    assert smoke.cues.is_dir()
+
+
+def test_the_smoke_env_file_carries_no_real_key_and_compose_is_pointed_at_it(stack):
+    smoke, runner = stack
+    smoke.prepare()
+    env = dict(line.split("=", 1) for line in (smoke.root / "smoke.env").read_text().splitlines())
+    assert env["OPENROUTER_API_KEY"] == "sk-smoke-dummy"
+    assert env["LLM_BASE_URL"] == "http://stub:8199/v1"
+    assert env["SPACE_VOLUMES_DIR"] == str(smoke.volumes)
+    assert set(env) == {
+        "OPENROUTER_API_KEY",
+        "LLM_BASE_URL",
+        "LLM_API_KEY",
+        "SPACE_VOLUMES_DIR",
+        "FLEET_SLUGS",
+    }
+    smoke.compose("ps")
+    argv = runner.calls[-1][0]
+    assert argv[argv.index("--env-file") + 1] == str(smoke.root / "smoke.env")
+
+
+def test_compose_runs_with_an_allowlisted_environment_whatever_the_shell_exports(
+    stack, monkeypatch
+):
+    smoke, runner = stack
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-real-key-in-the-shell")
+    monkeypatch.setenv("LLM_BASE_URL", "http://elsewhere/v1")
+    monkeypatch.setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+    smoke.prepare()
+    smoke.compose("ps")
+    env = runner.calls[-1][1]["env"]
+    assert "OPENROUTER_API_KEY" not in env
+    assert "LLM_BASE_URL" not in env
+    assert env["DOCKER_HOST"] == "unix:///var/run/docker.sock"
+    assert "PATH" in env
+
+
+def test_the_override_points_each_recorder_at_the_stub_and_keeps_the_fake_diode_off_worknet(
+    stack,
+):
+    smoke, _ = stack
+    text = smoke.override_text()
+    for n in (1, 2, 3):
+        assert f"  recorder_{n}:\n    depends_on: [stub]" in text
+    assert '      RECORDER_HOURLY_MAX: "4"' in text
+    assert "networks: !override [windowside]" in text
+    assert 'VERIFY_STUB_DELAY_SECONDS: "2.0"' in text
+    assert f"      - {smoke.cues}:/cues" in text
+    assert "AGENT_SLUGS: agent_1,agent_2,agent_3" in text
+
+
+def test_the_generated_override_parses_against_the_base_compose(stack):
+    """Needs docker on the host, like `docker compose config -q` in CLAUDE.md: absent, it fails."""
+    smoke, _ = stack
+    smoke.prepare()
+    real = stack_module.SmokeStack(3, root=smoke.root)
+    real._torn_down = True
+    result = real.compose("config", "-q", check=False)
+    assert result.returncode == 0, result.stderr
+
+
+def test_every_compose_call_names_the_smoke_project_and_env_file(stack):
+    smoke, runner = stack
+    smoke.prepare()
+    smoke.up()
+    argv = runner.calls[-1][0]
+    assert argv[:4] == ["docker", "compose", "-p", smoke.project]
+    assert smoke.project.startswith("space_chassis_smoke_")
+    assert argv[-8:] == [
+        "stub",
+        "recorder_1",
+        "recorder_2",
+        "recorder_3",
+        "agent_1",
+        "agent_2",
+        "agent_3",
+        "diode",
+    ]
+
+
+def test_the_orchestrator_tears_down_even_when_setup_fails(tmp_path):
+    runner = Runner(fail_on="build")
+    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=runner)
+    with pytest.raises(subprocess.CalledProcessError):
+        smoke.start()
+    assert any("down" in argv for argv, _ in runner.calls)
+    assert not smoke.root.exists()
+
+
+def test_down_twice_is_harmless(stack):
+    smoke, runner = stack
+    smoke.prepare()
+    smoke._torn_down = False
+    smoke.down()
+    smoke.down()
+    assert sum("down" in argv for argv, _ in runner.calls) == 1
+
+
+def test_wait_for_raises_with_what_it_was_waiting_for():
+    with pytest.raises(TimeoutError, match="waited 0.2s for the impossible"):
+        stack_module.wait_for(lambda: False, timeout=0.2, every=0.05, what="the impossible")
+    assert stack_module.wait_for(lambda: 7, timeout=1, what="seven") == 7

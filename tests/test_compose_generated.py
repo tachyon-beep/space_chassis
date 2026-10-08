@@ -256,15 +256,14 @@ def test_every_service_logs_with_a_bounded_json_file() -> None:
         }, name
 
 
-def test_the_smoke_override_binds_the_window_image_data_not_its_mount_point() -> None:
-    override = compose_text.services(
-        (ROOT / "docker-compose.override.example.yml").read_text(encoding="utf-8")
-    )
-    assert "recorder" not in override
-    assert "recorder_1" in override
-    assert "UPSTREAM_SOCKET" not in override["recorder_1"].get("environment", {})
-    assert f"{ROOT_PLACEHOLDER}/diode/data:/diode" in override["diode"]["volumes"]
-    assert "./volumes/diode:/diode" not in override["diode"]["volumes"]
+def test_the_override_example_is_a_pointer_to_the_generated_smoke_stack() -> None:
+    text = (ROOT / "docker-compose.override.example.yml").read_text(encoding="utf-8")
+    assert "live/stack.py" in text
+    assert compose_text.services(text) == {}
+
+
+def test_the_window_binds_its_image_data_not_its_mount_point() -> None:
+    assert SERVICES["diode"]["volumes"] == [f"{ROOT_PLACEHOLDER}/diode/data:/diode"]
 
 
 @pytest.mark.parametrize("count", [1, 3])
