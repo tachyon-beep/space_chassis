@@ -8,13 +8,15 @@ decides anything. Deciding that is the mission's first problem.
 
 Names are not identities the agents chose and not ranks: they are how one agent
 can refer to another, and how a stale lock or a half-finished job can be
-attributed to whoever left it. The roster is written where every agent can read
-it -- /work/roster.json -- because a fleet that cannot name its members cannot
-delegate to them.
+attributed to whoever left it. The roster is the operator's bookkeeping: it is
+written to operator/roster.json and into .env, which compose and the volume
+tooling read. Each agent is given its own name through its environment.
 
-Names are assigned once and then live in the volumes. Re-running this with --force
-renames the fleet on paper while the directories keep the old names, so it is
-refused unless asked for explicitly.
+Names are assigned once and then name the volume images. Re-running this with
+--force renames the fleet on paper while the images keep the old names, so it is
+refused unless asked for explicitly. Running it again without --force re-reads
+the existing roster and, when --env-file is given, writes its block into that
+file, so a fresh .env still names the fleet the images were made for.
 """
 
 from __future__ import annotations
@@ -257,9 +259,9 @@ def update_env_file(env_path: Path, roster: dict) -> None:
     env_path.write_text(existing, encoding="utf-8")
 
 
-def write_roster(roster: dict, work_dir: Path, env_path: Path | None) -> None:
-    work_dir.mkdir(parents=True, exist_ok=True)
-    (work_dir / ROSTER_JSON).write_text(json.dumps(roster, indent=2) + "\n", encoding="utf-8")
+def write_roster(roster: dict, roster_dir: Path, env_path: Path | None) -> None:
+    roster_dir.mkdir(parents=True, exist_ok=True)
+    (roster_dir / ROSTER_JSON).write_text(json.dumps(roster, indent=2) + "\n", encoding="utf-8")
     if env_path is not None:
         update_env_file(env_path, roster)
 
@@ -287,10 +289,11 @@ def main(argv: list[str] | None = None) -> int:
         "--seed", type=int, default=None, help="draw deterministically from this seed"
     )
     parser.add_argument(
-        "--work-dir",
-        default=os.environ.get("WORK_DIR", "./volumes/work"),
-        help="where roster.json is written for the agents to read",
+        "--roster-dir",
+        default=os.environ.get("ROSTER_DIR", "./operator"),
+        help="where roster.json is written: the operator's directory, not a volume",
     )
+    parser.add_argument("--work-dir", default=None, help="deprecated: use --roster-dir")
     parser.add_argument(
         "--env-file",
         default="./.env",
@@ -303,20 +306,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="re-draw even if a roster exists")
     args = parser.parse_args(argv)
 
-    work_dir = Path(args.work_dir)
-    existing = work_dir / ROSTER_JSON
+    if args.work_dir is not None:
+        print("--work-dir is deprecated: the roster lives in --roster-dir now", file=sys.stderr)
+        args.roster_dir = args.work_dir
+    roster_dir = Path(args.roster_dir)
+    existing = roster_dir / ROSTER_JSON
+    env_path = Path(args.env_file) if args.env_file else None
 
     if args.show or (existing.exists() and not args.force and args.seed is None):
         if not existing.exists():
             print(f"no roster at {existing}", file=sys.stderr)
             return 1
         roster = json.loads(existing.read_text(encoding="utf-8"))
+        if env_path is not None and not args.show:
+            update_env_file(env_path, roster)
         print_roster(roster, args.json)
         return 0
 
     roster = build(args.count, args.seed)
-    env_path = Path(args.env_file) if args.env_file else None
-    write_roster(roster, work_dir, env_path)
+    write_roster(roster, roster_dir, env_path)
     print_roster(roster, args.json)
     if env_path is not None:
         print(f"\nwrote {env_path}")

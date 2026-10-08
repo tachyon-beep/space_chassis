@@ -37,3 +37,6 @@ vendor/.cargo-home/
 # agent boots from (/opt/agent); a tracked session there would boot every agent into it.
 harness/session_context.json
 harness/tombstones/
+
+# The roster is drawn per host by scripts/prepare_host.sh: the operator's bookkeeping, not source.
+operator/

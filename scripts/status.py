@@ -24,6 +24,7 @@ sys.path.insert(0, str(PROJECT / "services"))
 from common import read_json, tail_jsonl  # noqa: E402
 
 VOLUMES = PROJECT / "volumes"
+ROSTER_PATH = PROJECT / "operator" / "roster.json"
 
 
 def size_of(path: Path) -> int:
@@ -73,7 +74,7 @@ def roster() -> dict[str, dict[str, str]]:
     `by_service` answers "who is agent_4"; `by_slug` answers "what is this
     directory called". Both are bookkeeping. Neither carries a rank.
     """
-    data = read_json(VOLUMES / "work" / "roster.json") or {}
+    data = read_json(ROSTER_PATH) or {}
     agents = data.get("agents")
     if not isinstance(agents, list):
         return {"by_service": {}, "by_slug": {}}
