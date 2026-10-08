@@ -1,5 +1,11 @@
 # SV-027 status
 
+## Accepted — independent Astra implementation review
+
+Astra accepted immutable head `4e738afc52be2693907ba3c654267e9fc88388f1`, runtime/test commit `89a26a7a6c25df0e5b552cca570ac197745991fc`, with no blocking corrections. See [ASTRA-ACCEPTANCE.md](ASTRA-ACCEPTANCE.md). All 76 selected cases passed in eight final serial commands; source/test hashes match the reviewed commit. L1–L5 are satisfied, including actual GC follow-up and exactly one final header.
+
+R-D's closed-boundary rotation-placement gap is closed. Segment/read slack and numerical replay bounds remain unproved; SV025 counterexamples and SV026 accounting qualifications remain. No real session, provider, merge or deployment was involved. Historical pending-review statements below describe earlier stages and are superseded by this acceptance.
+
 ## Implementation checkpoint 2: complete and tested. Not accepted.
 
 **Status:** C1–C5 are implemented. On the final bytes, **76 cases passed in 8 commands** (F1 18; F2 19; F3–F6 6, 11, 2, 8; F7 11; F8 1). Full log: [RECEIPT.md](RECEIPT.md).
