@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -221,7 +222,41 @@ ROSTER_BEGIN = "# --- the fleet roster (generated: do not edit by hand) ---"
 ROSTER_END = "# --- end of the fleet roster ---"
 
 
+_TOKEN = re.compile(r"[a-z][a-z0-9_]{0,31}")
+
+
+def validate(roster: dict) -> dict:
+    """Refuse a roster that is not one this script could have drawn.
+
+    The roster is written into .env, which compose hands to every service, and its slugs name
+    volume images and mount points. A roster carried forward from the old layout lived in a volume
+    every agent could write, so nothing in it is trusted: the count is a positive whole number,
+    the agents are exactly agent_1..agent_N in order, every name and slug is the drawn alphabet
+    (lower-case letters, digits and underscores, starting with a letter), and no slug repeats.
+    Anything else -- a newline that would add a variable, a path that climbs out -- is refused.
+    """
+    count = roster.get("count") if isinstance(roster, dict) else None
+    agents = roster.get("agents") if isinstance(roster, dict) else None
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise SystemExit(f"roster refused: count {count!r} is not a positive whole number")
+    if not isinstance(agents, list) or len(agents) != count:
+        raise SystemExit(f"roster refused: count {count} does not match its agents")
+    seen = set()
+    for n, entry in enumerate(agents, start=1):
+        if not isinstance(entry, dict) or entry.get("agent") != f"agent_{n}":
+            raise SystemExit(f"roster refused: entry {n} is not agent_{n}")
+        for field in ("name", "slug"):
+            value = entry.get(field)
+            if not isinstance(value, str) or not _TOKEN.fullmatch(value):
+                raise SystemExit(f"roster refused: agent_{n} has an unusable {field} {value!r}")
+        if entry["slug"] in seen:
+            raise SystemExit(f"roster refused: slug {entry['slug']!r} appears twice")
+        seen.add(entry["slug"])
+    return roster
+
+
 def roster_env_text(roster: dict) -> str:
+    validate(roster)
     lines = [
         ROSTER_BEGIN,
         "# Drawn by scripts/roster.py from pools of animals, cars, flowers, colour",
@@ -317,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
         if not existing.exists():
             print(f"no roster at {existing}", file=sys.stderr)
             return 1
-        roster = json.loads(existing.read_text(encoding="utf-8"))
+        roster = validate(json.loads(existing.read_text(encoding="utf-8")))
         if env_path is not None and not args.show:
             update_env_file(env_path, roster)
         print_roster(roster, args.json)

@@ -78,3 +78,48 @@ def test_an_existing_roster_refreshes_the_env_block(tmp_path):
     assert result.returncode == 0, result.stderr
     roster = json.loads((tmp_path / "operator" / "roster.json").read_text())
     assert _env_slugs(tmp_path / "fresh.env") == [entry["slug"] for entry in roster["agents"]]
+
+
+def _plant(tmp_path, agents, count=None):
+    (tmp_path / "operator").mkdir(exist_ok=True)
+    roster = {"count": len(agents) if count is None else count, "seed": 1, "agents": agents}
+    (tmp_path / "operator" / "roster.json").write_text(json.dumps(roster))
+    (tmp_path / ".env").write_text("KEEP=1\n")
+
+
+def _entry(n, slug, name=None):
+    return {"agent": f"agent_{n}", "name": name or slug, "slug": slug, "category": "animal"}
+
+
+def _refused(tmp_path):
+    result = _roster("--roster-dir", "operator", "--env-file", ".env", cwd=tmp_path)
+    assert result.returncode != 0
+    assert "roster" in result.stderr
+    assert (tmp_path / ".env").read_text() == "KEEP=1\n"
+
+
+def test_a_roster_carrying_an_environment_injection_is_refused_and_env_untouched(tmp_path):
+    # The roster prepare_host carries forward came from a volume every agent could write: a slug
+    # with a newline would put any variable into the environment compose hands every service.
+    _plant(tmp_path, [_entry(1, "x\nLLM_BASE_URL=http://elsewhere")])
+    _refused(tmp_path)
+
+
+def test_a_roster_slug_that_climbs_out_of_a_path_is_refused(tmp_path):
+    _plant(tmp_path, [_entry(1, "../x")])
+    _refused(tmp_path)
+
+
+def test_a_roster_whose_agents_are_not_numbered_one_to_n_is_refused(tmp_path):
+    _plant(tmp_path, [{"agent": "agent_1;x", "name": "ibex", "slug": "ibex", "category": "animal"}])
+    _refused(tmp_path)
+
+
+def test_a_roster_whose_count_disagrees_with_its_agents_is_refused(tmp_path):
+    _plant(tmp_path, [_entry(1, "ibex")], count=2)
+    _refused(tmp_path)
+
+
+def test_a_roster_with_a_repeated_slug_is_refused(tmp_path):
+    _plant(tmp_path, [_entry(1, "ibex"), _entry(2, "ibex")])
+    _refused(tmp_path)
