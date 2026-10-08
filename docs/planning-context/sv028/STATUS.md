@@ -1,3 +1,9 @@
+# SV-028: second design correction required
+
+Independent Astra review of `d47b5c19fc5a0cbdf7221c45d7b8361982734508` found three remaining archive-transaction defects. [ASTRA-DESIGN-CORRECTION-1-REVIEW.md](ASTRA-DESIGN-CORRECTION-1-REVIEW.md) is the governing residual review: SV028-06 requires reused-copy dependency fences before sealing; SV028-07 requires accurate equal-manifest retry allocation accounting; SV028-08 requires a durable inventory/ownership boundary before copied evidence can be discarded on retry. Activation/recovery corrections are accepted at design level. No implementation authority yet; these are bounded engineering corrections, not new owner policy.
+
+---
+
 # SV-028 status
 
 ## Correction round 1: complete, awaiting independent Astra re-review. Not implemented. Not accepted.
