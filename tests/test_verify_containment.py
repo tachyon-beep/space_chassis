@@ -18,9 +18,9 @@ SCRIPT = REPO / "scripts" / "verify_containment.sh"
 SENTINEL = "sk-or-v1-sentinel-not-a-real-key-0123456789"
 
 FAKE_DOCKER = r"""#!/bin/sh
-printf '%s\n' "$*" >> "$CALLS"
+{ printf '%s' "$*" | tr '\n' ' '; printf '\n'; } >> "$CALLS"
 case " $* " in
-    *" -f - "*) cat >> "$STDIN_LOG"; exit 1 ;;
+    *" exec "*) cat >> "$STDIN_LOG" ;;
 esac
 case "$*" in
     *inspect*Config.Env*)
@@ -33,6 +33,9 @@ case "$*" in
     *" ps -q "*)
         for last in "$@"; do :; done
         printf 'cid-%s\n' "$last"; exit 0 ;;
+    *" exec "*" tar "*)
+        [ -n "${TAR_CONTENT:-}" ] || exit 1
+        printf '%s' "$TAR_CONTENT"; exit 0 ;;
 esac
 exit 1
 """
@@ -64,6 +67,7 @@ class Run:
         return subprocess.run(
             ["sh", str(SCRIPT)],
             env=env,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=60,
@@ -89,13 +93,32 @@ def run(tmp_path):
 
 
 def test_verify_containment_passes_no_secret_in_any_argv(run):
-    run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
+    run(COMPOSE="docker compose -p probe", AGENTS="agent_1", TAR_CONTENT="file bytes")
     lines = run.argv_lines()
     assert lines, "the script made no docker calls"
     assert not [line for line in lines if SENTINEL in line]
-    assert SENTINEL in run.stdin_log.read_text(), "the key never reached the search on stdin"
-    searches = [line for line in lines if "grep" in line]
-    assert searches and all(" -f - " in f" {line} " for line in searches), searches
+
+
+def test_the_real_key_never_enters_an_agent_container(run):
+    """The agent is what is contained: a key piped into a process there is a key handed to it."""
+    result = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", TAR_CONTENT="file bytes")
+    assert SENTINEL not in run.stdin_log.read_text()
+    assert "PASS  agent_1 has no trace of its recorder's real key" in result.stdout
+
+
+def test_a_real_key_on_an_agent_s_disk_is_a_failure(run):
+    planted = f"header {SENTINEL} trailer"
+    result = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", TAR_CONTENT=planted)
+    assert "FAIL  agent_1 holds its recorder's real key on disk" in result.stdout
+    assert result.returncode == 1
+    assert SENTINEL not in result.stdout + result.stderr
+
+
+def test_a_probe_that_cannot_run_is_a_failure_never_a_pass(run):
+    """Every exec fails with no output: a check that cannot run must not report the wall holds."""
+    result = run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
+    assert "PASS" not in result.stdout, result.stdout
+    assert result.returncode == 1
 
 
 def test_the_script_never_echoes_the_key(run):

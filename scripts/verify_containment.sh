@@ -14,9 +14,14 @@
 # smoke stack in live/stack.py passes its own). It is split on spaces, so no path in it may
 # contain one. `--all` is accepted and ignored: every running agent is the default now.
 #
-# The real key is the one secret here, and it is never held in a shell variable, never passed as
-# an argument and never printed: the recorder's environment is piped from `docker inspect`
-# through sed into a `grep -f -` inside the agent, so the key exists only on a pipe.
+# The real key is the one secret here. It never enters an agent's container -- the agent is what is
+# contained, and a key piped into a process there is a key handed to a same-uid reader of that
+# process -- and it is never held in a shell variable, passed as an argument or printed. The agent's
+# files come out as a tar stream, and a host-side search reads the key from `docker inspect` itself.
+#
+# Every check fails closed. A negative probe ("cannot connect", "cannot unlink") prints a verdict
+# word from inside the container, and only that word passes: an exec that did not run, or ran and
+# said nothing, is a FAIL, never evidence that the wall holds.
 set -u
 
 PROJECT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -50,8 +55,45 @@ in_agent() {
     $COMPOSE exec -T "$agent" "$@"
 }
 
-recorder_env() {
-    docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1"
+# A probe's verdict: the last line it printed, or nothing if it could not run.
+verdict() {
+    agent=$1
+    shift
+    $COMPOSE exec -T "$agent" "$@" 2>/dev/null | tail -n 1
+}
+
+# Search stdin (a tar stream of an agent's files) for the recorder's credentials. The key is read
+# here, on the host, from `docker inspect`; it is never in this shell. Exit 0 found, 1 searched and
+# clean, 2 nothing to search or no key to search for.
+search_for_key() {
+    python3 -c '
+import subprocess, sys
+env = subprocess.run(
+    ["docker", "inspect", "--format", "{{range .Config.Env}}{{println .}}{{end}}", sys.argv[1]],
+    capture_output=True,
+).stdout.decode(errors="replace")
+keys = []
+for line in env.splitlines():
+    name, _, value = line.partition("=")
+    if name in ("OPENROUTER_API_KEY", "LLM_API_KEY") and value:
+        keys.append(value.encode())
+if not keys:
+    sys.exit(2)
+keep = max(map(len, keys)) - 1
+tail, total = b"", 0
+while chunk := sys.stdin.buffer.read(1 << 20):
+    total += len(chunk)
+    window = tail + chunk
+    if any(key in window for key in keys):
+        sys.exit(0)
+    tail = window[-keep:] if keep else b""
+sys.exit(1 if total else 2)
+' "$1"
+}
+
+recorder_has_key() {
+    docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1" 2>/dev/null \
+        | grep -q -e '^OPENROUTER_API_KEY=.' -e '^LLM_API_KEY=.'
 }
 
 for agent in $AGENTS; do
@@ -65,16 +107,23 @@ for agent in $AGENTS; do
 
     # 1. No outward route. The connection is authoritative: a bridge always has a gateway line,
     #    which proves nothing, and resolution failing is reported but is not the wall.
-    if in_agent "$agent" sh -c 'timeout 5 python3 -c "import socket; socket.create_connection((\"1.1.1.1\", 443), 3)"' >/dev/null 2>&1; then
-        bad "$agent opened a connection to a public address"
-    else
-        ok "$agent cannot open a connection outward"
-    fi
-    if in_agent "$agent" sh -c 'timeout 5 getent hosts example.com' >/dev/null 2>&1; then
-        bad "$agent resolved a public name"
-    else
-        ok "$agent cannot resolve outside names"
-    fi
+    case $(verdict "$agent" python3 -c '
+import socket
+try:
+    socket.create_connection(("1.1.1.1", 443), 3)
+except OSError:
+    print("blocked")
+else:
+    print("connected")') in
+        blocked) ok "$agent cannot open a connection outward" ;;
+        connected) bad "$agent opened a connection to a public address" ;;
+        *) bad "$agent could not be probed for an outward connection" ;;
+    esac
+    case $(verdict "$agent" sh -c 'timeout 5 getent hosts example.com >/dev/null 2>&1; echo "rc=$?"') in
+        rc=0) bad "$agent resolved a public name" ;;
+        rc=*) ok "$agent cannot resolve outside names" ;;
+        *) bad "$agent could not be probed for name resolution" ;;
+    esac
 
     # 2. The agent's own key is the dummy.
     if in_agent "$agent" sh -c 'tr "\0" "\n" < /proc/1/environ' 2>/dev/null | grep -qx 'OPENROUTER_API_KEY=sk-dummy'; then
@@ -83,20 +132,19 @@ for agent in $AGENTS; do
         bad "$agent does not carry the dummy key"
     fi
 
-    # 3. The recorder's real key is nowhere the agent can see. Only an exit status leaves the pipe.
+    # 3. The recorder's real key is nowhere the agent can see. The search runs on the host.
     rcid=$($COMPOSE ps -q "$recorder" 2>/dev/null)
     if [ -z "$rcid" ]; then
         skip "$recorder is not running, so there is no real key to look for"
-    elif ! recorder_env "$rcid" 2>/dev/null | grep -q -e '^OPENROUTER_API_KEY=.' -e '^LLM_API_KEY=.'; then
+    elif ! recorder_has_key "$rcid"; then
         skip "$recorder carries no key, so there is nothing to leak"
     else
-        recorder_env "$rcid" 2>/dev/null \
-            | sed -n -e 's/^OPENROUTER_API_KEY=\(..*\)$/\1/p' -e 's/^LLM_API_KEY=\(..*\)$/\1/p' \
-            | $COMPOSE exec -T "$agent" grep -rlqsF -f - $KEY_PATHS >/dev/null 2>&1
+        $COMPOSE exec -T "$agent" tar -cf - --ignore-failed-read $KEY_PATHS 2>/dev/null \
+            | search_for_key "$rcid" >/dev/null 2>&1
         case $? in
             0) bad "$agent holds its recorder's real key on disk" ;;
-            1 | 2) ok "$agent has no trace of its recorder's real key" ;;
-            *) bad "$agent could not be searched for the real key" ;;
+            1) ok "$agent has no trace of its recorder's real key" ;;
+            *) bad "$agent could not be searched for its recorder's real key" ;;
         esac
     fi
 
@@ -106,11 +154,18 @@ for agent in $AGENTS; do
     else
         bad "$agent cannot connect to /llm/sock/core.sock"
     fi
-    if in_agent "$agent" python3 -c 'import os; os.unlink("/llm/sock/core.sock")' >/dev/null 2>&1; then
-        bad "$agent unlinked its recorder's socket"
-    else
-        ok "$agent cannot unlink its recorder's socket"
-    fi
+    case $(verdict "$agent" python3 -c '
+import os
+try:
+    os.unlink("/llm/sock/core.sock")
+except OSError:
+    print("refused")
+else:
+    print("unlinked")') in
+        refused) ok "$agent cannot unlink its recorder's socket" ;;
+        unlinked) bad "$agent unlinked its recorder's socket" ;;
+        *) bad "$agent could not be probed for unlinking its recorder's socket" ;;
+    esac
 
     # 5. No sibling surface: the only window and socket mounts are its own, and neither the record
     #    nor the fleet ledger is mounted at all.
@@ -128,13 +183,16 @@ for agent in $AGENTS; do
     else
         bad "$agent's socket mounts are '$sockets', not /llm/sock alone"
     fi
-    if in_agent "$agent" sh -c 'ls -A /diode' 2>/dev/null | grep -vqx "${slug:-.}"; then
-        bad "$agent sees another entry under /diode"
-    else
+    entries=$(in_agent "$agent" ls -A /diode 2>/dev/null)
+    if [ -n "$slug" ] && [ "$entries" = "$slug" ]; then
         ok "$agent sees nothing under /diode but its own window"
+    else
+        bad "$agent's /diode holds '$entries', not ${slug:-<no slug>} alone"
     fi
     for private in /transcripts /ledger; do
-        if printf '%s\n' "$mounts" | grep -q "^$private\(/\|$\)"; then
+        if ! printf '%s\n' "$mounts" | grep -qx /; then
+            bad "$agent's mount table could not be read, so $private is unchecked"
+        elif printf '%s\n' "$mounts" | grep -q "^$private\(/\|$\)"; then
             bad "$agent has $private mounted"
         else
             ok "$agent has no $private mount"
@@ -150,11 +208,11 @@ for agent in $AGENTS; do
     fi
 
     # 7. No recorder is reachable by name: they live on modelnet, which no agent joins.
-    if in_agent "$agent" sh -c "timeout 5 getent hosts $recorder" >/dev/null 2>&1; then
-        bad "$agent can resolve $recorder"
-    else
-        ok "$agent cannot resolve $recorder"
-    fi
+    case $(verdict "$agent" sh -c "timeout 5 getent hosts $recorder >/dev/null 2>&1; echo rc=\$?") in
+        rc=0) bad "$agent can resolve $recorder" ;;
+        rc=*) ok "$agent cannot resolve $recorder" ;;
+        *) bad "$agent could not be probed for resolving $recorder" ;;
+    esac
 done
 
 # 8. The fleet can reach each other on worknet, because a control layer needs somewhere to run:
@@ -189,28 +247,31 @@ if [ -z "$($COMPOSE ps -q review 2>/dev/null)" ]; then
     skip "the review panel is not running"
 else
     # It must have no route out and no view of a recorder.
-    if $COMPOSE exec -T review sh -c 'timeout 4 python3 -c "import socket; socket.create_connection((\"1.1.1.1\", 443), 3)"' >/dev/null 2>&1; then
-        bad "the review panel reached a public address"
-    else
-        ok "the review panel has no route outward"
-    fi
-    if $COMPOSE exec -T review sh -c 'timeout 4 getent hosts recorder_1' >/dev/null 2>&1; then
-        bad "the review panel can see a recorder"
-    else
-        ok "the review panel cannot see a recorder"
-    fi
+    case $(verdict review python3 -c '
+import socket
+try:
+    socket.create_connection(("1.1.1.1", 443), 3)
+except OSError:
+    print("blocked")
+else:
+    print("connected")') in
+        blocked) ok "the review panel has no route outward" ;;
+        connected) bad "the review panel reached a public address" ;;
+        *) bad "the review panel could not be probed for an outward connection" ;;
+    esac
+    case $(verdict review sh -c 'timeout 4 getent hosts recorder_1 >/dev/null 2>&1; echo "rc=$?"') in
+        rc=0) bad "the review panel can see a recorder" ;;
+        rc=*) ok "the review panel cannot see a recorder" ;;
+        *) bad "the review panel could not be probed for seeing a recorder" ;;
+    esac
     # Its mounts are read-only, so the record cannot be amended from here.
-    if $COMPOSE exec -T review sh -c 'touch /transcripts/.probe' >/dev/null 2>&1; then
-        bad "the review panel can write to the record"
-        $COMPOSE exec -T review rm -f /transcripts/.probe >/dev/null 2>&1
-    else
-        ok "the review panel cannot write to the record"
-    fi
-    if $COMPOSE exec -T review sh -c 'touch /telemetry/.probe' >/dev/null 2>&1; then
-        bad "the review panel can write to the telemetry record"
-    else
-        ok "the review panel cannot write to the telemetry record"
-    fi
+    for record in /transcripts /telemetry; do
+        case $(verdict review sh -c "if touch $record/.probe 2>/dev/null; then rm -f $record/.probe; echo wrote; else echo refused; fi") in
+            refused) ok "the review panel cannot write to $record" ;;
+            wrote) bad "the review panel can write to $record" ;;
+            *) bad "the review panel could not be probed for writing to $record" ;;
+        esac
+    done
     # And it can read: a panel that is sealed out of its own subject is useless.
     if $COMPOSE exec -T review test -d /transcripts >/dev/null 2>&1; then
         ok "the review panel can read the transcripts"
