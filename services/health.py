@@ -17,6 +17,9 @@ What the lines can and cannot say:
 - **A fresh incarnation is a request with no assistant message.** A reset, a clean restart, a pause
   and the ladder's first rung all keep the conversation, so none of them is a boundary here; the
   only record of those is the agent's own.
+- **A vehicle command is a tool call that touches `/diode/`,** read from the recorder's copy of the
+  reply. The vehicle's result files sit in a directory the agent writes, so their count is shown
+  only as the agent's claim.
 - **A tool error is counted once,** from the tool results that follow the request's last assistant
   message: older results ride along in every later request and would otherwise count again.
 
@@ -40,6 +43,7 @@ QUIET_SECONDS = 900
 ERROR_PREFIXES = ("Error parsing JSON arguments", "Error executing tool", "Error: Tool `")
 CAP_WORDS = ("per hour", "across the fleet", "fleet ledger unavailable")
 MAX_ENTRIES = 10000
+WINDOW_MARK = "/diode/"
 RESULT_NAME = re.compile(r"^(\d{8}T\d{6})_(\d{6})Z_.+\.txt$")
 NOTE_BYTES = 64 * 1024
 CLAIM_LABEL = "the agent's own claim"
@@ -187,20 +191,52 @@ def _result_time(name: str) -> float | None:
     return stamp.replace(tzinfo=dt.UTC).timestamp()
 
 
-def vehicle_commands(output_dir: Path, start: float, end: float) -> int:
-    """Result files the vehicle wrote with a stamp in [start, end); each is one command."""
+def window_calls(record: dict) -> int:
+    """Tool calls in this reply whose arguments touch the window: the vehicle-command signal.
+
+    Read from the recorder's copy of the reply, so the agent cannot forge or delete it; a heuristic,
+    because a command is whatever writes the window's console and the harness has no diode tool.
+    """
+    response = record.get("response")
+    choices = response.get("choices") if isinstance(response, dict) else None
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return 0
+    message = choices[0].get("message")
+    calls = message.get("tool_calls") if isinstance(message, dict) else None
+    if not isinstance(calls, list):
+        return 0
     count = 0
+    for call in calls:
+        function = call.get("function") if isinstance(call, dict) else None
+        arguments = function.get("arguments") if isinstance(function, dict) else None
+        if isinstance(arguments, str) and WINDOW_MARK in arguments:
+            count += 1
+    return count
+
+
+def window_results(root: Path, slug: str) -> dict | None:
+    """The vehicle's result files in the agent's output directory: one bounded, no-follow scan.
+
+    The directory is the agent's to write, so the count is its claim: results can be forged or
+    deleted, and a flood of names stops the scan at MAX_ENTRIES (`capped`).
+    """
+    fd = _walk(Path(root), [slug, "output"])
+    if fd is None:
+        return None
+    count, capped = 0, False
     try:
-        with os.scandir(output_dir) as entries:
+        with os.scandir(fd) as entries:
             for seen, entry in enumerate(entries):
                 if seen >= MAX_ENTRIES:
+                    capped = True
                     break
-                when = _result_time(entry.name)
-                if when is not None and start <= when < end:
+                if _result_time(entry.name) is not None:
                     count += 1
     except OSError:
-        return 0
-    return count
+        return None
+    finally:
+        os.close(fd)
+    return {"count": count, "capped": capped}
 
 
 def liveness(
@@ -216,7 +252,7 @@ def liveness(
     return "stale"
 
 
-def signals(records: list, events: list, *, now: float, caps: dict, output_dir) -> dict:
+def signals(records: list, events: list, *, now: float, caps: dict) -> dict:
     core = core_records(records)
     groups = incarnations(records)
 
@@ -235,16 +271,7 @@ def signals(records: list, events: list, *, now: float, caps: dict, output_dir) 
     refusals = sum(1 for record in core if is_cap_refusal(record))
     other_errors = sum(1 for record in core if is_error(record) and not is_cap_refusal(record))
 
-    commands = None
-    if output_dir is not None:
-        starts = [parse_timestamp(group[0].get("timestamp")) for group in groups]
-        commands = []
-        for index, start in enumerate(starts):
-            end = starts[index + 1] if index + 1 < len(starts) else now
-            if start is None or end is None:
-                commands.append(0)
-            else:
-                commands.append(vehicle_commands(Path(output_dir), start, end))
+    commands = [sum(window_calls(record) for record in group) for group in groups]
 
     times = [t for t in (parse_timestamp(r.get("timestamp")) for r in core) if t is not None]
     lines = [r for r in records if isinstance(r, dict)]
@@ -370,12 +397,12 @@ def claim(value) -> dict:
 def agent_view(
     transcripts: Path,
     mirror: Path,
-    output: Path | None,
     *,
     now: float,
     quiet: float,
     caps: dict,
     pump_state: Path | None = None,
+    window: tuple[Path, str] | None = None,
 ) -> dict:
     """One agent, as status.py and the monitor both see it.
 
@@ -386,7 +413,7 @@ def agent_view(
     """
     records = read_records(Path(transcripts) / "agent_life_transcript.jsonl")
     events = read_records(Path(transcripts) / "events.jsonl")
-    found = signals(records, events, now=now, caps=caps, output_dir=output)
+    found = signals(records, events, now=now, caps=caps)
     last = found["last_request_at"]
     transcript_age = max(0.0, now - last) if last is not None else None
     mirror = Path(mirror)
@@ -404,6 +431,8 @@ def agent_view(
         "incarnation_note": claim(_note(mirror, "work/tombstones/incarnation_note.txt")),
         "agent_log_age": claim(claim_age(mirror, "work/agent_stdout.log", now)),
     }
+    if window is not None:
+        claims["window_results"] = claim(window_results(*window))
     if pump_state is not None:
         raw = read_claim(Path(pump_state).parent, Path(pump_state).name, MAX_READ_BYTES)
         try:

@@ -52,10 +52,10 @@ def agent_row(slug: str, now: float, quiet: float, limits: dict) -> dict:
     view = health.agent_view(
         TRANSCRIPTS_DIR / slug,
         MIRROR_DIR / slug,
-        DIODE_DIR / slug / "output",
         now=now,
         quiet=quiet,
         caps=limits,
+        window=(DIODE_DIR, slug),
     )
     name = os.environ.get(f"AGENT_NAME_{slug}") or slug
     return {"slug": slug, "name": name, **view}
