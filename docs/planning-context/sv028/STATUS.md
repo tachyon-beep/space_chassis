@@ -1,5 +1,11 @@
 # SV-028 status
 
+## Independent review: design correction required before implementation
+
+Astra reviewed immutable `1058c5475db656b10e0ec14bd47dae1cfc9c190b` and requested one design-only correction round. See [ASTRA-INITIAL-DESIGN-REVIEW.md](ASTRA-INITIAL-DESIGN-REVIEW.md), findings SV028-01–05. The W1 envelope and A12-compatible E1+S1+R1+N1 semantics are supported engineering; no new owner-policy gate is required.
+
+Required corrections: durability of inherited activation before live-file unlink; an immutable core/epoch plan and carrier-free RECOVERING reconstruction; a complete declared preservation inventory and sealed/unsealed retry distinction; physical scratch/peak capacity and exact encoded manifest/carrier bounds; truthful capability registration and corrected finite state/namespace/crash fixtures. The original design and its proposed 69-case plan below are not implementation authority.
+
 ## Design round 0: complete, awaiting independent Astra review. Not implemented. Not accepted.
 
 - **Base inspected:** accepted commit `5c2366cef7851b39d5363bdadcce3e1c0b25711c`. SV016–SV027 are accepted in their own scopes; `sv027/ASTRA-ACCEPTANCE.md` was read and nothing in SV027 is reopened.
