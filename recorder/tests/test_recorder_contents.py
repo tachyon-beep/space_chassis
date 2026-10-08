@@ -1,6 +1,6 @@
 import subprocess
 
-MODULES = {"proxy.py", "recorder_streams.py"}
+MODULES = {"proxy.py", "recorder_streams.py", "core_caps.py"}
 
 
 def test_the_recorder_directory_tracks_only_its_modules_and_tests():
