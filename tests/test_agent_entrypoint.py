@@ -279,6 +279,18 @@ def test_a_mount_root_on_the_host_filesystem_draws_the_factual_warning(world):
     assert sentence not in world.stderr()
 
 
+def test_the_entrypoint_warns_about_the_agent_s_own_window_directory(world):
+    defaults = re.search(r'^: "\$\{MOUNT_ROOTS:=([^}]*)\}"$', ENTRYPOINT.read_text(), re.M)
+    assert defaults, "MOUNT_ROOTS has no default"
+    assert "/diode/*" in defaults.group(1).split()
+    window = world.root / "diode" / "agent_1"
+    window.mkdir(parents=True)
+    reference = world.root / "reference"
+    reference.mkdir()
+    world.run(MOUNT_ROOTS=f"{world.root / 'diode'}/*", UNBOUNDED_REFERENCE=str(reference))
+    assert f"warning: {window} shares a filesystem with the host" in world.stderr()
+
+
 def test_the_entrypoint_names_state_only_for_the_servers():
     for line in ENTRYPOINT.read_text().splitlines():
         stripped = line.strip()
@@ -299,3 +311,8 @@ def test_no_harness_or_recorder_module_names_state():
     ]
     for module in modules:
         assert '"/state' not in (REPO / module).read_text(), module
+
+
+def test_the_seed_harness_imports_nothing_from_shared():
+    for module in sorted((REPO / "harness").glob("*.py")):
+        assert "/shared" not in module.read_text(), module.name

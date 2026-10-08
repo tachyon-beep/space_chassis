@@ -5,7 +5,8 @@
 #
 #   1. say which mount roots have no size boundary. A root on the same filesystem as the plain
 #      host bind at UNBOUNDED_REFERENCE is not one of the bounded volume images, and a fact is
-#      worth one line on stderr. It never stops the start.
+#      worth one line on stderr. It never stops the start. `/diode/*` is a glob on purpose: the
+#      window is bound at /diode/<slug>, and /diode itself is only the image's directory.
 #   2. empty the build area. It is a scratch volume; nothing in it is meant to outlive the
 #      container, and starting from nothing is cheaper than reasoning about what a dead build
 #      left behind.
@@ -35,7 +36,7 @@ set -u
 : "${RUN_DIR:=/run/agent}"
 : "${PUMP_BIN:=/usr/local/bin/pump.py}"
 : "${PYTHON:=python}"
-: "${MOUNT_ROOTS:=/state /shared /diode /pump /build /telemetry /llm/console /llm/sock}"
+: "${MOUNT_ROOTS:=/state /shared /diode/* /pump /build /telemetry /llm/console /llm/sock}"
 : "${UNBOUNDED_REFERENCE:=/vendor/registry}"
 : "${PUMP_RESTART_SECONDS:=5}"
 : "${PG_READY_TRIES:=20}"
