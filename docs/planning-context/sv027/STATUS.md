@@ -1,5 +1,90 @@
 # SV-027 status
 
+## Implementation checkpoint 2: complete and tested. Not accepted.
+
+**Status:** C1–C5 are implemented. On the final bytes, **76 cases passed in 8 commands** (F1 18; F2 19; F3–F6 6, 11, 2, 8; F7 11; F8 1). Full log: [RECEIPT.md](RECEIPT.md).
+
+**Discriminators on the unchanged runtime.**
+- B0 passed (1).
+- D1–D7 each failed at their declared behavior assertion:
+  - D1, D2, D4, D5: no header at the closure;
+  - D3: types `[H, LEGACY_IMPORT]`, before the counter;
+  - D6, D7: DID NOT RAISE.
+- The first D7 attempt hit a fixture setup error. It was not counted, and was corrected and rerun.
+
+**One test-only correction after the runtime edit.** F1's first run failed in R2 `generation-crossing`, because collection legitimately unlinked the segments a later ledger read relied on. The sequence is now logged as written; the assertions are unchanged. The rerun passed 18/18.
+
+**Files.**
+- Runtime: `services/chassis_session.py`, `services/chassis_startup.py`, `services/chassis.py` (docstring only), `services/chassis_persistence.py` (comment only).
+- New test: `tests/test_chassis_rotation.py`.
+- Docs: this file and RECEIPT.md.
+- No existing test changed.
+
+**Limits retained:** RECEIPT §5. **Next:** the coordinator's commit, scan and backup, then Astra's immutable implementation review.
+
+## Implementation checkpoint 1: discriminators (unchanged runtime)
+
+| Run | Result |
+|---|---|
+| B0 | 1 passed |
+| D1 `[startup-a9-clean]` | failed: `[] == ['LEDGER_HEADER']` |
+| D2 `[startup-after-intent]` | failed: the core ends in RECOVERY, no header |
+| D3 `[legacy-import]` | failed at the types assertion: no H3 |
+| D4 `[generations-and-notice]` | failed: index 1 is `MSG_APPEND`, not `LEDGER_HEADER` |
+| D5 `[drop-in-write_note]` | failed: `['RECOVERY']` |
+| D6 `[startup-inherited-fsync-eio]` | failed: DID NOT RAISE PersistenceFailure |
+| D7 `[generations-fence-eio-chassis]` | first attempt: setup `LedgerError` (a wrapper computed `segment_name(-1)` before checking it was armed), **not counted**. After the fix: failed, DID NOT RAISE; the second run entered main and ended `exit=0`. |
+
+## Implementation checkpoint 0: cases frozen before any run
+
+Base: accepted-design archive `bcb3c75225b609b84fcc4e93de5b64e1d9e4f775`. Governing inputs:
+- DESIGN.md, with L1–L5 at its top;
+- ASTRA-DESIGN-ACCEPTANCE.md (review SHA-256 `9b80837d…4d0f4`);
+- `sv016-context/SV-027-bounded-targets.json`.
+
+Opus implements and Astra reviews the immutable result. The worker makes no Git call. Every test command is the approved runner with literal targets, one per message.
+
+**New `tests/test_chassis_rotation.py`: 18 cases.** Its helpers come from accepted modules only (`test_chassis_recovery_live`, `test_chassis_bounds.frames`, `test_chassis_termination.make_run`/`reply`). Three small helpers are local.
+
+| Function | Parameters | n |
+|---|---|---|
+| `test_sv027_every_closed_boundary_rotates_a_full_segment` | `startup-a9-clean`, `startup-after-intent`, `legacy-import`, `file-edit`, `generations-and-notice`, `drop-in-write_note`, `drop-in-adopt_file_edit` | 7 |
+| `test_sv027_one_closure_writes_at_most_one_checkpoint_one_follow_up_and_one_header` | `startup-crossing`, `generation-crossing`, `header-evaluated-next` | 3 |
+| `test_sv027_no_rotation_inside_a_group_or_with_a_queue` | `drop-inside-group`, `queued-messages` | 2 |
+| `test_sv027_a_nonfull_segment_adds_no_event_at_the_new_boundaries` | — | 1 |
+| `test_sv027_rotation_failures_and_crashes_at_the_new_boundaries` | `startup-inherited-fsync-eio`, `startup-ledger-fence-eio`, `startup-name-lost-is-recreated`, `generations-fence-eio-chassis`, `generations-crash-converges` | 5 |
+
+**Injection.** Each value is labelled in the test:
+- `segment_max = 1` for writers built during a start, through a test-local patch of `LedgerWriter.__init__` (the accepted `SMALL_SEGMENTS` pattern);
+- `session.writer.segment_max = 1` on an open session;
+- `records_max` 1 or 2.
+
+Faults are armed by semantic predicates only: a path, the new segment's existence, `writer.inherited`, or a running method. None counts calls.
+
+**Predictions corrected by L1–L5, before any run:**
+- **L1 `legacy-import`:** a two-message A5 list with no handoff. Types are exactly `[H1, LEGACY_IMPORT, H3]`, with no checkpoint. The counter is `(2, frame(LEGACY_IMPORT) + len(conversation_bytes(list)) + frame(H3))` from the byte walk, and the blob file's size equals that length. A default-limit restart reproduces the counter with no new header. On the base, D3 fails first at the types assertion (no H3).
+- **L2 R4:**
+  - every `rotate_if_full` call is wrapped and must return False with an empty `FaultOps` event window;
+  - exactly 5 calls are expected: the startup closure, the file edit and 3 generations;
+  - the segment name set is unchanged and there is no new LEDGER_HEADER;
+  - the record types after P are `[NOTE_WRITTEN, MSG_APPEND ×3]`;
+  - the inherited append-open of segment s is present, after the `session/` and `ledger/` fences.
+
+  **Changed prediction:** the call-count assertion (which keeps the windows non-vacuous) would fail on the unchanged runtime. R4 is not a discriminator and is not run before the edit.
+- **L3 `generations-fence-eio-chassis`:**
+  - The markers are the last seq before the second run, and the seq, active segment, pending generation IDs and watermark at `adopt_notes` entry.
+  - EIO is armed only while `adopt_notes` runs, at `sync_dir(ledger/)` once segment `entry+1` exists. The test requires that cut to be reached.
+  - After entry, the records are exactly `[MSG_APPEND{gen = first pending}, LEDGER_HEADER]`, and no MSG_APPEND carries a later pending gen.
+  - The second run's lifecycle has `run_start` and `runtime_bound`, but no `run_resumed`/`run_fresh`, `turn` or `run_end`. No main or bootstrap marker is written, the client sent nothing, and there is no REQUEST_SENT, INVOKING, CHECKPOINT or RUN_END after the pre-run marker. FSYNC_FAILED exists and the next start is A1.
+  - The first run's ledger holds no NOTE_WRITTEN: an ordinary main return creates no note.
+- **L4 `startup-crossing`:** an unreferenced orphan blob is put before two says. The restart has **[injected]** `records_max = 2`, `collect=True` and `segment_max = 1`. After the last say the records are exactly `[CHECKPOINT, GC_INTENT, GC_DONE, CHECKPOINT, LEDGER_HEADER]`; the orphan is in the intent and its file is gone. `generation-crossing` counts headers from the adoption entry: 3 closures, each ending with exactly one header.
+- **L5:** G6 ran in SV024 (161 selected / 159 distinct, including that conditional case) but not in SV026. B0 re-establishes it on the current runtime. Unchanged-cut and default-size predictions are limited to the selected nodes.
+
+**Planned commands.**
+- B0: G6 alone, expected pass.
+- D1–D7: the manifest's `pre_fix_targets`, each alone on the unchanged runtime, each expected to fail at its behavior assertion.
+- After the C1–C5 edit: F1 (18), then the seven retained batches (19, 6, 11, 2, 8, 11, 1): **76 cases in 8 commands**.
+
 ## Governing implementation qualifications — independent review accepted
 
 Astra accepted the architecture at immutable design `0f113aed48d740c553322e5fdbf09ddb0fecd7af`, subject to **L1–L5 in [ASTRA-DESIGN-ACCEPTANCE.md](ASTRA-DESIGN-ACCEPTANCE.md)**. Those qualifications supersede conflicting historical text below; implementation remains unaccepted until its own review.
