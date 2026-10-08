@@ -19,6 +19,7 @@ exclude = [
     "recorder/tests/test_recorder_console_hostile.py", "recorder/tests/test_unix_listener.py",
     "recorder/tests/test_upstream_selection.py", "recorder/tests/test_recorder_events.py",
     "recorder/tests/hostile_inputs.py",
+    "pump/pump.py", "pump/tests/test_pump.py", "pump/tests/hostile_inputs.py",
 ]
 
 [tool.ruff.lint]
