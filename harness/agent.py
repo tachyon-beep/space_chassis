@@ -10,7 +10,10 @@ import os
 import sys
 import json
 import inspect
+import io
 from typing import Callable, Any, Dict, List, Literal
+
+from command_runtime import run_command
 
 
 class ToolRegistry:
@@ -408,6 +411,90 @@ def compact(discard: bool = False) -> str:
     deleted = len(conversation_history) - len(kept)
     conversation_history[:] = kept
     return report(f"deleted {deleted} messages; ")
+
+
+MISSION_KIT_OUTPUT_LIMIT = 65536
+
+
+@tools.register
+def read_path(path: str, line_number: int = 0) -> str:
+    """Read any file, with line numbers, up to MISSION_KIT_OUTPUT_LIMIT bytes.
+
+    Args:
+        path: The file to read. Relative paths resolve against the agent's directory.
+        line_number: The 1-indexed line number to read. Pass 0 to read the whole file.
+    """
+    actual_path = _resolve_path(path)
+    try:
+        size = os.path.getsize(actual_path)
+        with open(actual_path, "rb") as f:
+            data = f.read(MISSION_KIT_OUTPUT_LIMIT)
+        lines = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", errors="replace").readlines()
+        if line_number:
+            idx = line_number - 1
+            if idx < 0 or idx >= len(lines):
+                return f"error: line {line_number} is out of range; the file has {len(lines)} lines"
+            text = f"{line_number}: {lines[idx]}"
+        else:
+            text = "".join(f"{i + 1}: {line}" for i, line in enumerate(lines))
+        if size > MISSION_KIT_OUTPUT_LIMIT:
+            text += f"\n[file is {size} bytes; output stops at {MISSION_KIT_OUTPUT_LIMIT}]"
+        return text
+    except Exception as e:
+        return f"error reading {path}: {e}"
+
+
+@tools.register
+def write_path(path: str, text: str, mode: Literal["overwrite", "append"] = "overwrite") -> str:
+    """Write text to any file, replacing its contents or adding to its end.
+
+    Args:
+        path: The file to write. Relative paths resolve against the agent's directory. Its directory must already exist.
+        text: The text to write.
+        mode: overwrite replaces the file's contents, append adds the text after them.
+    """
+    actual_path = _resolve_path(path)
+    try:
+        with open(actual_path, "a" if mode == "append" else "w", encoding="utf-8") as f:
+            f.write(text)
+        return f"wrote {len(text.encode('utf-8'))} bytes to {path}"
+    except Exception as e:
+        return f"error writing {path}: {e}"
+
+
+@tools.register
+def run(command: str, timeout: int = 120) -> str:
+    """Run a shell command in the agent's directory and return its status and output.
+
+    Args:
+        command: The command line, run by /bin/sh.
+        timeout: Seconds to wait before the command is stopped, at most 120.
+    """
+    try:
+        result = run_command(
+            command,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            shell=True,
+            timeout=timeout,
+            output_limit=MISSION_KIT_OUTPUT_LIMIT,
+        )
+    except ValueError:
+        return "error: timeout must be a positive number of seconds"
+    except Exception as e:
+        return f"error running command: {e}"
+    if result["status"] == "timeout":
+        text = f"status: timeout after {result['timeout_seconds']} s\n"
+    else:
+        text = f"status: completed\nexit: {result['returncode']}\n"
+    for stream in ("stdout", "stderr"):
+        output = result[stream] or ""
+        if output and not output.endswith("\n"):
+            output += "\n"
+        text += f"{stream}:\n{output}"
+    for stream in ("stdout", "stderr"):
+        if result["output_truncated"][stream]:
+            text += f"[{stream} truncated]\n"
+    return text
 
 
 def _load_prompt(name: str) -> str:
