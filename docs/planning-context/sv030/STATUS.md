@@ -1,3 +1,9 @@
+# Current status: bounded design correction required; implementation not authorized
+
+Astra reviewed head `cd72f00a9604c00eb5f16f07c9696024d76160d1`. [ASTRA-INITIAL-DESIGN-REVIEW.md](ASTRA-INITIAL-DESIGN-REVIEW.md) accepts the default source recurrence but requires SV030-01–03: a precise clean frontier and narrower claim, header reuse/placement accounting, and finite ordering discriminators. No owner-policy decision is needed for this design correction. No tests or runtime changes have been made.
+
+---
+
 # SV030 status — design only, awaiting independent Astra review
 
 **State:** DESIGN.md is written. No runtime, test, constant or canonical file was changed. No command, test, import, Git operation, agent or provider was used.
