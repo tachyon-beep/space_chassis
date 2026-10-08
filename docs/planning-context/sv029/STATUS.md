@@ -1,6 +1,6 @@
 # Current status: SV029 accepted within its bounded test/evidence scope
 
-Independent Astra acceptance: reviewed head `4bd07c01f6f64aacf60353e853698461acce56e7`, test commit `8b2e5856607b3de5f1459966d5602dff5cb68bf8. [ASTRA-ACCEPTANCE.md](ASTRA-ACCEPTANCE.md) finds no required correction. Twelve selected cases passed in two serial commands, without failure/retry/cap hit/denial. Existing runtime/tests unchanged.
+Independent Astra acceptance: reviewed head `4bd07c01f6f64aacf60353e853698461acce56e7`, test commit `8b2e5856607b3de5f1459966d5602dff5cb68bf8`. [ASTRA-ACCEPTANCE.md](ASTRA-ACCEPTANCE.md) finds no required correction. Twelve selected cases passed in two serial commands, without failure/retry/cap hit/denial. Existing runtime/tests unchanged.
 
 Accepted counterexamples: final previous-base replay returns 58,720,256 message-blob bytes against the strict 50,352,266 claim; newest-base replay reads 365 non-origin records against 358 under the stated schedule of 108 edited interruptions. Controls return 8,388,608 message-blob bytes and 257 records. No replacement bound, PR-N proof, runtime/oracle change or real-session operation follows. All resource/kernel/policy nonclaims remain.
 
