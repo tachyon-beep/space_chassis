@@ -698,18 +698,28 @@ def test_a_crash_inside_recovery_never_turns_unknown_into_unrun(tmp_path, cut, t
     name, (operation, matches) = cut
     ops = FaultOps()
     if name == "after-first-record":
-        seen = {"n": 0}
+        # SV025: the first recovery record's own fsync, found by what precedes
+        # it -- a write to the same segment, an append -- rather than by a count
+        # of .svl fsyncs, which SV024's pre-intent fence shifted onto the
+        # truncation fence (neither of those fsyncs follows a write).
+        def appended(path, matches=matches):
+            return matches(path) and ops.events[-2] == ("write", path)
 
-        def nth(path, matches=matches):
-            if matches(path):
-                seen["n"] += 1
-                return seen["n"] == 2
-            return False
-
-        matches = nth
+        matches = appended
     ops.faults.append((operation, matches, Crash()))
     with pytest.raises(Crash):
         root.start(ops=ops)
+    if name == "after-first-record":
+        # The cut is where it is named: the first recovery record was written
+        # under the published intent, after the tail was set aside, and the
+        # process died in that record's own fsync.
+        segment = ops.events[-1][1]
+        assert ops.events[-2:] == [("write", segment), ("fsync", segment)], ops.events[-4:]
+        assert ops.events[:-1].count(("fsync", segment)) == 2, "SV024's pre-intent fence and the truncation fence came first"
+        written = root.records()
+        assert (written[-2].type_name, written[-1].type_name) == ("TURN_RESPONSE", "SYNTH")
+        assert written[-1].payload == {"call_key": [turn, 0], "kind": "unknown_damaged_tail"}
+        assert (root.session_dir / st.RECOVERING).exists() and len([n for n in root.corrupt() if n.startswith("ledger-")]) == 1
     opening = root.start()
     assert opening.session is not None, opening
     messages = opening.session.messages
