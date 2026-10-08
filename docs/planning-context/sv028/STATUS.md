@@ -1,4 +1,70 @@
-# SV-028: second design correction required
+# SV-028 status: correction round 2 complete, awaiting independent Astra re-review. Not implemented. Not accepted.
+
+- **Base:** `05cc4f8616c108855246c8c8ea13a571eb9731c8`.
+- **Governing residual review:** [ASTRA-DESIGN-CORRECTION-1-REVIEW.md](ASTRA-DESIGN-CORRECTION-1-REVIEW.md). Its SHA-256 is recorded as supplied (`64d8377115b5eb71d12249c9182470d9ad9858d3413880cdde2e6b74acfa5a14`) and not recomputed: hashing is outside Read/Grep/Write/Edit.
+- **Both archived reviews are unchanged.** All earlier STATUS history is kept below.
+- **Files written:** `DESIGN.md` (standalone rewrite) and this file. No runtime, test, source, literal or oracle file was touched.
+
+### Session provenance
+
+The first round-2 session was interrupted after writing DESIGN.md and before updating STATUS.md. The coordinator verified that launcher 1425383, process 1425390 and its scope are dead, and that no completion receipt exists.
+
+This resumed session:
+- inspected the surviving DESIGN.md by Grep;
+- confirmed the round-2 rewrite and all follow-up edits were present: step renumbering A7/A8, the A4 refusal wording, and the corrected N19 boundary companions with the stale contradictory sentence absent;
+- left DESIGN.md unchanged;
+- wrote only this section.
+
+### Finding → resolution map
+
+| Finding | Resolution (DESIGN section) | Discriminators (§14.3) |
+|---|---|---|
+| **SV028-06** reused copy sealed without its leaf-directory fence | **Data durability.** A final destination name exists only after `write_bytes_durable`'s file fsync returned. Hash verification gives integrity, not durability (§7.4).<br>**Dependency step `E`.** It fsyncs every set file, then every fixed directory leaves-first (`session/ledger`, `blobs`, `corrupt` → `session`, `home` → set root), then `preserved/`, then `session/`. It runs before every seal and again on a sealed set before each carrier publication. Every existing fixed subdirectory is re-fenced in its parent on retry (§8.2). The seal is a rename + `fsync(preserved/)`.<br>**EIO** follows v2 §1.4.9: `PersistenceFailure`, FSYNC_FAILED best-effort, exit 44. Nothing is sealed, published or deleted, and STOPPED and the live conversation are untouched.<br>**`PreserveOps`** keys pending names by directory identity, so they survive the `.partial` → sealed rename (§14.1) | **N16** ×3 `[reused-leaf-converges \| omit-reuse-fence-mutation \| eio-before-seal]`: the exact P1 → P2 → P3 trace, a single-entry corrupt leaf with no incidental write (asserted from the log), and host loss before convergence.<br>**N17**: harness control for carrying pending names across an ancestor rename |
+| **SV028-07** equal MANIFEST charged as reused but rewritten | **Selected rule: verified reuse plus dependency fencing.** The MANIFEST is the inventory, written once, never rewritten (`A_M = 0` when present).<br>**Exact deltas:** `peak = U − D + A_M + ΣA_C` for files and bytes; deletions before allocations; temps are the files they become (§7.5).<br>A complete set gives `D = A = 0`, `peak = U`: accepted at `cap = U`, refused below, with no mutation | **N19** ×3 `[complete-partial-before-rename \| rename-unfenced-then-host-loss \| sealed-after-rename-fence]`: no `O_CREAT` or write under `preserved/` at `cap = U`; `U_bytes − 1` and `U_files − 1` refuse unchanged. N15 `rewrite-peak` and `repeated-copy-temp-crashes` updated to the exact formula |
+| **SV028-08** inventory not durable; temp-name ownership | **Durable snapshot boundary.** A sealed, checksummed MANIFEST (inventory) is published at A2 before any subdirectory or copy (§7.2). It binds `ack_id`, `stop_sha256`, `stop_id`, `witness_check`, `lineage_id`, the pair and the entries; it is validated on every retry and in Phase B.<br>**Lifecycle:** none / pre-boundary (owned MANIFEST temps only) / post-boundary / sealed (immutable).<br>**After the boundary:** a changed, missing or added live source refuses (`preserved_source_changed` / `…_missing` / `preserved_domain_changed`). A copy X is never replaced by Y and nothing is deleted. A mismatching destination is rewritten only when its live source just verified.<br>**Ownership rule:** only `.<B>.<16 hex>.tmp` in the own partial set, for `B` an inventory destination in that directory or `MANIFEST`, and not itself a destination. Never sole evidence. Anything else refuses `preserved_scratch_unowned`.<br>**`.ACKNOWLEDGED.<16 hex>.tmp`:** the blanket exclusion is removed. A pre-existing one is ordinary inventoried evidence; carrier artifacts exist only after the seal (§7.1) | **N18** ×10 `[source-changed-after-copy \| source-missing \| domain-gained-file \| inventory-corrupt \| inventory-foreign-binding \| inventory-missing-with-copies \| corrupted-copy-with-verified-source \| pre-existing-acknowledged-temp-preserved \| owned-copy-temp-cleanup \| owned-inventory-temp-cleanup]`.<br>N3a's independent inventory now includes the planted pre-existing temp |
+
+### Preserved directions (unchanged)
+
+These stay as they were in round 1:
+- B3 before B4 activation durability;
+- the frozen plan Π and the four-key carrier-free context;
+- T after Π;
+- the six-pair registry and the one `SUPPORTED` edit;
+- E1+S1+R1+N1 (A12 resume order: pending notes preempt bootstrap);
+- older-known-prev actual collection;
+- the exact serialization checks;
+- the candid unproved RSS and aggregate-read limits.
+
+The retained nodes are kept explicitly: N7 `activation-readable/after-unlink-fence`, N8 spend and torn-context cases, N14 (B3 EIO), N13 registry, N3b, N11 CLI barrier.
+
+The only renamed parameter is N7 `archive-directory-unfenced/manifest-write` → `…/inventory-write`, because the MANIFEST is now the inventory.
+
+### Re-frozen plan (nothing run)
+
+- **53 new** (the 36 from round 1 plus N16 ×3, N17, N18 ×10, N19 ×3) and **50 retained**.
+- **103 cases in 10 serial commands** `[14, 1, 1, 9, 10, 1, 17, 35, 1, 14]`, plus B0 and D1–D3.
+- The runner and resource caps are unchanged. The only change from round 1 (86 in 9) is the new F7 command of 17 nodes.
+
+### Remaining blockers and limits
+
+**No design blocker is known to this worker.** Implementation stays held for independent re-review.
+
+Stated limits (DESIGN §15):
+- RSS is unproved; aggregate reads are listed;
+- capacity is an admission rule over logical sizes;
+- a Phase A or Phase B EIO leaves FSYNC_FAILED and a stopped session (SV023-02 class);
+- a post-boundary source change leaves this acknowledgement permanently unable to complete, with its partial set kept and counted;
+- M-6 is out of model.
+
+### Execution log
+
+- Read, Grep and Edit only, on the known checkout paths.
+- No test, Python, Bash, Git, provider, real session, credential or settings action. No denial. No parent-root search.
+- Filigree not used.
+
+---
+
+# SV-028: second design correction required (history)
 
 Independent Astra review of `d47b5c19fc5a0cbdf7221c45d7b8361982734508` found three remaining archive-transaction defects. [ASTRA-DESIGN-CORRECTION-1-REVIEW.md](ASTRA-DESIGN-CORRECTION-1-REVIEW.md) is the governing residual review: SV028-06 requires reused-copy dependency fences before sealing; SV028-07 requires accurate equal-manifest retry allocation accounting; SV028-08 requires a durable inventory/ownership boundary before copied evidence can be discarded on retry. Activation/recovery corrections are accepted at design level. No implementation authority yet; these are bounded engineering corrections, not new owner policy.
 

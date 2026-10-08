@@ -1,45 +1,61 @@
-# SV-028 design (correction round 1): one narrowly admitted `bootstrap-preserving` acknowledgement
+# SV-028 design (correction round 2): one narrowly admitted `bootstrap-preserving` acknowledgement
 
 **Status: corrected design only, for independent Astra re-review. Not implemented. No test was run. No runtime or test file was changed.**
 
-This document replaces round 0 as a standalone proposal; it is not an overlay. The governing review is [ASTRA-INITIAL-DESIGN-REVIEW.md](ASTRA-INITIAL-DESIGN-REVIEW.md), preserved unchanged. The finding-by-finding map is in [STATUS.md](STATUS.md).
+This is a standalone proposal that replaces correction round 1. The governing reviews are preserved unchanged:
+- [ASTRA-INITIAL-DESIGN-REVIEW.md](ASTRA-INITIAL-DESIGN-REVIEW.md) (SV028-01…05);
+- [ASTRA-DESIGN-CORRECTION-1-REVIEW.md](ASTRA-DESIGN-CORRECTION-1-REVIEW.md) (SV028-06…08).
+
+The finding map is in [STATUS.md](STATUS.md).
+
+**What stays and what changes.**
+- **Unchanged from round 1, as the residual review accepted:** activation durability (B3 before B4), the frozen plan Π and the sealed carrier-free context, the six-pair registry, and the A12-compatible E1+S1+R1+N1 semantics.
+- **Changed in this round, archive transaction only:**
+  - the MANIFEST is now the **durable inventory**, written before any copy and never rewritten (SV028-07, -08);
+  - an explicit **dependency-establishment** step precedes the seal (SV028-06);
+  - a verifiable **ownership rule** for scratch replaces the blanket `.ACKNOWLEDGED.*.tmp` exclusion (SV028-08);
+  - capacity uses **exact deltas** (SV028-07);
+  - the `PreserveOps` model tracks pending names by **directory identity** (SV028-06);
+  - the test matrix is re-frozen.
 
 ## Provenance
 
-- **Base:** `e2a1ddae362b1a931673dd074ef94ea6b978dbc2` (SV016–SV027 accepted in their own scopes; nothing reopened).
+- **Base:** `05cc4f8616c108855246c8c8ea13a571eb9731c8`. The residual review's SHA-256 is recorded as supplied (`64d83771…5a14`) and not recomputed, since hashing is outside the Read/Grep/Write/Edit tools.
 - **Canonical text:**
-  - SV-013 §2.2.2: files, CK1–CK6, the authority rule, A0–A15, the acknowledgement sentence l.558;
-  - SV-013 §2.2.5: notes, identity closure, GC;
-  - SV-015 v2 §1.1–§1.4: M-1…M-6, framing, tail classes, checkpoint graph, GC, transitions.
-- **Accepted local evidence:** `sv023/` (witnessed carrier, intent context, SV023-02 policy), `sv024/` (fences), `sv026/` (accounting), `sv027/` (closed-boundary rotation).
-- **Code read:** `services/chassis_startup.py` (whole), `chassis_persistence.py`, `chassis_session.py`, `chassis_replay.py`, `chassis_gc.py`, `chassis.py`.
-- **Tests read:** `tests/test_chassis_acknowledgements.py`, `test_chassis_recovery_live.py`, `test_chassis_gc.py` (the `CutOps`/`begin`/`start` harness).
-
-Line numbers below are at the base.
+  - SV-013 §2.2.2 (files, CK1–CK6, the authority rule, A0–A15, l.558) and §2.2.5;
+  - SV-015 v2 §1.1–§1.4 (M-1…M-6; framing; tails; checkpoint, GC and transitions; §1.4.8 strict pre-admission; §1.4.9 FSYNC_FAILED honesty).
+- **Accepted local evidence:** `sv023/`, `sv024/`, `sv026/`, `sv027/`.
+- **Code:** `services/chassis_startup.py`, `chassis_persistence.py`, `chassis_session.py`, `chassis_replay.py`, `chassis_gc.py`, `chassis.py`.
+- **Tests:** `tests/test_chassis_acknowledgements.py` (`AckOps`, `host_loss`), `test_chassis_gc.py` (`CutOps`, `begin`, `start`), `test_chassis_recovery_live.py` (`Root`, helpers).
 
 ---
 
-## 0. The corrected proposal in brief
+## 0. The proposal in brief
 
 **One pair is admitted:** `conversation_unreadable_unbound` + `bootstrap-preserving`. The stop must carry a valid SV023 witness, and the records after the witnessed newest checkpoint `C_n` must be state-neutral. Everything else stays refused.
 
 **Phase A (the operator command):**
-1. Runs a pure admission. It enumerates an **exact preservation domain**: every regular file of `session/` (top level, `ledger/`, `blobs/`, `corrupt/`) and the one named `HANDOFF.md`. Unsupported shapes are refused.
-2. Preflights the exact serialized manifest, carrier and maximal recovery-context sizes, and the actual peak usage of `preserved/`.
-3. Fills an owned **unfinished** set `preserved/<ack_id>.partial/` with independent copies.
-4. Writes `MANIFEST` inside it.
-5. **Seals** the set by renaming it to `preserved/<ack_id>/` and fencing.
-6. Writes a sealed carrier, then removes STOPPED.
+1. Runs a pure admission over an exact preservation domain: every regular file of `session/` (excluding `preserved/`) plus the named `HANDOFF.md`. Unsupported shapes are refused.
+2. Publishes a sealed, checksummed **inventory** (`MANIFEST`) into an owned `preserved/<ack_id>.partial/`. This is the **durable snapshot boundary**.
+3. Copies each inventoried file as independent bytes.
+4. **Establishes every file-data and name dependency** of the set, whether a copy is new or reused.
+5. Seals the set by renaming it to `preserved/<ack_id>/` and fencing. The sealed set is immutable.
+6. Publishes the sealed carrier, then removes STOPPED.
 
-**Phase B (the consuming start):**
-1. Re-verifies the carrier and every sealed byte.
-2. Derives a **frozen plan** Π from the witnessed checkpoint state alone, before any owned record is applied: receipt, optional `possible_duplicate_spend`, one activation `EXTERNAL_DELETE{epoch: e+1, cause: "bootstrap_preserving", …}`.
-3. Validates any owned prefix against Π and appends only the missing continuation.
-4. **Establishes the durability** of the whole owned prefix (segment fsyncs and the `ledger/` fence). This happens even if this process wrote nothing.
-5. Only then unlinks the preserved unreadable `conversation.json` and fences `session/`.
-6. Retires the carrier, then any RECOVERING, then reserves IDENTITY.
+**After the boundary:**
+- a changed, missing or added live source refuses;
+- only files proven to be transaction-owned scratch, which cannot be the only original, are ever deleted;
+- the manifest is never rewritten.
 
-**After a torn own frame:** a carrier-free restart is authenticated by a sealed, bounded `RECOVERING.witnessed` context, checked against the immutable ledger head. Duty-visible behaviour is exactly A12's (E1+S1+R1+N1, confirmed as engineering by the review).
+**Phase B (the consuming start), unchanged from round 1:**
+1. Verifies the carrier and the sealed set.
+2. Derives a frozen plan Π from the witnessed head: receipt, optional `possible_duplicate_spend`, one activation `EXTERNAL_DELETE{epoch: e+1, cause: "bootstrap_preserving", …}`.
+3. Appends only the missing continuation.
+4. **Establishes owned durability (B3)**.
+5. Only then unlinks the preserved unreadable `conversation.json`.
+6. Retires the carrier, then any intent.
+
+The duty-visible behaviour is exactly A12's.
 
 ---
 
@@ -48,38 +64,46 @@ Line numbers below are at the base.
 | Source | Text (abridged; quoted where exact) | Used for |
 |---|---|---|
 | SV-013 §2.2.2 l.558 | "`bootstrap-preserving` keeps every file and starts epoch+1; it is the operator's explicit choice, never automatic." | Same lineage; epoch +1 once; preservation; operator act |
-| SV-013 §2.2.2 files table | `conversation.json`, `.prev.json`, `run.json`, `ledger/`, `blobs/`, `corrupt/`, `STOPPED`, `FSYNC_FAILED`, `recap.md` (session), **`HANDOFF.md` (home)** | The preservation domain includes the one named home file (§7.1) |
-| SV-013 authority rule | "An unreadable file is never treated as absent … nothing bootstraps over memory that may exist." | The live name is removed only after preservation and durable activation (§9) |
-| SV-013 A12 | "`EXTERNAL_DELETE{epoch+1}`; bootstrap; `prev` and ledger preserved" | The accepted empty-base precedent (E1) |
-| SV-013 §2.2.5 r.3, v2 §1.4.3 | the adoption watermark is "never reset" | Notes carried (N1) |
-| v2 §1.1 | M-1 process death; M-2 honest host loss (unsynced bytes and unfenced names may be lost); M-3 checksum-only detection; M-4; M-5 single writer; M-6 out of model | Crash model (§10, §14.1) |
-| v2 §1.3 | TC1 own-torn rule; "`bootstrap-preserving` (D13) remains the alternative" for TC4 | Composition (§9.4); TC4 **not** admitted |
-| v2 §1.4.5 | GC removes only intent-named items; `corrupt/` never GC'd | GC exclusion (§12) |
-| v2 §1.4.8 | strict pre-admission caps | Capacity rule (§7.4) |
+| SV-013 §2.2.2 files table | the session files, including `corrupt/` and **`HANDOFF.md` (home)** | Preservation domain (§7.1) |
+| SV-013 authority rule | "An unreadable file is never treated as absent … nothing bootstraps over memory that may exist." | The live name is removed only after preservation and durable activation |
+| SV-013 A12 | "`EXTERNAL_DELETE{epoch+1}`; bootstrap; `prev` and ledger preserved" | E1 precedent |
+| SV-013 §2.2.5 r.3 / v2 §1.4.3 | watermark "never reset" | Notes carried (N1) |
+| v2 §1.1 | M-1 process death; M-2 honest host loss (bytes after the last returned fsync and names after the last returned directory fsync may be lost); M-3 checksum-only detection; M-5 single writer; M-6 out of model | Crash model (§10, §14.1), dependency fences (§7.4), snapshot boundary (§7.2) |
+| v2 §1.3 | own-torn TC1 rule; TC4 names `bootstrap-preserving` as an alternative | Composition (§9.4); TC4 **not** admitted |
+| v2 §1.4.5 | GC removes only intent-named items | GC exclusion (§12) |
+| v2 §1.4.8 | strict pre-admission caps | Capacity (§7.5) |
+| v2 §1.4.9 | on a sync error: `PersistenceFailure`, a best-effort FSYNC_FAILED marker, and "if the marker exists, the next start stops. No stronger claim" | Phase A EIO behaviour (§8.3) |
 
 ---
 
-## 2. Accepted runtime facts this design depends on (corrected)
+## 2. Accepted runtime facts this design depends on
 
-- **Today `bootstrap-preserving` is refused for every reason** ("not implemented … nothing was changed", `chassis_startup.py:246–247`). `IMPLEMENTED_RESOLUTIONS` (`:101–106`) is the allowlist, and `WITNESSED_RESOLUTIONS` (`:96–99`) the witnessed subset. `read_carrier` (`:290–303`), `carrier_problem` (`:506`) and `witnessed_context_problem` (`:1529`) consult these sets.
-- **The A14-unbound stop and its witness:** `:1271–1274`, `stop_witness` (`:409–454`).
-- **Witnessed own-prefix rule:**
-  - `witnessed_evidence` (`:539–681`) allows, after the witnessed end, only `[receipt, *core]` and a strict byte prefix of the next own frame (`_next_own_frame`, `:684–694`).
-  - `_recover` freezes a torn-own-frame transaction in RECOVERING with a `witnessed` context of exactly `{ack_id, receipt, after_seq}` (`:1055–1058`, `:1515–1537`).
-  - Under an existing intent, a further own torn frame is set aside **without** a new RECOVERY record (`:1070–1078`).
-  - Extras must be a prefix of the core, and a witnessed recovery writes nothing beyond it (`:1085–1094`).
-- **Ordinary TC0 closure:** `derive_core` (`:1587–1642`) emits `RECOVERY{possible_duplicate_spend}` when `requests.last.outcome == "failed_unknown"`. The reducer then sets that outcome and `requests_next = detail.next` (`chassis_replay.py:606–616`). **Applying the spend changes the state that derived it.** This is why the plan must be frozen (§5).
-- **Files that later ordinary operation replaces or removes:**
-  - CK3/CK4 replace `conversation.json` and rotate `.prev.json`, removing `.prev.tmp` (`chassis_persistence.py:1505–1538`);
+- `bootstrap-preserving` is refused today for every reason ("not implemented … nothing was changed", `chassis_startup.py:246–247`). The allowlist `IMPLEMENTED_RESOLUTIONS` is at `:101–106` and `WITNESSED_RESOLUTIONS` at `:96–99`. They are consulted by `read_carrier` (`:290–303`), `carrier_problem` (`:506`) and `witnessed_context_problem` (`:1529`).
+- The A14-unbound stop and its witness: `:1271–1274`; `stop_witness` (`:409–454`).
+- **Witnessed own-prefix and intent mechanics:**
+  - `witnessed_evidence` (`:539–681`) and `_next_own_frame` (`:684–694`);
+  - a RECOVERING `witnessed` context (`:1055–1058`, `:1515–1537`);
+  - an own tear under an existing intent is set aside with no record (`:1070–1078`);
+  - extras must be a prefix of the core (`:1085–1094`).
+- `derive_core` (`:1587–1642`) emits the spend for `failed_unknown`. Applying it changes `requests.last.outcome` (`chassis_replay.py:606–616`).
+- **`write_bytes_durable`** (`chassis_persistence.py:967–991`) writes in this order:
+  1. creates an `O_EXCL` temp `.<name>.<16 hex>.tmp` next to the target;
+  2. writes all bytes;
+  3. **fsyncs the file**;
+  4. renames the temp onto the target;
+  5. fsyncs the directory.
+
+  On `OSError` it unlinks its temp. A final name it creates therefore exists only after that file's data fsync returned. The new temp coexists with any existing target until the rename.
+- **Later ordinary operation replaces or removes:**
+  - CK3/CK4 replace `conversation.json` and `.prev.json`, removing `.prev.tmp`;
   - CK5 replaces `run.json`;
-  - `reserve_turns` replaces `IDENTITY`;
+  - `reserve_turns` replaces IDENTITY;
   - `append_recap` replaces `recap.md` (`chassis.py:275–285`);
-  - `write_note` replaces the `HANDOFF.md` mirror (`chassis_session.py:476–482`);
+  - `write_note` replaces the HANDOFF mirror (`chassis_session.py:476–482`);
   - GC unlinks segments and blobs;
-  - quarantine **rewrites a deterministic destination** in `corrupt/` (`chassis_persistence.py:1457–1481`; `_quarantine_file` `chassis_startup.py:210–226`), replacing a pre-existing file there with different bytes.
-- **`write_bytes_durable` cleanup:** it unlinks its own temp on `OSError` (`chassis_persistence.py:985–991`). A process death leaves the temp behind.
-- **CK3 retains an older known checkpoint:** `_retained_prev` (`chassis_session.py:610–625`) keeps `.prev.json` and names it as `prev` when it holds **any** known checkpoint's bytes, not only `C_n.prev`.
-- **Production layout:** `session_dir = home_dir / "session"` (`chassis.py:610–612`).
+  - quarantine rewrites a deterministic `corrupt/` destination (`chassis_persistence.py:1457–1481`, `chassis_startup.py:210–226`).
+- `_retained_prev` (`chassis_session.py:610–625`) keeps and names any known checkpoint found in `.prev.json`.
+- The production layout is `session_dir = home_dir / "session"` (`chassis.py:610–612`).
 
 ---
 
@@ -88,21 +112,17 @@ Line numbers below are at the base.
 | # | Stop | Decision | Missing semantics (not guessed) |
 |---|---|---|---|
 | **W1** | `conversation_unreadable_unbound`, valid witness, state-neutral suffix after `C_n` | **Admitted** | — |
-| W2 | same, any non-neutral record after `C_n` | refused (`suffix_not_neutral`) | Fate of suffix-only memory; open-group closure before a base switch |
-| W3 | same, no witness | refused (existing "no valid witness") | A witness for those shapes |
-| C1 | `run_json_unreadable` | refused (not implemented for this resolution) | Whether bootstrapping over a bound, readable conversation is ever wanted |
-| T1 | `ledger_tail_ambiguous` | refused | No note-generation reservation; hidden epoch steps; tail truncation before chain continuation |
+| W2 | same, any non-neutral record after `C_n` | refused (`suffix_not_neutral`) | Suffix-only memory; open-group closure before a base switch |
+| W3 | same, no witness | refused ("no valid witness") | A witness for those shapes |
+| C1 | `run_json_unreadable` | refused (not implemented for this resolution) | Bootstrapping over a bound, readable conversation |
+| T1 | `ledger_tail_ambiguous` | refused | No note-generation reservation; hidden epoch steps |
 | L | A7, A15, A2, `ledger_prefix_missing`, `ledger_unreadable`, A6, `run_json_missing`, integrity and transaction stops, `fsync_failed_previous_run`, `corrupt_quarantine_full`, `acknowledgement_unverified` | refused | No proven predecessor state, lineage, epoch or witness |
 
-**State-neutral** means each record with `seq > C_n.seq` has type in `NEUTRAL = {LEDGER_HEADER, RUN_END, GC_INTENT, GC_DONE}` and no intent is pending. The reducer has no handler for these (`chassis_replay.py:387–396`).
-
-The request-identity bound is the checked IDENTITY equal to the witness, never a turn maximum read from a clean ledger. A recovery repair after `C_n` is non-neutral, so W2 applies.
+**State-neutral** means every record with `seq > C_n.seq` is in `NEUTRAL = {LEDGER_HEADER, RUN_END, GC_INTENT, GC_DONE}`, with no pending intent. The request-identity bound is the checked IDENTITY equal to the witness, never a turn maximum read from a clean ledger.
 
 ---
 
-## 4. One truthful resolution registry
-
-There is a single registry with mechanism-specific subsets, used by `acknowledge`, `read_carrier`, `carrier_problem` and `witnessed_context_problem`:
+## 4. One truthful resolution registry (unchanged from round 1)
 
 ```python
 RESOLUTION_MECHANISM = {
@@ -113,130 +133,104 @@ RESOLUTION_MECHANISM = {
     ("run_json_unreadable", "continue-from-bound"): "witnessed",
     ("conversation_unreadable_unbound", "bootstrap-preserving"): "preserving",
 }
-IMPLEMENTED_RESOLUTIONS = frozenset(RESOLUTION_MECHANISM)            # the complete union: 6 pairs
-WITNESSED_RESOLUTIONS = {p for p, m in RESOLUTION_MECHANISM.items() if m == "witnessed"}   # unchanged, 2
-PRESERVING_RESOLUTIONS = {p for p, m in RESOLUTION_MECHANISM.items() if m == "preserving"} # 1
+IMPLEMENTED_RESOLUTIONS = frozenset(RESOLUTION_MECHANISM)             # the complete union: 6 pairs
+WITNESSED_RESOLUTIONS = {p for p, m in RESOLUTION_MECHANISM.items() if m == "witnessed"}    # unchanged, 2
+PRESERVING_RESOLUTIONS = {p for p, m in RESOLUTION_MECHANISM.items() if m == "preserving"}  # 1
 STOP_WITNESS_RESOLUTIONS = WITNESSED_RESOLUTIONS | PRESERVING_RESOLUTIONS
-WITNESSED_REASONS = {r for r, _ in STOP_WITNESS_RESOLUTIONS}         # unchanged: {A14, CK5}
+WITNESSED_REASONS = {r for r, _ in STOP_WITNESS_RESOLUTIONS}          # unchanged: {A14, CK5}
 ```
 
-- `acknowledge` first checks the union. Unimplemented pairs keep today's exact message. It then dispatches by mechanism.
-- `read_carrier` accepts a pair only if it is in the union, and checks the exact envelope its mechanism writes.
-- `witnessed_context_problem` accepts receipts whose pair is in `STOP_WITNESS_RESOLUTIONS`, with the key set its mechanism defines (§5.4).
+- `acknowledge` checks the union first (unimplemented pairs keep today's exact message), then dispatches by mechanism.
+- `read_carrier` and `witnessed_context_problem` check the envelope and context key set of each mechanism.
 
-**The one reviewed existing-test change.** `tests/test_chassis_acknowledgements.py:56–62` `SUPPORTED` gains the tuple `("conversation_unreadable_unbound", "bootstrap-preserving")`, with a comment naming SV028. This is required because `test_only_the_two_new_pairs_are_added_and_every_other_pair_is_still_refused` asserts `IMPLEMENTED_RESOLUTIONS == SUPPORTED` (`:494`). After the edit:
-- `:495` (`WITNESSED_RESOLUTIONS`) is unchanged and still holds;
-- the loop skips the now-implemented pair;
-- `refused == len(OTHER_REASONS) * 3 - len(SUPPORTED)` stays exact (75 − 6 = 69 refusals, previously 70);
-- every other assertion and message is untouched.
+**The one reviewed existing-test change.** `tests/test_chassis_acknowledgements.py:56–62` `SUPPORTED` gains `("conversation_unreadable_unbound", "bootstrap-preserving")`. Then:
+- `:494` holds;
+- `:495` is unchanged;
+- the loop skips the new pair;
+- `refused == 25 × 3 − 6 = 69` (previously 70).
 
-The removed in-loop refusal of `(A14, bootstrap-preserving)` on a repaired store is replaced by N4a's explicit `conversation_readable` case. No other existing test is edited.
+The removed in-loop refusal is replaced by N4a's `conversation_readable` case.
 
 ---
 
-## 5. The frozen plan Π
+## 5. The frozen plan Π (unchanged from round 1)
 
-### 5.1 Derivation (pure; from the witnessed head only)
+### 5.1 Derivation (pure; from the witnessed head `H` = the records `≤ W.last_seq`)
 
-Let `H` be the records with `seq ≤ W.last_seq`, where `W` is the witness ledger block. `preserving_plan(H, lineage, ack_id, manifest_sha256, receipt, identity_reserved)`:
+1. `C_n` is the newest CHECKPOINT in `H` and equals the witness tuple. `state0 = SessionState.from_wire(C_n.state)`. Every record after `C_n` in `H` is in `NEUTRAL`.
+2. `R0 = Replay([], state0.copy())`, with `group = None`.
+3. `spend = derive_core(R0, plan_recovery(scan_H, TC0), TC0, scan_H, None, lineage, identity_reserved=W.identity)`. It must be `[]` or exactly one `RECOVERY{possible_duplicate_spend}`; anything else refuses (`plan_unexpected`).
+4. `activation = ("EXTERNAL_DELETE", {"epoch": e+1, "notices": [], "cause": "bootstrap_preserving", "ack_id", "manifest_sha256"})`, with `e = state0.history_epoch`.
+5. `C = [*spend, activation]`; `continuation_sha256 = sha256(canonical_body({"continuation": C}))`.
+6. **Π = [("RECOVERY_ACK", receipt), *C]**, with `receipt = receipt_payload(carrier)`. The receipt names `evidence_sha256`, and the evidence names `continuation_sha256`, which excludes the receipt, so the definition is not circular.
 
-1. `C_n` = the newest CHECKPOINT in `H` (it must equal the witness tuple). `state0 = SessionState.from_wire(C_n.payload["state"])`. Every record in `H` after `C_n` must be in `NEUTRAL`.
-2. `R0 = Replay([], state0.copy())`. Neutral records are no-ops; `R0.group is None`.
-3. Over `H`'s clean end: `scan_H` = TC0, `tail0 = classify_tail(scan_H)`, `plan0 = plan_recovery(scan_H, tail0, read_blob)`. `spend = derive_core(R0, plan0, tail0, scan_H, None, lineage, identity_reserved=identity_reserved)`.
-   - This must be `[]` or exactly `[("RECOVERY", {"kind": "possible_duplicate_spend", "detail": {"label", "next"}})]`. Anything else refuses (`plan_unexpected`).
-4. `e = state0.history_epoch`. `activation = ("EXTERNAL_DELETE", {"epoch": e+1, "notices": [], "cause": "bootstrap_preserving", "ack_id": ack_id, "manifest_sha256": manifest_sha256})`.
-5. **Continuation** `C = [*spend, activation]`. `continuation_sha256 = sha256(canonical_body({"continuation": [[name, payload] for …]}))`.
-6. **Π = [("RECOVERY_ACK", receipt), *C]**, so `|Π| ∈ {2, 3}`. The receipt is `receipt_payload(carrier)` (`:518–523`) and names `evidence_sha256`. The evidence names `continuation_sha256`, which excludes the receipt, so the definition is not circular.
+Π is computed once per start from `H` alone, **before** any owned record is applied, and is never re-derived from a replay that applied owned records.
 
-Π is computed **once per start, from `H` alone, before any owned record is applied**, and is never recomputed from a replay that applied owned records. The epoch e+1 is fixed here.
+### 5.2 Owned records
 
-### 5.2 Owned records and positions
+`LEDGER_HEADER`s after `W` are physical. The logical owned sequence `O` (non-header records with `seq > W.last_seq`) must be `Π[:k]`, or `Π + T` under an intent (§9.4). Each owned record is applied once to the decision replay. The continuation `Π[k:]` (+ `T`) is committed by `Session._commit`.
 
-- **Owned records** are the records with `seq > W.last_seq`.
-  - `LEDGER_HEADER`s are physical. They are validated by the scanner's chain, `first_seq` and `prev_chain` rules, and never occupy a logical position.
-  - The **logical owned sequence** `O` is the non-header owned records.
-- **Valid shapes of `O`:**
-  - `O == Π[:k]` for some `0 ≤ k ≤ |Π|`, or
-  - `O == Π + T`, where `T` is the recovery record of an intent's original torn tail (§9.4). This shape is only valid when that intent is or was present.
-- Each owned record is applied **once**, to the decision replay that starts from `R0`. The continuation `Π[k:]` (+ `T`) is committed by `Session._commit`, which applies each record once more as it is written. No record is applied twice and Π is not re-derived.
-
-### 5.3 Evidence (carrier `evidence`; fixed keys, bounded)
+### 5.3 Carrier evidence (fixed keys, bounded)
 
 ```json
-{"witness_check": "<64 hex>", "manifest_sha256": "<64 hex>",
- "conv_sha256": "<64 hex>", "conv_bytes": n,
- "run_sha256": "<64 hex>", "state_sha256": "<64 hex>",
- "suffix": {"count": n, "types_sha256": "<64 hex>"},
- "continuation_sha256": "<64 hex>", "epoch": e+1}
+{"witness_check", "manifest_sha256", "conv_sha256", "conv_bytes", "run_sha256",
+ "state_sha256": "sha256(canonical(state0.to_wire(next_seq=W.last_seq+1)))",
+ "suffix": {"count": n, "types_sha256": "<64 hex>"}, "continuation_sha256", "epoch": e+1}
 ```
 
-- `conv_*` is the manifested `session/conversation.json` entry.
-- `state_sha256 = sha256(canonical(state0.to_wire(next_seq=W.last_seq+1)))`.
-- The suffix is represented by count and a digest of its type list, never the list, so the carrier size is independent of suffix length (SV028-04).
+The carrier is `{reason, resolution, ack_id, witness, evidence, check}`.
 
-The carrier is the SV023 envelope `{reason, resolution, ack_id, witness, evidence, check}` with this exact evidence key set for the preserving mechanism.
+### 5.4 Sealed carrier-free context
 
-### 5.4 Sealed recovery context for the preserving mechanism
-
-When a torn own frame forces RECOVERING, the intent's `witnessed` context for this pair is:
-
-```json
-{"ack_id": "<32 hex>", "receipt": {RECEIPT_KEYS…}, "after_seq": W.last_seq, "evidence": {§5.3 exactly}}
-```
-
-The SV023 `continue-from-bound` context keeps its exact 3 keys. `witnessed_context_problem` selects the key set from `(receipt.reason, receipt.resolution)`'s mechanism. Validation runs before use, inside the existing whole-intent checksum and `_validated_intent` domain checks (`:1470–1509`):
+`RECOVERING.witnessed` for this pair is `{"ack_id", "receipt", "after_seq", "evidence"}`. Validation, inside the existing whole-intent checksum and domain checks:
 1. key sets are exact;
 2. `receipt.ack_id == ack_id`;
-3. `sha256(canonical_body(evidence)) == receipt.evidence_sha256`;
-4. `evidence` passes its domain checks;
-5. `after_seq ≤ intent.last_seq`.
+3. `sha256(canonical(evidence)) == receipt.evidence_sha256`;
+4. `after_seq ≤ intent.last_seq`.
 
-**Carrier-free authentication** (carrier already retired, RECOVERING still present):
-1. `H` = the records `≤ after_seq` (immutable, chain-verified).
-2. `C_n` and `state0` come from `H`; their digest must equal `evidence.state_sha256`, and `state0.history_epoch + 1 == evidence.epoch`.
-3. Π is re-derived from `H`, `ack_id`, `evidence.manifest_sha256` and `receipt`. Its `continuation_sha256` must equal `evidence.continuation_sha256`.
+Carrier-free authentication re-derives Π from `H`, `ack_id`, `evidence.manifest_sha256` and `receipt`, and requires:
+- `continuation_sha256` matches;
+- `state0`'s digest equals `evidence.state_sha256`;
+- `e+1 == evidence.epoch`.
 
-Any failure stops `recovery_intent_invalid`, with nothing written. No fact is guessed, the archive is not read, and absence of the live file never counts as permission.
+Otherwise it stops `recovery_intent_invalid`.
 
-**Why a sealed context rather than reconstruction from preserved STOPPED and MANIFEST.** The context is bounded (< 2 KiB), self-contained, covered by the intent checksum and checked against the ledger head. Reconstruction would make every carrier-free restart depend on agent-reachable `preserved/` bytes and add archive reads. Every fact Π needs is in `H` or in this context.
-
-### 5.5 Domains and exact serialization (preflighted in Phase A before any write)
+### 5.5 Domains and exact serialization (preflighted before any write)
 
 - **Counters:**
   - `e+1 ≤ MAX_COUNTER`;
-  - `W.last_seq + |Π| + 1 (T) + 2 (possible headers) ≤ MAX_SEQ`;
-  - the spend's `next` fields are counters.
+  - `W.last_seq + |Π| + 1 + 2 ≤ MAX_SEQ`.
   - Otherwise refuse `plan_out_of_domain`.
 - **Exact bytes:**
-  - `MANIFEST` (§7.3) ≤ `MANIFEST_READ_MAX = META_READ_MAX` (1 MiB), else `preserved_manifest_too_large`;
-  - the carrier `json.dumps(…, sort_keys=True)` ≤ `MAX_MARKER_READ` (64 KiB), else `carrier_too_large`;
-  - the **maximal** RECOVERING, built with this context and maximal-width placeholders (`segment = 999999`, `offset` and `tail_bytes` = 10¹²−1, 64-hex hashes), ≤ `MAX_MARKER_READ`, else `recovery_context_too_large`.
-- **Shape bounds:** the witness and evidence have fixed keys and bounded fields (lineage ≤ 64 chars, 12-digit integers, 64-hex hashes), so carrier and context are each below about 3 KiB. Π's frame bodies are a few hundred bytes, far below `MAX_LEDGER_BODY`.
+  - the canonical `MANIFEST` ≤ `MANIFEST_READ_MAX = META_READ_MAX` (1 MiB) → `preserved_manifest_too_large`;
+  - the carrier ≤ `MAX_MARKER_READ` → `carrier_too_large`;
+  - the maximal RECOVERING with this context (`segment = 999999`, offsets 10¹²−1, 64-hex hashes) ≤ `MAX_MARKER_READ` → `recovery_context_too_large`.
+- **Retry with an existing MANIFEST.** Its exact bytes are what was published. They are re-read under `MANIFEST_READ_MAX` and never re-serialized for writing. The carrier and context checks still run.
 
 ---
 
 ## 6. Phase A admission (pure; refusal changes nothing)
 
-`acknowledge(session_dir, reason, resolution, *, ops=None, home_dir=None)` handles the pair through `_acknowledge_preserving`.
-- `home_dir` defaults to `session_dir.parent`, the chassis's own layout rule (`chassis.py:610–612`). The CLI passes `chassis.home_dir` explicitly.
-- Each refusal raises `AcknowledgementRefused` (a `LedgerError`; CLI exit 2) whose message begins with the token shown.
+`acknowledge(session_dir, reason, resolution, *, ops=None, home_dir=None)`:
+- `home_dir` defaults to `session_dir.parent` (`chassis.py:610–612`); the CLI passes `chassis.home_dir`.
+- Refusals raise `AcknowledgementRefused` (a `LedgerError`; CLI exit 2) with a leading token.
 
 | # | Check | Refusal token |
 |---|---|---|
-| P1 | STOPPED readable within `MAX_MARKER_READ`; reason A14; `detail.witness` valid (`witness_problem`) | `stop_not_acknowledgeable` / existing "no valid witness" |
-| P2 | ACKNOWLEDGED absent or **this** sealed preserving carrier. No RECOVERING, no FSYNC_FAILED | "another acknowledgement is pending" / `transaction_open` |
-| P3 | Ledger lineage, strict scan, no tail, anchor and physical end equal the witness; **no owned record** | `ledger_not_witnessed` |
-| P4 | No unauthorized prefix, no pending GC intent | `collection_pending_or_unauthorized` |
+| P1 | STOPPED readable, reason A14, valid witness | `stop_not_acknowledgeable` / "no valid witness" |
+| P2 | ACKNOWLEDGED absent or **this** sealed preserving carrier; no RECOVERING; no FSYNC_FAILED | "another acknowledgement is pending" / `transaction_open` |
+| P3 | Ledger lineage, strict scan, no tail, anchor and physical end equal the witness; no owned record | `ledger_not_witnessed` |
+| P4 | No unauthorized prefix, no pending GC | `collection_pending_or_unauthorized` |
 | P5 | `read_identity == witness.identity_reserved` | `identity_not_witnessed` |
-| P6 | `C_n` tuple, chain and `run_sha256` equal the witness; state validates; every `blobs_live` blob hash-verifies | `checkpoint_not_witnessed` / `state_blob_missing` |
-| P7 | Every record after `C_n` is in `NEUTRAL` | `suffix_not_neutral` |
-| P8 | `run.json` SHA-256 equals `C_n.run_sha256`; format-2 fields agree | `run_json_not_witnessed` |
-| P9 | `conversation.json` present, a regular file, read within `CONVERSATION_READ_MAX`, and `parse_messages` is None | `conversation_absent` / `conversation_readable` / `conversation_over_bound` |
-| P10 | Neither file's SHA-256 equals `C_n.conv.sha256`, and `_previous_base` (pure) returns `(None, None)`. A `.prev.json` holding a *different* known checkpoint is allowed | `previous_base_available` |
-| P11 | **Domain enumeration** (§7.1). Every path kind and name is supported; every file ≤ `PRESERVED_FILE_MAX`; inventory read #1 records size and SHA-256 | `preservation_unsupported_shape` / `preservation_unsupported_name` / `preserved_file_too_large` |
-| P12 | **Own-set state** (§7.2): none, unfinished, or sealed. A sealed set must verify fully and equal the recomputed manifest; both `<ack_id>` and `<ack_id>.partial` present refuses | `preserved_set_mismatch` |
-| P13 | **Capacity at actual peak** (§7.4) | `preserved_capacity:{sets\|files\|bytes}` |
-| P14 | Π derivable (§5.1); domains and exact sizes (§5.5) | `plan_unexpected` / `plan_out_of_domain` / `preserved_manifest_too_large` / `carrier_too_large` / `recovery_context_too_large` |
+| P6 | `C_n` equals the witness; state valid; `blobs_live` hash-verify | `checkpoint_not_witnessed` / `state_blob_missing` |
+| P7 | Neutral suffix | `suffix_not_neutral` |
+| P8 | `run.json` equals `C_n.run_sha256`; format-2 fields agree | `run_json_not_witnessed` |
+| P9 | `conversation.json` present, regular, within `CONVERSATION_READ_MAX`, unparseable as a message list | `conversation_absent` / `conversation_readable` / `conversation_over_bound` |
+| P10 | Neither file is `C_n`'s bytes; `_previous_base` returns `(None, None)` (an older known checkpoint in `.prev.json` is allowed) | `previous_base_available` |
+| P11 | **Domain** (§7.1): every kind and name supported; every file ≤ `PRESERVED_FILE_MAX`. Read #1 records size and SHA-256 | `preservation_unsupported_shape` / `…_name` / `preserved_file_too_large` |
+| P12 | **Own-set state and inventory binding** (§7.2, §7.3) | `preserved_inventory_invalid` / `…_missing` / `preserved_domain_changed` / `preserved_source_changed` / `preserved_source_missing` / `preserved_set_mismatch` / `preserved_scratch_unowned` |
+| P13 | **Capacity**, exact deltas (§7.5) | `preserved_capacity:{sets\|files\|bytes}` |
+| P14 | Π derivable; domains and exact sizes (§5.5) | `plan_unexpected` / `plan_out_of_domain` / `preserved_manifest_too_large` / `carrier_too_large` / `recovery_context_too_large` |
 
 `ack_id = sha256(STOPPED bytes ‖ "\n<reason>\n<resolution>")[:32]`, as today.
 
@@ -244,201 +238,294 @@ Any failure stops `recovery_intent_invalid`, with nothing written. No fact is gu
 
 ## 7. Preservation
 
-### 7.1 Exact domain (admitted namespace)
+### 7.1 Exact domain
 
-The domain is enumerated with `lstat` and without following symlinks. Listing is bounded: it stops and refuses after `PRESERVED_MAX_FILES + 1` entries.
+The domain is enumerated with `lstat` and without following symlinks; listing stops and refuses at `PRESERVED_MAX_FILES + 1` entries.
 
 | Location | Admitted | Treatment |
 |---|---|---|
-| `session/` top-level regular files | any name matching `NAME = [A-Za-z0-9._:+=@,-]{1,255}`, not `.`/`..` | **copied** to `session/<name>`, including STOPPED, IDENTITY, run.json, both conversation files, recap.md, unknown names such as `agent-notes.txt`, and any temp leftovers (`.IDENTITY.<hex>.tmp`, `.prev.tmp`, `.conversation.<hex>.tmp`, …) |
-| `session/ledger/`, `session/blobs/`, `session/corrupt/` | regular files with `NAME` names, no subdirectories | **copied**. `corrupt/` is included because quarantine can overwrite a deterministic destination there |
-| `<home>/HANDOFF.md` | absent, or one regular file | **copied** to `home/HANDOFF.md`; the only home path read |
-| `session/preserved/` | earlier sets only, in the §7.2 shapes | **not copied** (no archives inside archives). Counted for capacity; earlier sets are never modified |
-| `session/ACKNOWLEDGED`, `session/.ACKNOWLEDGED.<16 hex>.tmp` | acknowledgement-transaction artifacts, not session evidence | not copied, never deleted (`ACKNOWLEDGED` must be absent or this carrier: P2) |
-| any other directory, symlink, FIFO, socket or device in `session/`; a subdirectory inside `ledger/`/`blobs/`/`corrupt/`; a non-`NAME` name; a symlinked or non-regular HANDOFF | — | **refused before any mutation** |
+| `session/` top-level regular files | names matching `NAME = [A-Za-z0-9._:+=@,-]{1,255}`, not `.` or `..` | **inventoried and copied** to `session/<name>`. This includes STOPPED, IDENTITY, run.json, both conversation files, recap.md, unknown names, every temp leftover, and **any `.ACKNOWLEDGED.<16 hex>.tmp` present at the boundary**: a temp-shaped name proves nothing about ownership, so it is ordinary evidence |
+| `session/ledger/`, `session/blobs/`, `session/corrupt/` | regular files with `NAME` names; no subdirectories | inventoried and copied |
+| `<home>/HANDOFF.md` | absent, or one regular file | inventoried and copied as `home/HANDOFF.md` |
+| `session/preserved/` | earlier sets in the §7.3 shapes | **not copied** (no archives inside archives); counted for capacity; never modified |
+| `session/ACKNOWLEDGED` | must be absent at the boundary (P2) | — |
+| anything else in `session/`: other directories, symlinks, FIFOs, sockets, devices, nested directories, non-`NAME` names; a symlinked or non-regular HANDOFF | — | **refused before any mutation** |
 
-**Pre-resolution evidence** is exactly the domain's copied files at the first admission. **Transaction-owned artifacts** are:
-- the unfinished set `preserved/<ack_id>.partial/` and everything in it;
-- the carrier and its temp names.
+`PRESERVED_FILE_MAX = 64 MiB` [CM].
 
-The **sealed set** `preserved/<ack_id>/` is immutable after sealing. A whole-home or recursive backup is not performed.
+**Evidence versus transaction artifacts.**
+- **Pre-resolution evidence** is exactly the inventory published at the boundary (§7.2).
+- **Transaction artifacts** are everything this acknowledgement creates afterwards: the `preserved/<ack_id>…` tree; and, **after the seal only**, `ACKNOWLEDGED` and any `.ACKNOWLEDGED.<16 hex>.tmp` from writing it.
+- Because the carrier is written only after the seal's fence returns (A7), no carrier artifact of this transaction can exist while a live-domain comparison is made (those happen only before the seal). No name-based exclusion is used.
+- Carrier artifacts created after the seal are never inventoried and never deleted.
 
-`PRESERVED_FILE_MAX = 64 MiB` [CM], equal to the largest runtime per-file bound (conversation and blob). A larger file refuses rather than being partially copied.
+### 7.2 The durable inventory: the snapshot boundary
 
-### 7.2 Set lifecycle and retry policy
+**Publication.** The `MANIFEST` (§7.3) is the inventory. It is written once, at A2:
+1. `write_bytes_durable(preserved/<ack_id>.partial/MANIFEST)`;
+2. this happens after `<ack_id>.partial`'s own name is fenced in `preserved/`, and `preserved/`'s in `session/`;
+3. it is **before** any mirrored subdirectory or copy exists.
 
-Each set mirrors the domain: `<set>/session/…`, `<set>/session/ledger/…`, `<set>/session/blobs/…`, `<set>/session/corrupt/…`, `<set>/home/HANDOFF.md`, and `<set>/MANIFEST`. Set directory names must match `[0-9a-f]{32}` or `[0-9a-f]{32}\.partial`. Any other shape under `preserved/` refuses (P11).
+**The boundary** is the return of that write's directory fence. Before it there is no enduring snapshot: an admission that dies earlier leaves at most owned `MANIFEST` temps, and the next admission starts afresh. After it, the snapshot is fixed for this `ack_id` and is **never replaced or rewritten**.
 
-| Own state at admission | Action |
-|---|---|
-| none | create `<ack_id>.partial/`, then fill and seal |
-| **unfinished** (`<ack_id>.partial/` only) | **Owned-scratch cleanup**, only after full admission passes: unlink every file in it that is a temp name, not a domain destination or `MANIFEST`, a destination whose bytes differ (bounded read), or a `MANIFEST` differing from the recomputed one; `fsync` each touched directory. Then fill the missing destinations and seal. Verified destinations are kept, never rewritten. Unknown shapes inside refuse (P11), never deleted |
-| **sealed** (`<ack_id>/` only) | verify the `MANIFEST` seal, that it equals the manifest recomputed from the live domain (STOPPED was present throughout, M-5), and every entry's bytes. Any mismatch refuses `preserved_set_mismatch`, **untouched: never repaired or rewritten**. On success, re-fence `preserved/` and continue at the carrier step |
-| both | refuse |
+**Binding.** The `MANIFEST` binds:
+- `ack_id` (from the STOPPED bytes);
+- `stop_sha256` (STOPPED's SHA-256);
+- `stop_id`;
+- `witness_check`;
+- `lineage_id`;
+- `reason` and `resolution`;
+- the sorted entries `(path, bytes, sha256)` and totals.
 
-`write_bytes_durable`'s own `OSError` cleanup of its temp is consistent with this rule: that temp is owned scratch. A process death leaves the temp, and the next admission's cleanup removes it.
+A SHA-256 `check` seals all other fields. The carrier's `evidence.manifest_sha256` later binds its exact bytes.
 
-### 7.3 MANIFEST (sealed, exact)
+**Validation** (every retry before any mutation; Phase B on the sealed set):
+1. read the file under `MANIFEST_READ_MAX`;
+2. canonical JSON; the seal verifies;
+3. version 1;
+4. every binding field equals the value recomputed from the current STOPPED and witness;
+5. paths match the §7.3 grammar, are sorted and unique;
+6. totals agree.
+
+A failure refuses `preserved_inventory_invalid` (corrupt or foreign binding) and changes nothing.
+
+**Lifecycle of the own set** (`<ack_id>` names):
+
+| State | Recognized by | Retry action (only after the full admission passes) |
+|---|---|---|
+| none | no `<ack_id>*` directory | fresh path (§8.1) |
+| **pre-boundary** | `<ack_id>.partial/` with no `MANIFEST`, containing only regular files named `.MANIFEST.<16 hex>.tmp` and no subdirectory | delete those owned temps, `fsync(<partial>)`, then continue at A2 |
+| pre-boundary, any other content | — | refuse `preserved_inventory_missing`, unchanged |
+| **post-boundary** | `<ack_id>.partial/MANIFEST` validates | §8.2 |
+| **sealed** | `<ack_id>/MANIFEST` validates and every entry verifies | §8.2 (sealed branch); never modified |
+| sealed but damaged, or both `<ack_id>` and `<ack_id>.partial` | — | refuse `preserved_set_mismatch`, unchanged |
+
+**Ownership rule** (verifiable, bounded). A file under `preserved/<ack_id>.partial/` is **owned scratch** iff all of the following hold:
+- its directory is one of the set's fixed directories;
+- its name is `.<B>.<16 hex>.tmp`, where `B` is `MANIFEST` (set root only) or the basename of an inventory destination in that same directory;
+- its path is **not** itself an inventory destination.
+
+Owned scratch can never be the only original:
+- before the boundary, no copy exists, so the only owned files are `MANIFEST` temps, which hold no evidence;
+- after the boundary, a copy temp holds bytes read from a live source that **this same admission has just verified** equal to its inventory entry.
+
+A post-boundary retry deletes owned scratch **only after** all live sources verify. Any other unexpected file in the partial tree refuses `preserved_scratch_unowned`, unchanged.
+
+**After the boundary, sources must match the inventory.** A post-boundary retry re-enumerates the live domain and requires:
+- the **same path set** as the inventory, else `preserved_domain_changed`;
+- every live source exists, else `preserved_source_missing`;
+- every live source's bytes hash to its entry, else `preserved_source_changed`.
+
+A source that changed from X to Y therefore refuses. It never replaces an already-copied X, and nothing is deleted. A destination copy whose bytes differ from its entry may be deleted and rewritten **only if** its live source verified in this admission, so the surviving live original is the evidence. A sealed set is never compared with the live domain again (post-seal changes cannot affect it) and is never modified.
+
+The consequence is stated plainly: after a post-boundary refusal, this acknowledgement can never complete. Its partial set is kept, never deleted, and counts toward capacity. The session stays stopped. The operator may still use `continue-from-bound` after an external repair; SV023's path does not inspect `preserved/`.
+
+### 7.3 Set layout and `MANIFEST` schema
+
+```
+preserved/<ack_id>.partial/  or  preserved/<ack_id>/
+  MANIFEST
+  session/<name> ; session/ledger/<name> ; session/blobs/<name> ; session/corrupt/<name>
+  home/HANDOFF.md
+```
+
+The fixed directories are the set root, `session`, `session/ledger`, `session/blobs`, `session/corrupt` and `home`. Each subdirectory exists only if some entry needs it, so there are at most 6 per set. Set directory names must match `[0-9a-f]{32}` or `[0-9a-f]{32}\.partial`; any other shape under `preserved/` refuses.
 
 ```json
-{"version": 1, "ack_id", "reason", "resolution", "stop_sha256", "witness_check", "lineage_id",
- "entries": [{"path": "session/<name>" | "session/ledger/<name>" | "session/blobs/<name>" | "session/corrupt/<name>" | "home/HANDOFF.md",
-              "bytes": n, "sha256": "<64 hex>"}, …],      # sorted by path; NAME rule enforced
+{"version": 1, "ack_id", "reason", "resolution", "stop_sha256", "stop_id", "witness_check", "lineage_id",
+ "entries": [{"path": "<grammar above>", "bytes": n, "sha256": "<64 hex>"}, …],
  "totals": {"files": k, "bytes": b}, "check": "<64 hex>"}
 ```
 
-It is serialized canonically and its exact length is preflighted (P14).
+It is serialized canonically (sorted keys, compact separators).
 
-### 7.4 Capacity at actual peak (strict, admission-time)
+### 7.4 Dependency establishment `E` and the seal (SV028-06)
 
-The caps are [CM]: `PRESERVED_MAX_SETS = 4`, `PRESERVED_MAX_FILES = 16 384`, `PRESERVED_MAX_BYTES = 512 MiB`, over all of `preserved/`, temp names included.
+**File data.** A destination's final name is created only by `write_bytes_durable`, which fsyncs the file before the rename. A **present** destination therefore had its data fsync return in the process that renamed it. A reused destination still has a **name** that may be unfenced if its writer died before the directory fsync. `E` re-establishes both explicitly; verification by hash establishes integrity, not durability.
 
-Admission measures actual usage `U` (files and bytes; `lstat` walk of `preserved/` at depth ≤ 4) and plans:
-- `D` = owned scratch to delete (unfinished own set only);
-- `N` = destinations still to write (count and bytes);
-- `M` = manifest bytes, if not already present and equal.
+**`E(root)`**, where `root` is the partial or sealed set directory being relied on:
+1. For every file in the set (`MANIFEST` and every entry): open read-only and `fsync`. This uniformly re-establishes data durability, including for reused files.
+2. `fsync` every fixed directory that exists, **leaves first**: `session/ledger`, `session/blobs`, `session/corrupt`, then `session` and `home`, then the set root. This makes every file name, and each subdirectory's name in its parent, durable.
+3. `fsync(preserved/)`, which covers the set root's name, then `fsync(session/)`, which covers `preserved/`'s name.
 
-Peak usage is `U − D + N + M`. There is no double-holding: every deletion precedes every allocation, each copy temp is renamed onto an **absent** destination, and verified destinations are never rewritten.
+`E` allocates nothing and is idempotent.
 
-| Quantity | Requirement |
-|---|---|
-| Files | `U_files − D_files + N_count + 1 ≤ MAX_FILES` |
-| Bytes | `U_bytes − D_bytes + N_bytes + M ≤ MAX_BYTES` |
-| Sets | distinct set ids present, plus 1 if the own set is absent, ≤ `MAX_SETS` |
+**Where `E` runs.**
+- **Fresh and post-boundary retry:** after all copies (A5), before the seal.
+- **Sealed retry:** again on the sealed tree before the carrier is (re)published.
+- Every Phase A invocation that publishes or re-publishes authority therefore has just had `E` return over exactly the set the carrier will name.
 
-- Equality is allowed (an exact cap).
-- If it fails, refuse with nothing deleted or written.
-- Repeated deaths cannot accumulate scratch: each retry's cleanup removes the previous scratch before any new allocation, so live scratch never exceeds one in-flight temp.
-- This is an admission rule over measured usage, not a filesystem quota. An M-6 writer can exceed it.
-- The carrier and its temps live in `session/`, not `preserved/`. Each leftover carrier temp is under 3 KiB, and repeated carrier-write deaths can accumulate them, as with the accepted SV023 carriers (inherited, stated).
+**Seal (A6):** `rename(<ack_id>.partial, <ack_id>)`, then `fsync(preserved/)`. The rename moves one entry of `preserved/`. The subtree's entries were fenced inside their own directories by `E`, so they survive the rename.
+
+**EIO.** Any `E`, seal or copy failure follows v2 §1.4.9:
+- `PersistenceFailure` is raised;
+- FSYNC_FAILED is attempted in `session/` (best-effort);
+- the CLI exits 44.
+
+**Nothing is renamed, published or deleted.** STOPPED and the live conversation are untouched. If the marker exists, later retries refuse `transaction_open` (P2) and starts stop A0 (STOPPED). This is an inherited bounded fail-closed outcome (the SV023-02 class); no stronger claim is made about a later fsync after an error (E-K2).
+
+### 7.5 Capacity with exact deltas (SV028-07)
+
+The caps are [CM]: `PRESERVED_MAX_SETS = 4`, `PRESERVED_MAX_FILES = 16 384` (regular files, temps included), `PRESERVED_MAX_BYTES = 512 MiB` (logical `st_size`, not block allocation), over all of `preserved/`. Directories are not counted; they are bounded structurally (≤ 6 per set, plus `preserved/`).
+
+Admission measures **actual** usage `U = (U_files, U_bytes)` by an `lstat` walk of `preserved/`, including the own partial set and its leftovers. It then plans:
+
+| Symbol | What | Applies when |
+|---|---|---|
+| `D` | owned scratch to delete, plus mismatching destinations to delete (each with its live source verified) | post-boundary retry, or pre-boundary `MANIFEST` temps |
+| `A_M` | `(1, len(MANIFEST))` | only when the `MANIFEST` is **absent** (fresh or pre-boundary). An existing valid `MANIFEST` is reused and never rewritten: `A_M = (0, 0)` |
+| `A_C` | `(1, entry.bytes)` per destination absent or deleted under `D`; `(0, 0)` per reused verified destination | always |
+
+**Order.**
+1. All deletions first, each directory fsynced after its unlinks.
+2. Then allocations only. Each allocation is one `write_bytes_durable` whose temp exists only while its target is absent, so there is no double-holding, and the temp **is** the file it becomes.
+3. `E` and the seal allocate nothing.
+
+Usage is therefore at most `U` during deletions and non-decreasing afterwards, so the transaction's allocation peak is the final usage:
+
+```
+peak_files = U_files − D_files + A_M.files + Σ A_C.files
+peak_bytes = U_bytes − D_bytes + A_M.bytes + Σ A_C.bytes
+sets       = |distinct set ids present| + (1 if no own set exists)
+```
+
+**Admission** requires `peak_files ≤ MAX_FILES`, `peak_bytes ≤ MAX_BYTES` and `sets ≤ MAX_SETS`, with equality allowed. Otherwise it refuses with nothing deleted or written.
+
+- An existing `U` above a cap is never increased: deletions only reduce it, and an allocation is admitted only if the final usage fits.
+- A complete post-boundary partial set or a sealed set gives `D = A = 0`, so `peak = U`. **It is accepted at `cap = U` and allocates nothing** (no temp, no write) before `E` and the seal.
+- A failed `write_bytes_durable` unlinks its own temp. A process death leaves at most one in-flight temp, which the next admission counts in `U` and deletes as owned scratch (counted in `D`), so scratch does not accumulate across retries.
+- This is an admission rule over measured usage, not a quota. M-6 can exceed it.
+- The carrier and its temps live in `session/` (< 3 KiB each, outside these caps). Carrier-write deaths can accumulate such temps, inherited as with SV023.
 
 ---
 
 ## 8. Phase A transaction
 
-1. **A0** Admission, P1–P14 (pure; inventory read #1).
-2. **A1** Cleanup of owned scratch, if any (§7.2).
-3. **A2** Directories:
-   - `mkdir preserved/` if absent, then `fsync(session/)`;
-   - `mkdir <ack_id>.partial/` if absent, then `fsync(preserved/)`;
-   - each mirrored subdirectory needed, each followed by `fsync` of its parent.
-   - Every fence runs even if the directory already existed (SV020-01).
-4. **A3** Copies, in sorted path order, for every destination not already present and verified:
-   - bounded read #2;
-   - require size and SHA-256 equal to the inventory, else refuse `preserved_source_changed` (scratch is left for the next cleanup);
-   - `write_bytes_durable(dest, data)`: `O_EXCL` temp, write all, fsync, rename, fsync(dir).
-   - **Never `link()`**: copies are new inodes.
-5. **A4** `write_bytes_durable(<ack_id>.partial/MANIFEST)`.
-6. **A5** **Seal**: `rename(<ack_id>.partial, <ack_id>)`, then `fsync(preserved/)`. From here the set is immutable.
-7. **A6** Carrier: `write_bytes_durable(session/ACKNOWLEDGED)`.
-8. **A7** Retire STOPPED: unlink, then `fsync(session/)` (`cp.clear_stop`).
+### 8.1 Fresh path
 
-**Retry.**
-- STOPPED present: redo from A0 with the §7.2 branch.
-- STOPPED absent and this carrier held: re-fence `session/` and return the carrier (as `:709–711`).
-- Anything else refuses.
+1. **A0** Admission, P1–P14 (pure; read #1 hashes the domain).
+2. **A1** `mkdir preserved/` if absent, then `fsync(session/)`. `mkdir <ack_id>.partial/`, then `fsync(preserved/)`.
+3. **A2** **Boundary**: `write_bytes_durable(<partial>/MANIFEST)`.
+4. **A3** `mkdir` each needed fixed subdirectory, each followed by `fsync(parent)`.
+5. **A4** Copies, in sorted path order:
+   - read #2 under the bound;
+   - require size and hash equal to the entry, else refuse `preserved_source_changed` (an `AcknowledgementRefused`, not a persistence failure). Nothing is deleted, and later retries refuse by §7.2;
+   - `write_bytes_durable(dest)`. **Never `link()`.**
+6. **A5** `E(<partial>)`.
+7. **A6** **Seal**: `rename(<partial>, preserved/<ack_id>)`, then `fsync(preserved/)`.
+8. **A7** Carrier `write_bytes_durable(session/ACKNOWLEDGED)`.
+9. **A8** `clear_stop`: unlink STOPPED, then `fsync(session/)`.
+
+### 8.2 Retry (STOPPED present)
+
+Admission P1–P11 and P14 run first, then the §7.2 lifecycle state is identified.
+
+- **none or pre-boundary:** delete the owned `MANIFEST` temps (pre-boundary only), then the fresh path from A1 (its fences re-run).
+- **post-boundary (partial with a valid MANIFEST):**
+  1. live domain = inventory; every live source verifies;
+  2. classify every file in the partial tree:
+     - **reuse** (destination equals its entry);
+     - **delete** (owned scratch, or a mismatching destination with a verified source);
+     - **missing**;
+     - **unowned**: refuse.
+  3. P13 with `A_M = 0`;
+  4. deletions, each directory fsynced;
+  5. A3: every needed fixed subdirectory, `mkdir` if absent, **`fsync(parent)` whether or not it existed**;
+  6. A4 for missing destinations only;
+  7. A5 `E`;
+  8. A6 seal; A7; A8.
+- **sealed:** validate the `MANIFEST` and every entry (no live comparison); `E(<ack_id>)`; `fsync(preserved/)`; then A7 if this carrier is absent (a held identical carrier is kept); A8.
+
+**STOPPED absent and this carrier held:** re-fence `session/` and return the carrier.
+
+### 8.3 Phase A failure behaviour
+
+| Failure | Behaviour |
+|---|---|
+| refusal | no write |
+| any `PersistenceFailure` | §7.4 EIO: marker attempted, exit 44; no seal, carrier, STOPPED removal or deletion |
+| process death | the next admission identifies the lifecycle state |
 
 Phase A writes no ledger record and contacts nothing.
 
 ---
 
-## 9. Phase B transaction (consuming start; before any model call)
+## 9. Phase B transaction (unchanged from round 1 except the set verification wording)
 
-### 9.1 Uniform order (fresh run and restart alike)
+### 9.1 Order (fresh start and restart alike)
 
-**B0 Verify (pure), then fence.** `read_carrier` yields kind `preserving`. `_verify_preserving` checks, in order:
-1. the carrier seal, pair and evidence keys;
-2. the sealed set: the `MANIFEST` bytes hash equals `evidence.manifest_sha256`; the seal and paths are valid; **every** entry reads back under its bound with the manifested size and hash (read #3);
-3. P3–P8 and P10 over `H` (the records `≤ W.last_seq`);
-4. Π derived from `H` (§5.1), and the recomputed evidence equals the carrier's;
-5. the owned sequence `O` (excluding records after an own intent's anchor, which `_recover` checks) is `Π[:k]`;
-6. a tail, if there is no intent, is a strict byte prefix of the next own frame (`_next_own_frame` with `planned = Π`, written `= k`; a header at a segment boundary). If `k = |Π|`, no tail is allowed;
-7. RECOVERING, if present, is anchored at or after `W.last_seq` with this pair's sealed context (§5.4);
-8. **conversation rule:**
-   - if Π's activation is **not** among the owned records, `conversation.json` must be present with `evidence.conv_sha256`;
-   - if it **is** present, the file may be absent or have that hash.
+**B0** Verify, then fence:
+- the carrier seal, pair and evidence;
+- the **sealed** set: `MANIFEST` bytes hash to `evidence.manifest_sha256` and validate (§7.2), and every entry reads back with its size and hash;
+- P3–P8 and P10 over `H`;
+- Π derived from `H`, and the evidence recomputed and equal;
+- owned `O ≤` anchor `= Π[:k]`;
+- a tail without an intent is a strict prefix of the next own frame (`_next_own_frame`, `planned = Π`);
+- RECOVERING, if present, is anchored `≥ W.last_seq` with this pair's context;
+- **conversation rule:** activation not yet owned ⇒ present with `evidence.conv_sha256`; activation owned ⇒ absent or with that hash.
 
-Any failure stops `acknowledgement_unverified` with a problem token (`carrier`, `manifest`, `preserved_entry:<path>`, `ledger`, `own_prefix`, `conversation_changed`, `evidence_changed`). Only STOPPED is written; the carrier and the set are kept. On success, `fsync(session/)`.
+A failure stops `acknowledgement_unverified{problem}` (only STOPPED written). On success, `fsync(session/)`.
 
-**B1 Decision `BP`.** `_recover` takes the BP decision in place of `_classify_base`:
-- replay = `R0` + `H`'s neutral records + the owned records in `p0`, each applied once;
-- `checkpoints` = the known tuples above the collection floor, as `_classify_base` computes them;
-- **core = Π[k:] + T**, where `k` = the owned logical records in `p0` and `T = []` unless an intent exists (§9.4);
-- the SV023 receipt-prepend line (`:1040–1042`), `GC_DONE` prepend and `ADOPT` do not apply.
+**B1** Decision `BP`:
+- replay = `R0` + neutral records + owned records in `p0`, each applied once;
+- core = `Π[k:] + T` (`T` only under an intent);
+- the existing tail and intent mechanics are unchanged.
 
-The existing tail and intent mechanics (`:1044–1094`) run unchanged: an own torn tail with no intent writes RECOVERING with the §5.4 context, then quarantines; extras must be a prefix of the core and never exceed it.
+**B2** Commit `core[len(extra):]`, each synced.
 
-**B2 Continuation.** `Session._commit` each record of `core[len(extra):]`, each synced.
+**B3 Establish owned durability:** fsync every segment from `W`'s last segment through the active one, then `fsync(ledger/)`. This runs even when nothing was written. A failure takes the session failure boundary, and **`conversation.json` is untouched**.
 
-**B3 Establish owned durability** (new, before any destructive step):
-- for every segment from `W`'s last segment through the active segment, open read-only and `fsync`;
-- then `fsync(ledger/)`. The writer has already fenced `session/` for `ledger/`'s name (`continue_after`).
-- When this returns, every owned record, including an activation **inherited** from an earlier process whose fsync never returned, is durable with its name.
-- It runs even when this process wrote nothing.
-- A failure goes through the session failure boundary (FSYNC_FAILED attempted, `PersistenceFailure`, exit 44). **`conversation.json` is untouched.**
+**B4** If `conversation.json` exists:
+- require `evidence.conv_sha256`, else stop `conversation_changed`;
+- unlink it;
+- `fsync(session/)`.
 
-**B4 Complete:**
-- if `conversation.json` exists: bounded read, require `evidence.conv_sha256` (else stop `acknowledgement_unverified{conversation_changed}`, nothing unlinked), unlink it, `fsync(session/)`;
-- if it is absent: `fsync(session/)` anyway, which makes durable an absence that an earlier process may have left unfenced.
+If it is absent, `fsync(session/)` anyway.
 
-**B5 Retire:**
-- sync readable extras' segments (already covered by B3);
-- `_consume_ack`: exactly one matching receipt, its segment fsynced, unlink ACKNOWLEDGED, `fsync(session/)`;
-- then remove RECOVERING if present (carrier first, then intent: the SV023-03 order).
+**B5** `_consume_ack` (one matching receipt, its segment fsynced, unlink ACKNOWLEDGED, fence), then remove RECOVERING.
 
-**B6** Exact IDENTITY reservation (never lower), then `unit_end()` (SV026/SV027). Return `Opening("BP", session)`.
+**B6** Exact IDENTITY reservation, then `unit_end()`. Return `Opening("BP")`. No `REQUEST_SENT`/`INVOKING` is written and no client is constructed before this.
 
-**Three distinct notions, kept apart:**
-- *readable activation*: its frame is present and valid;
-- *established activation*: B3 returned in this process, covering it;
-- *completed activation*: B4 fenced and the carrier is retired.
+**Three notions, kept apart:**
+- *readable* activation: its frame is present;
+- *established*: B3 returned in this process;
+- *completed*: B4 fenced and the carrier is retired.
 
-A process may establish a frame that an earlier process wrote and whose fsync never returned. That is legitimate, and nothing destructive precedes it. **Linearization of the new epoch** is the first returned fsync covering the activation frame. The runtime acts destructively only after its own B3 has returned.
+Linearization of the new epoch is the first returned fsync covering the activation frame.
 
-No `REQUEST_SENT`/`INVOKING` is written and no client is constructed before B6 returns (`chassis.py:1152–1170`).
+### 9.2 Restart with nothing to write
 
-### 9.2 Restart that writes no core record
+`k = |Π|`: B0, then B1 with an empty core, then B3 establishes the inherited activation, then B4, B5, B6.
 
-Here `k = |Π|` (the activation is readable from an earlier process, no tail). The order is:
-1. B0 (fence);
-2. B1 with an empty core;
-3. B2 writes nothing;
-4. B3 fsyncs the inherited segment(s) and `ledger/`, which establishes the activation;
-5. B4 unlink and fence, B5, B6.
+### 9.3 Carrier-free (RECOVERING present, ACKNOWLEDGED absent)
 
-### 9.3 Carrier-free restart (RECOVERING present, ACKNOWLEDGED absent)
+1. Validate the intent and its context (§5.4).
+2. The owned records must be exactly `Π + T`, and `conversation.json` must be absent. Otherwise stop `recovery_intent_mismatch`; **nothing missing is written**.
+3. B3, B4 (fence the absence), remove RECOVERING, B6.
 
-1. `_validated_intent` validates the intent and its §5.4 context (domain, checksum, digests).
-2. Π is re-derived from `H` and authenticated (§5.4).
-3. The owned logical records must be **exactly** `Π + T`. The carrier is retired only after B4, so the transaction is complete. Anything shorter or different stops `recovery_intent_mismatch`; **no missing Π record is written without a carrier**.
-4. `conversation.json` must be absent, else stop `recovery_intent_mismatch`.
-5. B3, B4 (fence of absence), remove RECOVERING, B6.
+### 9.4 Composition with torn-tail recovery
 
-### 9.4 Composition with ordinary torn-tail recovery
+- `T = [RECOVERY{torn_incomplete, detail + tail_sha256}]`, built from the intent's original tail.
+- `T` is placed **after** Π.
+- The intent freezes `k`, the tail and the context.
+- A further own tear under that intent is set aside with no record (`:1070–1078`), so there is at most one `T`.
+- B0 checks `O ≤` anchor; `_recover` checks the extras against `Π[k:] + T`.
 
-- **Where `T` sits.** The recovery record of the intent's original torn tail is `T = [("RECOVERY", {"kind": "torn_incomplete", "detail": {…plan detail, "tail_sha256": intent.tail_sha256}})]`, built as `derive_core` builds recovery records (`:1620–1623`), never a spend.
-- **Ordering.** `T` is placed **after** the whole of Π. This mirrors `derive_core`'s order: closure first, then recovery records.
-- **Freezing.** The intent freezes the anchor (the last owned record before the tear: `k` is fixed), the original tail and the context. So `core = Π[k:] + T` is the same at every restart.
-- **Tears under an existing intent.** A tear of the intent's own continuation is set aside under that same intent with **no new record** (`:1070–1078`). There is therefore at most one `T` per transaction.
-- **B0 check.** B0 checks only `O ≤ anchor` against Π. Records after the anchor are checked by `_recover` against `core`. `T` can never appear `≤` an anchor, so B0's list and B1's comparison agree.
+### 9.5 Traces
 
-### 9.5 Explicit traces
-
-`k` is the owned logical count. "dies" means M-1; host loss means M-2 with carried watermarks.
-
-| Trace | Start 1 | Next start | Result |
-|---|---|---|---|
-| **receipt torn** | dies mid-write of Π[0] | B0: `k=0`, tail is a prefix of Π[0]. `_recover` writes intent (anchor `W.last`, context), quarantines the tail, commits Π[0..] + T. Then B3, B4, B5, B6 | owned = Π + [T(torn_incomplete, declared RECOVERY_ACK)] |
-| **spend torn** (failed-unknown) | Π[0] synced; dies mid-Π[1] | intent anchored at Π[0]; core = Π[1:] + T | owned = Π + T; the spend applied once |
-| **spend readable** | Π[0] synced; Π[1] written, not synced; dies | `k=2`; core = Π[2:] = [activation]; the spend is **not** re-derived away | owned = Π |
-| **spend readable, then host loss** | as above, then M-2 cuts Π[1] whole or to a prefix | `k=1` (cut whole) or the spend-torn path | converges |
-| **activation torn** | dies mid-activation | intent at the last owned record; core = [activation] + T | owned = Π + T |
-| **activation readable** (SV028-01) | activation written, not synced; dies | §9.2: B3 establishes it, then unlink | correct |
-| **…then second death after the unlink fence, then host loss** | start 2 dies after B4's `fsync(session/)`, before B5 | B3 had returned in start 2, so the activation survives host loss. Start 3: B0 (activation present, file absent: allowed), B3, B4 (fence absence), B5 | converges; one activation |
-| **…second death inside B3, then host loss** | start 2 dies before B3's fsync returns | the file was never unlinked. Host loss may cut the activation, so start 3 has `k ≤ 2` and rewrites it | converges |
-| **failed B3 sync** | EIO at B3 | `PersistenceFailure`; the conversation is intact; FSYNC_FAILED, then A1 (inherited SV023-02 policy: the A1 acknowledgement is refused while the carrier is pending) | no unlink |
-| **second tear under the intent** | after a receipt tear, start 2 dies mid-activation | start 3: intent I1 present; the own tear is set aside without a record; core from I1 = Π[0:] + T(t1); extras = [Π[0]] | owned = Π + T(t1) |
-| **carrier absent, RECOVERING present** | start dies after carrier retirement, before RECOVERING removal | §9.3 | intent removed; nothing written |
+| Trace | Outcome |
+|---|---|
+| receipt torn | intent at `W.last`; core = Π + T |
+| spend torn | intent at Π[0]; core = Π[1:] + T |
+| spend readable | `k = 2`; core = [activation]; the spend is never re-derived away |
+| …spend readable, then host loss | `k = 1`, or the spend-torn path |
+| activation torn | core = [activation] + T |
+| **activation readable** | §9.2: B3 establishes it, then B4 |
+| …then a second death after B4's fence, then host loss | the activation survives (B3 returned) and the start converges |
+| …second death inside B3 | the conversation is intact; the activation may be lost and is rewritten |
+| failed B3 | `PersistenceFailure`; no unlink; FSYNC_FAILED; A1 (SV023-02) |
+| second tear under the intent | set aside with no record; core from I1 |
+| carrier absent, RECOVERING present | §9.3 |
 
 ---
 
@@ -446,58 +533,47 @@ Here `k = |Π|` (the activation is readable from an earlier process, no tail). T
 
 | Cut | Outcome |
 |---|---|
-| A0 or refusal | unchanged |
-| A1–A4 (cleanup unlinks, mkdirs, copy temps, renames, `MANIFEST`), including unfenced directory or file names lost under M-2 | STOPPED present: A0 at start. Retry: admission, then cleanup of owned scratch, then refill. A lost `<ack_id>.partial` name simply means none |
-| A5 rename unfenced | under M-2 it may revert to `.partial` with a complete `MANIFEST`. Retry verifies and re-seals |
-| A6 carrier unfenced, or A7 STOPPED unlink unfenced | STOPPED present again: A0. Retry finds the sealed set and this carrier, then re-verifies and re-fences |
-| B0 | nothing written |
-| B2 records (torn or unsynced) | §9.5 |
-| B3 before return | file intact; activation possibly lost: rewritten |
-| B4 unlink unfenced | under M-2 the file returns with the manifested bytes: unlink again after B3 |
-| B5 carrier unlink unfenced | the carrier returns: B0 allows an absent file because the activation is present and established |
-| after B5, intent removal unfenced | §9.3 |
-| after all | ordinary A12t start, nothing written |
+| A0, refusal | unchanged |
+| A1 (mkdir or fence) | under M-2 a lost name means none or pre-boundary: retry |
+| A2 inside `write_bytes_durable` (temp written or renamed, directory unfenced) | pre-boundary (only owned `MANIFEST` temps), or `MANIFEST` present but its name unfenced. Under M-2 the name may vanish, reverting to pre-boundary. A **readable** valid `MANIFEST` is a boundary for the retry, which re-fences it in `E` before relying on the seal |
+| A3–A4 (subdirectory names, copy temps, renames, unfenced leaf directories) | post-boundary retry: reuse verified destinations, delete owned scratch, re-fence every subdirectory in its parent, copy the missing ones |
+| A5 (`E`) before return | no seal: retry runs `E` again |
+| A6 rename unfenced | under M-2 it may revert to `.partial` with a complete set: post-boundary retry, `D = A = 0`, then `E` and re-seal |
+| A7 carrier, A8 STOPPED unlink unfenced | STOPPED returns: sealed retry, `E`, then re-publish or keep the carrier |
+| Phase B | §9.5; B3 precedes B4 |
 
-**Invariant at every cut** (asserted immediately after the cut and any simulated host loss, before convergence): if `conversation.json` is absent, then the ledger, as the durability model leaves it, holds the complete Π, with the activation inside the returned-fsync watermark. In addition, every sealed set equals the pre-command domain.
+**Invariants checked immediately after every cut** (and after simulated host loss):
+1. If `conversation.json` is absent, the complete Π is within the durable ledger.
+2. If ACKNOWLEDGED (this carrier) exists, the sealed set exists with **every** inventory entry at its exact bytes in the durability model.
+3. No file of the post-boundary inventory has lost its last copy: each entry exists either live, with its inventory hash, or in the set.
 
 ---
 
-## 11. State authority after activation
+## 11. State authority after activation (unchanged)
 
-`e = C_n.state.history_epoch`. The comparison is normalized as `wire(x) = x.to_wire(next_seq=1)`, the accepted helper's normalization. The physical sequence and chain are asserted separately: the first owned record has `first_seq/seq = W.last_seq + 1`, and the chain is verified by the strict scanner.
+The comparison uses `wire(x) = x.to_wire(next_seq=1)`. Physical sequence and chain are asserted separately.
 
 | Field | After | Authority / proof |
 |---|---|---|
-| lineage | retained | l.558; one lineage across header, run.json, state and IDENTITY (P3–P8) |
-| `history_epoch` | `e+1` exactly once | frozen Π; the reducer asserts `epoch == e+1` (`chassis_replay.py:353`); the own-prefix rules forbid a second activation |
-| messages, `recap_folded` | `[]`, 0 | `_switch_base`; the old bytes are sealed in the set before B4 |
-| `requests.next` | **retained from `C_n`** (after a failed request, `send` had already advanced it to attempt+1) | P6 + Π |
-| `requests.last` | retained; **in the failed-unknown variant its `outcome` becomes `possible_duplicate_spend`** | Π's spend, applied once |
-| IDENTITY | retained; raised only by the exact reservation | P5; SV021-01 |
-| notes (next_gen, adopted_through, pending + blobs, mirrors, handoff sha, dropped) | retained | P6, P7; never-reset rule |
-| legacy, originals | retained | P6 |
-| active_group / queued | null / `[]` | P7 |
+| lineage | retained | P3–P8 |
+| `history_epoch` | `e+1` once | frozen Π; reducer `chassis_replay.py:353` |
+| messages, `recap_folded` | `[]`, 0 | `_switch_base`; old bytes sealed |
+| `requests.next` | retained from `C_n` (attempt+1 after a failed request) | P6 + Π |
+| `requests.last` | retained; in failed-unknown, `outcome = possible_duplicate_spend` | Π's spend |
+| IDENTITY | retained; exact reservation | P5 |
+| notes, legacy, originals | retained | P6, P7 |
+| group / queue | none | P7 |
 
-So `wire(after) == wire(state0)` with `history_epoch = e+1`, `recap_folded = 0` and (failed-unknown only) `requests.last.outcome = "possible_duplicate_spend"`. Its `next_label()` is `lineage:<C_n.requests.next.turn_seq>:<C_n.requests.next.attempt>`, i.e. `lineage:t:2` in the failed-unknown variant.
+`next_label() = lineage:<C_n.next.turn>:<C_n.next.attempt>`.
 
----
+## 12. Duty-visible semantics and GC (unchanged)
 
-## 12. Duty-visible semantics (resolved as engineering) and GC
+**E1+S1+R1+N1** apply. Pending notes preempt the bootstrap callback; with no pending note, bootstrap or the default opening runs. No notice, new ordering or held-policy choice is introduced.
 
-**E1+S1+R1+N1**, as confirmed by the review:
-- `EXTERNAL_DELETE` with an exact `cause`/`ack_id`/`manifest_sha256` binding;
-- A12's resume order: `adopt_file_edit`, then `adopt_notes`, then `bootstrap()` (or `DEFAULT_OPENING`) **only if the list is still empty**;
-- `recap.md` left in place (its bytes sealed);
-- notes carried.
-
-S1 therefore means **pending notes make the conversation non-empty and preempt the bootstrap callback**. A session with no pending note gets the bootstrap or default opening. Nothing promises a bootstrap despite pending memory. No new notice, ordering or held-policy choice is introduced. Each real session still needs its operator's explicit choice; this package authorizes temporary-root implementation and tests only.
-
-**GC (corrected).**
-- `preserved/` is outside the GC namespace (`chassis_gc.py:27–32`).
-- `STOPPED` and `ACKNOWLEDGED` block collection during the transaction (`chassis_session.py:120`, `:703–706`).
-- A pending intent is refused (P4).
-- After activation, ordinary §1.4.5 GC applies unchanged to the live store. The first post-activation checkpoint names as `prev` whatever `_retained_prev` finds: **an older known checkpoint still in `.prev.json` is kept and named**, so collection may begin at that first checkpoint. No first- or second-checkpoint prediction is made.
-- Quarantine usage counts `corrupt/` only.
+**GC:**
+- `preserved/` is outside the GC namespace;
+- STOPPED and ACKNOWLEDGED block collection;
+- after activation, ordinary GC applies. `_retained_prev` may name an older known checkpoint at the first post-activation checkpoint, so collection may start there.
 
 ---
 
@@ -505,86 +581,110 @@ S1 therefore means **pending notes make the conversation non-empty and preempt t
 
 | File | Change |
 |---|---|
-| `services/chassis_startup.py` | **Registry (§4).**<br>**`acknowledge`:** `home_dir` keyword (default `session_dir.parent`); dispatch by mechanism.<br>**`read_carrier` / `carrier_problem`:** mechanism envelopes; evidence keys (§5.3).<br>**`witnessed_context_problem`:** per-mechanism key sets (§5.4).<br>**New pure functions:** `preserving_plan`, `preserving_admission`, `preservation_domain`, `preserved_usage`, `manifest_bytes`/`manifest_problem`, `preserving_evidence`.<br>**New mutation:** `_acknowledge_preserving` (A1–A7).<br>**`_Context`:** `_verify_preserving` (B0); BP decision in `_recover`; `_establish_owned_durability` (B3); `_finish_case("BP")` (B4); carrier-free path (§9.3); `_consume_ack` treats the preserving receipt like the witnessed one.<br>Module docstring |
-| `services/chassis.py` | CLI: pass `home_dir=chassis.home_dir` to `acknowledge` (one call site, `:1765`) |
-| `services/chassis_persistence.py`, `chassis_replay.py`, `chassis_session.py`, `chassis_gc.py`, `common.py` | none |
+| `services/chassis_startup.py` | **Registry (§4).**<br>**`acknowledge`:** `home_dir`.<br>**Envelopes:** carrier, evidence, context.<br>**New pure functions:** `preserving_plan`, `preserving_admission`, `preservation_domain`, `preserved_usage`, `inventory_bytes` / `inventory_problem`, `set_lifecycle`, `owned_scratch`, `preserving_evidence`.<br>**New mutation:** `_acknowledge_preserving` (A1–A9, §8.2) and `_establish_set_dependencies` (`E`).<br>**`_Context`:** `_verify_preserving`, the BP decision, `_establish_owned_durability` (B3), `_finish_case("BP")`, the carrier-free path.<br>**`_consume_ack`:** treat the preserving receipt like the witnessed one |
+| `services/chassis.py` | CLI passes `home_dir=chassis.home_dir` (`:1765`) |
+| other services | none |
 | `tests/test_chassis_acknowledgements.py` | the one `SUPPORTED` tuple (§4) |
 | `tests/test_chassis_bootstrap_preserving.py` | new (§14) |
-
-There are no new record types, no `REQUIRED_KEYS` change and no reducer change.
 
 ---
 
 ## 14. Finite temporary-root test plan (frozen; nothing run)
 
-### 14.1 Harness
+### 14.1 Harness (test-local)
 
-The harness is test-local, built from accepted helpers only.
+**`HomeRoot(Root)`**: `home = path`, `session = path/"session"` (the production layout), so the default home is correct and calls use the unchanged signature.
 
-- **`HomeRoot(Root)`**: `home = path`, `session = path/"session"` (the production layout). `acknowledge` can then be called with its unchanged positional signature, and the default home is correct. `snapshot()` covers the whole domain.
-- **`PreserveOps(AckOps)`** (extends `test_chassis_acknowledgements.AckOps`/`CutOps`). It additionally records, per parent directory, until that directory's returned `sync_dir`:
-  - directories created by `mkdir`;
-  - file names created by `open(O_CREAT)` on a new path;
-  - **directory renames**.
-- **`host_loss_names(ops)`** undoes those newest-first:
-  - removes unfenced created directories (with their subtrees) and unfenced new file names;
-  - renames unfenced directory renames back;
-  - applies the existing byte and rename/unlink rules.
-- **Watermarks** (segment bytes and pending names) are carried across processes by `PreserveOps(previous)`.
-- **Scope.** This models M-2 for every namespace this package creates. Non-segment file bytes are written by `write_bytes_durable` (fsync before rename), so their loss is modelled through name loss.
-- **Independent declared inventory.** The test computes, before the command and **without** the production selector: every regular file under `session/` excluding `preserved/` and acknowledgement artifacts, plus `HANDOFF.md`, as `{path: (bytes, st_dev, st_ino)}`.
+**`PreserveOps(AckOps)`** (SV028-06 model). It records pending namespace changes **keyed by directory identity** `(st_dev, st_ino)` of the containing directory, not by path text:
+- `mkdir` (a new child directory);
+- `open(O_CREAT)` of a new path (a new child file);
+- file and **directory** renames: the source name removed, the target name added, and the replaced target's prior content if any;
+- unlinks.
+
+A returned `sync_dir(path)` clears the pending set of that path's **current** directory identity. Segment byte watermarks are inherited from `CutOps`.
+
+**`host_loss_names(ops)`**:
+1. Walks the temporary root once to map current directory identities to paths. This is how a pending child of `<ack>.partial/session/ledger` is found under `<ack>/session/ledger` after the ancestor rename.
+2. Undoes each directory's pending changes newest first:
+   - new children are removed (directories with their subtrees);
+   - renames are reversed;
+   - unlinked files are restored with their bytes;
+   - unsynced segment bytes are truncated (existing rule).
+
+**`PreserveOps(previous)`** carries the identity-keyed pending sets and the byte watermarks across processes.
+
+**Independent declared inventory.** The test computes this itself, never through the production selector:
+- before the command;
+- every regular file under `session/` outside `preserved/`, plus `HANDOFF.md`;
+- recorded as `{path: (bytes, st_dev, st_ino)}`.
+
+Snapshot timing alone excludes later carrier artifacts; no name filter is applied.
 
 ### 14.2 Fixtures
 
-All neutral fixtures use `HomeRoot`, `establish`, a pending note `N1` (unless stated), one complete tool turn (`partial_turn(6)`), then:
+All neutral fixtures use `HomeRoot`, `establish`, a pending note `N1` (unless stated), one complete tool turn, then:
 
-| Fixture | Construction | Suffix after `C_n` | Notes |
-|---|---|---|---|
-| `run-end` | `checkpoint()` (`C_n`), `record_run_end(0, "main_returned")` | `[RUN_END]` | — |
-| `collected-and-rotated` | `test_chassis_gc.begin` (collect, `segment_max = 1`), note, two `tool_turn`s, `record_run_end` | contains `GC_INTENT`, `GC_DONE`, `LEDGER_HEADER`, `RUN_END` | the fixture **asserts** at least one `GC_INTENT` naming a segment and one `LEDGER_HEADER` after `C_n` (non-vacuity) |
-| `failed-unknown-request` | `session.send(lambda: None)` without a response, `checkpoint()`, `record_run_end` | `[RUN_END]` | `C_n.requests.last.outcome == "failed_unknown"`, `requests.next = (t, 2)` |
-| `no-pending-note` | as `run-end` without `N1` | `[RUN_END]` | — |
-| `older-known-prev` | checkpoints C1, C2, C3 = `C_n`; `.prev.json` replaced by C1's saved bytes; only `conversation.json` damaged | — | `C_n.prev` names C2, so the case is unbound (P10) while `.prev.json` holds known C1 |
-| **planted** additions (N3a) | `session/agent-notes.txt`; `recap.md`; `HANDOFF.md`; a file `Y` at `corrupt/conversation-<sha256(X)[:16]>` | — | `X` is the garbage a later A14 quarantine will write there |
+| Fixture | Construction | Suffix after `C_n` |
+|---|---|---|
+| `run-end` | `checkpoint()` (`C_n`), `record_run_end(0, …)` | `[RUN_END]` |
+| `collected-and-rotated` | `test_chassis_gc.begin`, a note, two `tool_turn`s, `record_run_end`. The fixture asserts at least one `GC_INTENT` naming a segment, and a `LEDGER_HEADER`, after `C_n` | non-vacuous GC and header |
+| `failed-unknown-request` | `send` without a response, `checkpoint()`, `record_run_end` | `[RUN_END]`; `outcome failed_unknown`, `next (t, 2)` |
+| `no-pending-note` | `run-end` without `N1` | `[RUN_END]` |
+| `older-known-prev` | C1, C2, C3 = `C_n`; `.prev.json` = C1's bytes; only `conversation.json` damaged | — |
+| **planted** | `session/agent-notes.txt`, `recap.md`, `HANDOFF.md`, `Y` at `corrupt/conversation-<sha256(X)[:16]>`, and **`session/.ACKNOWLEDGED.0123456789abcdef.tmp` with distinct bytes** | — |
+| **single-entry corrupt leaf** | exactly one regular file in `session/corrupt/`, so `<partial>/session/corrupt/` holds one destination and no later copy writes there. The fixture asserts this | — |
 
-Each fixture then damages `conversation.json` (and `.prev.json` except in `older-known-prev`). The actual start must stop A14-unbound with a valid witness, changing only `session/STOPPED` (the accepted `stop` pattern).
+Each fixture then damages `conversation.json` (and `.prev.json` except in `older-known-prev`). The actual start must stop A14-unbound with a valid witness, changing only STOPPED.
 
-### 14.3 New nodes: `tests/test_chassis_bootstrap_preserving.py` (36)
+### 14.3 New nodes: `tests/test_chassis_bootstrap_preserving.py` (53)
+
+**Unchanged from round 1 (36), parameters as stated; assertions updated where noted:**
+
+| Id | Node | Notes |
+|---|---|---|
+| N1 ×3 | `test_sv028_bootstrap_preserving_starts_exactly_one_new_epoch[run-end\|collected-and-rotated\|failed-unknown-request]` | Set = independent inventory; copies' inodes are not pre-command inodes and have `st_nlink == 1`; protocol records exactly Π; §11 state; `A12t` later |
+| N2 ×2 | `test_sv028_resume_after_activation_matches_the_same_state_a12_path[pending-note\|no-pending-note]` | pending: `[note]`, no opening; none: `["OPENING"]` |
+| N3a | `test_sv028_every_declared_pre_resolution_file_survives_later_ordinary_replacement` | planted fixture. The independent inventory **includes the pre-existing `.ACKNOWLEDGED.<hex>.tmp`**, which is preserved byte-exactly in the set and never deleted live |
+| N3b | `test_sv028_an_older_known_previous_file_is_retained_and_collection_follows_the_reference_graph` | actual collection at the first post-activation checkpoint |
+| N4a | `test_sv028_every_envelope_refusal_names_its_reason_and_changes_nothing` | as round 1 |
+| N4b | `test_sv028_every_unsupported_shape_is_refused_before_any_mutation` | as round 1, plus `preserved_scratch_unowned` (a non-owned file in the own partial) |
+| N5 | `test_sv028_the_command_and_the_activation_are_ordered_and_fenced` | **revised order:** `mkdir` + fences < `MANIFEST` (boundary) < subdirectory fences < copies < `E` (every set-file fsync, then leaf, parent and root directory fsyncs, `preserved/`, `session/`) < seal rename + `fsync(preserved)` < carrier < STOPPED unlink + fence; Phase B as round 1 (B3 before B4); no `link` |
+| N6 ×2 | `test_sv028_every_cut_converges_to_one_receipt_and_one_activation[process-death\|host-loss]` | §10 invariants 1–3 checked at each cut, then convergence |
+| N7 ×4 | `test_sv028_a_second_interruption_then_host_loss_still_converges[activation-readable/after-unlink-fence\|receipt-unsynced/activation-write\|archive-directory-unfenced/inventory-write\|conversation-unlink-unfenced/carrier-unlink]` | the third parameter is renamed from `…/manifest-write` because the MANIFEST is now the inventory |
+| N8 ×5 | `test_sv028_an_own_partial_prefix_composes_with_the_frozen_plan[receipt-torn\|spend-torn\|spend-readable\|activation-torn\|carrier-absent-recovering-present]` | — |
+| N9 | `test_sv028_stale_or_conflicting_acknowledgements_grant_nothing` | — |
+| N10 | `test_sv028_a_conflict_after_activation_fails_closed` | — |
+| N11 | `test_sv028_cli_bootstrap_preserving_behind_the_first_request_barrier` | — |
+| N12 ×4 | `test_sv028_mutation_control[hardlinked-copies\|no-neutral-suffix-check\|no-pre-unlink-sync\|plan-from-mutated-replay]` | — |
+| N13 | `test_sv028_the_registry_is_one_truthful_union` | — |
+| N14 | `test_sv028_a_failed_pre_unlink_sync_leaves_the_conversation_and_takes_the_persistence_boundary` | — |
+| N15 ×6 | `test_sv028_capacity_and_serialization_bounds[repeated-copy-temp-crashes\|rewrite-peak\|manifest-exact-limit\|manifest-over-limit\|long-neutral-suffix\|cap-boundary]` | **`rewrite-peak`** is now a post-boundary retry with one destination byte-flipped and its live source verified: it is deleted before its temp is written, and usage never exceeds the §7.5 formula. **`repeated-copy-temp-crashes`**: usage at every allocation ≤ the formula, and the owned temps of each death are counted in `D` and deleted |
+
+**New in round 2 (17):**
 
 | Id | Node (exact parameters) | Asserts |
 |---|---|---|
-| N1 ×3 | `test_sv028_bootstrap_preserving_starts_exactly_one_new_epoch[run-end\|collected-and-rotated\|failed-unknown-request]` | **Sealed set:** byte-equal to the independent inventory (§14.1); every copy has an `st_ino` not among the **pre-command** live inodes, and `st_nlink == 1`.<br>**Protocol records** (non-header owned) exactly Π (spend only in failed-unknown); headers asserted separately; no later records at default limits.<br>**State:** §11 normalized equality; `next_label()` as §11.<br>**Files and effects:** `conversation.json` absent; no STOPPED/ACKNOWLEDGED/RECOVERING/FSYNC_FAILED; effect counts unchanged.<br>**Later start:** `A12t`, writes nothing |
-| N2 ×2 | `test_sv028_resume_after_activation_matches_the_same_state_a12_path[pending-note\|no-pending-note]` | Through the accepted `resume()` helper: the BP list equals a same-state A12 control (conversation **deleted**). With a pending note: exactly `[note N1]`, **no opening**. Without: `["OPENING"]` |
-| N3a | `test_sv028_every_declared_pre_resolution_file_survives_later_ordinary_replacement` | Planted fixture, activation, then ordinary operations: `write_note` (replaces HANDOFF), `append_recap` (`chassis.py:275`), two checkpoints (run.json, `.prev` rotation, IDENTITY), collection, then `X` written into `conversation.json` and a start that classifies A14 and quarantines `X` over planted `Y`. The sealed set still equals the independent inventory, including `agent-notes.txt` and `Y` |
-| N3b | `test_sv028_an_older_known_previous_file_is_retained_and_collection_follows_the_reference_graph` | `older-known-prev`. The first post-activation checkpoint names C1 as `prev`. Its collection (asserted present) names exactly items eligible under `gc.retained_basis`, none under `preserved/`, and the set is unchanged |
-| N4a | `test_sv028_every_envelope_refusal_names_its_reason_and_changes_nothing` | One node over cases, each matching its token, with the full root snapshot unchanged:<br>• `suffix_not_neutral` ×4 (partial-turn, message, note-written, earlier receipt);<br>• `conversation_readable`, `conversation_absent`, `conversation_over_bound` [injected];<br>• `previous_base_available`, no-witness, damaged witness;<br>• `ledger_not_witnessed` ×2 (appended record, garbage tail);<br>• `identity_not_witnessed`, `state_blob_missing`, `run_json_not_witnessed`, `collection_pending_or_unauthorized`, `transaction_open` ×2;<br>• another carrier pending;<br>• the pair with `run_json_unreadable` / `ledger_tail_ambiguous` / `ledger_missing` ("not implemented") |
-| N4b | `test_sv028_every_unsupported_shape_is_refused_before_any_mutation` | A symlink in `session/`; a subdirectory in `ledger/`, `blobs/` or `corrupt/`; an unknown top-level directory; a FIFO; a bad name; a symlinked HANDOFF; a foreign shape under `preserved/`; both `<ack>` and `<ack>.partial`; a damaged sealed own set (`preserved_set_mismatch`, untouched) |
-| N5 | `test_sv028_the_command_and_the_activation_are_ordered_and_fenced` | From the log:<br>• copies (each rename then directory fence) < `MANIFEST` < seal rename + `sync_dir(preserved)` < carrier + `sync_dir(session)` < STOPPED unlink + fence;<br>• start: `sync_dir(session)` < receipt write and fsync < (spend) < activation write and fsync < **B3 segment fsync + `sync_dir(ledger)`** < `unlink conversation.json` + `sync_dir(session)` < receipt-segment fsync < ACKNOWLEDGED unlink + fence < IDENTITY;<br>• no `link` call |
-| N6 ×2 | `test_sv028_every_cut_converges_to_one_receipt_and_one_activation[process-death\|host-loss]` | `run-end` with planted files. Sweep every logged call of A and B. At each cut (and after `host_loss_names` in host-loss mode), the §10 invariant holds **immediately**. Then converge: repeat the command if STOPPED is present; start; a second start writes nothing. Final: one receipt, one activation, §11 state, the set equals the inventory |
-| N7 ×4 | `test_sv028_a_second_interruption_then_host_loss_still_converges[activation-readable/after-unlink-fence\|receipt-unsynced/activation-write\|archive-directory-unfenced/manifest-write\|conversation-unlink-unfenced/carrier-unlink]` | Carried byte and name watermarks over both processes, then host loss, then two restarts. The first parameter is the **exact SV028-01 trace**: P1 crashes on the activation fsync (frame `"14"`); P2 (carried) crashes on the first call after B4's `sync_dir(session)` |
-| N8 ×5 | `test_sv028_an_own_partial_prefix_composes_with_the_frozen_plan[receipt-torn\|spend-torn\|spend-readable\|activation-torn\|carrier-absent-recovering-present]` | The §9.5 rows. The spend cases use `failed-unknown-request`. Owned records are exactly Π or Π + [T] with the intent's tail hash; exactly one spend; epoch `e+1` |
-| N9 | `test_sv028_stale_or_conflicting_acknowledgements_grant_nothing` | A SV023 carrier pending, then this command: refused. This carrier pending, then `continue-from-bound`: refused. Repeat after STOPPED removal: fence only. Consumed, then repeat: refused. An old carrier over a later same-reason stop: refused, then `acknowledgement_unverified`. Changed between command and start (conversation repaired, record appended, sealed byte flipped, `MANIFEST` byte flipped): `acknowledgement_unverified`, nothing activated. Independent FSYNC_FAILED: A1, and the A1 acknowledgement refused "pending" |
-| N10 | `test_sv028_a_conflict_after_activation_fails_closed` | Activation established (crash after B3), then a readable list under the name: stop `conversation_changed`, nothing unlinked, carrier kept |
-| N11 | `test_sv028_cli_bootstrap_preserving_behind_the_first_request_barrier` | Real CLI (`Loop`, as `test_cli_acknowledgement…`): stop exit 44; command exit 0, no traffic; restart behind the barrier: no traffic, carrier and STOPPED gone, Π in the ledger; release: the label is `lineage:<next>:1`, unseen. The sealed set verifies against the independent inventory |
-| N12 ×4 | `test_sv028_mutation_control[hardlinked-copies\|no-neutral-suffix-check\|no-pre-unlink-sync\|plan-from-mutated-replay]` | Each patches one mechanism and requires the protecting assertion to **fail**:<br>• `link` for copies: an ordinary append to the active segment changes the "preserved" segment;<br>• P7 disabled: the W2 fixture activates and drops suffix memory;<br>• B3 a no-op: N7[activation-readable…] does not converge;<br>• Π derived after own extras: the spend-readable trace stops `own_prefix` |
-| N13 | `test_sv028_the_registry_is_one_truthful_union` | `IMPLEMENTED_RESOLUTIONS` = the 6 pairs; mechanism subsets exact; every other `(reason, resolution)` over the accepted `OTHER_REASONS` list raises "not implemented" with the store unchanged |
-| N14 | `test_sv028_a_failed_pre_unlink_sync_leaves_the_conversation_and_takes_the_persistence_boundary` | EIO at B3's segment fsync (restart with the activation readable): `PersistenceFailure`; `conversation.json` still has the manifested bytes; FSYNC_FAILED exists; the next start is A1 |
-| N15 ×6 | `test_sv028_capacity_and_serialization_bounds[repeated-copy-temp-crashes\|rewrite-peak\|manifest-exact-limit\|manifest-over-limit\|long-neutral-suffix\|cap-boundary]` | Five crashes, each right after a copy temp write: `preserved/` usage never exceeds the computed peak, and the sixth attempt converges. An existing mismatching destination is deleted before its temp (peak = the formula). Injected `MANIFEST_READ_MAX` equal to the exact length: accepted; one below: `preserved_manifest_too_large`, unchanged. 2,000 appended `RUN_END`s: the carrier size is unchanged and under the bound. Bytes cap at exact equality: accepted; minus one: refused, unchanged |
+| N16 ×3 | `test_sv028_a_reused_copy_is_fenced_before_the_seal[reused-leaf-converges\|omit-reuse-fence-mutation\|eio-before-seal]` | Single-entry corrupt-leaf fixture.<br>**P1** (the command, `PreserveOps`) crashes on the `sync_dir` of `<partial>/session/corrupt` inside that copy's `write_bytes_durable`, after its rename.<br>**P2** = `PreserveOps(P1)` runs the command to completion. Its log must show **no** `open(O_CREAT)`, `write` or `rename` in that leaf (the reuse branch, with no incidental fence from a later copy).<br>**P3** = `PreserveOps(P2)` runs the consuming start to completion (activation, unlink, carrier retired).<br>Then `host_loss_names(P3)` with all carried pending sets, **before** any further start.<br>• `reused-leaf-converges`: every independently inventoried entry, including the reused one, exists in the **sealed** set with exact bytes; then ordinary convergence.<br>• `omit-reuse-fence-mutation`: `_establish_set_dependencies` is patched to skip directory fsyncs of leaves holding only reused entries. The same assertion must **fail**: the reused entry is missing after host loss, because its pending name survived the ancestor `.partial` → sealed rename.<br>• `eio-before-seal`: P2 gets `EIO` on that leaf's fsync inside `E`. Then: `PersistenceFailure`; no sealed directory; no ACKNOWLEDGED; STOPPED present; `conversation.json` present with its original bytes; FSYNC_FAILED present; a retry refuses `transaction_open` with the store unchanged |
+| N17 | `test_sv028_preserve_ops_carries_pending_child_names_across_an_ancestor_rename` | Harness control: create `a/b/`, fence its creation; create `a/b/f` unfenced; rename `a` → `c`; fence the parent of `c`; host loss. `c/b/f` is gone, and `c/b/` remains. The same with `sync_dir(c/b)` before host loss: `f` remains |
+| N18 ×10 | `test_sv028_the_durable_inventory_binds_every_retry[source-changed-after-copy\|source-missing\|domain-gained-file\|inventory-corrupt\|inventory-foreign-binding\|inventory-missing-with-copies\|corrupted-copy-with-verified-source\|pre-existing-acknowledged-temp-preserved\|owned-copy-temp-cleanup\|owned-inventory-temp-cleanup]` | Planted fixture.<br>• `source-changed-after-copy`: P1 dies after copying `agent-notes.txt` (X) and before `E`; the live file is set to Y; the retry refuses `preserved_source_changed`. The **whole root snapshot is unchanged**: the X copy is kept, no carrier, STOPPED present, conversation present.<br>• `source-missing`: the live file is deleted; refuse `preserved_source_missing`, unchanged.<br>• `domain-gained-file`: a new live regular file; refuse `preserved_domain_changed`.<br>• `inventory-corrupt`: one `MANIFEST` byte flipped; refuse `preserved_inventory_invalid`, untouched.<br>• `inventory-foreign-binding`: `MANIFEST` resealed with another `stop_sha256`; refuse `preserved_inventory_invalid`.<br>• `inventory-missing-with-copies`: a partial set planted with a copy and no `MANIFEST`; refuse `preserved_inventory_missing`, untouched.<br>• `corrupted-copy-with-verified-source`: a reused destination byte-flipped with its live source intact; the retry deletes and recopies; the set equals the inventory.<br>• `pre-existing-acknowledged-temp-preserved`: the planted `.ACKNOWLEDGED.<hex>.tmp` is in the published inventory and the sealed set, and the live file is still present after completion.<br>• `owned-copy-temp-cleanup`: P1 dies after a copy temp's write and before its rename; the retry deletes exactly that temp (asserted gone, and counted in `D`) and converges.<br>• `owned-inventory-temp-cleanup`: P1 dies after the `MANIFEST` temp's write and before its rename; the partial set holds only `.MANIFEST.<hex>.tmp`; the retry deletes it, publishes the inventory and converges |
+| N19 ×3 | `test_sv028_an_equal_manifest_retry_allocates_nothing_at_cap_u[complete-partial-before-rename\|rename-unfenced-then-host-loss\|sealed-after-rename-fence]` | A run is cut so the own set is complete:<br>• before the seal rename;<br>• after an unfenced rename, then `host_loss_names` (reverting to `.partial`);<br>• after the rename's fence (sealed).<br>The caps are injected to the measured `U` (files and bytes). The retry is **accepted**, and the `PreserveOps` log shows **no** `open(O_CREAT)` or `write` under `preserved/` (in particular no `MANIFEST` temp). Measured usage equals `U` after every logged call. Then convergence. Boundary companions in the same node, each on a fresh copy of the same cut state: with `bytes cap = U_bytes − 1` the retry refuses `preserved_capacity:bytes`; with `files cap = U_files − 1` it refuses `preserved_capacity:files`. Both leave the whole root snapshot unchanged. This pins the selected rule: verified reuse with dependency fencing allocates exactly nothing, and it is admitted at `cap = U` and not below |
 
-N1 ×3, N2 ×2, N3a, N3b, N4a, N4b, N5, N6 ×2, N7 ×4, N8 ×5, N9, N10, N11, N12 ×4, N13, N14, N15 ×6 = **36**.
+The N19 companions follow from the single admission predicate `peak ≤ cap`, where `peak = U − D + A`. With `D = A = 0`, `peak = U`, so the retry is accepted at `cap = U` and refused below it. A refusal changes nothing. A rewrite policy (rejected here) would need `peak = U + len(MANIFEST)` and would refuse at `cap = U`. N19 therefore distinguishes the two rules.
 
-**Collection on the old runtime.** The new module defines `HomeRoot`/`PreserveOps` locally and imports only accepted test modules. D1–D3 call `st.acknowledge(session_dir, reason, "bootstrap-preserving")` or the CLI, with no new keyword, and reference no new runtime attribute at import or setup. New attributes (e.g. `PRESERVING_RESOLUTIONS`) are referenced only inside N13 and N15.
+**Total new: 36 + 17 = 53.** N12 and N16[`omit-reuse-fence-mutation`] are the mutation controls. N17 is the model control.
 
-### 14.4 Retained nodes (50)
+**Collection on the old runtime.** Only accepted test modules are imported. D1–D3 call `st.acknowledge(session_dir, reason, "bootstrap-preserving")` or the CLI with no new keyword. New attributes are referenced only inside N13, N15, N16 and N19 bodies.
+
+### 14.4 Retained nodes (50; unchanged from round 1)
 
 **R1, `tests/test_chassis_acknowledgements.py` (35):**
 - `test_a_witnessed_file_repair_stop_resumes_from_the_bound_checkpoint[a14]`, `[ck5]`
 - `test_the_same_command_repeated_is_idempotent[a14]`
-- `test_every_refusal_leaves_the_store_byte_identical[a14]`, `[ck5]`. Its `wrong-resolution-bootstrap` case on a repaired store is now refused by P9 `conversation_readable`; its assertions (`LedgerError`, byte-identical) are unchanged.
+- `test_every_refusal_leaves_the_store_byte_identical[a14]`, `[ck5]`
 - `test_the_refusal_matrix_control_the_unmutated_repair_is_accepted`
 - `test_stops_without_a_safe_witness_are_recorded_as_before_and_ineligible`
 - `test_an_a14_stop_over_a_pending_collection_carries_no_witness`
-- `test_only_the_two_new_pairs_are_added_and_every_other_pair_is_still_refused` (**with the §4 `SUPPORTED` edit**)
+- `test_only_the_two_new_pairs_are_added_and_every_other_pair_is_still_refused` (with the §4 edit)
 - `test_newer_integrity_stops_acquire_no_resolution[identity_unproven]`, `[gc_intent_invalid]`, `[ledger_prefix_missing]`, `[recovery_intent_invalid]`, `[acknowledgement_unverified]`
 - `test_the_transaction_is_ordered_and_fenced`
 - `test_every_cut_of_the_acknowledgement_converges_with_one_receipt[a14-process-death]`, `[a14-host-loss]`
@@ -610,65 +710,59 @@ N1 ×3, N2 ×2, N3a, N3b, N4a, N4b, N5, N6 ×2, N7 ×4, N8 ×5, N9, N10, N11, N1
 - `test_chassis_gc.py`: `test_o2_1_pending_generations_outlive_their_collected_records`, `test_c_g1_an_adopted_note_is_never_readopted_after_its_records_are_collected`, `test_o2_4_every_cut_in_a_collection_converges_over_two_restarts[process-death]`
 - `test_chassis_rotation.py`: `test_sv027_every_closed_boundary_rotates_a_full_segment[startup-a9-clean]`, `test_sv027_rotation_failures_and_crashes_at_the_new_boundaries[startup-inherited-fsync-eio]`
 
-Ids follow the accepted manifests' convention (inner parametrize first). Each is confirmed by static AST before running.
-
-### 14.5 Pre-fix (unchanged runtime; one node per command)
+### 14.5 Pre-fix (unchanged; one node per command)
 
 | Id | Node | Expected |
 |---|---|---|
 | B0 | `test_c_k3_a12_a_deleted_list_is_a_clean_slate_with_everything_kept` | pass |
-| D1 | `N1[run-end]` | fails at the acceptance call: `LedgerError … not implemented` |
-| D2 | `N4a` | fails at its first reason-token `match` (the base says "not implemented"). This is a reason-specific refusal control, **not** evidence of activation safety |
-| D3 | `N11` | fails at `ack.returncode == 0` (the base returns 2) |
-
-Activation-safety evidence comes from N6–N8, N12 and N14 after the change. N12 is the mutation evidence that those assertions discriminate.
+| D1 | `N1[run-end]` | fails: `LedgerError … not implemented` |
+| D2 | `N4a` | fails at its first reason-token `match` (a reason-specific refusal control) |
+| D3 | `N11` | fails at `returncode == 0` |
 
 ### 14.6 Commands and resource estimate
 
-Each command is the approved runner with literal targets, one per message, serially, under the unchanged caps (120 CPU s / 180 wall s / 512 MiB AS; aggregate 50% CPU / 2 GiB / 64 tasks / nice 15).
+The approved runner is used with literal targets, one per message, serially, under unchanged caps (120 CPU s / 180 wall s / 512 MiB AS; aggregate 50% CPU / 2 GiB / 64 tasks / nice 15).
 
 | Cmd | Content | Cases | Estimate |
 |---|---|---|---|
-| F1 | N1×3, N2×2, N3a, N3b, N4a, N4b, N5, N9, N10, N13, N14 | 14 | ≈ 70 fixture builds ≲ 20 s CPU |
-| F2 | N6[process-death] | 1 | ≈ 120 logged calls (≈ 14 domain files) × ≈ 0.25 s ≈ 30 s CPU |
-| F3 | N6[host-loss] | 1 | as F2 |
-| F4 | N7×4, N8×5 | 9 | ≲ 15 s CPU |
-| F5 | N12×4, N15×6 | 10 | ≲ 20 s CPU |
-| F6 | N11 | 1 | ≈ 10–20 s wall |
-| R1 | retained acknowledgement nodes | 35 | SV023 ran 97 of these in one command within the caps |
-| R2 | retained CLI node | 1 | ≈ 10–20 s wall |
-| R3 | retained recovery, notes, GC, rotation | 14 | ≲ 20 s CPU |
+| F1 | N1×3, N2×2, N3a, N3b, N4a, N4b, N5, N9, N10, N13, N14 | 14 | ≲ 20 s CPU |
+| F2 | N6[process-death] | 1 | ≈ 160 logged calls (copies + `E` adds about 22 fsyncs) × ≈ 0.25 s ≈ 40 s CPU |
+| F3 | N6[host-loss] | 1 | as F2, plus an identity walk per cut ≈ 45 s CPU |
+| F4 | N7×4, N8×5 | 9 | ≲ 15 s |
+| F5 | N12×4, N15×6 | 10 | ≲ 20 s |
+| F6 | N11 | 1 | 10–20 s wall |
+| **F7** | **N16×3, N17, N18×10, N19×3** | **17** | ≈ 40 fixture builds, three-process traces ≲ 30 s CPU |
+| R1 | retained acknowledgement nodes | 35 | as SV023 |
+| R2 | retained CLI node | 1 | 10–20 s wall |
+| R3 | retained recovery, notes, GC, rotation | 14 | ≲ 20 s |
 
-**Totals: 36 new + 50 retained = 86 cases in 9 commands, plus 4 pre-fix commands.** Fixture data is KB-sized and the caps are injected small. These are proposed counts only.
+Commands `[14, 1, 1, 9, 10, 1, 17, 35, 1, 14]`: **53 new + 50 retained = 103 cases in 10 commands, plus 4 pre-fix commands.** The change from round 1 (86 in 9) is exactly the 17 new F7 nodes.
 
 ---
 
 ## 15. Limits (candid) and what is not claimed
 
-1. **RSS is unproved.** Admission and Phase B hold:
-   - every segment's bytes (`read_segments`, up to `MAX_SEGMENT_READ` each);
-   - the scan's parsed records;
-   - replay states;
-   - one domain file at a time (≤ 64 MiB);
-   - the manifest.
+1. **RSS is unproved.** Phase A and Phase B hold all segment bytes (`read_segments`), the parsed scan, replay states, one domain file or set entry at a time (≤ 64 MiB), and the inventory.
+2. **Aggregate reads:**
+   - Phase A fresh: all segments, the domain twice;
+   - post-boundary retry: all segments, the live domain once (verification) plus the partial tree's existing files once, plus missing copies;
+   - sealed retry: the set once;
+   - Phase B: all segments, plus the set once.
 
-   Phase B also verifies the whole set. No peak-memory bound is claimed.
-2. **Aggregate reads per acknowledgement:**
-   - Phase A reads all segments and the domain twice (hash pass and copy pass);
-   - Phase B reads all segments (as any start does) and the sealed set once, plus a bounded read of `conversation.json`.
-
-   Disk use grows by the set, within §7.4's admission bound.
-3. **Inherited wedges (not changed):**
-   - a persistence failure while a carrier is pending leads to an A1 stop whose acknowledgement is refused (SV023-02);
-   - a post-activation M-6 conflict stops with no resolution;
-   - carrier-temp leftovers in `session/` can accumulate across repeated carrier-write deaths.
-4. **M-6:** `preserved/` is agent-reachable and is a reliability aid, not evidence. The caps are an admission rule, not a quota.
-5. **Not claimed:** real-session acknowledgement, deletion or resumption; kernel or power-loss behaviour (M-2 is simulated); partial-I/O guarantees beyond the existing helpers; numerical replay, segment or read bounds; any other stop or resolution; TC4 widening; H/T/Q/pump/history policy; provider behaviour, merge or deployment.
+   `E` adds one fsync per set file plus ≤ 8 directory fsyncs.
+3. **Capacity** is an admission rule over measured logical sizes, not a quota or a block-allocation bound.
+4. **Inherited fail-closed outcomes:**
+   - a Phase A or Phase B persistence failure leaves FSYNC_FAILED and the session stopped (SV023-02 class);
+   - a post-boundary source change makes this acknowledgement permanently unable to complete; its partial set is kept and counted;
+   - a post-activation M-6 conflict stops;
+   - carrier temps can accumulate.
+5. **M-6:** `preserved/` is agent-reachable and is a reliability aid, not evidence.
+6. **Not claimed:** real-session operation; kernel or power-loss behaviour (M-2 is simulated); any guarantee after an fsync error (E-K2); partial-I/O guarantees beyond the existing helpers; numerical replay, segment or read bounds; any other stop; TC4; H/T/Q/pump/history; provider behaviour, merge or deployment.
 
 ## 16. Questions for Astra
 
-1. Is the sealed four-key preserving context (§5.4), authenticated against the ledger head, an acceptable resolution of carrier-free resumption?
-2. Is the domain (§7.1) the right preservation promise? It covers all of `session/` (excluding `preserved/` and carrier artifacts) plus the named `HANDOFF.md`, and refuses unsupported shapes.
-3. Are the `.partial`, then seal-by-rename, then immutable lifecycle and the owned-scratch cleanup (§7.2) acceptable?
-4. Is the one `SUPPORTED` edit the right capability-pin change?
-5. Are 86 cases in 9 + 4 commands sufficient, including the `PreserveOps` name-loss model?
+1. Is `MANIFEST`-as-inventory, published before any copy and never rewritten, an acceptable durable snapshot boundary (§7.2)?
+2. Does `E` (§7.4), run before every seal and every carrier publication, fully establish reused-entry dependencies?
+3. Is the ownership rule (§7.2) verifiable enough, and is treating pre-existing `.ACKNOWLEDGED.*.tmp` as ordinary evidence acceptable?
+4. Do the exact-delta capacity equation and N19 resolve SV028-07?
+5. Is the identity-keyed `PreserveOps` model (N17) sufficient, and are 103 cases in 10 + 4 commands adequate?
