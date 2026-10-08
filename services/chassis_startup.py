@@ -55,6 +55,26 @@ finishes the ordinary TC0 closure. A carrier whose evidence no longer holds
 stops (`acknowledgement_unverified`) and grants nothing. Nothing here repairs
 a file, chooses an older checkpoint or resets an epoch, lineage, note
 watermark or request identity.
+
+**bootstrap-preserving** (SV-028, W1 only). Admitted only for a witnessed
+`conversation_unreadable_unbound` stop whose records after the newest
+checkpoint are state-neutral. The command (Phase A) admits purely, then
+publishes a sealed inventory of every session file and HANDOFF.md into
+`preserved/<ack_id>.partial/` -- the durable snapshot boundary -- copies each
+file as independent bytes, establishes every file and name dependency of the
+set (E), seals it by renaming it to `preserved/<ack_id>/`, publishes the
+carrier and removes STOPPED. After the boundary a changed source refuses and
+never replaces a copy; only provably owned scratch is ever deleted; a sealed
+set is never modified. The consuming start (Phase B) verifies the sealed set
+and the preserved STOPPED it binds, derives the frozen plan Π (receipt,
+optional spend, one EXTERNAL_DELETE at epoch+1) from the witnessed head
+before applying any owned record, appends only Π's missing continuation,
+fsyncs every owned segment and ledger/ (B3) -- even when it wrote nothing --
+and only then removes the preserved unreadable conversation.json. Lineage,
+request identity, notes, legacy status and originals are carried unchanged;
+the duty sees exactly A12's path. A carrier-free restart under RECOVERING is
+authenticated by the intent's sealed context against the ledger head and
+writes nothing missing.
 """
 
 from __future__ import annotations
@@ -65,6 +85,7 @@ import json
 import os
 import re
 import secrets
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -87,23 +108,26 @@ LINEAGE_ID = re.compile(r"[A-Za-z0-9._:-]{1,64}")  # the chassis's own rule
 SWITCH_TYPES = ("LEGACY_IMPORT", "EXTERNAL_EDIT", "LEGACY_REIMPORT")
 MESSAGE_RECORDS = ("TURN_RESPONSE", "RESPONSE_REFUSED", "DONE", "UNRUN", "SYNTH", "MSG_APPEND", "HISTORY_REPLACED")
 
-# Resolutions this runtime can carry out. The others named by SV-013/v2
-# (bootstrap-preserving; continue-from-bound for a damaged or missing ledger)
-# are refused rather than half-performed: they remain deferred. The
+# The one registry of resolutions this runtime can carry out, each with its
+# mechanism; the sets below are its exact subsets. Every other pair named by
+# SV-013/v2 (bootstrap-preserving for any other stop; continue-from-bound for
+# a damaged or missing ledger) is refused rather than half-performed. The
 # persistence layer's generic resolution names authorize nothing by themselves.
-# SV-023: the two file-repair pairs, each only for a stop with a valid witness
-# whose evidence still verifies (see "Witnessed file-repair resolutions").
-WITNESSED_RESOLUTIONS = {
-    ("conversation_unreadable_unbound", "continue-from-bound"),
-    ("run_json_unreadable", "continue-from-bound"),
+# SV-023: the two witnessed file-repair pairs. SV-028: one bootstrap-preserving
+# pair, only for a witnessed A14 stop over a state-neutral suffix (W1).
+RESOLUTION_MECHANISM = {
+    ("ledger_tail_ambiguous", "continue-conservative"): "tail",
+    ("fsync_failed_previous_run", "continue-from-bound"): "plain",
+    ("corrupt_quarantine_full", "continue-from-bound"): "plain",
+    ("conversation_unreadable_unbound", "continue-from-bound"): "witnessed",
+    ("run_json_unreadable", "continue-from-bound"): "witnessed",
+    ("conversation_unreadable_unbound", "bootstrap-preserving"): "preserving",
 }
-WITNESSED_REASONS = frozenset(reason for reason, _resolution in WITNESSED_RESOLUTIONS)
-IMPLEMENTED_RESOLUTIONS = {
-    ("ledger_tail_ambiguous", "continue-conservative"),
-    ("fsync_failed_previous_run", "continue-from-bound"),
-    ("corrupt_quarantine_full", "continue-from-bound"),
-    *WITNESSED_RESOLUTIONS,
-}
+IMPLEMENTED_RESOLUTIONS = frozenset(RESOLUTION_MECHANISM)
+WITNESSED_RESOLUTIONS = frozenset(pair for pair, mechanism in RESOLUTION_MECHANISM.items() if mechanism == "witnessed")
+PRESERVING_RESOLUTIONS = frozenset(pair for pair, mechanism in RESOLUTION_MECHANISM.items() if mechanism == "preserving")
+STOP_WITNESS_RESOLUTIONS = WITNESSED_RESOLUTIONS | PRESERVING_RESOLUTIONS
+WITNESSED_REASONS = frozenset(reason for reason, _resolution in STOP_WITNESS_RESOLUTIONS)
 
 A14_NOTICE = (
     "[runtime] conversation.json could not be read; it was set aside in corrupt/ and the conversation "
@@ -229,7 +253,9 @@ def _quarantine_file(session_dir: Path, name: str, data: bytes, quarantine: cp.Q
 # ---------------------------------------------------------------------------
 # Acknowledgement (operator capability; tested with temporary data only)
 # ---------------------------------------------------------------------------
-def acknowledge(session_dir: Path, reason: str, resolution: str, *, ops: cp.DurableOps | None = None) -> dict:
+def acknowledge(
+    session_dir: Path, reason: str, resolution: str, *, ops: cp.DurableOps | None = None, home_dir: Path | None = None
+) -> dict:
     """Make the acknowledgement durable, then lift the stop: ACKNOWLEDGED -> (FSYNC_FAILED) -> STOPPED.
 
     A crash before ACKNOWLEDGED is durable changes nothing; after it, STOPPED
@@ -240,13 +266,19 @@ def acknowledge(session_dir: Path, reason: str, resolution: str, *, ops: cp.Dura
     The two witnessed pairs (SV-023) go through `_acknowledge_witnessed`:
     the same order, after a pure verification of the stop's witness against
     the repaired store, with the verified evidence sealed into the carrier.
+    The preserving pair (SV-028) goes through `_acknowledge_preserving`.
+    `home_dir` (for HANDOFF.md) defaults to the chassis's own layout rule,
+    `session_dir = home_dir / "session"` (chassis.py).
     """
     ops = ops or cp.DurableOps()
     session_dir = Path(session_dir)
     if (reason, resolution) not in IMPLEMENTED_RESOLUTIONS:
         raise cp.LedgerError(f"{resolution!r} for {reason!r} is not implemented by this runtime; nothing was changed")
-    if (reason, resolution) in WITNESSED_RESOLUTIONS:
+    mechanism = RESOLUTION_MECHANISM[(reason, resolution)]
+    if mechanism == "witnessed":
         return _acknowledge_witnessed(session_dir, reason, resolution, ops)
+    if mechanism == "preserving":
+        return _acknowledge_preserving(session_dir, reason, resolution, Path(home_dir) if home_dir is not None else session_dir.parent, ops)
     ack = cp.acknowledge_stop(session_dir, reason, resolution, ops=ops)
     stopped = ops.read(str(session_dir / STOPPED), cp.MAX_MARKER_READ)
     ack["ack_id"] = sha256(stopped + f"\n{reason}\n{resolution}".encode())[:32]
@@ -272,7 +304,7 @@ WITNESSED_ENVELOPE_KEYS = frozenset({"witness", "evidence", "check"})
 
 
 def read_carrier(session_dir: Path, ops) -> tuple[str, dict | None, str | None]:
-    """ACKNOWLEDGED classified: ("absent" | "old" | "witnessed" | "invalid", carrier, problem).
+    """ACKNOWLEDGED classified: ("absent" | "old" | "witnessed" | "preserving" | "invalid", carrier, problem).
 
     SV023-01: absence is the only state that grants nothing and stops
     nothing. A present file that cannot be read, or whose types, pair or
@@ -292,6 +324,9 @@ def read_carrier(session_dir: Path, ops) -> tuple[str, dict | None, str | None]:
     if (reason, resolution) in WITNESSED_RESOLUTIONS:
         problem = carrier_problem(carrier)
         return ("invalid", None, problem) if problem else ("witnessed", carrier, None)
+    if (reason, resolution) in PRESERVING_RESOLUTIONS:
+        problem = preserving_carrier_problem(carrier)
+        return ("invalid", None, problem) if problem else ("preserving", carrier, None)
     keys = set(carrier)
     tail = reason == "ledger_tail_ambiguous"
     if keys & WITNESSED_ENVELOPE_KEYS or keys != (OLD_CARRIER_KEYS | ({"tail_sha256"} if tail else set())):
@@ -728,6 +763,867 @@ def _acknowledge_witnessed(session_dir: Path, reason: str, resolution: str, ops)
 
 
 # ---------------------------------------------------------------------------
+# bootstrap-preserving (SV-028 W1; engineering schema, not canonical fields)
+# ---------------------------------------------------------------------------
+PRESERVED = "preserved"
+MANIFEST = "MANIFEST"
+MANIFEST_VERSION = 1
+MANIFEST_READ_MAX = META_READ_MAX  # [CM] the inventory's own read bound
+NEUTRAL_SUFFIX = frozenset({"LEDGER_HEADER", "RUN_END", "GC_INTENT", "GC_DONE"})
+# [CM] Admission bounds over the measured preserved/ namespace (logical sizes):
+# an admission rule, not a filesystem quota.
+PRESERVED_MAX_SETS = 4
+PRESERVED_MAX_FILES = 16_384
+PRESERVED_MAX_BYTES = 512 * 1024 * 1024
+PRESERVED_FILE_MAX = 64 * 1024 * 1024  # = the largest runtime per-file bound (conversation, blob)
+PRESERVED_NAME = re.compile(r"[A-Za-z0-9._:+=@,-]{1,255}")
+SET_NAME = re.compile(r"([0-9a-f]{32})(\.partial)?")
+SESSION_SUBDIRS = ("ledger", "blobs", "corrupt")
+SET_DIRS = ("session/ledger", "session/blobs", "session/corrupt", "session", "home")  # leaves first
+OWNED_TEMP = re.compile(r"\.(.+)\.[0-9a-f]{16}\.tmp")  # write_bytes_durable's temp name for <B>
+EVIDENCE_KEYS = frozenset(
+    {"witness_check", "manifest_sha256", "conv_sha256", "conv_bytes", "run_sha256", "state_sha256", "suffix", "continuation_sha256", "epoch"}
+)
+MANIFEST_KEYS = frozenset(
+    {"version", "ack_id", "reason", "resolution", "stop_sha256", "stop_id", "witness_check", "lineage_id", "entries", "totals", "check"}
+)
+
+
+def _canonical(value) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _suffix_problem(records) -> str | None:
+    """Why the records after the newest checkpoint are not state-neutral (W1), or None."""
+    for record in records:
+        if record.type_name not in NEUTRAL_SUFFIX:
+            return f"{record.type_name} at seq {record.seq}"
+    return None
+
+
+def _source(session_dir: Path, home_dir: Path, rel: str) -> Path:
+    return home_dir / "HANDOFF.md" if rel == "home/HANDOFF.md" else session_dir / rel[len("session/"):]
+
+
+def _entry_problem(path) -> str | None:
+    if not isinstance(path, str):
+        return "path"
+    if path == "home/HANDOFF.md":
+        return None
+    for prefix in ("session/ledger/", "session/blobs/", "session/corrupt/", "session/"):
+        if path.startswith(prefix):
+            name = path[len(prefix):]
+            return None if PRESERVED_NAME.fullmatch(name) and name not in (".", "..") else "path"
+    return "path"
+
+
+def preservation_domain(session_dir: Path, home_dir: Path) -> list[tuple[str, Path]]:
+    """(inventory path, source) for every admitted pre-resolution file, sorted. Pure; refuses unsupported shapes.
+
+    Every regular file of session/ (top level, ledger/, blobs/, corrupt/) and
+    the one named HANDOFF.md. preserved/ is counted for capacity, never copied.
+    No name is excluded: a temp-shaped name proves nothing about who wrote it.
+    """
+    found: list[tuple[str, Path]] = []
+
+    def add(rel: str, path: Path) -> None:
+        found.append((rel, path))
+        if len(found) > PRESERVED_MAX_FILES:
+            _refuse("preserved_capacity:files: the session holds more files than one preserved set may")
+
+    def mode_of(path: Path) -> int:
+        try:
+            return os.lstat(path).st_mode
+        except OSError as error:
+            _refuse(f"preservation_unsupported_shape: {path.name} cannot be inspected ({type(error).__name__})")
+
+    def named(name: str, where: str) -> None:
+        if not (PRESERVED_NAME.fullmatch(name) and name not in (".", "..")):
+            _refuse(f"preservation_unsupported_name: {where}{name!r}")
+
+    for name in sorted(os.listdir(session_dir)):
+        path = session_dir / name
+        mode = mode_of(path)
+        if name == PRESERVED:
+            if not stat.S_ISDIR(mode):
+                _refuse("preservation_unsupported_shape: preserved is not a directory")
+            continue
+        named(name, "")
+        if name in SESSION_SUBDIRS:
+            if not stat.S_ISDIR(mode):
+                _refuse(f"preservation_unsupported_shape: {name} is not a directory")
+            for child in sorted(os.listdir(path)):
+                named(child, f"{name}/")
+                if not stat.S_ISREG(mode_of(path / child)):
+                    _refuse(f"preservation_unsupported_shape: {name}/{child} is not a regular file")
+                add(f"session/{name}/{child}", path / child)
+        elif stat.S_ISREG(mode):
+            add(f"session/{name}", path)
+        else:
+            _refuse(f"preservation_unsupported_shape: {name} is not a regular file")
+    handoff = home_dir / "HANDOFF.md"
+    try:
+        mode = os.lstat(handoff).st_mode
+    except FileNotFoundError:
+        mode = None
+    if mode is not None:
+        if not stat.S_ISREG(mode):
+            _refuse("preservation_unsupported_shape: HANDOFF.md is not a regular file")
+        add("home/HANDOFF.md", handoff)
+    return sorted(found)
+
+
+def _read_source(ops, path: Path, rel: str, limit: int) -> bytes:
+    try:
+        return ops.read(str(path), limit)
+    except cp.ReadTooLarge:
+        _refuse(f"preserved_file_too_large: {rel} is over {limit} bytes")
+    except FileNotFoundError:
+        _refuse(f"preserved_source_missing: {rel} is gone")
+    except OSError as error:
+        _refuse(f"preservation_unsupported_shape: {rel} cannot be read ({type(error).__name__})")
+
+
+def _inventory(domain, ops) -> list[dict]:
+    """Read #1: the size and hash of every admitted file, one file at a time."""
+    entries = []
+    for rel, path in domain:
+        data = _read_source(ops, path, rel, PRESERVED_FILE_MAX)
+        entries.append({"path": rel, "bytes": len(data), "sha256": sha256(data)})
+    return entries
+
+
+def _stop_binding(stopped: bytes, witness: dict, reason: str, resolution: str, ack_id: str) -> dict:
+    return {
+        "ack_id": ack_id, "reason": reason, "resolution": resolution, "stop_sha256": sha256(stopped),
+        "stop_id": witness["stop_id"], "witness_check": witness["check"], "lineage_id": witness["lineage_id"],
+    }
+
+
+def _manifest(binding: dict, entries: list) -> bytes:
+    body = {
+        "version": MANIFEST_VERSION, **binding, "entries": entries,
+        "totals": {"files": len(entries), "bytes": sum(entry["bytes"] for entry in entries)},
+    }
+    return _canonical(_sealed(body))
+
+
+def manifest_problem(data: bytes, binding: dict | None) -> tuple[str | None, dict | None]:
+    """(why the bytes are not a valid sealed inventory for `binding`, or None; the inventory)."""
+    try:
+        value = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        return "json", None
+    if not isinstance(value, dict) or set(value) != MANIFEST_KEYS:
+        return "keys", None
+    try:
+        if _canonical(value) != data:
+            return "canonical", None
+    except (TypeError, ValueError):
+        return "canonical", None
+    if not _check_ok(value):
+        return "check", None
+    if value["version"] != MANIFEST_VERSION:
+        return "version", None
+    if binding is not None:
+        for key, item in binding.items():
+            if value[key] != item:
+                return f"binding {key}", None
+    entries = value["entries"]
+    if not isinstance(entries, list) or not entries:
+        return "entries", None
+    paths = []
+    for entry in entries:
+        if not (isinstance(entry, dict) and set(entry) == {"path", "bytes", "sha256"}):
+            return "entry keys", None
+        if _entry_problem(entry["path"]) or not rp.counter(entry["bytes"]) or not rp.is_hex64(entry["sha256"]):
+            return "entry", None
+        paths.append(entry["path"])
+    if paths != sorted(set(paths)):
+        return "entry order", None
+    if value["totals"] != {"files": len(entries), "bytes": sum(entry["bytes"] for entry in entries)}:
+        return "totals", None
+    return None, value
+
+
+def _read_manifest(set_dir: Path, ops, token: str) -> bytes:
+    try:
+        return ops.read(str(set_dir / MANIFEST), MANIFEST_READ_MAX)
+    except cp.ReadTooLarge:
+        _refuse(f"{token}: the inventory is over its read bound")
+    except OSError as error:
+        _refuse(f"{token}: the inventory cannot be read ({type(error).__name__})")
+
+
+def _set_files(set_dir: Path) -> list[str]:
+    """Every regular file of one set, by path inside it. Pure; any other shape refuses."""
+    files: list[str] = []
+    allowed = set(SET_DIRS)
+
+    def walk(rel: str) -> None:
+        directory = set_dir / rel if rel else set_dir
+        for name in sorted(os.listdir(directory)):
+            child = f"{rel}/{name}" if rel else name
+            mode = os.lstat(directory / name).st_mode
+            if stat.S_ISDIR(mode) and child in allowed:
+                walk(child)
+            elif stat.S_ISREG(mode):
+                files.append(child)
+                if len(files) > 2 * PRESERVED_MAX_FILES:
+                    _refuse("preserved_capacity:files: the preserved namespace is over its listing bound")
+            else:
+                _refuse(f"preservation_unsupported_shape: preserved set entry {child}")
+
+    walk("")
+    return files
+
+
+@dataclass(frozen=True)
+class PreservedUsage:
+    files: int
+    bytes: int
+    sets: frozenset
+
+
+def preserved_usage(preserved: Path) -> PreservedUsage:
+    """The measured usage U of all of preserved/ (every set, sealed or unfinished, temps included). Pure."""
+    if not os.path.lexists(preserved):
+        return PreservedUsage(0, 0, frozenset())
+    if not stat.S_ISDIR(os.lstat(preserved).st_mode):
+        _refuse("preservation_unsupported_shape: preserved is not a directory")
+    files = total = 0
+    sets = set()
+    for name in sorted(os.listdir(preserved)):
+        match = SET_NAME.fullmatch(name)
+        if not match or not stat.S_ISDIR(os.lstat(preserved / name).st_mode):
+            _refuse(f"preservation_unsupported_shape: preserved/{name} is not a preserved set")
+        sets.add(match.group(1))
+        for rel in _set_files(preserved / name):
+            files += 1
+            total += os.lstat(preserved / name / rel).st_size
+            if files > 2 * PRESERVED_MAX_FILES:
+                _refuse("preserved_capacity:files: the preserved namespace is over its listing bound")
+    return PreservedUsage(files, total, frozenset(sets))
+
+
+def _lifecycle(preserved: Path, ack_id: str) -> str:
+    """none | pre (unfinished, no inventory) | post (unfinished, inventory published) | sealed."""
+    sealed, partial = preserved / ack_id, preserved / f"{ack_id}.partial"
+    if os.path.lexists(sealed) and os.path.lexists(partial):
+        _refuse("preserved_set_mismatch: both the sealed and the unfinished own set exist; both are kept untouched")
+    if os.path.lexists(sealed):
+        return "sealed"
+    if not os.path.lexists(partial):
+        return "none"
+    return "post" if os.path.lexists(partial / MANIFEST) else "pre"
+
+
+def _pre_boundary_scratch(partial: Path) -> list[tuple[str, int]]:
+    """Before the inventory exists the only owned files are MANIFEST temps; anything else refuses."""
+    found = []
+    for name in sorted(os.listdir(partial)):
+        status = os.lstat(partial / name)
+        match = OWNED_TEMP.fullmatch(name)
+        if not (stat.S_ISREG(status.st_mode) and match and match.group(1) == MANIFEST):
+            _refuse("preserved_inventory_missing: the unfinished own set holds files but no inventory; it is kept untouched")
+        found.append((name, status.st_size))
+    return found
+
+
+def _verify_sources(session_dir: Path, home_dir: Path, entries: list, ops) -> None:
+    """After the boundary the live domain must be the inventory, byte for byte (missing first, then added, then changed)."""
+    for entry in entries:
+        if not os.path.lexists(_source(session_dir, home_dir, entry["path"])):
+            _refuse(f"preserved_source_missing: {entry['path']} is gone; the inventory and copies are kept")
+    added = {rel for rel, _path in preservation_domain(session_dir, home_dir)} - {entry["path"] for entry in entries}
+    if added:
+        _refuse(f"preserved_domain_changed: {sorted(added)[:3]} appeared after the inventory; nothing is replaced")
+    for entry in entries:
+        data = _read_source(ops, _source(session_dir, home_dir, entry["path"]), entry["path"], PRESERVED_FILE_MAX)
+        if len(data) != entry["bytes"] or sha256(data) != entry["sha256"]:
+            _refuse(f"preserved_source_changed: {entry['path']} no longer has its inventoried bytes; its copy is kept")
+
+
+def _classify_partial(partial: Path, entries: list, ops) -> tuple[list, list]:
+    """(owned deletions [(path, size)], entries still to copy). Pure; unowned files refuse.
+
+    Called only after every live source verified: a deleted destination or
+    copy temp is therefore never the sole preserved original.
+    """
+    dests = {entry["path"]: entry for entry in entries}
+    present, deletions = set(), []
+    for rel in _set_files(partial):
+        if rel == MANIFEST:
+            continue
+        size = os.lstat(partial / rel).st_size
+        if rel in dests:
+            entry = dests[rel]
+            try:
+                data = ops.read(str(partial / rel), entry["bytes"])
+            except OSError:
+                data = None
+            if data is not None and len(data) == entry["bytes"] and sha256(data) == entry["sha256"]:
+                present.add(rel)
+            else:
+                deletions.append((rel, size))
+            continue
+        parent, _sep, name = rel.rpartition("/")
+        match = OWNED_TEMP.fullmatch(name)
+        base = match.group(1) if match else None
+        if match and ((not parent and base == MANIFEST) or (parent and f"{parent}/{base}" in dests)):
+            deletions.append((rel, size))
+            continue
+        _refuse(f"preserved_scratch_unowned: {rel} is not this transaction's scratch; it is kept untouched")
+    return deletions, [entry for entry in entries if entry["path"] not in present]
+
+
+def _verify_set(set_dir: Path, entries: list, ops, token: str) -> None:
+    files = set(_set_files(set_dir))
+    expected = {MANIFEST, *(entry["path"] for entry in entries)}
+    if files != expected:
+        _refuse(f"{token}: the set's files are not its inventory ({sorted(files ^ expected)[:3]})")
+    for entry in entries:
+        try:
+            data = ops.read(str(set_dir / entry["path"]), entry["bytes"])
+        except OSError:
+            data = None
+        if data is None or len(data) != entry["bytes"] or sha256(data) != entry["sha256"]:
+            _refuse(f"{token}:{entry['path']}: preserved bytes differ")
+
+
+def _ensure_dir(path: Path, parent: Path, ops) -> None:
+    """mkdir if absent; the parent's fsync runs whether or not it existed (SV020-01)."""
+    if not path.is_dir():
+        ops.mkdir(str(path))
+    ops.sync_dir(str(parent))
+
+
+def _ensure_subdirs(set_dir: Path, entries: list, ops) -> None:
+    needed = set()
+    for entry in entries:
+        parts = entry["path"].split("/")[:-1]
+        for end in range(1, len(parts) + 1):
+            needed.add("/".join(parts[:end]))
+    for rel in ("session", "home", "session/ledger", "session/blobs", "session/corrupt"):
+        if rel in needed:
+            _ensure_dir(set_dir / rel, (set_dir / rel).parent, ops)
+
+
+def _write_copy(source: Path, dest: Path, data: bytes, ops) -> None:
+    """One independent copy from bytes read now (never a link): temp, fsync, rename, directory fsync."""
+    cp.write_bytes_durable(dest, data, ops=ops)
+
+
+def _copy_entry(session_dir: Path, home_dir: Path, set_dir: Path, entry: dict, ops) -> None:
+    source = _source(session_dir, home_dir, entry["path"])
+    data = _read_source(ops, source, entry["path"], PRESERVED_FILE_MAX)  # read #2
+    if len(data) != entry["bytes"] or sha256(data) != entry["sha256"]:
+        _refuse(f"preserved_source_changed: {entry['path']} changed after the inventory; the inventory and earlier copies are kept")
+    _write_copy(source, set_dir / entry["path"], data, ops)
+
+
+def _fsync_file(path: Path, ops) -> None:
+    fd = ops.open(str(path), os.O_RDONLY | os.O_CLOEXEC)
+    try:
+        ops.fsync(fd)
+    finally:
+        with contextlib.suppress(OSError):
+            ops.close(fd)
+
+
+def _establish_inventory(partial: Path, session_dir: Path, ops) -> None:
+    """L1: a readable inherited inventory is made durable with its names before any further archive mutation."""
+    _fsync_file(partial / MANIFEST, ops)
+    ops.sync_dir(str(partial))
+    ops.sync_dir(str(partial.parent))
+    ops.sync_dir(str(session_dir))
+
+
+def _establish_set(set_dir: Path, entries: list, session_dir: Path, ops) -> None:
+    """E (SV028-06): every set file's data, every set directory leaves first, then preserved/ and session/.
+
+    Covers reused copies as well as new ones: a final name may be readable
+    while its writer's leaf fence never returned. Allocates nothing.
+    """
+    for rel in (MANIFEST, *(entry["path"] for entry in entries)):
+        _fsync_file(set_dir / rel, ops)
+    for rel in SET_DIRS:
+        if (set_dir / rel).is_dir():
+            ops.sync_dir(str(set_dir / rel))
+    ops.sync_dir(str(set_dir))
+    ops.sync_dir(str(set_dir.parent))
+    ops.sync_dir(str(session_dir))
+
+
+@dataclass
+class _Head:
+    lineage: str
+    scan: cp.LedgerScan
+    head: tuple
+    after: list
+    newest: cp.Record
+    state0: SessionState
+    suffix: list  # head records after the newest checkpoint's covers_seq: C_n itself and the neutral records
+    read_blob: object
+
+
+def _preserving_head(session_dir: Path, witness: dict, ops, *, owned: bool) -> _Head:
+    """The witnessed facts, unchanged (P3–P8). `owned`: records and a tail after the witnessed end may exist."""
+    lineage, ledger, wanted = witness["lineage_id"], witness["ledger"], witness["checkpoint"]
+    try:
+        segments = cp.read_segments(session_dir / "ledger", ops=ops) if (session_dir / "ledger").is_dir() else []
+    except OSError as error:
+        _refuse(f"ledger_not_witnessed: the ledger cannot be read ({type(error).__name__})")
+    if _segment_lineage(segments) != lineage:
+        _refuse("ledger_not_witnessed: the ledger is not the witnessed lineage's")
+    scan = cp.scan_segments(segments, lineage)
+    if scan.stop:
+        _refuse("ledger_not_witnessed: the ledger is damaged")
+    head = tuple(record for record in scan.records if record.seq <= ledger["last_seq"])
+    after = [record for record in scan.records if record.seq > ledger["last_seq"]]
+    anchor = (head[0].seq, head[-1].seq, head[-1].chain, head[-1].segment) if head else None
+    if anchor != (ledger["first_seq"], ledger["last_seq"], ledger["last_chain"], ledger["last_segment"]):
+        _refuse("ledger_not_witnessed: the ledger is not the witnessed ledger")
+    if not owned and (after or scan.tail):
+        _refuse("ledger_not_witnessed: records or bytes follow the witnessed end")
+    if not after and not scan.tail and (scan.tail_segment, scan.tail_offset) != (ledger["end_segment"], ledger["end_offset"]):
+        _refuse("ledger_not_witnessed: the ledger does not end where the witness says")
+    try:
+        if gc.unauthorized_prefix(head) is not None:
+            _refuse("collection_pending_or_unauthorized: segments below the ledger are missing")
+        if gc.pending_intent(head) is not None:
+            _refuse("collection_pending_or_unauthorized: a collection is pending")
+    except gc.GCRefused as refusal:
+        _refuse(f"collection_pending_or_unauthorized: {refusal.reason}")
+    if read_identity(session_dir, lineage, ops) != witness["identity_reserved"]:
+        _refuse("identity_not_witnessed: IDENTITY is not the witnessed reservation")
+    checkpoints = [record for record in head if record.type_name == "CHECKPOINT"]
+    newest = checkpoints[-1] if checkpoints else None
+    if newest is None or {**checkpoint_tuple(newest), "chain": newest.chain, "run_sha256": newest.payload["run_sha256"]} != wanted:
+        _refuse("checkpoint_not_witnessed: the newest checkpoint is not the witnessed one")
+    try:
+        state0 = SessionState.from_wire(newest.payload["state"])
+    except rp.StateError as error:
+        _refuse(f"checkpoint_not_witnessed: its state is invalid ({str(error)[:200]})")
+    blobs = cp.BlobStore(session_dir / "blobs", ops=ops)
+    read_blob = lambda sha: blobs.get(sha, BLOB_READ_MAX)  # noqa: E731
+    if any(read_blob(sha) is None for sha in state0.blobs_live()):
+        _refuse("state_blob_missing: a blob the checkpoint state needs is missing or damaged")
+    problem = _suffix_problem([record for record in head if record.seq > newest.seq])
+    if problem:
+        _refuse(f"suffix_not_neutral: {problem} follows the newest checkpoint")
+    status, run_bytes = _read(ops, session_dir / "run.json", META_READ_MAX)
+    if status != "ok" or sha256(run_bytes) != wanted["run_sha256"]:
+        _refuse("run_json_not_witnessed: run.json is not the metadata the newest checkpoint recorded")
+    try:
+        meta = json.loads(run_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        meta = None
+    recorded = meta.get("checkpoint") if isinstance(meta, dict) else None
+    if not (
+        isinstance(recorded, dict)
+        and meta.get("format") == 2
+        and meta.get("lineage_id") == lineage
+        and recorded.get("covers_seq") == wanted["covers_seq"]
+        and recorded.get("conv") == {"sha256": wanted["conv_sha256"], "bytes": wanted["conv_bytes"]}
+    ):
+        _refuse("run_json_not_witnessed: run.json does not agree with the newest checkpoint")
+    suffix = [record for record in head if record.seq > newest.payload["covers_seq"]]
+    return _Head(lineage, scan, head, after, newest, state0, suffix, read_blob)
+
+
+def _previous_base_problem(session_dir: Path, h: _Head, conv_data: bytes | None, ops) -> str | None:
+    """P10: no file holds C_n's bytes and C_n's own previous base is not available (A14-unbound still holds)."""
+    newest_sha = h.newest.payload["conv"]["sha256"]
+    prev = read_conversation(session_dir / "conversation.prev.json", ops)
+    if (conv_data is not None and sha256(conv_data) == newest_sha) or (prev.status == "ok" and prev.sha == newest_sha):
+        return "a file holds the newest checkpoint's bytes"
+    info = h.newest.payload["prev"]
+    if info and prev.status == "ok" and prev.sha == info["conv_sha256"] and any(
+        record.seq == info["checkpoint_seq"] and record.type_name == "CHECKPOINT" for record in h.head
+    ):
+        return "the newest checkpoint's previous base is available"
+    return None
+
+
+def _still_unbound(session_dir: Path, h: _Head, ops) -> bytes:
+    """P9/P10: the live conversation is present, regular, within its bound, unreadable as a list, and still unbound."""
+    path = session_dir / "conversation.json"
+    try:
+        mode = os.lstat(path).st_mode
+    except FileNotFoundError:
+        _refuse("conversation_absent: the ordinary start is A12; no acknowledgement is needed")
+    if not stat.S_ISREG(mode):
+        _refuse("preservation_unsupported_shape: conversation.json is not a regular file")
+    try:
+        data = ops.read(str(path), CONVERSATION_READ_MAX)
+    except cp.ReadTooLarge:
+        _refuse("conversation_over_bound: conversation.json cannot be preserved under its read bound")
+    except OSError as error:
+        _refuse(f"conversation_over_bound: conversation.json cannot be read ({type(error).__name__})")
+    if parse_messages(data) is not None:
+        _refuse("conversation_readable: the stop no longer holds; start normally")
+    problem = _previous_base_problem(session_dir, h, data, ops)
+    if problem:
+        _refuse(f"previous_base_available: {problem}")
+    return data
+
+
+def preserving_continuation(newest, suffix, head, *, lineage, ack_id, manifest_sha256, read_blob, identity_reserved=None):
+    """(C_n's state, the frozen continuation [spend?, activation]) from the witnessed head alone (SV028-02).
+
+    Derived once, before any owned record is applied: applying a readable
+    spend would change the very state the spend is derived from.
+    """
+    state0 = SessionState.from_wire(newest.payload["state"])
+    replay = Replay([], state0.copy(), read_blob)
+    for record in suffix:
+        replay.apply(record)
+    last = head[-1]
+    scan_h = cp.LedgerScan(tuple(head), last.seq, last.chain, b"", last.segment, last.offset + last.length)
+    tail0 = cp.classify_tail(scan_h)
+    plan0 = cp.plan_recovery(scan_h, tail0, read_blob=read_blob)
+    if plan0.action != "continue" or tail0.kind != "TC0" or replay.group is not None:
+        raise ReplayMismatch("the witnessed head does not continue as TC0 at a unit boundary")
+    spend = derive_core(replay, plan0, tail0, scan_h, None, lineage, identity_reserved=identity_reserved)
+    if spend and not (len(spend) == 1 and spend[0][0] == "RECOVERY" and spend[0][1]["kind"] == "possible_duplicate_spend"):
+        raise ReplayMismatch("the witnessed head needs a closure the preserving plan does not carry")
+    activation = (
+        "EXTERNAL_DELETE",
+        {"epoch": replay.state.history_epoch + 1, "notices": [], "cause": "bootstrap_preserving", "ack_id": ack_id, "manifest_sha256": manifest_sha256},
+    )
+    return state0, [*spend, activation]
+
+
+def preserving_evidence(witness, manifest_sha256, conv_entry, newest, state0, suffix_types, continuation) -> dict:
+    return {
+        "witness_check": witness["check"],
+        "manifest_sha256": manifest_sha256,
+        "conv_sha256": conv_entry["sha256"],
+        "conv_bytes": conv_entry["bytes"],
+        "run_sha256": newest.payload["run_sha256"],
+        "state_sha256": sha256(cp.canonical_body(state0.to_wire(next_seq=witness["ledger"]["last_seq"] + 1))),
+        "suffix": {"count": len(suffix_types), "types_sha256": sha256(cp.canonical_body({"types": suffix_types}))},
+        "continuation_sha256": _continuation_sha(continuation),
+        "epoch": continuation[-1][1]["epoch"],
+    }
+
+
+def _continuation_sha(continuation) -> str:
+    return sha256(cp.canonical_body({"continuation": [[name, payload] for name, payload in continuation]}))
+
+
+def _suffix_types(h: _Head) -> list[str]:
+    return [record.type_name for record in h.head if record.seq > h.newest.seq]
+
+
+def preserving_evidence_problem(evidence) -> str | None:
+    if not isinstance(evidence, dict) or set(evidence) != EVIDENCE_KEYS:
+        return "evidence keys"
+    for key in ("witness_check", "manifest_sha256", "conv_sha256", "run_sha256", "state_sha256", "continuation_sha256"):
+        if not rp.is_hex64(evidence[key]):
+            return f"evidence {key}"
+    if not (rp.counter(evidence["conv_bytes"]) and rp.counter(evidence["epoch"], minimum=2)):
+        return "evidence counters"
+    suffix = evidence["suffix"]
+    if not (isinstance(suffix, dict) and set(suffix) == {"count", "types_sha256"} and rp.counter(suffix["count"]) and rp.is_hex64(suffix["types_sha256"])):
+        return "evidence suffix"
+    return None
+
+
+def preserving_carrier_problem(carrier) -> str | None:
+    """Why ACKNOWLEDGED's content is not a sealed preserving carrier, or None."""
+    if not isinstance(carrier, dict) or set(carrier) != CARRIER_KEYS:
+        return "keys"
+    if not _check_ok(carrier):
+        return "check"
+    if (carrier["reason"], carrier["resolution"]) not in PRESERVING_RESOLUTIONS:
+        return "pair"
+    if not (isinstance(carrier["ack_id"], str) and HEX32.fullmatch(carrier["ack_id"])):
+        return "ack_id"
+    problem = witness_problem(carrier["witness"], carrier["reason"])
+    if problem:
+        return f"witness {problem}"
+    problem = preserving_evidence_problem(carrier["evidence"])
+    if problem:
+        return problem
+    if carrier["evidence"]["witness_check"] != carrier["witness"]["check"]:
+        return "evidence"
+    return None
+
+
+def _preflight(carrier: dict, receipt: dict, witness: dict, plan_len: int, epoch: int) -> None:
+    """P14: counter domains and the exact serialized carrier and maximal RECOVERING, before any write."""
+    if epoch > rp.MAX_COUNTER or witness["ledger"]["last_seq"] + plan_len + 3 > cp.MAX_SEQ:
+        _refuse("plan_out_of_domain: the epoch or sequence would leave its 12-digit domain")
+    if len(json.dumps(carrier, sort_keys=True).encode()) > cp.MAX_MARKER_READ:
+        _refuse("carrier_too_large: the carrier would exceed its reader's bound")
+    context = {"ack_id": carrier["ack_id"], "receipt": receipt, "after_seq": witness["ledger"]["last_seq"], "evidence": carrier["evidence"]}
+    maximal = _sealed_intent({
+        "lineage_id": witness["lineage_id"], "last_seq": cp.MAX_SEQ, "chain": "f" * 64, "segment": cp.MAX_SEGMENT_NO,
+        "offset": 10**12 - 1, "tail_sha256": "f" * 64, "tail_bytes": 10**12 - 1, "ack": None,
+        "identity_reserved": rp.MAX_COUNTER, "witnessed": context,
+    })
+    if len(json.dumps(maximal, sort_keys=True).encode()) > cp.MAX_MARKER_READ:
+        _refuse("recovery_context_too_large: a recovery intent for this transaction would exceed its reader's bound")
+
+
+def _acknowledge_preserving(session_dir: Path, reason: str, resolution: str, home_dir: Path, ops) -> dict:
+    """SV-028 Phase A: admission (pure) -> durable inventory -> copies -> E -> seal -> carrier -> STOPPED's removal.
+
+    Every refusal in admission happens before any write. After the inventory
+    is published (the durable boundary) a later refusal leaves the inventory
+    and the copies made so far for diagnosis; it never rolls anything back.
+    A persistence failure attempts the best-effort FSYNC_FAILED marker and
+    stops the transaction where it is: completed renames and unlinks stay.
+    Phase A never touches the live conversation.
+    """
+    status, stopped = _read(ops, session_dir / STOPPED, cp.MAX_MARKER_READ)
+    held_kind, held, _problem = read_carrier(session_dir, ops)
+    if status == "absent" and held_kind == "preserving" and (held["reason"], held["resolution"]) == (reason, resolution):
+        _fence_session(session_dir, ops)
+        return held
+    cp.acknowledge_stop(session_dir, reason, resolution, ops=ops)  # STOPPED readable, this reason: else LedgerError
+    detail = json.loads(stopped.decode("utf-8")).get("detail")
+    witness = detail.get("witness") if isinstance(detail, dict) else None
+    problem = witness_problem(witness, reason)
+    if problem:
+        _refuse(f"the {reason} stop carries no valid witness ({problem}); a stop without one is not eligible")
+    ack_id = sha256(stopped + f"\n{reason}\n{resolution}".encode())[:32]
+    if held_kind != "absent" and not (held_kind == "preserving" and held["ack_id"] == ack_id):
+        _refuse("another acknowledgement is pending and is never replaced; it keeps its transaction")
+    for name in (RECOVERING, FSYNC_FAILED):
+        if os.path.lexists(session_dir / name):
+            _refuse(f"transaction_open: {name} is present and is resolved first")
+    h = _preserving_head(session_dir, witness, ops, owned=False)
+    conv_data = _still_unbound(session_dir, h, ops)
+    binding = _stop_binding(stopped, witness, reason, resolution, ack_id)
+    preserved = session_dir / PRESERVED
+    sealed, partial = preserved / ack_id, preserved / f"{ack_id}.partial"
+    usage = preserved_usage(preserved)
+    state = _lifecycle(preserved, ack_id)
+    if held_kind == "preserving" and state != "sealed":
+        _refuse("preserved_set_mismatch: a carrier is held but its set is not sealed")
+    deletions: list = []
+    writes: list = []
+    manifest_new = None
+    if state == "sealed":
+        data = _read_manifest(sealed, ops, "preserved_set_mismatch")
+        problem, manifest = manifest_problem(data, binding)
+        if problem:
+            _refuse(f"preserved_set_mismatch: the sealed inventory is not valid ({problem}); it is kept untouched")
+        entries = manifest["entries"]
+        _verify_set(sealed, entries, ops, "preserved_set_mismatch")
+    elif state == "post":
+        data = _read_manifest(partial, ops, "preserved_inventory_invalid")
+        problem, manifest = manifest_problem(data, binding)
+        if problem:
+            _refuse(f"preserved_inventory_invalid: {problem}; the unfinished set is kept untouched")
+        entries = manifest["entries"]
+        _verify_sources(session_dir, home_dir, entries, ops)
+        deletions, writes = _classify_partial(partial, entries, ops)
+    else:
+        if state == "pre":
+            deletions = _pre_boundary_scratch(partial)
+        entries = _inventory(preservation_domain(session_dir, home_dir), ops)
+        data = _manifest(binding, entries)
+        if len(data) > MANIFEST_READ_MAX:
+            _refuse(f"preserved_manifest_too_large: the inventory is {len(data)} bytes, over its read bound {MANIFEST_READ_MAX}")
+        manifest_new, writes = data, entries
+    conv_entry = next((entry for entry in entries if entry["path"] == "session/conversation.json"), None)
+    if conv_entry is None or (conv_entry["bytes"], conv_entry["sha256"]) != (len(conv_data), sha256(conv_data)):
+        _refuse("preserved_source_changed: the live conversation is not the inventoried one")
+    manifest_sha = sha256(data)
+    try:
+        state0, continuation = preserving_continuation(
+            h.newest, h.suffix, h.head, lineage=h.lineage, ack_id=ack_id, manifest_sha256=manifest_sha,
+            read_blob=h.read_blob, identity_reserved=witness["identity_reserved"],
+        )
+    except (ReplayMismatch, rp.StateError) as error:
+        _refuse(f"plan_unexpected: {str(error)[:200]}")
+    evidence = preserving_evidence(witness, manifest_sha, conv_entry, h.newest, state0, _suffix_types(h), continuation)
+    carrier = _sealed({"reason": reason, "resolution": resolution, "ack_id": ack_id, "witness": witness, "evidence": evidence})
+    receipt = receipt_payload(carrier)
+    _preflight(carrier, receipt, witness, len(continuation) + 1, continuation[-1][1]["epoch"])
+    if held_kind == "preserving" and held != carrier:
+        _refuse("the pending acknowledgement of this stop was made on other evidence")
+    # P13 on every branch (L4): F = U - D + A; deletions precede allocations, so F is the allocation peak.
+    final_files = usage.files - len(deletions) + len(writes) + (1 if manifest_new is not None else 0)
+    final_bytes = usage.bytes - sum(size for _rel, size in deletions) + sum(entry["bytes"] for entry in writes) + len(manifest_new or b"")
+    if len(usage.sets | {ack_id}) > PRESERVED_MAX_SETS:
+        _refuse(f"preserved_capacity:sets: {len(usage.sets | {ack_id})} sets would exceed {PRESERVED_MAX_SETS}")
+    if final_files > PRESERVED_MAX_FILES:
+        _refuse(f"preserved_capacity:files: {final_files} files would exceed {PRESERVED_MAX_FILES}")
+    if final_bytes > PRESERVED_MAX_BYTES:
+        _refuse(f"preserved_capacity:bytes: {final_bytes} bytes would exceed {PRESERVED_MAX_BYTES}")
+    try:
+        if state == "sealed":
+            _establish_set(sealed, entries, session_dir, ops)
+        else:
+            if state == "post":
+                _establish_inventory(partial, session_dir, ops)  # L1: before any cleanup, child mkdir or copy
+            touched = set()
+            for rel, _size in deletions:
+                ops.unlink(str(partial / rel))
+                touched.add((partial / rel).parent)
+            for directory in sorted(touched, key=lambda path: len(path.parts), reverse=True):
+                ops.sync_dir(str(directory))
+            if manifest_new is not None:
+                _ensure_dir(preserved, session_dir, ops)
+                _ensure_dir(partial, preserved, ops)
+                cp.write_bytes_durable(partial / MANIFEST, manifest_new, ops=ops)  # the durable inventory boundary
+            _ensure_subdirs(partial, entries, ops)
+            for entry in writes:
+                _copy_entry(session_dir, home_dir, partial, entry, ops)
+            _establish_set(partial, entries, session_dir, ops)
+            ops.rename(str(partial), str(sealed))
+            ops.sync_dir(str(preserved))
+        if held_kind != "preserving":
+            cp.write_bytes_durable(session_dir / ACKNOWLEDGED, json.dumps(carrier, sort_keys=True).encode(), ops=ops)
+        cp.clear_stop(session_dir, ops=ops)
+    except OSError as error:
+        cp.mark_fsync_failed(session_dir, f"bootstrap-preserving: {type(error).__name__}: {error}", ops=ops)
+        raise cp.PersistenceFailure(f"the preservation could not be made durable: {type(error).__name__}: {error}") from error
+    return carrier
+
+
+@dataclass(frozen=True)
+class Preserving:
+    plan: tuple  # Π: receipt, spend?, activation -- frozen from the witnessed head
+    evidence: dict
+    receipt: dict
+    witness_end: int
+    witness_segment: int
+    state0: SessionState
+    newest: cp.Record
+    carrier: dict | None  # None on the carrier-free route
+    written: tuple = ()
+
+
+def preserving_verification(session_dir: Path, carrier: dict, ops) -> Preserving:
+    """Phase B's B0 (pure): the sealed set, the preserved stop's binding (L2), the witnessed head, Π, the owned prefix.
+
+    Live STOPPED was removed by Phase A on purpose; the stop is bound through
+    its preserved copy. Raises AcknowledgementRefused.
+    """
+    witness, evidence, ack_id = carrier["witness"], carrier["evidence"], carrier["ack_id"]
+    reason, resolution = carrier["reason"], carrier["resolution"]
+    preserved = session_dir / PRESERVED
+    sealed = preserved / ack_id
+    if not sealed.is_dir() or os.path.lexists(preserved / f"{ack_id}.partial"):
+        _refuse("manifest: the sealed preserved set is missing")
+    data = _read_manifest(sealed, ops, "manifest")
+    if sha256(data) != evidence["manifest_sha256"]:
+        _refuse("manifest: the sealed inventory is not the acknowledged one")
+    problem, manifest = manifest_problem(data, None)
+    if problem:
+        _refuse(f"manifest: {problem}")
+    entries = {entry["path"]: entry for entry in manifest["entries"]}
+    stop_entry = entries.get("session/STOPPED")
+    if stop_entry is None:
+        _refuse("stop_binding: the preserved set holds no STOPPED")
+    try:
+        stop_bytes = ops.read(str(sealed / "session" / STOPPED), cp.MAX_MARKER_READ)
+    except OSError:
+        _refuse("preserved_entry:session/STOPPED: it cannot be read")
+    if (len(stop_bytes), sha256(stop_bytes)) != (stop_entry["bytes"], stop_entry["sha256"]):
+        _refuse("preserved_entry:session/STOPPED: preserved bytes differ")
+    try:
+        stop_record = json.loads(stop_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        stop_record = None
+    detail = stop_record.get("detail") if isinstance(stop_record, dict) else None
+    if not (isinstance(stop_record, dict) and stop_record.get("reason") == reason and isinstance(detail, dict) and detail.get("witness") == witness):
+        _refuse("stop_binding: the preserved STOPPED is not the acknowledged stop")
+    if sha256(stop_bytes + f"\n{reason}\n{resolution}".encode())[:32] != ack_id:
+        _refuse("stop_binding: the preserved STOPPED does not give this acknowledgement's identity")
+    problem, _manifest_value = manifest_problem(data, _stop_binding(stop_bytes, witness, reason, resolution, ack_id))
+    if problem:
+        _refuse(f"stop_binding: the inventory's binding does not match ({problem})")
+    _verify_set(sealed, manifest["entries"], ops, "preserved_entry")
+    conv_entry = entries.get("session/conversation.json")
+    if conv_entry is None or (conv_entry["sha256"], conv_entry["bytes"]) != (evidence["conv_sha256"], evidence["conv_bytes"]):
+        _refuse("evidence_changed: the preserved conversation is not the acknowledged one")
+    h = _preserving_head(session_dir, witness, ops, owned=True)
+    try:
+        state0, continuation = preserving_continuation(
+            h.newest, h.suffix, h.head, lineage=h.lineage, ack_id=ack_id, manifest_sha256=evidence["manifest_sha256"],
+            read_blob=h.read_blob, identity_reserved=witness["identity_reserved"],
+        )
+    except (ReplayMismatch, rp.StateError) as error:
+        _refuse(f"evidence_changed: the plan cannot be derived ({str(error)[:200]})")
+    receipt = receipt_payload(carrier)
+    plan = (("RECOVERY_ACK", receipt), *continuation)
+    last = witness["ledger"]["last_seq"]
+    own_all = [record for record in h.after if record.type_name != "LEDGER_HEADER"]
+    intent_status, intent = _read_json_object(ops, session_dir / RECOVERING, cp.MAX_MARKER_READ)
+    intent_seq = None
+    if intent_status != "absent":
+        expected = {"ack_id": ack_id, "receipt": receipt, "after_seq": last, "evidence": evidence}
+        last_seq = intent.get("last_seq") if intent_status == "ok" else None
+        found = next((r for r in h.scan.records if r.seq == last_seq), None) if rp.counter(last_seq, minimum=1) else None
+        if found is None or found.seq < last or found.chain != intent.get("chain") or intent.get("witnessed") != expected:
+            _refuse("own_prefix: a recovery is open that is not this acknowledgement's own")
+        intent_seq = found.seq
+    own = [record for record in own_all if intent_seq is None or record.seq <= intent_seq]
+    if len(own) > len(plan) or not all(_same_record(record, item) for record, item in zip(own, plan)):
+        _refuse("own_prefix: records after the witnessed end are not this acknowledgement's own")
+    if intent_seq is None and h.scan.tail:
+        frame = _next_own_frame((*h.head, *h.after)[-1], list(plan), len(own), h.lineage, h.scan.tail_segment)
+        if frame is None or len(h.scan.tail) >= len(frame) or not frame.startswith(h.scan.tail):
+            _refuse("own_prefix: the bytes after the witnessed end are not this acknowledgement's own")
+    activated = any(_same_record(record, plan[-1]) for record in own_all)
+    conv_path = session_dir / "conversation.json"
+    conv_data = None
+    if os.path.lexists(conv_path):
+        status, conv_data = _read(ops, conv_path, CONVERSATION_READ_MAX)
+        if status != "ok" or sha256(conv_data) != evidence["conv_sha256"]:
+            _refuse("conversation_changed: the live conversation is not the preserved one")
+    elif not activated:
+        _refuse("conversation_changed: the conversation is absent but the activation is not in the ledger")
+    problem = _previous_base_problem(session_dir, h, conv_data, ops)
+    if problem:
+        _refuse(f"previous_base_available: {problem}")
+    recomputed = preserving_evidence(witness, evidence["manifest_sha256"], conv_entry, h.newest, state0, _suffix_types(h), continuation)
+    if recomputed != evidence:
+        _refuse("evidence_changed: the verified evidence differs from the acknowledged evidence")
+    return Preserving(plan, evidence, receipt, last, witness["ledger"]["last_segment"], state0, h.newest, carrier, tuple(own))
+
+
+def preserving_from_context(p0, context: dict, lineage: str, read_blob) -> Preserving:
+    """The carrier-free route: Π re-derived from the immutable witnessed head and authenticated by the sealed context."""
+
+    def bad(why: str):
+        raise StartupStop("recovery_intent_invalid", {"field": f"preserving context: {why}"}, "intent")
+
+    after, evidence, receipt = context["after_seq"], context["evidence"], context["receipt"]
+    head = tuple(record for record in p0 if record.seq <= after)
+    if not head or head[-1].seq != after:
+        bad("after_seq")
+    checkpoints = [record for record in head if record.type_name == "CHECKPOINT"]
+    if not checkpoints:
+        bad("checkpoint")
+    newest = checkpoints[-1]
+    if _suffix_problem([record for record in head if record.seq > newest.seq]):
+        bad("suffix")
+    suffix = [record for record in head if record.seq > newest.payload["covers_seq"]]
+    try:
+        state0, continuation = preserving_continuation(
+            newest, suffix, head, lineage=lineage, ack_id=context["ack_id"], manifest_sha256=evidence["manifest_sha256"], read_blob=read_blob,
+        )
+    except (ReplayMismatch, rp.StateError):
+        bad("plan")
+    if _continuation_sha(continuation) != evidence["continuation_sha256"]:
+        bad("continuation")
+    if sha256(cp.canonical_body(state0.to_wire(next_seq=after + 1))) != evidence["state_sha256"]:
+        bad("state")
+    if continuation[-1][1]["epoch"] != evidence["epoch"] or newest.payload["run_sha256"] != evidence["run_sha256"]:
+        bad("epoch or run")
+    plan = (("RECOVERY_ACK", receipt), *continuation)
+    return Preserving(plan, evidence, receipt, after, head[-1].segment, state0, newest, None)
+
+
+# ---------------------------------------------------------------------------
 # Entry
 # ---------------------------------------------------------------------------
 def open_session(
@@ -799,10 +1695,14 @@ class _Context:
             # and is not absence: stop before any change, its bytes kept.
             raise StartupStop("acknowledgement_unverified", {"problem": f"carrier: {problem}"}, "ACK")
         self.witnessed = None
+        self.preserving = None
         self.clean_end = None
         if carrier_kind == "witnessed":
             # SV-023: verified before this start changes anything at all.
             self.witnessed = self._verify_carrier(self.ack)
+        elif carrier_kind == "preserving":
+            # SV-028 B0: the sealed set, the preserved stop and the frozen plan, before any change.
+            self.preserving = self._verify_preserving(self.ack)
         meta_status, meta = _read_json_object(self.ops, session_dir / "run.json")
         self.meta = meta if meta_status == "ok" else None
         self.meta_unreadable = meta_status == "unreadable"
@@ -875,6 +1775,102 @@ class _Context:
             raise StartupStop("acknowledgement_unverified", {"ack_id": carrier["ack_id"], "problem": "the evidence changed"}, "ACK")
         _fence_session(self.session_dir, self.ops)
         return Witnessed(carrier, receipt, verified.written)
+
+    def _verify_preserving(self, carrier: dict) -> Preserving:
+        """SV-028 B0: grants nothing unless the sealed set, the stop it binds and the witnessed store still verify.
+
+        On success session/ is fenced (the carrier's name and STOPPED's removal
+        are durable before any record depends on them), and the frozen plan Π
+        is kept for `_recover`: it is never re-derived from a replay that
+        applied this transaction's own records.
+        """
+        try:
+            verified = preserving_verification(self.session_dir, carrier, self.ops)
+        except AcknowledgementRefused as refusal:
+            raise StartupStop("acknowledgement_unverified", {"ack_id": carrier["ack_id"], "problem": str(refusal)[:300]}, "ACK") from refusal
+        _fence_session(self.session_dir, self.ops)
+        self.witnessed = Witnessed(carrier, verified.receipt, verified.written)
+        return verified
+
+    def _preserving_decision(self, preserving: Preserving, p0, extra, scan0, plan, fetch_blob):
+        """The BP decision: replay from C_n's state through the neutral suffix and the owned prefix, each once.
+
+        core = Π[k:] + T, where k counts the owned records already in p0 and T
+        is the recovery record of this start's (or the frozen intent's)
+        original torn own frame. The carrier-free route writes nothing: its
+        extras must already be the whole core, and the live file absent.
+        """
+        own = [record for record in p0 if record.seq > preserving.witness_end and record.type_name != "LEDGER_HEADER"]
+        planned = list(preserving.plan)
+        if len(own) > len(planned) or not all(_same_record(record, item) for record, item in zip(own, planned)):
+            raise StartupStop("recovery_intent_mismatch", {"problem": "the owned records are not the frozen plan's prefix"}, "intent")
+        covers = preserving.newest.payload["covers_seq"]
+        suffix = [record for record in p0 if record.seq > covers]
+        replay = Replay([], preserving.state0.copy(), fetch_blob=fetch_blob)
+        try:
+            for record in suffix:
+                replay.apply(record)
+        except ReplayMismatch as error:
+            raise StartupStop("replay_mismatch", {"error": str(error)[:200]}) from error
+        tail_records = []
+        if scan0.tail:
+            tail_sha = sha256(scan0.tail)
+            tail_records = [
+                ("RECOVERY", {"kind": item["kind"], "detail": {**item["detail"], "tail_sha256": tail_sha}})
+                for item in plan.recovery_records
+                if item["kind"] != "possible_duplicate_spend"
+            ]
+        core = [*planned[len(own):], *tail_records]
+        if preserving.carrier is None:
+            if len(extra) != len(core) or not all(_same_record(record, item) for record, item in zip(extra, core)):
+                raise StartupStop("recovery_intent_mismatch", {"problem": "a retired activation must already be complete"}, "intent")
+            if os.path.lexists(self.session_dir / "conversation.json"):
+                raise StartupStop("recovery_intent_mismatch", {"problem": "the conversation is present after a retired activation"}, "intent")
+        checkpoints = [record for record in p0 if record.type_name == "CHECKPOINT"]
+        collected = max((r.payload["records_through"] for r in p0 if r.type_name == "GC_INTENT"), default=0)
+        known = {r.payload["conv"]["sha256"]: checkpoint_tuple(r) for r in checkpoints if r.seq > collected}
+        decision = _Decision("BP", replay, FileState("absent"), preserving.newest, suffix, known)
+        decision.preserving = preserving
+        return decision, core
+
+    def _establish_owned_durability(self, session: Session, preserving: Preserving) -> None:
+        """B3 (SV028-01): every segment from the witnessed end through the active one, then ledger/.
+
+        Runs even when this start wrote nothing: an activation an earlier
+        process wrote may be readable while its fsync never returned. Only
+        after this returns may the live conversation be removed. A failure
+        takes the session's persistence boundary; the conversation is untouched.
+        """
+        ledger = self.session_dir / "ledger"
+        try:
+            for number in range(preserving.witness_segment, session.writer.segment_no + 1):
+                path = ledger / cp.segment_name(number)
+                if path.exists():
+                    _fsync_file(path, self.ops)
+            self.ops.sync_dir(str(ledger))
+        except OSError as error:
+            session._fail(error)
+
+    def _complete_preserving(self, session: Session, preserving: Preserving) -> None:
+        """B3, then B4: the preserved unreadable file's name is removed and session/ fenced (or an absence fenced)."""
+        self._establish_owned_durability(session, preserving)
+        path = self.session_dir / "conversation.json"
+        if os.path.lexists(path):
+            status, data = _read(self.ops, path, CONVERSATION_READ_MAX)
+            if status != "ok" or sha256(data) != preserving.evidence["conv_sha256"]:
+                raise StartupStop(
+                    "acknowledgement_unverified", {"problem": "conversation_changed: the live conversation is not the preserved one"}, "ACK"
+                )
+            try:
+                self.ops.unlink(str(path))
+                self.ops.sync_dir(str(self.session_dir))
+            except OSError as error:
+                session._fail(error)
+        else:
+            try:
+                self.ops.sync_dir(str(self.session_dir))
+            except OSError as error:
+                session._fail(error)
 
     def _witness(self, reason: str, scan, lineage) -> dict | None:
         """A stop's detail carrying its witness, or None (the stop as before, ineligible)."""
@@ -977,6 +1973,10 @@ class _Context:
             receipt, witness_end = context["receipt"], context["after_seq"]
         else:
             receipt = witness_end = None
+        # SV-028: the frozen plan, from B0 (carrier) or authenticated from the sealed context (carrier-free).
+        preserving = self.preserving
+        if preserving is None and context is not None and (context["receipt"]["reason"], context["receipt"]["resolution"]) in PRESERVING_RESOLUTIONS:
+            preserving = preserving_from_context(p0, context, lineage, read_blob)
         # What IDENTITY is carried forward as: never below either checked value.
         high_water = max((v for v in (live, identity) if v is not None), default=None)
         tail_ack = ack if ack and ack.get("reason") == "ledger_tail_ambiguous" else None
@@ -1023,23 +2023,27 @@ class _Context:
         # SV-023: only a strictly clean end with no transaction of its own can witness an A14 stop.
         self.clean_end = scan0 if intent is None and tail.kind == "TC0" and collecting is None else None
 
-        decision = self._classify_base(p0, extra, format2, lineage, read_blob, fetch_blob=fetch_blob)
-        if self.witnessed is not None and decision.case not in ("A9", "A9t"):
-            raise StartupStop("acknowledgement_unverified", {"problem": f"classified {decision.case}"}, "ACK")
-        try:
-            core = derive_core(decision.replay, plan, tail, scan0, tail_ack, lineage, identity_reserved=identity)
-        except ReplayMismatch as error:
-            raise StartupStop("replay_mismatch", {"error": str(error)[:200]}) from error
-        if decision.adopt is not None:
-            # A10: bind the file as the base it equals, before anything follows it.
-            core = [decision.adopt, *core]
-        if collecting is not None:
-            # The pending collection completes first: GC_DONE immediately
-            # follows its intent, before any record (or blob) of this start.
-            core = [("GC_DONE", {"intent_seq": collecting.seq}), *core]
-        if receipt is not None and not any(r.seq > witness_end and _same_record(r, ("RECOVERY_ACK", receipt)) for r in p0):
-            # SV-023: the receipt is this transaction's first record, before any closure.
-            core = [("RECOVERY_ACK", receipt), *core]
+        if preserving is not None:
+            # SV-028: core = Π[k:] + T; never derive_core over a replay that applied owned records.
+            decision, core = self._preserving_decision(preserving, p0, extra, scan0, plan, fetch_blob)
+        else:
+            decision = self._classify_base(p0, extra, format2, lineage, read_blob, fetch_blob=fetch_blob)
+            if self.witnessed is not None and decision.case not in ("A9", "A9t"):
+                raise StartupStop("acknowledgement_unverified", {"problem": f"classified {decision.case}"}, "ACK")
+            try:
+                core = derive_core(decision.replay, plan, tail, scan0, tail_ack, lineage, identity_reserved=identity)
+            except ReplayMismatch as error:
+                raise StartupStop("replay_mismatch", {"error": str(error)[:200]}) from error
+            if decision.adopt is not None:
+                # A10: bind the file as the base it equals, before anything follows it.
+                core = [decision.adopt, *core]
+            if collecting is not None:
+                # The pending collection completes first: GC_DONE immediately
+                # follows its intent, before any record (or blob) of this start.
+                core = [("GC_DONE", {"intent_seq": collecting.seq}), *core]
+            if receipt is not None and not any(r.seq > witness_end and _same_record(r, ("RECOVERY_ACK", receipt)) for r in p0):
+                # SV-023: the receipt is this transaction's first record, before any closure.
+                core = [("RECOVERY_ACK", receipt), *core]
 
         # Set the tail aside only under a durable intent (see the module docstring).
         if scan0.tail and intent is None:
@@ -1056,6 +2060,9 @@ class _Context:
                 # SV023-03: the witnessed context outlives the carrier, sealed with
                 # the rest, so the whole core (receipt first) is re-derived alike.
                 body["witnessed"] = {"ack_id": receipt["ack_id"], "receipt": receipt, "after_seq": witness_end}
+                if preserving is not None:
+                    # SV-028: enough to authenticate Π against the ledger head with no carrier.
+                    body["witnessed"]["evidence"] = preserving.evidence
             intent = _sealed_intent(body)
             # SV024-02: what the intent names -- its anchor and the exact tail --
             # is durable before the intent, so no host loss can leave the intent
@@ -1308,6 +2315,9 @@ class _Context:
 
     def _finish_case(self, session: Session, decision: _Decision, plan: cp.RecoveryPlan, core, after_core) -> None:
         """The base decision's records, then any recovery notices not yet durable."""
+        if decision.case == "BP":
+            self._complete_preserving(session, decision.preserving)
+            return
         notices = list(plan.notices)
         case = decision.case
         state = session.state
@@ -1421,6 +2431,7 @@ class _Decision:
     restore: bytes | None = None  # A14: the newest checkpoint's bytes
     kind: str = ""  # the latest binding transition's kind and its file hash (None: absent)
     bound: str | None = None
+    preserving: object = None  # SV-028: the BP decision's frozen plan
 
 
 def _binding(records, newest):
@@ -1519,21 +2530,32 @@ def witnessed_context_problem(context, last_seq: int) -> str | None:
     shape), that receipt's ack_id, and the witnessed end the intent's anchor
     cannot precede.
     """
-    if not (isinstance(context, dict) and set(context) == {"ack_id", "receipt", "after_seq"}):
+    if not isinstance(context, dict):
         return "keys"
-    receipt = context["receipt"]
+    receipt = context.get("receipt")
     if not (isinstance(receipt, dict) and set(receipt) == RECEIPT_KEYS):
         return "receipt keys"
     if not all(isinstance(receipt[key], str) for key in RECEIPT_KEYS):
         return "receipt types"
-    if (receipt["reason"], receipt["resolution"]) not in WITNESSED_RESOLUTIONS:
+    pair = (receipt["reason"], receipt["resolution"])
+    if pair not in STOP_WITNESS_RESOLUTIONS:
         return "pair"
-    if not (HEX32.fullmatch(receipt["ack_id"]) and receipt["ack_id"] == context["ack_id"] and HEX32.fullmatch(receipt["stop_id"])):
+    # SV-028: the preserving mechanism's context also carries its evidence (bounded, fixed keys).
+    keys = {"ack_id", "receipt", "after_seq"} | ({"evidence"} if pair in PRESERVING_RESOLUTIONS else set())
+    if set(context) != keys:
+        return "keys"
+    if not (isinstance(context["ack_id"], str) and HEX32.fullmatch(receipt["ack_id"]) and receipt["ack_id"] == context["ack_id"] and HEX32.fullmatch(receipt["stop_id"])):
         return "ack_id"
     if not rp.is_hex64(receipt["evidence_sha256"]):
         return "evidence_sha256"
     if not (rp.counter(context["after_seq"], minimum=1) and context["after_seq"] <= last_seq):
         return "after_seq"
+    if pair in PRESERVING_RESOLUTIONS:
+        problem = preserving_evidence_problem(context["evidence"])
+        if problem:
+            return problem
+        if sha256(cp.canonical_body(context["evidence"])) != receipt["evidence_sha256"]:
+            return "evidence digest"
     return None
 
 

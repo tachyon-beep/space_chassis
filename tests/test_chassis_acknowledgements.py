@@ -59,6 +59,7 @@ SUPPORTED = {
     ("corrupt_quarantine_full", "continue-from-bound"),
     (A14, RESOLUTION),
     (CK5, RESOLUTION),
+    (A14, "bootstrap-preserving"),  # SV-028: the one preserving pair (W1); its own tests are in test_chassis_bootstrap_preserving
 }
 
 

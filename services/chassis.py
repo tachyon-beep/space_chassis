@@ -1762,7 +1762,8 @@ def main(argv: list[str] | None = None) -> int:
         if not args.resolution:
             parser.error("--acknowledge-stop needs --resolution")
         try:
-            ack = chassis_startup.acknowledge(chassis.session_dir, args.acknowledge_stop, args.resolution)
+            # The home the chassis uses (HANDOFF.md is preserved from there by bootstrap-preserving, SV-028).
+            ack = chassis_startup.acknowledge(chassis.session_dir, args.acknowledge_stop, args.resolution, home_dir=chassis.home_dir)
         except persistence.LedgerError as error:
             print(f"[chassis] acknowledgement refused: {error}", flush=True)
             return 2
