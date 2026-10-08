@@ -1,3 +1,11 @@
+# Independent implementation acceptance — SV026
+
+Accepted by OpenAI Astra at immutable head `a17115f89b3775ca0a34cd759be79bd1fe38c9e3`, runtime/test commit `b08830e4ce98f71fbb3b07a23f32bc391d08f030`. See [ASTRA-ACCEPTANCE.md](ASTRA-ACCEPTANCE.md). No blocking implementation correction was required.
+
+Final validation: 161 selected cases in 12 serial bounded commands (48 new accounting, 16 bounds, 97 retained), all on final code. The receipt separately preserves pre-fix/staged controls and development corrections. This accepts the engineering repair on the isolated WIP, not numerical replay guarantees, real-session operations, merge or deployment. T_origin, unknown partial I/O, selected-interval scope and R-D rotation deferral remain explicit limits; the two SV025 default-bound counterexamples remain. Constants, golden oracles and all held product policies are unchanged.
+
+---
+
 # SV-026 implementation (C1–C14)
 
 Base `190a57f7cfb4227c847ba1e92b7d0ab914384a2c`. Governing inputs:
