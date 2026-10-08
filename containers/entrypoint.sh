@@ -1,143 +1,99 @@
 #!/bin/sh
-# The world's first process. Everything below it is either the supervisor's
-# business, the pump's business, or the duty's.
+# The agent container's first process, in Aurora's form.
 #
-# Three jobs, in order:
+# Five jobs, in order, and then the container belongs to the watchdog:
 #
-#   1. seed the floor -- the shared codebase and this agent's home, once. The
-#      marker file is what makes it "once": a fleet that deletes everything it
-#      was given should get an empty directory back, not a resurrection, and
-#      the difference between those two is whether this script tests for a
-#      marker or for emptiness.
-#   2. start the servers the world carries: postgres, nats, redis. They are
-#      present, running and *empty*. No schema, no subjects, no roles, no
-#      tables -- deciding what any of it is for is the first real question the
-#      mission has to answer, and this script will not answer it.
-#   3. start the pump and the supervisor. The pump runs whatever the agent has
-#      scheduled; the supervisor runs the duty and repairs it when it hurts
-#      itself.
+#   1. say which mount roots have no size boundary. A root on the same filesystem as the plain
+#      host bind at UNBOUNDED_REFERENCE is not one of the bounded volume images, and a fact is
+#      worth one line on stderr. It never stops the start.
+#   2. empty the build area. It is a scratch volume; nothing in it is meant to outlive the
+#      container, and starting from nothing is cheaper than reasoning about what a dead build
+#      left behind.
+#   3. start the servers the world carries: postgres, nats, redis. They are present, running and
+#      *empty* -- deciding what any of it is for is the first real question the mission has, and
+#      this script will not answer it. Their data lives under STATE_DIR, the agent's own durable
+#      store, because a database that forgets at every restart is not a database; their logs live
+#      on the run tmpfs, because logs in the durable store grow without bound. Each is guarded:
+#      a server that will not start is the agent's to notice, not a reason to stop the world.
+#   4. start the pump, in a loop that restarts it, so work the agent scheduled keeps running
+#      while the agent is mid-conversation, dead, or being repaired.
+#   5. reseed /work from the image and exec the watchdog. The seed is a git repository with
+#      baseline and rescue tags; the watchdog restores from whichever tags the agent has moved.
+#      `exec` is the point: when the watchdog dies the container ends, the restart policy brings
+#      it back, and this script reseeds -- the only rung below rescue.
 #
-# It is also the one place that decides what "the duty" is. AGENT_ENTRY names
-# it, defaulting to the seed at $SEED_DIR/duty.py. The agents may replace that
-# file; the supervisor re-reads it every time a run ends, which is how a
-# rewrite becomes the next incarnation.
-set -eu
+# Every path and binary has an override whose default is the real one, so the script can be run
+# against stubs in a temporary directory (tests/test_agent_entrypoint.py).
+set -u
 
-[ -f /etc/agent.env ] && . /etc/agent.env
-
-: "${WORK_DIR:=/work}"
 : "${SEED_DIR:=/opt/agent}"
-: "${AGENT_HOME:=/home/agent}"
-: "${DIARY_DIR:=/diary}"
-: "${BRIEF_DIR:=/opt/brief}"
-: "${SERVICES_DIR:=/opt/services}"
-export WORK_DIR SEED_DIR AGENT_HOME DIARY_DIR BRIEF_DIR SERVICES_DIR
+: "${WORK_DIR:=/work}"
+: "${STATE_DIR:=/state}"
+: "${BUILD_DIR:=/build}"
+: "${RUN_DIR:=/run/agent}"
+: "${PUMP_BIN:=/usr/local/bin/pump.py}"
+: "${PYTHON:=python}"
+: "${MOUNT_ROOTS:=/state /shared /diode /pump /build /telemetry /llm/console /llm/sock}"
+: "${UNBOUNDED_REFERENCE:=/vendor/registry}"
+: "${PUMP_RESTART_SECONDS:=5}"
+if [ -z "${PG_BIN:-}" ]; then
+    for candidate in /usr/lib/postgresql/*/bin; do
+        PG_BIN=$candidate
+        break
+    done
+fi
+: "${PG_BIN:=/usr/lib/postgresql/bin}"
 
-AGENT_ENTRY="${AGENT_ENTRY:-$WORK_DIR/duty.py}"
-export AGENT_ENTRY
-
-LOG_DIR="$AGENT_HOME/logs"
-mkdir -p "$LOG_DIR" "$DIARY_DIR" /run/agent
-
-log() { printf '%s [entrypoint] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
-
-# Declare this agent to the recorder.
-#
-# The recorder serves whichever agents announce themselves, rather than reading
-# a list of names, so the fleet's names (drawn at random, and different every
-# time the roster is redrawn) are stated in exactly one place: here, by the
-# agent that was given one. The announcement lands in the shared codebase
-# because that is the directory an agent can write and the recorder can read;
-# the socket directory itself is mounted read-only into the fleet, so an agent
-# cannot create its own listener there and should not be able to.
-if [ -n "${AGENT_SLUG:-}" ]; then
-    mkdir -p "$WORK_DIR/.fleet" 2>/dev/null || true
-    printf '%s\n' "$AGENT_SLUG" > "$WORK_DIR/.fleet/${AGENT_SLUG}.agent" 2>/dev/null || true
+# --- 1. mount roots without a size boundary ---------------------------------
+if reference=$(stat -c %d "$UNBOUNDED_REFERENCE" 2>/dev/null); then
+    for root in $MOUNT_ROOTS; do
+        [ -d "$root" ] || continue
+        device=$(stat -c %d "$root" 2>/dev/null) || continue
+        if [ "$device" = "$reference" ]; then
+            echo "warning: $root shares a filesystem with the host; its size boundary is absent" >&2
+        fi
+    done
 fi
 
-# --- 1. the floor ----------------------------------------------------------
-if [ ! -f "$WORK_DIR/.seeded" ]; then
-    log "seeding $WORK_DIR from $SEED_DIR"
-    cp -a "$SEED_DIR/." "$WORK_DIR/" 2>/dev/null || true
-    date -u +%Y-%m-%dT%H:%M:%SZ > "$WORK_DIR/.seeded"
-fi
-mkdir -p "$AGENT_HOME/session" "$AGENT_HOME/logs" "$DIARY_DIR"
-if [ ! -f "$AGENT_HOME/.seeded" ]; then
-    [ -d "$SEED_DIR/home" ] && cp -a "$SEED_DIR/home/." "$AGENT_HOME/" 2>/dev/null || true
-    date -u +%Y-%m-%dT%H:%M:%SZ > "$AGENT_HOME/.seeded"
+# --- 2. the build area ------------------------------------------------------
+if [ -d "$BUILD_DIR" ]; then
+    chmod -R u+rwX "$BUILD_DIR" 2>/dev/null || true
+    find "$BUILD_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
 fi
 
-# --- 2. the servers the world carries --------------------------------------
-start_servers() {
-    if ! pg_isready -q 2>/dev/null; then
-        log "starting postgresql"
-        cluster=$(ls /etc/postgresql 2>/dev/null | head -1)
-        [ -n "$cluster" ] && pg_ctlcluster "$cluster" main start >/dev/null 2>&1 || true
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-            pg_isready -q 2>/dev/null && break
-            sleep 1
-        done
-    fi
-    # One empty database owned by this container's user, so a client can
-    # connect with no credential it does not have. No tables, no roles, no
-    # extensions, no schema.
-    if pg_isready -q 2>/dev/null; then
-        whoami >/dev/null && createuser -s "$(id -un)" 2>/dev/null || true
-        createdb -O "$(id -un)" chassis 2>/dev/null || true
-    fi
-
-    if ! nc -z 127.0.0.1 4222 2>/dev/null; then
-        log "starting nats-server"
-        mkdir -p "$AGENT_HOME/.nats"
-        nats-server -a 127.0.0.1 -p 4222 -m 8222 -sd "$AGENT_HOME/.nats" \
-            >> "$LOG_DIR/nats.log" 2>&1 &
-    fi
-    if ! nc -z 127.0.0.1 6379 2>/dev/null; then
-        log "starting redis-server"
-        mkdir -p "$AGENT_HOME/.redis"
-        redis-server --bind 127.0.0.1 --port 6379 --dir "$AGENT_HOME/.redis" \
-            --save '' --appendonly no >> "$LOG_DIR/redis.log" 2>&1 &
-    fi
-}
-start_servers
-
-# --- 3. the window, the pump, the supervisor -------------------------------
-# If an operator mounted a diode implementation, run it. It is the only thing
-# in this container with a route outward, and the only thing that talks to the
-# vehicle. Killing it is allowed and is a decision with consequences.
-if [ -n "${DIODE_ENTRY:-}" ] && [ -f "$DIODE_ENTRY" ]; then
-    log "starting diode: $DIODE_ENTRY"
-    python "$DIODE_ENTRY" >> "$LOG_DIR/diode.log" 2>&1 &
-fi
-
-log "starting pump for ${PUMP_DUTY_DIR:-/pump}"
-python "$SERVICES_DIR/pump.py" >> "$LOG_DIR/pump.log" 2>&1 &
-PUMP_PID=$!
-
-shutdown() {
-    log "stopping"
-    [ -n "${PUMP_PID:-}" ] && kill -TERM "$PUMP_PID" 2>/dev/null || true
-    wait 2>/dev/null || true
-    exit 0
-}
-trap shutdown TERM INT
-
-log "work=$WORK_DIR home=$AGENT_HOME name=${AGENT_NAME:-$AGENT_SLUG} entry=$AGENT_ENTRY \
-socket=${LLM_SOCKET_PATH:-none}"
-while true; do
-    set +e
-    python "$SERVICES_DIR/supervisor.py" >> "$LOG_DIR/supervisor.log" 2>&1
-    rc=$?
-    set -e
-    # Keep the supervisor's log bounded; its tail is what anyone reads.
-    if [ -f "$LOG_DIR/supervisor.log" ] && [ "$(wc -c < "$LOG_DIR/supervisor.log")" -gt 2000000 ]; then
-        tail -c 500000 "$LOG_DIR/supervisor.log" > "$LOG_DIR/supervisor.log.tmp" \
-            && mv "$LOG_DIR/supervisor.log.tmp" "$LOG_DIR/supervisor.log"
-    fi
-    if [ "$rc" -eq 1 ]; then
-        log "supervisor exhausted its ladder; pausing before the next attempt"
-        sleep 60
+# --- 3. the servers the world carries ---------------------------------------
+mkdir -p "$STATE_DIR/nats" "$STATE_DIR/redis" "$RUN_DIR/logs" 2>/dev/null || true
+(
+    # A container that was killed leaves postmaster.pid behind, and in a fresh container its pid
+    # can belong to something else; nothing but this script can hold this data directory here.
+    if [ -e "$STATE_DIR/postgres/PG_VERSION" ]; then
+        rm -f "$STATE_DIR/postgres/postmaster.pid"
     else
-        sleep 3
+        "$PG_BIN/initdb" -D "$STATE_DIR/postgres" --auth=trust -U "$(id -un)" \
+            >> "$RUN_DIR/logs/postgres.log" 2>&1 || exit 0
     fi
-done
+    "$PG_BIN/postgres" -D "$STATE_DIR/postgres" -k "$RUN_DIR" -c listen_addresses=127.0.0.1 \
+        >> "$RUN_DIR/logs/postgres.log" 2>&1 &
+    tries=0
+    until "$PG_BIN/pg_isready" -q -h "$RUN_DIR" 2>/dev/null; do
+        tries=$((tries + 1))
+        [ "$tries" -ge 20 ] && exit 0
+        sleep 0.5
+    done
+    # One empty database owned by this user, whom initdb made the superuser, so a client can
+    # connect with no credential it does not have. No tables, no roles, no schema.
+    "$PG_BIN/createdb" -h "$RUN_DIR" chassis >> "$RUN_DIR/logs/postgres.log" 2>&1 || true
+) &
+nats-server -a 127.0.0.1 -p 4222 -m 8222 -sd "$STATE_DIR/nats" \
+    >> "$RUN_DIR/logs/nats.log" 2>&1 &
+redis-server --bind 127.0.0.1 --port 6379 --dir "$STATE_DIR/redis" --save '' --appendonly no \
+    >> "$RUN_DIR/logs/redis.log" 2>&1 &
+
+# --- 4. the pump ------------------------------------------------------------
+( while true; do "$PYTHON" "$PUMP_BIN" || true; sleep "$PUMP_RESTART_SECONDS"; done ) &
+
+# --- 5. the harness, and the hand-off ---------------------------------------
+find "$WORK_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+cp -r "$SEED_DIR/." "$WORK_DIR/"
+cd "$WORK_DIR" || exit 1
+exec "$PYTHON" watchdog.py
