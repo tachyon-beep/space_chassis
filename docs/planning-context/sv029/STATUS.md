@@ -1,3 +1,9 @@
+# Current status: SV029 design accepted with launch qualifications; tests not yet implemented
+
+Independent Astra review accepted the bounded architecture at c2cb7ebae13ac02c524b974c880a9379bde006b9. [ASTRA-DESIGN-REVIEW.md](ASTRA-DESIGN-REVIEW.md) L1–L6 govern implementation over earlier draft expectations. The matrix remains four new and eight retained cases, two serial commands, unchanged caps. Numerical evidence awaits execution and immutable review.
+
+---
+
 # SV029 status: design proposed; awaiting independent Astra design review. Not accepted. Nothing executed.
 
 Base: accepted head `7936b665c4653ff61ec227ddd3d1589da31f3abe`. The deliverable is [DESIGN.md](DESIGN.md). It is a test-only proposal for the two §1.4.7 inequalities that SV025–SV028 left unproved.
