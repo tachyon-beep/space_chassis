@@ -1,5 +1,17 @@
 # SV-027 status
 
+## Governing implementation qualifications — independent review accepted
+
+Astra accepted the architecture at immutable design `0f113aed48d740c553322e5fdbf09ddb0fecd7af`, subject to **L1–L5 in [ASTRA-DESIGN-ACCEPTANCE.md](ASTRA-DESIGN-ACCEPTANCE.md)**. Those qualifications supersede conflicting historical text below; implementation remains unaccepted until its own review.
+
+- L1: the A5 counter is `(2, LEGACY_IMPORT frame + imported blob bytes + H3 frame)`, with only H1 excluded and no checkpoint. Distinguish nonempty import from the empty-list OPENING trace.
+- L2: the non-full control preserves the inherited append-open and startup fences. Assert unchanged names/no new header or new-segment open; use precise closure event windows.
+- L3: use pre-run and adoption-entry markers. Arm only the new adoption header's directory fence; assert baseline pending IDs/watermark and only first-generation progress. Client construction/duty loading precede adoption, while main/bootstrap/request/tool invocation and the second run's run-end do not. Ordinary main return does not create a pending note.
+- L4: one existing crossing fixture must actually select collectible evidence and exercise CHECKPOINT, GC_INTENT, GC_DONE, follow-up CHECKPOINT, exactly one header. Count generation headers from adoption entry, excluding startup.
+- L5: G6 ran in SV024, but not SV026; B0 establishes the current baseline. Limit unchanged-cut/default-size predictions to selected nodes, and preserve observed cut semantics. 19,978 is the source's claimed checkpoint frame size, not an established maximum; SV025's valid-domain 21,173-byte witness remains.
+
+The finite matrix remains 18 new + 58 retained cases in eight final commands, plus B0 and D1–D7. No broad test, policy, literal or resource-cap change follows from acceptance.
+
 ## Design round 0: complete, awaiting independent review. Not implemented. Not accepted.
 
 - **Base inspected:** `a17115f89b3775ca0a34cd759be79bd1fe38c9e3`. It contains the SV026 implementation, which was under review during drafting and was subsequently accepted without runtime correction; the coordinator archived that acceptance at `e6016fc1cd5fa3d68c54f40c9c21834210231660`. This proposal modifies none of its code, tests or receipts.
