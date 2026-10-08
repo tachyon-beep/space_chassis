@@ -504,3 +504,142 @@ def test_o2_5_negative_control_an_ineffective_rotation_fence_loses_an_effects_ga
     assert opening.stop is None
     assert opening.session.next_label() == effects[0], "the control would reuse the label of a request that was sent"
     opening.session.close()
+
+
+# ---------------------------------------------------------------------------
+# 6. Astra SV024-02: a published RECOVERING depends only on durable inputs
+# ---------------------------------------------------------------------------
+class ShortHeaderWrite(NameOps):
+    """M-1: once armed, the rotation's header write stores only TORN bytes, and the process dies inside it."""
+
+    def write(self, fd, data):
+        path = self.paths.get(fd, "")
+        if self.armed and path.endswith(".svl") and bytes(data[18:20]) == b"01":
+            self._step("write", path, "01")
+            cp.DurableOps.write(self, fd, bytes(data[:TORN]))
+            raise Crash()
+        return super().write(fd, data)
+
+
+def partial_header(path: Path):
+    """After actual collection, the rotation's in-flight header write leaves a prefix: watermark 0, name unfenced."""
+    ops = ShortHeaderWrite()
+    root, session = collected(path, ops)
+    with pytest.raises(Crash):
+        rotate_after_collection(root, session, ops)
+    ops.armed = False
+    session.close()
+    at = ops.at
+    name = str(new_segment(root, at))
+    assert new_segment(root, at).read_bytes() == at.header[:TORN], "an in-flight prefix (M-1), readable"
+    assert ops.durable[name] == 0 and name in ops.unfenced_names(), "neither synced nor fenced"
+    return root, ops, at, name
+
+
+def published(ops: NameOps):
+    """Process death at the first call after RECOVERING's rename and its fsync(session/) returned."""
+    return lambda call, path, frame: ops.log[-2:] == [("rename", st.RECOVERING, None), ("sync_dir", "session", None)]
+
+
+@pytest.mark.parametrize("variant", ["name-lost", "name-kept-data-lost", "interrupted-again"])
+def test_sv024_02_a_partial_header_behind_a_published_intent_converges(tmp_path, variant):
+    root, first, at, name = partial_header(tmp_path)
+    fragment = at.header[:TORN]
+    restart = first.inherit()  # both maps carried: nothing promoted by the restart's read
+    restart.armed = True
+    restart.crash_when = published(restart)
+    with pytest.raises(Crash):
+        start(root, ops=restart)
+    assert (root.session_dir / st.RECOVERING).exists() and not root.corrupt(), "the intent is durable; no copy exists yet"
+    last = restart
+    if variant == "interrupted-again":
+        third = restart.inherit()
+        third.armed = True
+        third.crash_when = lambda call, path, frame: any(entry[0] == "truncate" for entry in third.log)
+        with pytest.raises(Crash):
+            start(root, ops=third)  # finishes the copy and the truncation, dies before the truncation's fsync
+        assert len(root.corrupt()) == 1 and new_segment(root, at).read_bytes() == b""
+        last = third
+    fenced, synced = name not in last.unfenced_names(), last.durable.get(name)
+    taken = host_loss(last, names="keep" if variant == "name-kept-data-lost" else "vanish", data="drop")
+    assert taken["restored"] == []
+    opening = recover(root, at, NameOps(), written=["LEDGER_HEADER", "RECOVERY"], torn=fragment)
+    assert fenced and synced == TORN, "the fragment the intent names was synced and its name fenced before the intent"
+    assert not taken["names"] and not taken["bytes"], "the host loss could take nothing the intent depends on"
+    continue_and_converge(root, opening, at, "torn")
+
+
+PRE_INTENT = {
+    "segment-fsync": lambda name: lambda call, path, frame: call == "fsync" and path == name,
+    "ledger-fence": lambda name: lambda call, path, frame: call == "sync_dir" and path.endswith("/ledger"),
+}
+
+
+@pytest.mark.parametrize("fence", list(PRE_INTENT))
+def test_sv024_02_a_failed_pre_intent_fence_publishes_nothing(tmp_path, fence):
+    root, first, at, name = partial_header(tmp_path)
+    fragment = at.header[:TORN]
+    restart = first.inherit()
+    restart.armed = True
+    hits = []
+    matches = PRE_INTENT[fence](name)
+
+    def fail(call, path, frame):
+        if not hits and matches(call, path, frame):
+            hits.append(path)
+            return OSError(errno.EIO, "injected EIO")
+        return None
+
+    restart.fail_when = fail
+    with pytest.raises(cp.PersistenceFailure):
+        start(root, ops=restart)
+    assert hits
+    assert not (root.session_dir / st.RECOVERING).exists() and ("rename", st.RECOVERING, None) not in restart.log, "no intent"
+    assert not [e for e in restart.log if e[0] == "truncate" or (e[0] == "write" and e[1].endswith(".svl"))]
+    assert not root.corrupt() and new_segment(root, at).read_bytes() == fragment, "no copy, no truncation"
+    assert (root.session_dir / "FSYNC_FAILED").exists(), "the persistence boundary attempted its marker"
+    before = root.snapshot()
+    opening = start(root)
+    assert (opening.classification, opening.stop) == ("A1", "fsync_failed_previous_run")
+    after = root.snapshot()
+    after.pop(str((root.session_dir / "STOPPED").relative_to(root.path)))
+    assert after == before, "the stop changed nothing but STOPPED"
+    st.acknowledge(root.session_dir, "fsync_failed_previous_run", "continue-from-bound")
+    opening = recover(root, at, NameOps(), written=["LEDGER_HEADER", "RECOVERY", "RECOVERY_ACK"], torn=fragment, same_state=False)
+    continue_and_converge(root, opening, at, "torn")
+
+
+def test_sv024_01_a_failed_inherited_segment_fsync_publishes_no_checkpoint(tmp_path):
+    root, first, _effects = cut_rotation(tmp_path, "before-file-sync")
+    at = first.at
+    name = str(new_segment(root, at))
+    restart = first.inherit()
+    hits = []
+
+    def fail(call, path, frame):
+        if not hits and call == "fsync" and path == name:
+            hits.append(path)
+            return OSError(errno.EIO, "injected EIO")
+        return None
+
+    restart.fail_when = fail
+    opening = start(root, ops=restart)
+    assert opening.stop is None, opening
+    session = opening.session
+    files, numbers = protected(root), segments(root)
+    restart.armed = True  # the first checkpoint, through its inherited-segment fence
+    with pytest.raises(cp.PersistenceFailure):
+        session.checkpoint()
+    assert hits == [name] and session.broken and session.writer.broken
+    assert protected(root) == files, "no CK2-CK5 publication after the failed fence"
+    assert of_type(root, "CHECKPOINT")[-1] == at.checkpoint and segments(root) == numbers, "no CHECKPOINT, no rotation"
+    assert [e for e in restart.log if e[0] in ("rename", "link")] == [("rename", "FSYNC_FAILED", None)]
+    assert not [e for e in restart.log if e[0] == "write" and e[1].endswith(".svl")]
+    sent = []
+    with pytest.raises(cp.PersistenceFailure):
+        session.send(lambda: sent.append(1))
+    with pytest.raises(cp.PersistenceFailure):
+        session.append_message("user", "dependent")
+    session.close()
+    assert sent == [] and (root.session_dir / "FSYNC_FAILED").exists()
+    assert start(root).classification == "A1"

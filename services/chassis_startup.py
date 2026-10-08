@@ -17,7 +17,9 @@ the only in-place evidence for its classification, and the records that
 carry the outcome (SYNTH/UNRUN, RECOVERY, notices) are written afterwards. A
 crash between the two would make a later start see a clean ledger and call a
 possibly-run call "unrun". So, before any copy or truncation, a durable
-`RECOVERING` intent names the valid prefix's end and the tail's hash; a
+`RECOVERING` intent names the valid prefix's end and the tail's hash. Both
+are made durable first -- their segments fsynced, ledger/ fenced -- so the
+intent never outlives what it names (SV024-02). A
 restart rebuilds the identical tail from its quarantined copy, re-derives the
 identical outcome, checks that whatever was already written is a prefix of
 it, and writes only the rest. The intent is removed only after the outcome,
@@ -316,6 +318,37 @@ def _fence_session(session_dir: Path, ops) -> None:
         ops.sync_dir(str(session_dir))
     except OSError as error:
         raise cp.PersistenceFailure(f"session/ could not be fenced: {error}") from error
+
+
+def _fence_intent_inputs(session_dir: Path, scan: cp.LedgerScan, ops) -> None:
+    """Make durable everything a new RECOVERING intent depends on, before it is published (SV024-02).
+
+    The intent names P's last record (its anchor) and the exact tail bytes at
+    (segment, offset). Both were only read; an earlier process may have died
+    before their fsync returned, and a new segment's name may never have been
+    fenced (a rotation header torn in flight, M-1). So: fsync the anchor's
+    segment and the tail's segment, then fsync(ledger/) for their names.
+    (ledger/'s own name was fenced in session/ before its first segment was
+    created, SV020-01.) Earlier segments were synced before anything rotated
+    away from them. Any failure is a persistence failure before the intent
+    exists: nothing is copied, truncated or published.
+    """
+    ledger = Path(session_dir) / "ledger"
+    for number in sorted({scan.records[-1].segment, scan.tail_segment}):
+        fd = None
+        try:
+            fd = ops.open(str(ledger / cp.segment_name(number)), os.O_RDONLY | os.O_CLOEXEC)
+            ops.fsync(fd)
+        except OSError as error:
+            raise cp.PersistenceFailure(f"the recovery's source could not be made durable: {type(error).__name__}: {error}") from error
+        finally:
+            if fd is not None:
+                with contextlib.suppress(OSError):
+                    ops.close(fd)
+    try:
+        ops.sync_dir(str(ledger))
+    except OSError as error:
+        raise cp.PersistenceFailure(f"ledger/ could not be fenced before the recovery intent: {error}") from error
 
 
 def _sync_record(session_dir: Path, record: cp.Record, ops) -> None:
@@ -1021,6 +1054,10 @@ class _Context:
                 # the rest, so the whole core (receipt first) is re-derived alike.
                 body["witnessed"] = {"ack_id": receipt["ack_id"], "receipt": receipt, "after_seq": witness_end}
             intent = _sealed_intent(body)
+            # SV024-02: what the intent names -- its anchor and the exact tail --
+            # is durable before the intent, so no host loss can leave the intent
+            # without both its original bytes and its copy.
+            _fence_intent_inputs(session_dir, scan0, ops)
             cp.write_bytes_durable(session_dir / RECOVERING, json.dumps(intent, sort_keys=True).encode(), ops=ops)
         if scan0.tail and scan.records[-1].seq == scan0.last_seq and scan.tail == scan0.tail:
             result = cp.quarantine_tail(session_dir, scan, plan, self.quarantine, ops=ops)
