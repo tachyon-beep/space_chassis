@@ -7,9 +7,11 @@ come out right, and that neither of them can reach into a fleet.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parent.parent
@@ -17,94 +19,109 @@ sys.path.insert(0, str(PROJECT / "services"))
 sys.path.insert(0, str(PROJECT / "scripts"))
 
 
-def build_world(root: Path, slugs: list[str]) -> Path:
-    """A world with just enough in it for the readers to have something to read."""
-    (root / "work").mkdir(parents=True, exist_ok=True)
-    for slug in slugs:
-        (root / "home" / slug / "session").mkdir(parents=True, exist_ok=True)
-        (root / "diary" / slug).mkdir(parents=True, exist_ok=True)
-        (root / "transcripts" / slug).mkdir(parents=True, exist_ok=True)
-        (root / "telemetry" / "agents" / slug).mkdir(parents=True, exist_ok=True)
-        (root / "pump" / slug).mkdir(parents=True, exist_ok=True)
-        (root / "diode" / slug / "output").mkdir(parents=True, exist_ok=True)
-        (root / "home" / slug / "session" / "run.json").write_text(
-            json.dumps(
-                {"turn": 12, "context_window": 1000, "context_tokens": 250, "model": "stub"}
-            ),
-            encoding="utf-8",
-        )
-        (root / "home" / slug / "session" / "recap.md").write_text(
-            "- something\n", encoding="utf-8"
-        )
-        # The pressure figure is derived from the saved conversation's size, not
-        # from the run metadata's own count: the metadata is what the run said
-        # about itself, and the conversation is what it actually sent.
-        (root / "home" / slug / "session" / "conversation.json").write_text(
-            "x" * 1000, encoding="utf-8"
-        )
-        (root / "diary" / slug / "diary.md").write_text("notes\n" * 10, encoding="utf-8")
-        (root / "transcripts" / slug / "agent_life_transcript.jsonl").write_text(
-            '{"at": "x", "request": {}, "response": {}}\n' * 5, encoding="utf-8"
-        )
-        (root / "telemetry" / "agents" / slug / "lifecycle.jsonl").write_text(
-            "\n".join(
-                json.dumps(record)
-                for record in (
-                    {"event": "run_start", "agent": slug},
-                    {"event": "run_resumed", "agent": slug},
-                    {"event": "run_end", "agent": slug, "exit": 42, "note": "handing over"},
-                )
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        (root / "pump" / slug / "state.json").write_text(
-            json.dumps({"entries": {"beat": {"running": True}}}), encoding="utf-8"
-        )
-    (root / "work" / "roster.json").write_text(
-        json.dumps(
-            {"agents": [{"agent": slug, "name": f"name-{slug}", "slug": slug} for slug in slugs]}
-        ),
-        encoding="utf-8",
+SYSTEM = {"role": "system", "content": "you are an agent"}
+USER = {"role": "user", "content": "begin"}
+CAP = "rate limited: at most 4 request(s) per hour on this socket"
+
+
+def _line(seconds_ago: float, *, capped: bool = False, fresh: bool = True) -> str:
+    moment = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=seconds_ago)
+    messages = [SYSTEM, USER]
+    if not fresh:
+        messages += [{"role": "assistant", "content": "", "tool_calls": []}]
+    return json.dumps(
+        {
+            "timestamp": moment.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "stream": "core",
+            "request": {"model": "m", "messages": messages},
+            "response": {"error": {"message": CAP}} if capped else {"choices": []},
+        }
     )
+
+
+def build_world(root: Path, slugs: list[str]) -> Path:
+    """The monitor's view of the per-agent layout: its own read-only binds, one directory each."""
+    for slug in slugs:
+        transcripts = root / "transcripts" / slug
+        transcripts.mkdir(parents=True)
+        capped = slug.endswith("3")
+        lines = [_line(40), _line(10, fresh=False), _line(5, capped=capped, fresh=False)]
+        (transcripts / "agent_life_transcript.jsonl").write_text("\n".join(lines) + "\n")
+        (transcripts / "events.jsonl").write_text("")
+        tombstones = root / "telemetry" / "agents" / slug / "work" / "tombstones"
+        tombstones.mkdir(parents=True)
+        (tombstones / "recovery_note.txt").write_text("Recovery event 1: a claim.\n")
+        (root / "diode" / slug / "output").mkdir(parents=True)
+        (root / "diode" / slug / "output" / f"20000101T000000_000000Z_{slug}_x.txt").write_text("")
     return root
 
 
-def test_the_fleet_monitor_reads_and_never_writes_into_the_fleet(tmp_path, monkeypatch):
-    """Its whole vocabulary is observation: read-only mounts, one output directory."""
+def _point_monitor_at(monkeypatch, fleet_monitor, root: Path) -> None:
+    monkeypatch.setattr(fleet_monitor, "TRANSCRIPTS_DIR", root / "transcripts")
+    monkeypatch.setattr(fleet_monitor, "MIRROR_DIR", root / "telemetry" / "agents")
+    monkeypatch.setattr(fleet_monitor, "DIODE_DIR", root / "diode")
+    monkeypatch.setattr(fleet_monitor, "TELEMETRY_DIR", root / "telemetry")
+
+
+def test_the_monitor_publishes_signals_for_every_agent_in_the_new_shape(tmp_path, monkeypatch):
+    root = build_world(tmp_path / "w", ["agent_1", "agent_3"])
+    import fleet_monitor  # noqa: PLC0415
+
+    _point_monitor_at(monkeypatch, fleet_monitor, root)
+    monkeypatch.setenv("AGENT_NAME_agent_1", "Otter")
+    snapshot = fleet_monitor.publish(["agent_1", "agent_3"], now=time.time())
+    on_disk = json.loads((root / "telemetry" / "fleet.json").read_text())
+    assert on_disk == snapshot
+    rows = {row["slug"]: row for row in snapshot["agents"]}
+    assert rows["agent_1"]["name"] == "Otter"
+    assert rows["agent_1"]["liveness"] == "active"
+    assert rows["agent_3"]["liveness"] == "capped"
+    assert rows["agent_1"]["signals"]["incarnations"] == 1
+    assert rows["agent_3"]["signals"]["refusals"] == 1
+    assert snapshot["summary"]["agents"] == 2
+    assert snapshot["summary"]["capped"] == 1
+    lines = (root / "telemetry" / "fleet.jsonl").read_text().splitlines()
+    assert len(lines) == 1 and set(json.loads(lines[0])) == {"at", "summary"}
+
+
+def test_the_monitor_labels_every_mirror_value_as_the_agent_s_claim(tmp_path, monkeypatch):
     root = build_world(tmp_path / "w", ["agent_1"])
     import fleet_monitor  # noqa: PLC0415
 
-    monkeypatch.setattr(fleet_monitor, "TELEMETRY_DIR", root / "telemetry")
-    monkeypatch.setattr(fleet_monitor, "TRANSCRIPTS_DIR", root / "transcripts")
-    monkeypatch.setattr(fleet_monitor, "WORK_DIR", root / "work")
-    monkeypatch.setattr(fleet_monitor, "HOME_ROOT", root / "home")
-    monkeypatch.setattr(fleet_monitor, "DIARY_ROOT", root / "diary")
-    monkeypatch.setattr(fleet_monitor, "PUMP_ROOT", root / "pump")
+    _point_monitor_at(monkeypatch, fleet_monitor, root)
+    row = fleet_monitor.publish(["agent_1"], now=time.time())["agents"][0]
+    assert row["claims"]
+    for name, claim in row["claims"].items():
+        assert claim["claim"] == "agent", name
+    assert "a claim" in row["claims"]["recovery_note"]["value"]
 
-    before = {
-        path: path.read_bytes()
-        for path in (
-            root / "home" / "agent_1" / "session" / "run.json",
-            root / "work" / "roster.json",
-        )
+
+def test_the_monitor_never_writes_outside_its_telemetry_directory(tmp_path, monkeypatch):
+    root = build_world(tmp_path / "w", ["agent_1"])
+    import fleet_monitor  # noqa: PLC0415
+
+    _point_monitor_at(monkeypatch, fleet_monitor, root)
+    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    fleet_monitor.publish(["agent_1"], now=time.time())
+    after = {p for p in root.rglob("*") if p.is_file()}
+    assert after - set(before) == {
+        root / "telemetry" / "fleet.json",
+        root / "telemetry" / "fleet.jsonl",
     }
-    row = fleet_monitor.agent_row("agent_1")
-    summary = fleet_monitor.fleet_summary([row])
-
-    assert row["agent"] == "agent_1"
-    assert row["turn"] == 12
-    assert row["context_pressure"] == 0.25
-    assert row["handoff_present"] is False
-    assert row["pump_running"] == ["beat"]
-    assert summary["agents"] == 1
-    assert summary["turns_total"] == 12
-
-    # Nothing in the fleet's own storage changed: it read, and only read.
     for path, content in before.items():
-        assert path.read_bytes() == content, f"{path} was modified by the monitor"
+        assert path.read_bytes() == content, path
 
-    assert not (root / "work" / ".fleet").exists()
+
+def test_the_monitor_mounts_the_window_read_only():
+    sys.path.insert(0, str(PROJECT / "tests"))
+    import compose_text  # noqa: PLC0415
+
+    monitor = compose_text.services((PROJECT / "docker-compose.yml").read_text())["fleet_monitor"]
+    windows = [v for v in monitor["volumes"] if isinstance(v, dict) and v["target"] == "/diode"]
+    assert len(windows) == 1 and windows[0]["read_only"] == "true"
+    environment = monitor["environment"]
+    for key in ("QUIET_SECONDS", "RECORDER_HOURLY_MAX", "RECORDER_TOKEN_HOURLY_MAX"):
+        assert key in environment, key
 
 
 def test_the_monitor_is_not_a_grader():

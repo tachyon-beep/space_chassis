@@ -195,15 +195,23 @@ def _recorder(n: int, count: int) -> str:
 
 def _fleet_monitor(count: int) -> str:
     text = (
-        "  # The watcher. Reads every agent's record and writes one row per agent to the operator's\n"
-        "  # telemetry. Read-only binds of the agents' images, no network, no channel back.\n"
+        "  # The watcher. Reads every agent's record and writes the fleet's signals to the operator's\n"
+        "  # telemetry. Read-only binds of the agents' records and the window, no network, no channel\n"
+        "  # back.\n"
         "  fleet_monitor:\n"
         f"    image: {IMAGE}\n"
         '    entrypoint: ["python", "/opt/services/fleet_monitor.py"]\n'
         "    restart: unless-stopped\n"
         "    network_mode: none\n"
     )
-    text += _environment((("MONITOR_INTERVAL_SECONDS", "${MONITOR_INTERVAL_SECONDS:-15}"),))
+    text += _environment(
+        (
+            ("MONITOR_INTERVAL_SECONDS", "${MONITOR_INTERVAL_SECONDS:-15}"),
+            ("QUIET_SECONDS", "${QUIET_SECONDS:-900}"),
+            ("RECORDER_HOURLY_MAX", "${RECORDER_HOURLY_MAX:-2400}"),
+            ("RECORDER_TOKEN_HOURLY_MAX", "${RECORDER_TOKEN_HOURLY_MAX:-200000000}"),
+        )
+    )
     text += "    volumes:\n" + _binds("monitor", None, count)
     text += (
         "    read_only: true\n"
