@@ -1,5 +1,12 @@
 # SV-023 status
 
+**Accepted within the isolated temporary-fixture engineering scope.** Independent Astra acceptance: [ASTRA-ACCEPTANCE.md](ASTRA-ACCEPTANCE.md), immutable reviewed head `931d6c64367b2d9ff755eb7dd199459faf6642f3`, runtime/tests `fb638a6f4f65e382a7cdb7f691fe9cd82cbd208e`. All five findings are closed. Final narrow correction: 248 selected passes in three serial commands; preceding correction: 657 selected passes, not all rerun for the final narrow change. Historical review/worker statuses below are retained as provenance and superseded by this paragraph.
+
+Exactly two new witnessed file-repair pairs are implemented, with checked stop evidence and durable acknowledgement closure. Invalid/conflicting carriers and unsupported resolutions remain refused. No real-session repair, acknowledgement, deletion or resumption; no main merge, deployment, live provider, exact replay-bound claim, H/T/Q or pump choice. See acceptance for evidence limits.
+
+---
+
+
 **Correction 2 (Astra SV023-05) complete; awaiting the coordinator's checkpoint and Astra re-review. Not accepted.** Review: `SV-023-Astra-correction-1-review.md` (head `aff9388`, runtime/tests `914bcfe`): SV023-01…04 closed; SV023-05 open. Fix: a no-intent TC4 carrier's consumption is decided by its exact recorded receipt, whatever the current tail. A spent permission is never applied to another tail. An unused one applies only to its exact acknowledged bytes; other continuing tails are refused before any change. No intent is written with an acknowledgement for another tail. Three new nodes failed pre-fix as traced, mutation M6 was run and restored, and the final serial runs gave 97 + 97 + 54 = 248 passes. Details: `checkpoint-002-astra-corrections.md`. Each command was submitted alone; no Git call; temporary roots only.
 
 ---
