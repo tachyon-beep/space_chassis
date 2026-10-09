@@ -104,7 +104,9 @@ def copy_definition(destination: Path) -> Path:
     for name in ("README.md", "plant.md"):
         shutil.copy(VEHICLE / name, destination / name)
     (destination / "tools").mkdir(exist_ok=True)
-    for name in ("faults.py", "console.py"):
+    # checkpoint.py joined the list with the vehicle's restart resume (WP08.3): the linter reads its
+    # `capture_state` to know what a resume remembers.
+    for name in ("faults.py", "console.py", "checkpoint.py"):
         shutil.copy(VEHICLE / "tools" / name, destination / "tools" / name)
     domains = VEHICLE / "domains"
     if domains.is_dir():
