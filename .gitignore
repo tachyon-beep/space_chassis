@@ -15,8 +15,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 
-# Endurance runs are large and reproducible from a scenario file. The report is
-# copied to docs/example-run-report.md when one is worth keeping.
+# The retired endurance harness's runs, left on an operator's disk to archive (plan 5).
 endurance/runs/
 
 # The local smoke configuration: a copy of the example, not a deliverable.

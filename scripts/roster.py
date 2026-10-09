@@ -196,17 +196,14 @@ def build(count: int, seed: int | None) -> dict:
                 "name": entry["name"],
                 "slug": slug,
                 "category": entry["category"],
-                "mount": f"/home/{slug}",
-                "diary": f"diary_{slug}",
             }
         )
     return {
         "count": count,
         "seed": seed,
         "note": (
-            "Names are drawn at random and carry no rank. The service and volume "
-            "identifiers (agent_1, home_1) are bookkeeping and are not what an "
-            "agent is called."
+            "Names are drawn at random and carry no rank. The service identifiers "
+            "(agent_1, agent_2) are bookkeeping and are not what an agent is called."
         ),
         "agents": entries,
     }
@@ -215,9 +212,9 @@ def build(count: int, seed: int | None) -> dict:
 # The roster lives in .env rather than beside it, and that is not tidiness
 # either. Compose reads .env with no flags; a separate file needs
 # `--env-file roster.env` on every command, and a stack started without it hands
-# every agent the fallback name -- so agent_1 would be handed /home/agent_1
-# while its real directory is /home/mazarine, and it would come up unable to
-# write its own home. One file, read by default, cannot be forgotten.
+# every agent the fallback slug -- so agent_1's binds would name images that
+# were never created for it, and with `create_host_path: false` it would not
+# start. One file, read by default, cannot be forgotten.
 ROSTER_BEGIN = "# --- the fleet roster (generated: do not edit by hand) ---"
 ROSTER_END = "# --- end of the fleet roster ---"
 
@@ -306,11 +303,11 @@ def print_roster(roster: dict, as_json: bool) -> None:
         print(json.dumps(roster, indent=2))
         return
     width = max(len(a["name"]) for a in roster["agents"])
-    print(f"{'service':<9}  {'name':<{width}}  {'pool':<8}  private")
+    print(f"{'service':<9}  {'name':<{width}}  {'pool':<8}  slug")
     for entry in roster["agents"]:
         print(
             f"{entry['agent']:<9}  {entry['name']:<{width}}  "
-            f"{entry['category']:<8}  {entry['mount']}"
+            f"{entry['category']:<8}  {entry['slug']}"
         )
     print(f"\n{roster['count']} agents, seed {roster['seed']}, no ranks.")
 

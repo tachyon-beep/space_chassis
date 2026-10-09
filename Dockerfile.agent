@@ -59,29 +59,25 @@ COPY --chown=agent:agent recorder/proxy.py recorder/recorder_streams.py recorder
 COPY --chown=agent:agent llm_console_seed.json /usr/local/share/space/llm_console_seed.json
 # The briefing, read-only.
 COPY --chown=agent:agent brief/ /opt/brief/
-# The operator side that has not yet moved to the Aurora harness: the watcher and the review panel
-# run from here until the port retires them.
-COPY --chown=agent:agent services/ /opt/services/
+# The operator's own services, which reuse this image: the fleet monitor and the review panel, and
+# the two modules they import. Nothing the fleet runs is here.
+COPY --chown=agent:agent services/common.py services/health.py services/fleet_monitor.py services/review.py /opt/services/
 
 # **The vehicle, which is the far side of the window.** `docs/deep_research/vehicle/` is the
 # configuration the reference console serves: it is baked here rather than mounted, for the same
-# reason the services are -- the image is self-contained and the copy is read-only, so the thing
+# reason the harness is -- the image is self-contained and the copy is read-only, so the thing
 # serving the window cannot be edited by anything reading it. It lives under `docs/` in the
 # repository because it is vendored there as a submodule; nothing here imports it.
 COPY --chown=agent:agent docs/deep_research/vehicle/ /opt/vehicle/
 
-# The entrypoint and the world's constants. Both are read by every process in
-# the container, so their modes are stated rather than inherited: COPY preserves
-# whatever the host file happened to be, and a mode of 0600 here produces a
-# container that cannot read its own environment.
+# The entrypoint and the vehicle's service script. Their modes are stated rather than inherited:
+# COPY preserves whatever the host file happened to be.
 COPY containers/entrypoint.sh /usr/local/bin/entrypoint.sh
 # The vehicle's half of the window: the console loop, as a service. It is a script rather than a
 # compose `command:` because the container is read-only and the loop needs no shell features --
 # see the script's own header for what it decides and what it deliberately leaves to the operator.
 COPY containers/serve_vehicle.sh /usr/local/bin/serve_vehicle.sh
-COPY containers/agent.env /etc/agent.env
 RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/serve_vehicle.sh \
-    && chmod 0644 /etc/agent.env \
     && find /opt /usr/local/lib/recorder -name __pycache__ -type d -prune -exec rm -rf {} +
 
 # Nothing an agent can write is on an image-owned process's import or config path: no user

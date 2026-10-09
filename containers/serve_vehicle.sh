@@ -9,13 +9,12 @@
 #
 # What this script decides, and what it deliberately does not:
 #
-#   * **the diode directory is the one the fleet is already mounted on.** The agents read
-#     `/diode/<slug>/`, which the compose file mounts from `./volumes/diode`; so does this service,
-#     and the window appears inside the agents' own mount rather than beside it. A vehicle serving
-#     into a directory nobody reads is a working implementation of nothing.
-#   * **the slug is one window's name in that directory.** The console serves one `<slug>`, so
-#     several vehicles would be several slugs; the reference stack serves one, and the fleet's
-#     agents are all given that one slug by `docker-compose.yml`.
+#   * **the diode directory is the one the fleet is already mounted on.** Each agent binds only its
+#     own `/diode/<slug>/` from the shared window image; this service binds the whole window, so
+#     every agent's window appears inside that agent's own mount. A vehicle serving into a
+#     directory nobody reads is a working implementation of nothing.
+#   * **the slug is one window's name in that directory.** The console serves one `<slug>` per
+#     process, so the fleet's windows are one process each.
 #   * **it does not initialise and exit.** `console.py --init` creates the directory and stops,
 #     which is useful for a probe run by hand and useless as a service: the window has to keep
 #     publishing, because "state.json is rewritten every cycle whether or not anything was
@@ -38,8 +37,6 @@
 # mission under a crisis label.
 set -eu
 
-[ -f /etc/agent.env ] && . /etc/agent.env
-
 : "${DIODE_DIR:=/diode}"
 : "${VEHICLE_DIR:=/opt/vehicle}"
 : "${VEHICLE_SCENARIO:=nominal}"
@@ -58,7 +55,7 @@ fi
 # **Which slugs to serve, and why the answer is a roster rather than a name.**
 #
 # The console serves one `<slug>` per process, and the fleet's agents are each given their own:
-# `docker-compose.yml` hands agent *n* `DIODE_DUTY_DIR=/diode/$FLEET_N_SLUG`, taken from the roster
+# `docker-compose.yml` binds agent *n* to `/diode/$FLEET_N_SLUG`, taken from the roster
 # `scripts/roster.py` draws. So a vehicle that published into one directory called `vehicle` would be
 # a working implementation of nothing -- the agents would be reading their own empty directories and
 # concluding the vehicle was silent, which is the failure mode this whole side exists to prevent.

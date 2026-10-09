@@ -13,6 +13,7 @@ target-version = "py312"
 # `recorder/` is vendored from Aurora at 42faf41 the same way: its two modules and its seven
 # vendored test files, but not its conftest or the tests this repository adds.
 exclude = [
+    # endurance/runs/ is the retired endurance harness's output, left on the operator's disk.
     "vendor", ".scratch", "endurance/runs", "harness",
     "recorder/proxy.py", "recorder/recorder_streams.py",
     "recorder/tests/test_proxy.py", "recorder/tests/test_recorder_streams.py",
@@ -28,16 +29,10 @@ exclude = [
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 ignore = ["E501", "B008"]
 
-[tool.ruff.lint.isort]
-# Bare `import recorder` and `import pump` in tests/ mean services/recorder.py and services/pump.py;
-# the top-level recorder/ and pump/ are Aurora's, tested as their own processes. Without this, ruff
-# files the old ones as first-party. Plan 5 of the Aurora port retires both, and this with them.
-known-third-party = ["recorder", "pump"]
-
 [tool.pytest.ini_options]
 # The vehicle's referee lives in its own repository, mounted here as a git submodule. The suite is
 # still one suite: `pytest -q` at this root runs the operator side, the assertions about this
-# repository's own files, and the vehicle's 312 tests.
+# repository's own files, and the vehicle's 344 tests.
 testpaths = ["tests", "docs/deep_research/vehicle/tests"]
 addopts = "-q"
 filterwarnings = ["error::DeprecationWarning"]
