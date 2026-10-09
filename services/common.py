@@ -104,14 +104,36 @@ def write_text_atomic(path: Path, text: str, mode: int = 0o644) -> None:
             os.unlink(tmp)
 
 
-def append_jsonl(path: Path, record: dict) -> None:
+JSONL_MAX_BYTES = 64 * 1024 * 1024
+
+
+def previous_generation(path: Path) -> Path:
+    """Where a rotated log goes: `fleet.jsonl` -> `fleet.1.jsonl`."""
+    return path.with_name(f"{path.stem}.1{path.suffix}")
+
+
+def append_jsonl(path: Path, record: dict, max_bytes: int = JSONL_MAX_BYTES) -> None:
     """Append one JSON record. Failure is the caller's to contain.
 
     Append-only is the point: a record of what happened is not something a
-    later event should be able to rewrite.
+    later event should be able to rewrite. Within a generation nothing is
+    rewritten; past `max_bytes` the file is renamed to its previous generation
+    (replacing the one before) and a new one begins, so the operator's own logs
+    stay bounded on their image without truncating anything. A failed rename
+    never stops the append. Each file has one writer -- the fleet monitor, one
+    journal pass at a time -- and nothing in production reads these logs, so
+    there is no reader to teach about the second generation.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+    incoming = len(line.encode("utf-8")) + 1
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = 0
+    if size > 0 and size + incoming > max_bytes:
+        with contextlib.suppress(OSError):
+            os.replace(path, previous_generation(path))
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(line + "\n")
 
