@@ -117,7 +117,7 @@ runs every refusal, so run it before you commit. `live/` is separate because it 
   `vehicle` is a third profile, an alternative to `diode` rather than a neighbour — two publishers
   into one slug is two vehicles wearing one name.
 - **Agents join `worknet` (`internal: true`) and nothing else** — never `modelnet` or `windowside`.
-  That is the one hard rule, and the vehicle service obeys it too.
+  That is the one hard rule. The vehicle service and the diode fixture are on no network an agent is on.
 - Fleet names are drawn by `scripts/roster.py` into `.env` as `FLEET_N_SLUG`/`FLEET_N_NAME`, because
   compose reads `.env` with no flags; the roster itself is `operator/roster.json`, which no agent mounts.
 - `vendor/registry/` is gitignored and `prepare_host.sh` refuses without it; rebuild with
