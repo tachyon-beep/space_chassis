@@ -1909,15 +1909,16 @@ services:
         max-file: "5"
 
   # The vehicle: the reference console, serving into the same window image the fleet reads.
-  # `diode` above is the contract fixture; start one or the other. It is on
-  # `worknet` alone: a vehicle with a route to the model network could reach the fleet's mind.
+  # `diode` above is the contract fixture; start one or the other. No network at all: its
+  # interface is the window volume, as the fixture's is (spec 5), and its code opens no
+  # socket. On `worknet` it was a named host the agents could address and whose restarts
+  # they could observe, which is evidence about hidden vehicle state outside the instruments.
   vehicle:
     image: space-chassis-agent
     entrypoint: ["/usr/local/bin/serve_vehicle.sh"]
     restart: unless-stopped
     profiles: ["vehicle"]
-    hostname: vehicle
-    networks: [worknet]
+    network_mode: none
     environment:
       DIODE_DIR: /diode
       VEHICLE_DIR: /opt/vehicle

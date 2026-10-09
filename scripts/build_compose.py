@@ -297,15 +297,16 @@ def _diode() -> str:
 def _vehicle() -> str:
     text = (
         "  # The vehicle: the reference console, serving into the same window image the fleet reads.\n"
-        "  # `diode` above is the contract fixture; start one or the other. It is on\n"
-        "  # `worknet` alone: a vehicle with a route to the model network could reach the fleet's mind.\n"
+        "  # `diode` above is the contract fixture; start one or the other. No network at all: its\n"
+        "  # interface is the window volume, as the fixture's is (spec 5), and its code opens no\n"
+        "  # socket. On `worknet` it was a named host the agents could address and whose restarts\n"
+        "  # they could observe, which is evidence about hidden vehicle state outside the instruments.\n"
         "  vehicle:\n"
         f"    image: {IMAGE}\n"
         '    entrypoint: ["/usr/local/bin/serve_vehicle.sh"]\n'
         "    restart: unless-stopped\n"
         '    profiles: ["vehicle"]\n'
-        "    hostname: vehicle\n"
-        "    networks: [worknet]\n"
+        "    network_mode: none\n"
     )
     text += _environment(
         (

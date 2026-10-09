@@ -509,9 +509,14 @@ def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
         "the window must appear inside the agents' own diode mount, not beside it"
     )
     assert [v for v in service["volumes"] if v.endswith(":/diode")], service["volumes"]
-    assert service["networks"] == ["worknet"], (
-        "agents join worknet and nothing else; the vehicle obeys the same rule"
-    )
+    # **No network at all.** This asserted `worknet` alone, on the reasoning that the vehicle obeys
+    # the agents' rule; the rule's purpose was to keep the vehicle off the model network, and no network
+    # serves it better. The vehicle's interface is the window volume, as the fixture's is (spec 5), and
+    # its code opens no socket; on `worknet` it was a named host the fleet could address and whose
+    # restarts it could observe (aurora-port spec 8, the vehicle workstream's answer on filigree
+    # space_chassis-93010ff54e).
+    assert service.get("network_mode") == "none", service.get("network_mode")
+    assert "networks" not in service and "hostname" not in service, sorted(service)
     assert service["read_only"] is True
     assert service["cap_drop"] == ["ALL"]
     assert service["security_opt"] == ["no-new-privileges:true"]
