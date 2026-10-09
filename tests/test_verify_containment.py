@@ -45,6 +45,15 @@ case "$*" in
         echo "$IMAGE_ID"; exit 0 ;;
     *"--entrypoint find"*)
         printf '%b' "${IMAGE_SWEEP:-}"; exit "${IMAGE_SWEEP_RC:-1}" ;;
+    *inspect*.Source*)
+        [ -n "${MOUNT_SOURCES:-}" ] || exit 1
+        printf '%s' "$MOUNT_SOURCES"; exit 0 ;;
+    *inspect*.Destination*)
+        [ -n "${VEHICLE_BINDS:-}" ] || exit 1
+        printf '%s' "$VEHICLE_BINDS"; exit 0 ;;
+    *" exec "*"/diode/.probe"*)
+        [ -n "${DIODE_ROOT_VERDICT:-}" ] || exit 1
+        echo "$DIODE_ROOT_VERDICT"; exit 0 ;;
     *" exec "*getent*)
         [ -n "${GETENT_RC:-}" ] || exit 1
         echo "rc=$GETENT_RC"; exit 0 ;;
@@ -258,3 +267,41 @@ def test_the_sweep_finds_its_sentinel_and_every_vehicle_file_it_names(run, tmp_p
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("vehicle")
     assert sorted(_find_under(args, root)) == sorted([SENTINEL_PATH, *planted])
+
+
+def test_an_agent_that_mounts_the_vehicle_s_state_is_a_failure(run):
+    """Read host-side: an agent's own /state makes the target useless from inside."""
+    clean = run(
+        COMPOSE="docker compose -p probe",
+        AGENTS="agent_1",
+        MOUNT_SOURCES="/v/state_x/data /v/diode/data/x ",
+    )
+    assert "PASS  agent_1 mounts nothing of the vehicle's private state" in clean.stdout
+    leaked = run(
+        COMPOSE="docker compose -p probe",
+        AGENTS="agent_1",
+        MOUNT_SOURCES="/v/state_x/data /v/vehicle_state/data ",
+    )
+    assert "FAIL  agent_1 mounts the vehicle's private state" in leaked.stdout
+    blind = run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
+    assert "FAIL  agent_1's mounts could not be inspected" in blind.stdout
+
+
+def test_the_window_root_write_probe_fails_closed(run):
+    refused = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", DIODE_ROOT_VERDICT="refused")
+    assert "PASS  agent_1 cannot write the window root" in refused.stdout
+    wrote = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", DIODE_ROOT_VERDICT="wrote")
+    assert "FAIL  agent_1 can write the window root" in wrote.stdout
+    silent = run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
+    assert "FAIL  agent_1 could not be probed for writing the window root" in silent.stdout
+
+
+def test_the_vehicle_binds_its_window_and_its_state_and_nothing_else(run):
+    exact = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", VEHICLE_BINDS="/state /diode ")
+    assert "PASS  the vehicle binds /diode and /state and nothing else" in exact.stdout
+    wider = run(
+        COMPOSE="docker compose -p probe", AGENTS="agent_1", VEHICLE_BINDS="/diode /state /shared "
+    )
+    assert "FAIL  the vehicle binds '/diode /shared /state'" in wider.stdout
+    absent = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", ABSENT="vehicle")
+    assert "SKIP  the vehicle is not running" in absent.stdout
