@@ -275,3 +275,49 @@ def test_too_little_free_space_refuses_before_admission_and_charges_nothing(
 def test_a_failed_directory_sync_is_appended_not_durable(tmp_path, monkeypatch):
     _Syncs(monkeypatch, fail={str(tmp_path)})
     assert proxy.append_record(str(tmp_path / "t.jsonl"), b"{}") == "appended"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"model": "m", "messages": [1]},
+        {"model": "m", "messages": [{"role": 7, "content": "x"}]},
+        {"model": "m", "messages": [{"role": "assistant", "tool_calls": ["a"]}]},
+        {"model": "m", "messages": [{"role": "assistant", "tool_calls": [{"function": None}]}]},
+    ],
+    ids=["number-message", "number-role", "string-call", "null-function"],
+)
+@pytest.mark.parametrize("streamed", [False, True], ids=["buffered", "streamed"])
+def test_an_odd_message_shape_is_still_recorded_and_closed(
+    stream_factory, upstream, transcripts, payload, streamed
+):
+    """Plan 4b final review: the transcript's display code ran before the record was written and
+    raised on shapes like these, so a streamed reply went out unrecorded and a buffered one was
+    charged with no record, no close and no reply."""
+    from test_proxy import _StreamingResponse
+
+    if streamed:
+        upstream["response"] = lambda: _StreamingResponse([b"data: [DONE]\n\n"])
+    else:
+        upstream["response"] = lambda: _BufferedResponse(json.dumps(ENOSPC_BODY).encode())
+    path = stream_factory(max_tokens=10)
+    response = _post(path, dict(payload, stream=streamed))
+    assert response.status_code == 200
+    assert _wait_until(lambda: _entries(transcripts))
+    assert _wait_until(lambda: [e for e in _events(transcripts) if e["event"] == "close"])
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [b"[1, 2]", b'{"choices": [{"message": null}]}', b'{"choices": ["x"]}'],
+    ids=["list", "null-message", "string-choice"],
+)
+def test_an_odd_reply_shape_is_still_recorded_and_relayed(
+    stream_factory, upstream, transcripts, reply
+):
+    upstream["response"] = lambda: _BufferedResponse(reply)
+    path = stream_factory(max_tokens=10)
+    response = _post(path, {"model": "m", "messages": []})
+    assert response.status_code == 200
+    assert response.content == reply
+    assert _entries(transcripts)
