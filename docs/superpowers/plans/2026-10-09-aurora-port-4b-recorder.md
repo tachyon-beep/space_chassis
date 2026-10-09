@@ -38,13 +38,13 @@ SV's `Budget`, `RecordStore`, memory budget, correlation labels and slot machine
    - The handler's 300 s idle timeout stays.
 2. **SV's memory reservation is dropped.** Its own receipt marks the arithmetic as never commissioned. What the port takes from that work is the pre-scan, which needs no reservation to refuse an over-structured body.
 3. **No connection-count limit, header deadline or TLS rebind.** The port has no slot machinery, and nothing in its threat model needs them.
+4. **Refund on a no-send failure (SV `test_an_admitted_request_that_never_connected_is_refunded`)** comes with Task 2's connection class. That class is what can tell "never connected" apart from "sent". Before Task 2 the port cannot tell, and keeps the reservation.
 5. **A reply the recorder already knows it could not record is refused before it is paid for.** Withholding (decision 1) has a known failure mode. A `502 record_failed` is retried by the OpenAI client (twice, on any status ≥ 500) inside each of the chassis's 5 transient retries (1–16 s backoff). That is up to 18 charged and withheld upstream calls in about 45 s, then exit 44, a pause of 60 s plus jitter, and the cycle repeats.
    - SV guarded this, and the port does too. Before admission, a stdlib `os.statvfs` check refuses with `503 record_capacity` when the transcript directory has less than `RECORDER_MIN_FREE_BYTES` free (default 64 MiB).
    - Nothing is charged for that refusal. A full transcript volume then costs pauses, not tokens.
    - The `open` event stays best-effort (`test_a_full_volume_does_not_stop_the_open_or_the_close_event`). The free-space floor is the gate, not the event.
 6. **A `400 structure_limit` is `invalid_request` to the chassis** (chassis.py:236). It gets one deep repair, then exits 43, which the ladder handles. That is acceptable for the seed harness, which never sends such a body.
 7. **SV's R-A5 differs here by John's decision 4.** SV corrected the originating hour and reported the settle as late. The port's declared pools carry in-flight reservations into the new hour instead.
-4. **Refund on a no-send failure (SV `test_an_admitted_request_that_never_connected_is_refunded`)** comes with Task 2's connection class. That class is what can tell "never connected" apart from "sent". Before Task 2 the port cannot tell, and keeps the reservation.
 
 ## Global Constraints
 
