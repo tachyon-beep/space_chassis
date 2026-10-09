@@ -155,3 +155,11 @@ def test_claude_md_states_the_vehicle_s_private_state_and_one_executive():
         line for line in text.splitlines() if "/opt/vehicle" in line and line.startswith("|")
     )
     assert "/state" in row and "one process for every window" in row, row
+
+
+def test_a_new_world_archives_the_window_root_s_identity_too():
+    # The window root's .executive.json binds the old world; left behind, the console refuses.
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    start = text.index("- **A deliberate new world**")
+    bullet = text[start : text.index("\n- **", start + 1)]
+    assert ".executive.json" in bullet, bullet

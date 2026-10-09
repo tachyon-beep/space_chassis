@@ -195,7 +195,8 @@ else:
         bad "$agent's /diode holds '$entries', not ${slug:-<no slug>} alone"
     fi
     # The window root is the vehicle's: an agent writes only inside its own window.
-    case $(verdict "$agent" sh -c 'if touch /diode/.probe 2>/dev/null; then rm -f /diode/.probe; echo wrote; else echo refused; fi') in
+    # A missing `touch` says nothing, which fails: only a write that was tried and refused passes.
+    case $(verdict "$agent" sh -c 'command -v touch >/dev/null 2>&1 || exit 0; if touch /diode/.probe 2>/dev/null; then rm -f /diode/.probe; echo wrote; else echo refused; fi') in
         refused) ok "$agent cannot write the window root" ;;
         wrote) bad "$agent can write the window root" ;;
         *) bad "$agent could not be probed for writing the window root" ;;
@@ -205,7 +206,7 @@ else:
     sources=$(docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' "$($COMPOSE ps -q "$agent" 2>/dev/null)" 2>/dev/null)
     if [ -z "$sources" ]; then
         bad "$agent's mounts could not be inspected"
-    elif printf '%s' "$sources" | grep -q '/vehicle_state/'; then
+    elif printf '%s ' "$sources" | grep -qE '/vehicle_state(/| )'; then
         bad "$agent mounts the vehicle's private state"
     else
         ok "$agent mounts nothing of the vehicle's private state"

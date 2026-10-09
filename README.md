@@ -241,8 +241,9 @@ identity: a restart that names any of them differently refuses.
   seed, a vehicle update, or an exit 3 that will not clear: stop the fleet and
   the vehicle (an agent's window is bound by inode, so moving it under a running
   agent leaves the agent writing into the old one); move the whole of `/state`
-  aside and the contents of each window aside, keeping each `<slug>/` and
-  `<slug>/output/` (or rerun `prepare_host.sh`); start. A start with no
+  aside, the contents of each window aside, keeping each `<slug>/` and
+  `<slug>/output/` (or rerun `prepare_host.sh`), and the window root's
+  `.executive.json` aside too -- it binds the old world; start. A start with no
   checkpoint on a `/state` that holds a record refuses: one state directory is
   one world.
 - **`--closed-interlock` on a restart** is added to the world's set and

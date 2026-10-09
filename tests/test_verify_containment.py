@@ -305,3 +305,29 @@ def test_the_vehicle_binds_its_window_and_its_state_and_nothing_else(run):
     assert "FAIL  the vehicle binds '/diode /shared /state'" in wider.stdout
     absent = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", ABSENT="vehicle")
     assert "SKIP  the vehicle is not running" in absent.stdout
+
+
+def test_an_agent_bound_to_the_vehicle_state_image_root_is_a_failure(run):
+    result = run(
+        COMPOSE="docker compose -p probe",
+        AGENTS="agent_1",
+        MOUNT_SOURCES="/v/state_x/data /v/vehicle_state ",
+    )
+    assert "FAIL  agent_1 mounts the vehicle's private state" in result.stdout
+
+
+def test_the_window_root_probe_says_nothing_when_it_cannot_run(run, tmp_path):
+    """The probe's own text, run where none of its tools exist, must not read as a refusal."""
+    run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
+    probe = next(line for line in run.argv_lines() if "/diode/.probe" in line)
+    script = probe.split(" -c ", 1)[1]
+    empty = tmp_path / "empty-path"
+    empty.mkdir()
+    out = subprocess.run(
+        ["/bin/sh", "-c", script],
+        env={"PATH": str(empty)},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    ).stdout.strip()
+    assert out.splitlines()[-1:] != ["refused"], out
