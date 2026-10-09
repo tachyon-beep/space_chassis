@@ -164,7 +164,12 @@ def test_spend_sums_closes_inside_the_hour_and_counts_429_and_503_as_refused():
         {"timestamp": at(3740), "event": "open", "stream": "core"},
         close(3750, 200, 7),
     ]
-    assert health.spend(events, now=epoch(3800)) == {"requests": 4, "tokens": 17, "refused": 2}
+    spent = health.spend(events, now=epoch(3800))
+    assert {key: spent[key] for key in ("requests", "tokens", "refused")} == {
+        "requests": 4,
+        "tokens": 17,
+        "refused": 2,
+    }
 
 
 def _calling(arguments: str, seconds: float, fresh: bool) -> dict:
@@ -258,7 +263,9 @@ def test_signals_survive_an_empty_or_malformed_window():
     ]
     for records in ([], junk):
         result = health.signals(records, ["junk", {"event": "close"}], now=0, caps={})
-        assert result["spend"] == {"requests": 0, "tokens": 0, "refused": 0}
+        assert result["spend"]["requests"] == result["spend"]["tokens"] == 0
+        assert result["spend"]["refused"] == 0 and result["spend"]["cache_share"] is None
+        assert result["incarnations_last_hour"] == 0
         assert isinstance(result["incarnations"], int)
     assert health.signals([], [], now=0, caps={"x": 1})["caps"] == {"x": 1}
 
@@ -371,3 +378,75 @@ def test_only_a_cap_refusal_close_counts_as_refused_spend():
         close(502),
     ]
     assert health.spend(events, now=epoch(20))["refused"] == 2
+
+
+def _priced(seconds: float, usage, stream: str = "core") -> dict:
+    return {
+        "timestamp": at(seconds),
+        "event": "close",
+        "stream": stream,
+        "status": 200,
+        "usage": usage,
+    }
+
+
+def test_spend_counts_prompt_completion_and_cached_tokens_from_core_closes():
+    events = [
+        _priced(
+            10,
+            {
+                "prompt_tokens": 1000,
+                "completion_tokens": 50,
+                "total_tokens": 1050,
+                "cached_tokens": 800,
+            },
+        ),
+        _priced(20, {"prompt_tokens": 3000, "completion_tokens": 10, "total_tokens": 3010}),
+        _priced(30, {"prompt_tokens": 9999, "cached_tokens": 9999}, stream="vision"),
+    ]
+    spent = health.spend(events, now=epoch(60))
+    assert spent["prompt_tokens"] == 4000
+    assert spent["cached_tokens"] == 800
+    assert spent["completion_tokens"] == 60
+    assert spent["priced"] == 2
+    assert spent["cache_share"] == 0.2
+    assert spent["mean_prompt_tokens"] == 2000
+
+
+def test_spend_ignores_usage_that_is_not_a_non_negative_integer():
+    events = [
+        _priced(n, {"prompt_tokens": bad, "completion_tokens": bad, "cached_tokens": bad})
+        for n, bad in enumerate([True, -5, 1.5, "9", None])
+    ]
+    spent = health.spend(events, now=epoch(60))
+    assert spent["prompt_tokens"] == spent["completion_tokens"] == spent["cached_tokens"] == 0
+    assert spent["priced"] == 0
+
+
+def test_cached_tokens_without_prompt_tokens_count_nothing():
+    spent = health.spend([_priced(10, {"cached_tokens": 500})], now=epoch(60))
+    assert spent["cached_tokens"] == 0 and spent["priced"] == 0
+    assert spent["cache_share"] is None and spent["mean_prompt_tokens"] is None
+
+
+def test_the_cache_share_never_exceeds_one():
+    spent = health.spend([_priced(10, {"prompt_tokens": 100, "cached_tokens": 500})], now=epoch(60))
+    assert spent["cached_tokens"] == 100 and spent["cache_share"] == 1.0
+
+
+def test_cache_share_is_none_when_nothing_was_prompted():
+    spent = health.spend([], now=epoch(60))
+    assert spent["cache_share"] is None and spent["mean_prompt_tokens"] is None
+
+
+def test_incarnations_last_hour_counts_fresh_starts_inside_the_hour():
+    records = [fresh(0), later(1, 10), fresh(4000), later(1, 4010), fresh(5000), later(2, 5010)]
+    result = health.signals(records, [], now=epoch(6000), caps={})
+    assert result["incarnations_last_hour"] == 2
+
+
+def test_a_tail_that_opens_mid_incarnation_counts_no_start():
+    records = [later(3, 4000), later(4, 4010)]
+    result = health.signals(records, [], now=epoch(4100), caps={})
+    assert result["incarnations"] == 1
+    assert result["incarnations_last_hour"] == 0

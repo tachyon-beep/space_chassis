@@ -633,6 +633,14 @@ def _claim_cell(claim: dict | None, cap: int = SUMMARY_CAP) -> str:
     return f"<span class=warn title='{esc(CLAIM)}'>{esc(text[:cap])}*</span>"
 
 
+def _percent(share) -> str:
+    """A share in 0..1 as a whole percentage; anything else, including a snapshot from before
+    the monitor published one, is a dash."""
+    if isinstance(share, (int, float)) and not isinstance(share, bool) and 0 <= share <= 1:
+        return f"{round(100 * share)}%"
+    return "—"
+
+
 def render_fleet(rows: list[dict], summary: dict) -> bytes:
     states = ", ".join(f"{count} {state}" for state, count in summary["liveness"].items() if count)
     head = (
@@ -663,6 +671,7 @@ def render_fleet(rows: list[dict], summary: dict) -> bytes:
             f"<td class={kind}>{esc(state)}</td>"
             f"<td>{esc(signals.get('incarnations', '—'))}</td>"
             f"<td>{esc(spend.get('requests', '—'))}/{esc(caps.get('requests', '—'))}</td>"
+            f"<td title='cache share'>{esc(_percent(spend.get('cache_share')))}</td>"
             f"<td>{esc(signals.get('refusals', '—'))}</td>"
             f"<td>{esc(signals.get('tool_errors', '—'))}/{esc(signals.get('tool_results', '—'))}</td>"
             f"<td>{esc(r['turns_loaded'])}{'…' if r['more_available'] else ''}</td>"
@@ -673,7 +682,7 @@ def render_fleet(rows: list[dict], summary: dict) -> bytes:
 
     table = (
         "<table><tr><th>agent</th><th>liveness</th><th>incarnations</th><th>hour / cap</th>"
-        "<th>refusals</th><th>tool errors</th><th>turns</th><th>transcript</th>"
+        "<th>cache</th><th>refusals</th><th>tool errors</th><th>turns</th><th>transcript</th>"
         "<th>last note*</th></tr>" + "".join(cells(r) for r in rows) + "</table>"
     )
     return page("space_chassis — the fleet", head + table, refresh=15)

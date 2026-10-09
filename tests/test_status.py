@@ -208,3 +208,29 @@ def test_a_truncated_window_is_marked_in_the_text(tmp_path, monkeypatch):
     row = status.agent_row("agent_1", "agent_1", volumes, time.time(), 60, {"requests": 1}, None)
     row["signals"]["window"]["truncated"] = True
     assert "incarnations 1+" in status.render([row], verbose=False)
+
+
+def test_status_shows_cache_share_prompt_size_and_incarnations_this_hour(tmp_path):
+    volumes = tmp_path / "volumes"
+    make_agent(volumes, "agent_1", transcript_ago=5)
+    row = status.agent_row("agent_1", "agent_1", volumes, time.time(), 60, {"requests": 1}, None)
+    row["signals"]["spend"].update(cache_share=0.2, mean_prompt_tokens=2000)
+    row["signals"]["incarnations_last_hour"] = 2
+    line = status.render([row], verbose=False)
+    assert "cache 20%" in line and "prompt 2000" in line and "inc/h 2" in line
+    row["signals"]["window"]["truncated"] = True
+    assert "inc/h 2+" in status.render([row], verbose=False)
+    row["signals"]["spend"].update(cache_share=None, mean_prompt_tokens=None)
+    assert "cache —" in status.render([row], verbose=False)
+    assert "prompt —" in status.render([row], verbose=False)
+
+
+def test_status_reads_a_snapshot_published_before_the_cache_signals(tmp_path):
+    volumes = tmp_path / "volumes"
+    make_agent(volumes, "agent_1", transcript_ago=5)
+    row = status.agent_row("agent_1", "agent_1", volumes, time.time(), 60, {"requests": 1}, None)
+    for key in ("cache_share", "mean_prompt_tokens"):
+        row["signals"]["spend"].pop(key, None)
+    row["signals"].pop("incarnations_last_hour", None)
+    line = status.render([row], verbose=False)
+    assert "cache —" in line and "prompt —" in line and "inc/h —" in line
