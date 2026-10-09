@@ -436,12 +436,60 @@ def reservation_for(composed_bytes, allowance):
     reserved = estimate_prompt_tokens(composed_bytes)
     try:
         data = json.loads(composed_bytes.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         data = None
     tokens = data.get("max_tokens") if isinstance(data, dict) else None
     if isinstance(tokens, int) and not isinstance(tokens, bool) and tokens > 0:
         return reserved + tokens
     return reserved + allowance
+
+
+# Structure caps, from the SV workstream (R-B3): (depth, containers, values). A body small in
+# bytes can be enormous in structure, and deeper than the parser's recursion allows; the pre-scan
+# refuses it before anything parses it.
+REQUEST_CAPS = (64, 32_768, 131_072)
+RESPONSE_CAPS = (64, 8_192, 32_768)
+_TOKEN = re.compile(rb'"[^"\\]*(?:\\.[^"\\]*)*(?:"|\Z)|[\[{]|[\]}]|[^\s,:\[\]{}"]+', re.S)
+
+
+def _structure(data, caps=None):
+    """Walk the tokens of a JSON-ish body: (depth, containers, values, first cap exceeded).
+
+    Strings, with their escapes, are one token each, so punctuation inside them is not structure.
+    Nothing is validated. With caps, the walk stops at the first cap exceeded.
+    """
+    depth = deepest = containers = values = 0
+    for match in _TOKEN.finditer(data):
+        first = match.group()[:1]
+        if first in (b"[", b"{"):
+            depth += 1
+            containers += 1
+            values += 1
+            deepest = max(deepest, depth)
+        elif first in (b"]", b"}"):
+            depth = max(0, depth - 1)
+            continue
+        else:
+            values += 1
+        if caps is not None:
+            if deepest > caps[0]:
+                return deepest, containers, values, "depth"
+            if containers > caps[1]:
+                return deepest, containers, values, "containers"
+            if values > caps[2]:
+                return deepest, containers, values, "values"
+    return deepest, containers, values, None
+
+
+def prescan(data):
+    """(max depth, containers, values) of a body, without parsing it."""
+    deepest, containers, values, _ = _structure(data)
+    return deepest, containers, values
+
+
+def over_caps(data, caps):
+    """The first cap a body exceeds ("depth", "containers", "values"), or None."""
+    return _structure(data, caps)[3]
 
 
 def token_limited_message(allowance, history, now, window=BUDGET_WINDOW):
@@ -488,7 +536,7 @@ def compose_body(body_bytes, settings, allowance=0):
     """
     try:
         data = json.loads(body_bytes.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         data = None
     if not isinstance(data, dict):
         return None, "request body is not a json object"

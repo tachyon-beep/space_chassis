@@ -27,6 +27,11 @@ EVENTS_MAX_BYTES = 16_777_216
 # hygiene inside the recorder, which runs under a memory limit; not a ceiling
 # on what a stream may spend.
 REQUEST_MAX_BYTES = int(os.environ.get("REQUEST_MAX_BYTES", str(16_777_216)))
+# A buffered upstream response is read at most this far; past it the reply is withheld (502) and
+# recorded as the prefix read, its usage unknown.
+RESPONSE_MAX_BYTES = int(os.environ.get("RESPONSE_MAX_BYTES", str(16_777_216)))
+# Every raw body the recorder writes or prints is cut here.
+RAW_RECORD_CHARS = 1_000_000
 # The most of a streamed body's raw bytes the recorder keeps, for a body that
 # carries no events, and the longest single event line it parses. The
 # reassembled completion is held whole; the body it came from is not.
@@ -370,6 +375,14 @@ def relay_chunks(writer, response, record, size=65536):
     return error
 
 
+def raw_record(data):
+    """A body that is not recorded as JSON: as text, cut at RAW_RECORD_CHARS."""
+    text = data.decode("utf-8", errors="replace")
+    if len(text) > RAW_RECORD_CHARS:
+        return {"raw_body": text[:RAW_RECORD_CHARS], "raw_body_truncated": True}
+    return {"raw_body": text}
+
+
 def sse_payload(line):
     """The JSON object a data: line carries, or None.
 
@@ -382,9 +395,11 @@ def sse_payload(line):
     data = line[len(b"data:") :].strip()
     if not data or data == b"[DONE]":
         return None
+    if recorder_streams.over_caps(data, recorder_streams.RESPONSE_CAPS) is not None:
+        return None
     try:
         payload = json.loads(data.decode("utf-8", errors="replace"))
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -581,7 +596,7 @@ def stream_response_data(record):
     if not record.raw_truncated:
         try:
             data = json.loads(text)
-        except ValueError:
+        except (ValueError, RecursionError):
             data = None
         if isinstance(data, dict):
             return data
@@ -624,6 +639,23 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         stream = getattr(self.server, "stream_name", "core")
         registry = getattr(self.server, "registry", None)
 
+        # Structure before anything parses the body: nothing is admitted, reserved or forwarded.
+        over = recorder_streams.over_caps(req_body, recorder_streams.REQUEST_CAPS)
+        if over is not None:
+            req_data = raw_record(req_body)
+            event_id = request_id()
+            started = time.monotonic()
+            log_event("open", stream, id=event_id, model=None, messages=0)
+            log_event(
+                "close",
+                stream,
+                id=event_id,
+                status=400,
+                duration_seconds=round(time.monotonic() - started, 3),
+            )
+            self._finish_local(stream, req_data, 400, f"structure_limit: {over} over its limit")
+            return
+
         refused = None
         ticket = None
         fleet_ticket = None
@@ -658,7 +690,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         except Exception:
             req_data = None
         if not isinstance(req_data, dict):
-            req_data = {"raw_body": req_body.decode("utf-8", errors="replace")}
+            req_data = raw_record(req_body)
 
         event_id = request_id()
         messages = req_data.get("messages")
@@ -706,7 +738,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 if req_data.get("stream") is True:
                     relayed = self._relay(response_code, response_headers, res)
                 else:
-                    response_body = res.read()
+                    response_body = res.read(RESPONSE_MAX_BYTES + 1)
         except urllib.error.HTTPError as e:
             response_code = e.code
             try:
@@ -733,20 +765,36 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             response_body = json.dumps({"error": {"message": "proxy error"}}).encode("utf-8")
             response_headers = [("Content-Type", "application/json")]
 
+        untrusted = False
         if relayed is not None:
             res_data = stream_response_data(relayed)
+        elif len(response_body) > RESPONSE_MAX_BYTES:
+            # Withheld: a prefix is not the answer. Recorded as read, its usage unknown.
+            res_data = raw_record(response_body[:RESPONSE_MAX_BYTES])
+            res_data["raw_body_truncated"] = True
+            untrusted = True
+            response_code = 502
+            response_body = json.dumps(
+                {"error": {"message": f"response_too_large: over {RESPONSE_MAX_BYTES} bytes"}}
+            ).encode("utf-8")
+            response_headers = [("Content-Type", "application/json")]
+        elif recorder_streams.over_caps(response_body, recorder_streams.RESPONSE_CAPS) is not None:
+            # Relayed as the upstream sent it, recorded raw, and its claimed usage not trusted.
+            res_data = raw_record(response_body)
+            res_data["structure_limit"] = True
+            untrusted = True
         else:
             try:
                 res_data = json.loads(response_body.decode("utf-8"))
             except Exception:
-                res_data = {"raw_body": response_body.decode("utf-8", errors="replace")}
+                res_data = raw_record(response_body)
 
         close_fields = {
             "id": event_id,
             "status": response_code,
             "duration_seconds": round(time.monotonic() - started, 3),
         }
-        usage = res_data.get("usage") if isinstance(res_data, dict) else None
+        usage = res_data.get("usage") if isinstance(res_data, dict) and not untrusted else None
         if isinstance(usage, dict):
             recorded = {
                 key: usage[key]
