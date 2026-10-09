@@ -184,6 +184,12 @@ _statvfs = os.statvfs
 READABLE = frozenset({"appended", "appended_fsync_failed", "durable"})
 RECORDER_MIN_FREE_BYTES = int(os.environ.get("RECORDER_MIN_FREE_BYTES", str(64 * 1024 * 1024)))
 
+# After a record that could not be written, requests are refused uncharged until a probe write
+# to the transcript's directory succeeds again, at most once per RECORD_RETRY_SECONDS.
+RECORD_RETRY_SECONDS = 30
+RECORD_CLOCK = time.monotonic
+_record_failed_at = None
+
 _fenced = set()
 _append_locks = {}
 _append_locks_guard = threading.Lock()
@@ -256,8 +262,44 @@ def append_record(path, line):
             os.close(fd)
 
 
+def _probe_write():
+    """Write, sync and remove a small file beside the transcript; whether all of it worked."""
+    probe = os.path.join(TRANSCRIPT_DIR, f".record-probe-{os.getpid()}")
+    try:
+        fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC, 0o600)
+        try:
+            _os_write(fd, b"probe\n")
+            _fdatasync(fd)
+        finally:
+            os.close(fd)
+        return True
+    except OSError:
+        return False
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(probe)
+
+
+def record_failed():
+    global _record_failed_at
+    _record_failed_at = RECORD_CLOCK()
+
+
 def record_capacity_ok():
-    """Whether the transcript volume has room for the exchange the recorder is about to pay for."""
+    """Whether the transcript can take the exchange the recorder is about to pay for.
+
+    Free space covers a volume filling up. A record that failed for any other reason (a volume
+    remounted read-only, an I/O error, a permission) is seen by the failure itself: after one,
+    requests are refused until a probe write works again, tried at most every RECORD_RETRY_SECONDS.
+    """
+    global _record_failed_at
+    if _record_failed_at is not None:
+        if RECORD_CLOCK() - _record_failed_at < RECORD_RETRY_SECONDS:
+            return False
+        if not _probe_write():
+            _record_failed_at = RECORD_CLOCK()
+            return False
+        _record_failed_at = None
     try:
         st = _statvfs(TRANSCRIPT_DIR)
     except OSError:
@@ -716,11 +758,11 @@ def strict_request(body):
     return None
 
 
-def raw_record(data):
-    """A body that is not recorded as JSON: as text, cut at RAW_RECORD_CHARS."""
+def raw_record(data, limit=RAW_RECORD_CHARS):
+    """A body that is not recorded as JSON: as text, cut at limit characters (None: whole)."""
     text = data.decode("utf-8", errors="replace")
-    if len(text) > RAW_RECORD_CHARS:
-        return {"raw_body": text[:RAW_RECORD_CHARS], "raw_body_truncated": True}
+    if limit is not None and len(text) > limit:
+        return {"raw_body": text[:limit], "raw_body_truncated": True}
     return {"raw_body": text}
 
 
@@ -1028,7 +1070,8 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 stream,
                 req_data,
                 503,
-                f"record_capacity: under {RECORDER_MIN_FREE_BYTES} bytes free for the transcript",
+                "record_capacity: the transcript cannot take another exchange (too little free "
+                "space, or its last write failed); refused before it is paid for",
             )
             return
 
@@ -1194,15 +1237,22 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             ).encode("utf-8")
             response_headers = [("Content-Type", "application/json")]
         elif recorder_streams.over_caps(response_body, recorder_streams.RESPONSE_CAPS) is not None:
-            # Relayed as the upstream sent it, recorded raw, and its claimed usage not trusted.
-            res_data = raw_record(response_body)
+            # Relayed as the upstream sent it, recorded raw and whole (the relay is bounded by
+            # RESPONSE_MAX_BYTES), and its claimed usage not trusted.
+            res_data = raw_record(response_body, limit=None)
             res_data["structure_limit"] = True
             untrusted = True
         else:
             try:
-                res_data = json.loads(response_body.decode("utf-8"))
+                # Strict, like requests: a non-finite number would make the line unwritable, and
+                # this reply was paid for. It is recorded as the bytes it was instead.
+                res_data = json.loads(
+                    response_body.decode("utf-8"),
+                    parse_constant=_no_constants,
+                    parse_float=_finite_float,
+                )
             except Exception:
-                res_data = raw_record(response_body)
+                res_data = raw_record(response_body, limit=None)
 
         close_fields = {
             "id": event_id,
@@ -1395,6 +1445,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 print(f"Recorded transaction in: {os.path.basename(TRANSCRIPT_FILE)}")
             else:
                 print(f"Error writing transcript: {result}", file=sys.stderr)
+                record_failed()
             if result == "appended_fsync_failed" and not _degraded_reported:
                 _degraded_reported = True
                 print(

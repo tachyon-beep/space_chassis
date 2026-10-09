@@ -18,3 +18,14 @@ for path in (TESTS_DIR, HARNESS_DIR, RECORDER_DIR):
 @pytest.fixture(autouse=True)
 def _chdir_recorder(monkeypatch):
     monkeypatch.chdir(RECORDER_DIR)
+
+
+@pytest.fixture(autouse=True)
+def _a_clean_record_latch():
+    """The recorder refuses requests after a record fails (plan 4b); one test's failure must not
+    leak into the next test's requests."""
+    import proxy
+
+    proxy._record_failed_at = None
+    yield
+    proxy._record_failed_at = None

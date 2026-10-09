@@ -182,9 +182,13 @@ def test_a_partial_transcript_is_withheld_and_the_next_turn_is_recorded_cleanly(
         return real(fd, data)
 
     monkeypatch.setattr(proxy, "_os_write", once_short)
+    clock = {"now": 0.0}
+    monkeypatch.setattr(proxy, "RECORD_CLOCK", lambda: clock["now"])
     upstream["response"] = lambda: _BufferedResponse(json.dumps(ENOSPC_BODY).encode())
     path = stream_factory(max_tokens=10)
     assert _post(path, {"model": "m", "messages": []}).status_code == 502
+    # The failed record holds new requests back until a probe write succeeds after the cool-off.
+    clock["now"] += proxy.RECORD_RETRY_SECONDS + 1
     assert _post(path, {"model": "m", "messages": []}).status_code == 200
     lines = (transcripts / "transcript.jsonl").read_bytes().split(b"\n")
     assert json.loads(lines[1])["response"] == ENOSPC_BODY
@@ -237,21 +241,71 @@ def test_rotation_makes_the_archive_durable_before_truncating(tmp_path, monkeypa
     assert ("fsync", str(tmp_path)) in order[:truncate]
 
 
-def test_a_non_finite_number_fails_the_record_rather_than_writing_invalid_json(
-    stream_factory, upstream, transcripts
+def test_a_reply_carrying_a_non_finite_number_is_relayed_and_recorded_raw(
+    stream_factory, upstream, transcripts, registry
 ):
-    upstream["response"] = lambda: _BufferedResponse(
-        b'{"choices": [{"message": {"content": "hi"}}], "usage": {"total_tokens": 1}, "x": NaN}'
-    )
+    """Plan 4b final review: a NaN in the upstream's reply used to fail the record every time,
+    withholding a reply that was paid for. It is now recorded as the bytes it was, its usage not
+    trusted, and the line stays strict JSON."""
+    reply = b'{"choices": [{"message": {"content": "hi"}}], "usage": {"total_tokens": 1}, "x": NaN}'
+    upstream["response"] = lambda: _BufferedResponse(reply)
+    path = stream_factory(max_tokens=400)
+    response = _post(path, {"model": "m", "messages": []})
+    assert response.status_code == 200
+    assert response.content == reply
+    line = (transcripts / "transcript.jsonl").read_bytes().splitlines()[-1]
+
+    def refuse(name):
+        raise ValueError(name)
+
+    entry = json.loads(line, parse_constant=refuse)
+    assert entry["response"]["raw_body"] == reply.decode()
+    assert _used_tokens(registry) >= 400, "the claimed usage is not trusted"
+
+
+def test_a_relayed_raw_reply_is_recorded_whole(stream_factory, upstream, transcripts):
+    over = b'{"x":[' + b",".join([b"[]"] * 9_000) + b'],"pad":"' + b"p" * 1_500_000 + b'"}'
+    upstream["response"] = lambda: _BufferedResponse(over)
     path = stream_factory(max_tokens=10)
     response = _post(path, {"model": "m", "messages": []})
-    assert response.status_code == 502
-    raw = (
-        (transcripts / "transcript.jsonl").read_bytes()
-        if (transcripts / "transcript.jsonl").exists()
-        else b""
+    assert response.status_code == 200
+    entry = _entries(transcripts)[-1]
+    assert entry["response"]["raw_body"] == over.decode()
+    assert "raw_body_truncated" not in entry["response"]
+
+
+def test_a_failed_record_refuses_new_requests_until_the_volume_takes_a_write_again(
+    stream_factory, upstream, transcripts, registry, monkeypatch
+):
+    """A failure that free space cannot see (EROFS, EIO, EACCES) would otherwise repeat on every
+    paid-for request: after one, requests are refused uncharged until a probe write succeeds."""
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(proxy, "RECORD_CLOCK", lambda: clock["now"])
+    monkeypatch.setattr(proxy, "_record_failed_at", None)
+    real = os.write
+
+    def read_only(fd, data):
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    monkeypatch.setattr(proxy, "_os_write", read_only)
+    upstream["response"] = lambda: _BufferedResponse(json.dumps(ENOSPC_BODY).encode())
+    path = stream_factory(max_tokens=10)
+    assert _post(path, {"model": "m", "messages": []}).status_code == 502
+    calls = []
+    upstream["response"] = lambda: (
+        calls.append(1) or _BufferedResponse(json.dumps(ENOSPC_BODY).encode())
     )
-    assert b"NaN" not in raw
+    used = _used_tokens(registry)
+    refused = _post(path, {"model": "m", "messages": []})
+    assert refused.status_code == 503
+    assert "record_capacity" in refused.json()["error"]["message"]
+    assert calls == [] and _used_tokens(registry) == used
+    clock["now"] += proxy.RECORD_RETRY_SECONDS + 1
+    assert _post(path, {"model": "m", "messages": []}).status_code == 503, "the probe still fails"
+    monkeypatch.setattr(proxy, "_os_write", real)
+    clock["now"] += proxy.RECORD_RETRY_SECONDS + 1
+    assert _post(path, {"model": "m", "messages": []}).status_code == 200
+    assert not [p for p in transcripts.iterdir() if p.name.startswith(".record-probe")]
 
 
 def test_too_little_free_space_refuses_before_admission_and_charges_nothing(
