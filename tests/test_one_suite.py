@@ -1,7 +1,7 @@
 """One pytest runs every suite (plan 5): the root, the harness, the recorder, the pump, the vehicle.
 
-They ran as separate processes while the old runtime's services/chassis.py, recorder.py and pump.py
-shared bare module names with Aurora's. With those retired, `testpaths` takes every directory. What
+They ran as separate processes while the retired runtime's modules shared bare names with Aurora's
+(chassis, recorder, pump). With those retired, `testpaths` takes every directory. What
 can still go wrong is quiet: a suite collected short, or a bare name importing from the wrong
 directory. These tests hold both. They are slow (several full collections); the green merged run is
 the proof, and these guard it.
