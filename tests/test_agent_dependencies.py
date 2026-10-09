@@ -95,4 +95,6 @@ def test_the_image_installs_the_manifest_after_copying_it():
     copy = dockerfile.index("COPY requirements-agent.txt /opt/requirements-agent.txt")
     install = dockerfile.index("RUN pip install --no-cache-dir -r /opt/requirements-agent.txt")
     assert copy < install
-    assert re.search(r"RUN pip install --no-cache-dir -r /opt/requirements-agent\.txt\n", dockerfile)
+    assert re.search(
+        r"RUN pip install --no-cache-dir -r /opt/requirements-agent\.txt\n", dockerfile
+    )

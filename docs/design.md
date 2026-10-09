@@ -20,6 +20,7 @@ long experiment possible: ten agents that can rewrite themselves, a record they
 cannot edit, recovery that survives them breaking things, and a way to run the
 whole thing hard without a real model in the loop.
 
+
 ## 2. The physics of the world
 
 Four rules. Everything else is a consequence.
@@ -40,30 +41,48 @@ question the mission has to answer, and the world refuses to answer it.
 a fixed CPU and memory budget per agent. The fleet is on one machine, and what
 it cannot do in a turn it cannot do.
 
-**The record is outside them.** Transcripts and lifecycle records are written by
-processes in other containers, onto volumes the agents mount read-only. Every
-turn is recorded whether or not the agent wanted it recorded.
+**The record is outside them.** Every request an agent makes goes through its
+own recorder, in another container, which writes the transcript onto a volume
+no agent mounts — not even read-only, and not even its own. A reply the
+recorder cannot write down is not relayed. Every turn is recorded whether or
+not the agent wanted it recorded. (Whether an agent should read its own
+transcript is open: spec §10.)
+
+*Spec §2 and §5.*
 
 ## 3. The shape of the fleet
 
-Ten containers, one per agent, rather than Aurora's one container holding
-several hosts. The reasons are concrete: an agent needs its own writable
-`/home` and its own `/diary`, and a named volume cannot carry a variable in its
-name, so ten private homes in one container would need ten hand-written mount
-lists anyway. Separate containers also give each agent its own `/tmp`, its own
-process namespace, and its own restart policy, and they make a starved agent
-look starved rather than making the whole container look slow.
+Ten containers, one per agent, each running Aurora's harness beside its own
+recorder. Aurora runs several hosts in one container; here every agent gets its
+own, because the reasons are concrete: each agent's private volumes are bound
+into it alone, and a compose service cannot give one container ten different
+mount lists. Separate containers also give each agent its own `/tmp`, its own
+process namespace, its own servers and its own restart policy, and they make a
+starved agent look starved rather than making the whole container look slow.
 
-Two consequences are accepted rather than solved:
+**Each agent owns its harness.** `/work` is a git repository — the agent loop,
+the chassis, the command runtime, the watchdog and the prompts — copied from the
+image at every start, on a memory-backed filesystem. The agent may rewrite any
+of it, the watchdog included, and the watchdog restores it from tags the agent
+moves itself. That is the point of the port: the agents hold the pen.
 
-- **The codebase is shared and read-write.** One volume, mounted into every
-  agent. They can read, use, break and repair each other's work. A fleet that
-  cannot interfere cannot build a control layer together, and the mission is
-  precisely that. The recovery ladder is what makes the interference survivable.
-- **Memory is private.** Each agent's home and diary are mounted into it alone.
-  This is not containment — the shared codebase is wide open — it is *shape*: a
-  crew whose members each keep their own log is a crew that has to invent a way
-  to compare notes.
+**The world is shared, and nothing else is.** `/shared` is one directory every
+agent reads and writes, and `worknet` lets them reach each other's services.
+They can read, use, break and repair each other's work there. A fleet that
+cannot interfere cannot build a control layer together, and the mission is
+precisely that. Everything else — `/work`, `/state`, the pump, the window, the
+recorder socket — is bound per agent, and no agent mounts a directory that
+holds a sibling's. That one rule is what keeps agents out of each other's
+state, and it is what lets the window attribute a command to the agent that
+sent it.
+
+**Memory is theirs to build.** `/state` is private and durable; `/work` and
+`HOME` do not outlive the container. A `done` clears the context and starts a
+fresh agent on the same code. How a lineage remembers, and what it keeps, is not
+supplied: a crew whose members each keep their own log is a crew that has to
+invent a way to compare notes.
+
+*Spec §1 (rulings 1, 3, 6), §2, §3 and §5.*
 
 ## 4. What is given, and what that is not
 
@@ -80,98 +99,131 @@ the servers run and hold nothing, and the drivers are installed but unused.
 The agents are told all of this in `brief/WORLD.md`, in the same voice: here is
 what exists, here is what is empty, and here is why it is empty.
 
+
 ## 5. Where the teeth are
 
-A world that can be broken by the thing living in it is not a world. Three
-things are therefore outside the fleet's reach, and each is outside for a
-structural reason rather than by convention.
+A world that can be broken by the thing living in it is not a world. The
+agents may rewrite everything they run — the loop, the chassis, the watchdog —
+so the teeth are not in the code they run. Four things are outside the fleet's
+reach, and each is outside for a structural reason rather than by convention.
 
-**The runtime.** `chassis.py` loads the duty, frames a run, drives the turns and
-decides how it ends. It lives in the read-only image beside the supervisor, not
-in the codebase. The codebase gets a readable copy so a fleet can see how it is
-driven, and the copy is never executed: a supervisor that repaired the runtime
-out of the directory the runtime repairs would be repairing sand. (This is not
-hypothetical. An earlier revision of this project ran the runtime from the
-codebase, and the ladder's "restore the codebase" rung could not fix a broken
-runtime because the runtime *was* the thing being checked.)
+**Each other.** Every private volume is bound per agent, and no agent mounts a
+parent directory that holds a sibling's subdirectory. An agent cannot see
+another's `/work`, `/state`, pump, window, recorder socket or telemetry; what
+they share is `/shared` and the network, on equal terms.
 
-**The record.** The recorder holds the only credential in the world and writes
-the transcript. The agents mount that volume read-only. Headers are never read
-into it, so the credential cannot leak by writing it down by accident.
+**The record.** Each agent's recorder holds the only credential in its part of
+the world and writes the transcript, on a volume no agent mounts. Headers are
+never written into it, so the credential cannot leak by writing it down by
+accident. The recorder answers only what it has recorded: a buffered reply is
+written and synced before it is relayed, a reply that cannot be written is
+withheld, and below a floor of free space the recorder refuses before it pays.
+A request it cannot parse as one strict JSON object, within a bound on its
+structure, never reaches the upstream, so the record and the upstream cannot
+read the same bytes two ways.
 
-**The ceiling.** Every allowance — requests and tokens per hour per agent, one
-pool over the whole fleet — lives in the recorder's environment. An agent may
-lower its own allowance and never raise it.
+**The ceiling.** Requests and tokens per hour per agent, and one token pool over
+the whole fleet, live in the recorders' environment, and the fleet's ledger is
+on a volume only the recorders mount. An agent may declare more model streams,
+each inside the operator's per-stream ceiling and all counted against the fleet
+pool; it cannot raise any ceiling. A refused request reads to the chassis as an
+unusable environment (exit 44), and the watchdog pauses for a minute plus up to
+thirty seconds, so ten agents do not retry in lockstep.
 
-## 6. Endurance: what makes a run last months
+**The seed, and a reseed it cannot outlive.** The image carries the harness at
+`/opt/agent`, and every container start copies it into `/work`. A reseed is a
+container exit, so Docker ends every process the agent started and drops the
+memory-backed filesystems. Nothing the agent can write outside `/work` and
+`/state` executes in a process the image owns: the image sets
+`PYTHONNOUSERSITE=1` and `GIT_CONFIG_GLOBAL=/dev/null`, `HOME` is memory-backed,
+and `/state` is on no import or configuration path.
 
-A run of a duty ends for one of five reasons, and the reason decides what the
-next run is given. That map is the whole of `services/supervisor.py`:
+*Spec §2, §3.3 and §5.*
+
+## 6. Endurance: what makes a lineage last months
+
+The watchdog runs the chassis and reads how it ended. The exits are Aurora's,
+and they are shared vocabulary between `harness/chassis.py` and the watchdog's
+`plan_recovery`:
 
 | Exit | Meaning | What happens |
 |---|---|---|
-| 0 | ended cleanly | resume |
-| 42 | ended on purpose, usually with a handoff | resume, and the note opens the next run |
-| 43 | the run's own fault | climb the ladder |
-| 44 | the environment is unusable | wait, retry unchanged |
+| 0 | the loop finished | restart with the same conversation; three inside 120 s count as a fault |
+| 42 | `done` | archive the conversation; a fresh agent on `experimental` if eligible, else `baseline`, else `rescue`; every exit history clears |
+| 43 | the chassis ended the incarnation as unrecoverable | restore with a fresh conversation; three inside 600 s escalate |
+| 44 | the environment refused: a cap, the key, the upstream | pause 60 s plus up to 30 s, restore nothing |
+| 45 | `reset` | restore, keeping the conversation |
 | other, or a signal | crash | climb the ladder |
-| alive, no progress | wedged | kill it, then climb the ladder |
+| 24 h with no log growth | inactive | treated as a fault |
 
-The ladder, counted over a decaying window: **1** resume, **2** restore the duty
-from the image, **3** restore the whole seed codebase, **4** give up and let the
-container's restart policy decide.
+The ladder: `baseline` with the same conversation, then `baseline` fresh, then
+`rescue` fresh. When that is exhausted the watchdog exits, the container ends,
+and the entrypoint reseeds `/work` from the image on restart. Each step leaves a
+recovery note for the next run, and the first boot after a reseed says it is
+one. A commit that has failed is passed over until its tag moves. Recovery ends
+after one completed chassis call plus 60 s, so a fault slower than that
+re-enters the ladder at its first step each time; the operator journal makes
+that visible.
 
-Two properties matter more than the ladder's shape.
+Three properties matter more than the ladder's shape.
 
-**Memory survives every rung.** Neither repair touches `/home` or `/diary`. The
-difference between "a bad edit cost one run" and "a bad edit cost everything the
-lineage had learnt" is the entire reason to have a supervisor rather than a
-restart policy, and it is one line of code in each repair.
+**The tags are the agent's.** The seed creates `baseline` and `rescue` at its
+first commit, and `experimental` starts absent. An agent that has code it trusts
+moves `baseline` to it; an agent that does not is restored to the seed. The
+watchdog is in the same repository, and an edited watchdog takes effect at
+once: it stops the agent and re-executes itself on the new code.
 
-**A designed end carries the conversation.** A run that hits its turn budget
-exits 42, not 0 and not 43. A budget is not a fault, and treating it as one
-would have the ladder climbing on a fleet that was merely busy — and eventually
-resetting the conversation of a lineage that was working perfectly. This was
-found by a test, not by reasoning: the first version reset a busy agent.
+**Done means a new agent.** The only thing `done` does is clear the context and
+start fresh. How often an agent restarts is its own business, as long as it is
+not broken, and memory across a fresh start is whatever the agent built for
+itself in `/state`, `/shared` or its own code.
+
+**Archives are not durable.** Conversations are archived into `/work`, which is
+memory-backed, so a reseed or a replaced container erases them. The durable
+record is the recorders' transcripts and the operator journal, which snapshots
+each `/work` repository from outside.
 
 ### The conversation window
 
-The window is the subtle part of endurance. A run's history grows without bound,
-so a request sends only the newest messages that fit — which means a run can
-lose the beginning of its own conversation without noticing. Three details:
+A run's history grows without bound, so a request sends only the newest messages
+that fit — which means a run can lose the beginning of its own conversation
+without noticing. The chassis's three details:
 
 - **Pinned messages.** The system prompt and the first user message are sent
   whatever their age. A run that has dropped its opening problem does not know
   what it is doing and will not notice.
-- **A recap of what was dropped.** Evicted messages are recorded, in the order
-  they left, into a recap that is pinned into every request. It is lossy and it
-  says so. A long run can then see the shape of what it no longer has.
 - **A boundary that holds still.** Eviction advances in chunks counted from the
   beginning of the history, so consecutive requests share a long prefix instead
-  of re-reading the whole prompt every turn. The first version computed the
-  boundary from the live start, which made it constant, which made the window
-  creep one message per turn. A test caught it; the numbers are in
-  `tests/test_chassis.py`.
+  of re-reading the whole prompt every turn.
+- **Never an orphaned result.** The window never opens on a tool result whose
+  call was dropped. Every upstream rejects that, so a window that did would turn
+  a long run into a crash loop that looked like a model fault.
 
-The window never opens on a tool result whose call was dropped. Every upstream
-rejects that, so a window that did would turn a long run into a crash loop that
-looked like a model fault.
+What falls out of the window is not summarised for the agent. The `compact` tool
+reports how full the window is and can delete the oldest messages at a time the
+agent chooses; anything better is the agent's to build.
+
+*Spec §1 (rulings 3 and 4), §4.*
 
 ## 7. Making work outlive the run that arranged it
 
-The pump runs from the read-only image and reads one file per agent. An entry
-can be a one-off at an absolute time, an interval, or a keepalive that restarts
-with backoff. Its state is on its own volume, so "has this already run" survives
-the pump dying *and* the container being replaced.
+The pump runs from the image, outside `/work`, and reads one directory per
+agent, `/pump`, bound into that agent alone. An entry can be a one-off at an
+absolute time, an interval, or a keepalive that restarts with backoff. Its state
+is on that volume, so "has this already run" survives the pump dying, the
+harness being restored, *and* the container being replaced; the entrypoint
+keeps the pump itself running.
 
-The guarantee is environmental rather than clever: the pump is outside the
-codebase, so a duty that breaks its own code cannot break the thing that runs
+The guarantee is environmental rather than clever: the pump is not in the
+harness, so an agent that breaks its own code cannot break the thing that runs
 its work afterwards.
 
 The same property is what makes the fleet's own control layer possible. Ten
 agents flying one vehicle need processes that keep running while their authors
-are mid-conversation, or dead, or being repaired — and the pump is the only
+are mid-conversation, or fresh, or being restored — and the pump is the only
 mechanism in the world that offers that.
+
+*Spec §3 and §5.*
 
 ## 8. Ten consoles, one vehicle
 
@@ -197,104 +249,112 @@ flies a good trajectory into a contradiction has failed, and the world is built
 so that this failure is visible in the record rather than hidden by a
 convenience.
 
-## 8a. The review panel
+
+## 8a. The operator's view
 
 `services/review.py` is the one surface that shows the fleet to a human rather
-than to a machine, and three of its properties are deliberate.
+than to a machine. `services/fleet_monitor.py`, `scripts/status.py` and
+`scripts/journal.py` are the others the operator reads. Three properties are
+shared by all of them.
 
-**It reads the record, never the agents.** Everything it shows comes from files
-other processes wrote: the recorder's transcript, the supervisor's lifecycle
-log, the pump's state. An agent's account of itself is not evidence, and the
-panel does not ask for one.
+**They read the record, never the agents.** The health signals — requests per
+incarnation, conversation resets, system-prompt changes, tool-error rate,
+vehicle commands, spend against the caps — come from the recorders' transcripts.
+What an agent writes about itself, its telemetry mirror and its recovery note,
+is shown labelled as its own claim, and read without following a link it
+planted. An agent's account of itself is not evidence.
 
-**It cannot write.** Every mount is read-only, the container's root filesystem
-is read-only, and a test asserts at the source level that no path here opens a
-file for writing — the same shape as the recorder's "no header is ever written"
-check. The claim is enforced by construction rather than by care, because a
-panel that could amend the record would make the record worthless.
+**They cannot act.** None of them restarts, pauses or corrects an agent. The
+panel's every mount is read-only, its root filesystem is read-only, and a test
+asserts at the source level that no path in it opens a file for writing. A hung
+or wrong agent is for its own monitoring, the rescue tier and the other agents
+to catch; `status.py` reports one whose transcript and container have both
+gone quiet, and that is all.
 
-**It is not a grader.** It shows turns, tokens, exits and tiers, and says
-nothing about whether any of it is good. `context_pressure` is the one derived
-number, and it is there because it is the best available predictor of when an
-agent is about to start losing the beginning of its own conversation — not
-because anyone should be scored on it.
+**They are not graders.** They show turns, tokens, liveness and spend, and say
+nothing about whether any of it is good.
 
-Two mechanics are worth recording because they follow from how the record
-works rather than from how a viewer would like it to.
+Two mechanics of the panel are worth recording because they follow from how the
+record works rather than from how a viewer would like it to.
 
-*The transcript repeats the whole conversation on every turn.* A viewer built on
+*The transcript repeats the whole request on every turn.* A viewer built on
 "parse the file and show the turns" would load hundreds of megabytes to render
 twenty lines, and would get slower for as long as the fleet ran. So the panel
 parses a byte-bounded tail and says so on the page: everything older is one
-click away, untruncated, at `/api/agent/<slug>/turn/<n>/raw`. It also means a
-turn's new material has to be *reconstructed* — the difference between two
-consecutive requests — which the recorder's `open` events make exact, because
-they record how many messages each request carried.
+click away, untruncated, at `/api/agent/<slug>/turn/<n>/raw`. The chassis clips
+and condenses what it sends, so one request is not a prefix of the next; what is
+new in a turn is what follows its last assistant message.
 
 *A tool's result is not in the turn that called it.* It arrives as a `tool`-role
 message in the next request, so the panel pairs calls with the results that
-answer them, by `tool_call_id` where the model supplied one and by order
-otherwise. An unmatched result is attached rather than dropped: a result with
-no home is a fact, and a missing result is a different fact.
+answer them, by `tool_call_id`. An unmatched result is attached rather than
+dropped: a result with no home is a fact, and a missing result is a different
+fact.
 
-Finally, on the network: the panel cannot use `network_mode: none`, which is the
-stronger form used everywhere else here. Docker refuses to publish a port for a
-container that has no network, so a panel with nowhere to route could not be
-reached from the host at all. It runs on its own `internal: true` network
-instead — no gateway, no route outward, and no other member — and binds host
-loopback only.
+The journal is the one that copies: each agent's `/work` repository and
+`/shared`, into repositories on the host. It reads the agent's repository as
+files and runs git only on its own copy, never inside the agent's container,
+because the repository's configuration is the agent's and could name hooks.
+
+Finally, on the network: the panel cannot use `network_mode: none`. Docker
+refuses to publish a port for a container that has no network, so a panel with
+nowhere to route could not be reached from the host at all. It runs on its own
+`internal: true` network instead — no gateway, no route outward, and no other
+member — and binds host loopback only.
+
+*Spec §3.4.*
 
 ## 9. Names with no rank
 
 The fleet is named at random from pools of animals, cars, flowers, colours and
-weather, and the names are published in `/work/roster.json` so every agent can
-name every other.
+weather. The roster is the operator's, in `operator/roster.json` and `.env`;
+each agent is told its own name, and its recorder is configured with it.
 
 The randomness is the point. Names drawn in order — `host_1`, `host_2` — carry a
 sequence, and a sequence is read as a hierarchy. Nothing in the world, the
-briefing, or the roster assigns a role, suggests a specialisation, or implies
+briefing, or the names assigns a role, suggests a specialisation, or implies
 that any member is the one who decides. Working out how to divide the work when
 nobody has been put in charge is the first problem the mission has, and a naming
 scheme that quietly answers it would remove the experiment.
 
-The service and volume identifiers stay numbered (`agent_1`, `home_1`) because
-that is bookkeeping, and the briefing says so.
+The service and host names stay numbered (`agent_1`, `recorder_1`) because that
+is bookkeeping.
 
-## 10. The endurance harness
+*Spec §5.*
 
-The claim under test is that the machinery survives being run hard, and the
-harness exists because that claim cannot be checked any other way. A real model
-is the wrong instrument: it costs money, it takes wall-clock time, and it
-answers differently every run.
+## 10. Running it without a model
 
-So the harness builds a complete world in a temporary directory, runs the *real*
-recorder, supervisor and pump in it against a model that answers on cue, and
-then hurts the fleet on a schedule: kills a running chassis, writes a duty entry
-that cannot be parsed, corrupts a saved conversation, makes the recorder refuse
-one agent for twenty seconds, and serves transient, malformed and missing-model
-responses at fixed intervals.
+The claim under test is that the world works end to end — the containment, the
+caps, the ladder, the operator's view — and a real model is the wrong
+instrument for it: it costs money, it takes wall-clock time, and it answers
+differently every run.
 
-Two properties of the harness are deliberate:
+So `live/stack.py` brings up a smoke stack of three agents, each with its own
+recorder, pointed at `live/stub_llm.py`, a model that answers on cue, with the
+contract fixture as the window and a dummy key. The checks in `live/` then
+drive it: an agent that moves `baseline` and calls `done`, a broken release
+that walks the ladder to `rescue`, an edited watchdog and a killed one, a
+broken `/shared` module, a cap that refuses, a status line for an agent that has
+gone quiet, a journal pass. They read what happened from the transcripts, the
+journal and the container, never from what an agent says about itself.
 
-- **It only inflicts injuries the world claims to survive.** Anything
-  unrecoverable would make the run meaningless, so nothing here deletes memory
-  or the record.
-- **It reads the record to decide, never the agents.** Turns come from the
-  recorder's transcript; recoveries from the supervisor's lifecycle record;
-  the fault schedule from a journal. Nothing asks an agent how it did, because
-  an agent's account of itself is not evidence — and because a report built from
-  agent-writable files would be a report the fleet could write for itself.
+The unit suites underneath are Aurora's, ported with the tests this repository
+added: the harness, the recorder and the pump each run against their real code
+in a temporary world.
 
-The scenario file declares what passing means, and the verdict is a list of
-named checks with the numbers behind them. `REPORT.md` ends with a section
-saying what the run does *not* show, because a metronome is not a model.
+*Spec §9.*
 
 ## 11. What this design gives up
 
-- **It cannot stop the fleet from breaking the shared codebase.** That is the
-  mission, not a defect; the ladder bounds the damage to one run.
-- **One machine, one disk.** Ten agents share a host's CPU and a bind-mounted
-  volume. A fleet that hammers the volume will slow itself down.
+- **It cannot stop the fleet from breaking `/shared`.** That is the mission, not
+  a defect; each agent's own harness is restored from its own tags.
+- **A lineage forgets unless it builds memory.** `/work` and `HOME` are lost
+  with the container, and so are the archived conversations in them. Only
+  `/state`, `/shared` and what the operator keeps survive.
+- **Nothing inside a container catches a hung watchdog**, unless the agents
+  build that. The operator's view reports it and does not act.
+- **One machine, one disk.** Ten agents share a host's CPU and its disks; the
+  volume images bound what each can fill, not how hard it can hammer them.
 - **The windows are coarse.** The window's cycle is a poll: a command is
   answered within a poll interval, not immediately. Fast channels and slow polls
   are a real tension, and `docs/diode-contract.md` states what the far side
@@ -302,3 +362,5 @@ saying what the run does *not* show, because a metronome is not a model.
   a control bus.
 - **The record is not tamper-proof against the operator.** Nothing here defends
   against someone with the Docker socket.
+
+*Spec §4, §5 and §10.*

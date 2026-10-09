@@ -143,7 +143,9 @@ def test_the_dockerignore_keeps_test_leftovers_and_tests_out_of_the_image():
 
 
 def test_the_image_carries_only_the_operator_services():
-    copies = [line for line in DOCKERFILE.splitlines() if line.startswith("COPY") and "services" in line]
+    copies = [
+        line for line in DOCKERFILE.splitlines() if line.startswith("COPY") and "services" in line
+    ]
     assert len(copies) == 1, copies
     sources = copies[0].split()[1:-1]
     sources = [s for s in sources if not s.startswith("--")]

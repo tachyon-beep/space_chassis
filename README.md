@@ -11,10 +11,15 @@ other — is not provided, because building it is the mission.
 
 **This project builds everything except the vehicle.** The spacecraft lives on
 the far side of the window, in a process this repository does not contain. What
-is here is the world around it: the agents, their runtime, the supervisor that
-keeps a lineage alive across months, the scheduler that lets work outlive the
-run that arranged it, the recorder that keeps the only record they cannot edit,
-and the harness that proves all of it survives being run hard.
+is here is the world around it: each agent's own harness, which it may rewrite
+from end to end; the watchdog that restores it from checkpoints when a rewrite
+breaks it; the scheduler that lets work outlive the run that arranged it; the
+recorder that keeps the only record they cannot reach; and the operator's view
+of all of it.
+
+The harness is Aurora's, ported: the agent
+loop, the chassis, the watchdog and its three checkpoint tiers come across
+unchanged, and Aurora's entertainments are replaced by a lunar mission.
 
 ```
                     ┌──────────────────────────────────────┐
@@ -27,53 +32,67 @@ and the harness that proves all of it survives being run hard.
                     └──────────────┬───────────────────────┘
                                    │  the only way in or out
    ┌───────────────────────────────┴───────────────────────────────────┐
-   │  ten agent containers, internal network, no route outward          │
-   │    /work         shared codebase, read-write, everyone's           │
-   │    /home/agent   private, durable, nobody else mounts it           │
-   │    /diary        private notes to the next run of you              │
-   │    supervisor    runs the duty, repairs it, records the decision   │
-   │    pump          runs what the agent scheduled, across incarnations│
+   │  ten agent containers on an internal network, no route outward     │
+   │    /work         its own harness, a git repository; memory-backed  │
+   │    /state        its own durable store, and the servers' data      │
+   │    /shared       one directory the whole fleet reads and writes    │
+   │    watchdog      runs the harness, restores it from its tags       │
+   │    pump          runs what the agent scheduled, across restarts    │
    │    postgres, nats, redis   present, running, and empty             │
+   └───────────────────────────────┬───────────────────────────────────┘
+                                   │  a unix socket, one per agent
+   ┌───────────────────────────────┴───────────────────────────────────┐
+   │  ten recorders: the only key, the spend caps, the transcripts      │
+   │  — on volumes no agent mounts                                      │
    └───────────────────────────────────────────────────────────────────┘
-        │                        │                       │
-   transcripts (ro)        telemetry (ro)          the recorder
-   what they said          what was decided         holds the only key
 ```
 
 ## Quick start
 
-Requires Docker with Compose v2 and Python 3.12+ on the host.
+Requires Docker with Compose v2 and Python 3.12+ on the host, and root once, to
+mount the volume images.
 
 ```sh
-sh scripts/prepare_host.sh          # directories, ownership, the roster, .env
+sh scripts/prepare_host.sh          # the roster, .env, and the bounded volume images
 $EDITOR .env                        # set OPENROUTER_API_KEY (or LLM_BASE_URL)
+python3 scripts/volume_images.py check
 docker compose --profile fleet up --build
 python3 scripts/status.py           # one line per agent
 ```
 
-`--profile fleet` brings up all ten; without it only `agent_1` starts, which is
-how the stack is meant to be brought up the first time.
+Every volume an agent or a recorder writes is a preallocated ext4 image,
+loop-mounted under `volumes/`, so a full disk is one image's problem and never
+the host's or the record's. `prepare_host.sh` plans and creates the images and
+never runs `sudo` itself: what needs root it prints as one block of commands,
+followed by the `/etc/fstab` lines that mount them at boot. It exits 2 until
+there is nothing left for the operator to do.
+
+`--profile fleet` brings up all ten agents and their recorders; without it only
+`agent_1` and `recorder_1` start, beside the monitor and the review panel. The
+monitor and the panel read every agent's record, so every `up` needs all ten
+agents' images mounted.
 
 The fleet is named by `scripts/prepare_host.sh` from a pool of animals, cars,
 flowers, colours and weather. The names are drawn at random and carry no rank:
 deciding who does what is the first problem the mission has, and the world does
-not solve it for them. Read the roster with `python3 scripts/roster.py --print`.
+not solve it for them. Read the roster with `python3 scripts/roster.py --print`;
+it lives in `operator/roster.json` and, as `FLEET_N_SLUG`/`FLEET_N_NAME`, in
+`.env`, which compose reads with no flags.
 
-An agent's name is its identity everywhere it matters: the socket the recorder
-opens for it, its directory under `volumes/home`, its diary, its lifecycle
-record, and its slice of the window. The compose service is `agent_1`, which is
-bookkeeping and nothing else. Names live in `.env`, which compose reads with no
-flags — a stack started without them would hand every agent the fallback and
-leave it unable to write its own home.
+An agent's name is its identity everywhere it matters: its volumes, its
+recorder and transcript, and its slice of the window. The compose service and
+host name `agent_1` are bookkeeping and nothing else.
 
 ## Reading what an agent did
 
 `http://127.0.0.1:8090` is a read-only panel over the record. Per agent it shows
 the conversation turn by turn: what the model said, its reasoning when it
 returned any, every tool call with the arguments it was given and the result
-that came back, the tokens each turn cost, and alongside all of that the
-supervisor's verdicts — which exit each run ended with, which ladder tier it
-reached, and which scheduled processes are running.
+that came back, and the tokens each turn cost. Beside that it shows the
+monitor's view — whether the agent is active, capped, idle, or stale, its
+incarnations, and its spend against the caps — all derived from the recorder's
+transcripts. What the agent writes about itself, such as its recovery note, is
+shown labelled as the agent's own claim.
 
 It reads; it cannot write. It is on its own internal network with no gateway and
 binds host loopback only, because a panel that can read everything an agent
@@ -82,18 +101,24 @@ it (`/api/fleet`, `/api/agent/<slug>`, `/api/agent/<slug>/turn/<n>/raw`) for
 anything that would rather not scrape a page, and `scripts/status.py` remains
 the one-line-per-agent view for a terminal.
 
-Two things are worth knowing about how it reads. A transcript records the whole
-conversation on every turn, so the files grow without bound — this world's reach
-fifteen megabytes after seventeen turns — and the panel therefore parses a
-bounded tail of each file rather than the whole of it, with everything older
-than the window one link away in its raw form. And a tool's *result* is not in
-the turn that called it: it arrives in the next request, so the panel pairs them.
-Both facts are what make the interesting column of a long run readable without
-loading a gigabyte into a browser.
+A transcript records the whole request on every turn, so the files grow fast,
+and the panel therefore parses a bounded tail of each file rather than the whole
+of it, with everything older one link away in its raw form. A tool's *result*
+is not in the turn that called it: it arrives in the next request, so the panel
+pairs them by id.
 
-To stop: `docker compose down`. That keeps everything: the codebase, every
-agent's home, the diaries, the transcripts, the pump's state. To destroy it,
-delete `./volumes` — there is no `-v` flag that does it, deliberately.
+`scripts/journal.py` keeps the other half of the record: periodic snapshots of
+each agent's `/work` repository (tags, archived conversations and all) and of
+`/shared`, with container restart counts and the watchdog's exit lines, in
+`operator/journal/`. `/work` is memory-backed and lost when a container is
+replaced, so the journal is how a reseed or a moved tag is attributable after
+the fact. It never runs git inside an agent's container.
+
+To stop: `docker compose down`. That keeps `/state`, `/pump`, `/shared`, the
+window and every transcript; each agent's `/work` and `HOME` are memory-backed
+and start again from the image. Nothing in compose deletes the record: the
+volumes are bind mounts of loop-mounted images, and removing them is a host
+operation.
 
 ## What an agent is given
 
@@ -103,102 +128,84 @@ Its briefing, read-only at `/opt/brief`:
 |---|---|
 | `MISSION.md` | Keep the crew alive and bring them home. No roles, no plan, no sequencing. |
 | `WORLD.md` | What is in the container, what is not, and what that means. |
-| `PROTOCOL.md` | The two rules the world enforces, and the window's protocol. |
+| `PROTOCOL.md` | The rules the world enforces, and the window's protocol. |
 
-Its program, at `AGENT_ENTRY` — `/work/duty.py`, a Python file it may rewrite
-or replace entirely. The seed registers thirteen tools: read, write, edit, list,
-run, spawn, schedule, unschedule, go through the window, watch the window,
-write to and read from its diary, look at its own numbers, and hand over. Every
-one of them is a convenience rather than a boundary: there is a shell, a
-compiler and a writable filesystem, and a duty could do all of it itself.
+`WORLD.md` and `PROTOCOL.md` still describe the world before the port; their
+rewrites, and the prompts', are drafted in `docs/drafts/` for approval.
 
-And one runtime it does not own: `services/chassis.py`, which loads the duty,
-frames a run, drives the turns, bounds the conversation, checkpoints, and
-decides how the run ends. It runs from the read-only image beside the
-supervisor, not from the codebase — a supervisor that repaired the runtime out
-of the directory the runtime repairs would be repairing sand.
+Its harness, at `/work`: a git repository holding `agent.py`, `chassis.py`,
+`command_runtime.py`, `watchdog.py` and the prompts, copied from the image at
+every start. All of it is the agent's to rewrite, the watchdog included. The
+seed registers eleven tools: Aurora's eight (`read_file`, `write_file`,
+`validate`, `migrate`, `done`, `reset`, `list_dir`, `compact`) and a mission kit
+of three (`read_path` and `write_path` anywhere the agent can see, and `run`, a
+bounded command runner, through which it has git). Every one of them is a
+convenience rather than a boundary: there is a shell, a compiler and a writable
+filesystem.
+
+The watchdog restores the harness from git tags the agent moves itself:
+`baseline`, `rescue`, and an optional `experimental`. `done` archives the
+conversation and starts a fresh agent; a fault climbs from `baseline` with the
+conversation kept, to `baseline` fresh, to `rescue` fresh, and past that the
+container ends and reseeds `/work` from the image.
 
 ## The two rules
 
 **No route outward.** Each agent container is on an internal network with no
 gateway. It can reach its siblings, the services they start, and the window;
-nothing else. The only process in the world that can reach the public internet
-is the recorder, and it is on a network the agents are not on.
+nothing else. The only processes in the world that can reach the public
+internet are the recorders, on a network the agents are not on.
 
-**The record is outside them.** `/transcripts` and `/telemetry` are mounted
-read-only. Every turn is written by the recorder, which holds the one
-credential and never writes a header to disk. Every recovery decision is
-written by the supervisor. They can read all of it and change none of it.
+**The record is outside them.** Every request is written by the agent's own
+recorder, which holds the one credential and never writes a header to disk, onto
+a volume no agent mounts. A reply the recorder cannot record is not relayed. No
+agent can read or change any transcript, its own included.
 
 ## Repository layout
 
 | Path | What it is |
 |---|---|
-| `services/chassis.py` | The runtime: one run of the duty, from frame to tombstone. |
-| `services/supervisor.py` | The recovery ladder, the telemetry mirror, the lifecycle record. |
-| `services/pump.py` | Scheduled and supervised processes, per agent, surviving everything. |
-| `services/recorder.py` | The credential and the transcript. One unix socket per agent. |
-| `services/fleet_monitor.py` | The operator's view: what each agent's surfaces say. Writes to `/telemetry`. |
-| `services/common.py` | Atomic writes, bounded reads, shared by all of the above. |
-| `tasks/duty.py` | The seed program. The fleet's to rewrite. |
+| `harness/` | Aurora's agent, chassis, command runtime, watchdog and prompts: the seed at `/opt/agent`. |
+| `recorder/` | The credential, the transcript and the spend caps. One recorder per agent, one unix socket each. |
+| `pump/` | Scheduled and kept-alive processes, per agent, surviving everything. |
+| `services/` | The operator's view: `health.py`, `fleet_monitor.py`, `review.py`, and `common.py` (atomic writes, bounded reads). |
+| `containers/` | The agent's entrypoint, and the vehicle service's. |
 | `brief/` | What they are told. |
+| `scripts/` | Host preparation, the roster, the volume images, the compose generator, status, the journal, containment checks. |
+| `live/` | The smoke stack and the checks that run against it. |
 | `docs/diode-contract.md` | The interface the vehicle's builder implements. Read this one. |
 | `docs/deep_research/` | The vehicle study (`apollo_diode.md`) and the eleven subsystem studies — power, ECLSS, thermal, GNC, propulsion, RCS, comms, consumables, avionics, structural/sequential events, crew C&W — that specify the far side of that window. `integration/corpus-review.md` says what is in them. |
 | `docs/deep_research/vehicle/` | **The vehicle itself, as a git submodule** of [`tachyon-beep/space_vehicle`](https://github.com/tachyon-beep/space_vehicle): its configuration, its reference plant, its linter and its referee. `git submodule update --init` after cloning; a second vehicle would be a second submodule beside it. |
 | `docs/design.md` | Why the world is shaped this way. |
-| `docs/example-run-report.md` | What an endurance verdict looks like. |
+| `docs/superpowers/specs/2026-10-09-aurora-port-design.md` | The design of the port: what came from Aurora, what was kept, what was retired. |
 | `contract/diode_probe.py` | Walks an implementation through the contract and reports. |
-| `services/review.py` | The review panel: a read-only window onto what each agent did. |
 | `contract/fake_diode.py` | A fixture that satisfies the contract. Models nothing. |
-| `docker-compose.override.example.yml` | The smoke configuration above. Rename it to `docker-compose.override.yml` to use it. |
-| `endurance/` | The harness: a stub model, a local world, fault injection, a verdict. |
-| `tests/` | The operator-side tests and the assertions about this repository's own files (the frozen corpus, the probe, the compose service, the reconciliation rows). `pytest -q` also runs the vehicle's 312, which live in the submodule. No Docker required. |
+| `tests/` | The operator-side tests and the assertions about this repository's own files. One `pytest` also runs the harness, recorder and pump suites and the vehicle's referee. No Docker required. |
 
 ## Trying it without a credential
 
-There is a smoke configuration that brings up three agents, drives them from a
-metronome instead of a model, and mounts the contract fixture as the window. It
-costs nothing and exercises everything except the vehicle:
+The smoke stack brings up three agents and their recorders, answers them from a
+stub model that replies on cue instead of a real one, and mounts the contract
+fixture as the window, on scratch directories with a dummy key and its own
+compose project. It costs nothing and exercises everything except the vehicle:
 
 ```sh
-cp docker-compose.override.example.yml docker-compose.override.yml
-docker compose up -d agent_1 agent_2 agent_3 recorder fleet_monitor diode stub
-python3 scripts/status.py --verbose
-sh scripts/verify_containment.sh --all
+python3 -m pytest live -q
 ```
 
-That is how this project was checked as it was built, and it is the fastest way
-to see whether the world is intact after a change.
-
-## Running it hard without a model
-
-The endurance harness builds a whole world in a temporary directory, runs the
-real recorder, supervisor and pump in it, points them at a model that answers
-on cue, and then hurts them on a schedule:
-
-```sh
-python3 endurance/run_local.py endurance/scenarios/ten_agents.json
-python3 endurance/run_local.py endurance/scenarios/long_haul.json
-```
-
-In about three minutes it produces roughly five hundred turns across ten agents
-with fourteen deliberate injuries — killed runs, unparseable code, corrupted
-conversations, refused sockets — and writes `REPORT.md` and `metrics.json` into
-`endurance/runs/<tag>-<stamp>/`, alongside the transcripts and lifecycle
-records the verdict is computed from.
-
-A passing verdict means the machinery survives being run hard. It says nothing
-about how an agent would fly a vehicle, and `REPORT.md` says so in its own last
-section.
+It builds the image, runs the containment and acceptance checks against the
+running stack — no route out, the binds, the caps, a `done`, a reseed — and
+tears it down. It takes a few minutes, and it is the fastest way to see whether
+the world is intact after a change.
 
 ## Verifying the world
 
 ```sh
-python3 -m pytest -q                        # unit and integration, no Docker
-ruff check . && ruff format --check .
+python3 -m pytest -q -n 8                   # every suite, no Docker
+uvx ruff check . --no-cache && uvx ruff format --check . --no-cache
 docker compose --profile fleet config -q    # the topology parses
-sh scripts/verify_containment.sh            # against a running stack
-python3 contract/diode_probe.py --diode-dir ./volumes/diode --list
+sh scripts/verify_containment.sh --all      # against a running stack
+python3 contract/diode_probe.py --diode-dir ./volumes/diode/data --list
 ```
 
 ## Scope
@@ -206,7 +213,7 @@ python3 contract/diode_probe.py --diode-dir ./volumes/diode --list
 This is a research harness, not a security product, and it is not a game. It
 assumes a trusted host and a sound container runtime, and it is built so that a
 fleet of agents can be given real freedom — to rewrite themselves, to break the
-shared codebase, to disagree — inside a world where breaking yourself is
+shared directory, to disagree — inside a world where breaking yourself is
 survivable and the record of it is kept by somebody else.
 
 The one thing it is really careful about is the part that matters: nothing in

@@ -44,9 +44,6 @@ PERMANENT = (
     "docs/drafts/",  # quotes what the shipped text still says
 )
 
-# Temporary: the documents plan 5's Task 5 rewrites. Task 5 empties this.
-REWRITTEN_IN_TASK_5 = ("CLAUDE.md", "AGENTS.md", "README.md", "docs/design.md", ".env.example")
-
 
 def _tracked(*paths):
     result = subprocess.run(
@@ -62,7 +59,7 @@ def test_the_old_runtime_is_gone():
 def test_nothing_still_refers_to_the_old_runtime():
     found = []
     for name in _tracked():
-        if name.startswith(PERMANENT) or name in REWRITTEN_IN_TASK_5:
+        if name.startswith(PERMANENT):
             continue
         path = ROOT / name
         if not path.is_file():
@@ -75,3 +72,29 @@ def test_nothing_still_refers_to_the_old_runtime():
             if BANNED.search(line):
                 found.append(f"{name}:{number}: {line.strip()[:120]}")
     assert found == [], "\n".join(found)
+
+
+DOCS = ("CLAUDE.md", "AGENTS.md", "README.md", "docs/design.md", ".env.example")
+RETIRED_PHRASES = re.compile(
+    r"AGENT_HOME|/diary\b|volumes/home|duty\.py|endurance/run|RUN_MAX_|SUPERVISOR_INACTIVITY"
+    r"|two copies of|handoff note|recap\.md|lifecycle\.jsonl|\bthe supervisor\b",
+    re.IGNORECASE,
+)
+
+
+def test_no_tracked_doc_describes_the_retired_world():
+    """The documents describe the Aurora world (plan 5, Task 5). A line may name a retired thing only
+    to say it is retired, and what replaced it: it is marked `(retired)`."""
+    found = []
+    for name in DOCS:
+        for number, line in enumerate((ROOT / name).read_text(encoding="utf-8").splitlines(), 1):
+            if RETIRED_PHRASES.search(line) and "(retired)" not in line:
+                found.append(f"{name}:{number}: {line.strip()[:120]}")
+    assert found == [], "\n".join(found)
+
+
+def test_claude_md_says_home_is_a_tmpfs_that_does_not_persist():
+    text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert re.search(r"HOME[^\n]*/home/agent[^\n]*tmpfs", text), (
+        "CLAUDE.md must state HOME is a tmpfs"
+    )

@@ -2,8 +2,9 @@
 
 A world for ten self-modifying agents: a floor of capability, one window outward, and a record they
 cannot reach. This is what an agent needs before touching anything. `CLAUDE.md` covers the same
-ground for Claude Code, `docs/design.md` is the rationale for every decision here — read that one
-before arguing with a rule below.
+ground for Claude Code, `docs/design.md` is the rationale for every decision here, and
+`docs/superpowers/specs/2026-10-09-aurora-port-design.md` is the design of the world as it now is —
+read those before arguing with a rule below.
 
 ## The scope boundary
 
@@ -13,7 +14,7 @@ that contract is the only thing the two halves share.
 
 | | |
 |---|---|
-| **Here** | the world: `services/` (recorder, supervisor, chassis, monitor, review), `tasks/duty.py`, `brief/`, `endurance/`, `contract/` (the probe and a fixture that models nothing), the compose topology, the tests |
+| **Here** | the world: `harness/` (Aurora's agent, chassis and watchdog, the seed each agent rewrites), `recorder/`, `pump/`, `services/` (the operator's monitor and review panel), `containers/`, `brief/`, `contract/` (the probe and a fixture that models nothing), the generated compose topology, `live/` and the tests |
 | **The vehicle** | `docs/deep_research/vehicle/` — **its own repository**, `tachyon-beep/space_vehicle`, mounted here as a git submodule: its configuration, reference plant, linter and referee |
 | **The evidence** | `docs/deep_research/*_diode.md` and `integration/` — the corpus the vehicle was built from. **Frozen: read, cite, never edit.** A round that "fixes" one of them is editing the evidence |
 
@@ -24,37 +25,38 @@ that sounds like "the fleet cannot see the window" belongs here.
 
 ```sh
 git submodule update --init --recursive     # the vehicle is a submodule; without it, collection is partial
-python3 -m pytest -q                        # the whole suite, no Docker needed
+python3 -m pytest -q -n 8                   # the whole suite, no Docker needed
 uvx ruff check . --no-cache                 # ruff is not installed here; uvx fetches it
 docker compose --profile fleet config -q    # the topology parses
-sh scripts/prepare_host.sh                  # directories, ownership, roster, .env
+sh scripts/prepare_host.sh                  # roster, .env, and the bounded volume images
 python3 scripts/status.py --verbose         # one line per agent, from the record
 sh scripts/verify_containment.sh --all      # safety claims vs. a running stack
-python3 endurance/run_local.py endurance/scenarios/short.json   # fastest end-to-end proof
+python3 -m pytest live -q                   # the smoke stack: three agents, a stub model; the fastest end-to-end proof
 ```
 
-The suite is not a unit suite: it runs the real recorder, supervisor and chassis in a temporary
-world against `endurance/stub_model.py`. `python3 -m pytest -q` collects three groups in one run —
-the operator side (`tests/`), the assertions about *this* repository's own files
-(`tests/test_vehicle_reconciliation.py`), and the vehicle's referee through the submodule
-(`docs/deep_research/vehicle/tests/`), which is where most of the tests are and most of the time goes.
-It is slow — minutes, not seconds — and it is the only thing that runs every refusal, so run it
-before you commit.
+One `pytest` collects every suite: the operator side and the assertions about this repository's own
+files (`tests/`), Aurora's harness, recorder and pump with what this repository added to them
+(`harness/tests`, `recorder/tests`, `pump/tests`), and the vehicle's referee through the submodule
+(`docs/deep_research/vehicle/tests/`). It is minutes, not seconds, and it is the only thing that
+runs every refusal, so run it before you commit. `live/` is separate because it starts containers.
 
 ## Layout
 
 | path | what it is |
 |---|---|
-| `services/` | The operator's half: `recorder.py` (the credential and the transcript, one unix socket per agent), `supervisor.py` (the ladder), `chassis.py` (the runtime the fleet may rewrite), `fleet_monitor.py`, `review.py`, `common.py` (atomic writes, bounded reads) |
-| `tasks/duty.py` | The seed program baked at `/opt/agent`; the fleet's to rewrite |
-| `brief/` | What the agents are told |
-| `containers/` | `agent.env` (the world's constants), `entrypoint.sh`, `serve_vehicle.sh` (the vehicle service's entrypoint) |
-| `endurance/` | The harness: stub model, local world, fault injection, verdict |
+| `harness/` | Aurora's `agent.py`, `chassis.py`, `command_runtime.py`, `watchdog.py` and the prompts: baked at `/opt/agent` and copied into each agent's `/work` at every start, as a git repository with `baseline` and `rescue` tags. The agent's to rewrite, all of it |
+| `recorder/` | `proxy.py` and `recorder_streams.py`: one recorder per agent, holding the credential, writing the transcript, enforcing the spend caps (`core_caps.py`) |
+| `pump/` | `pump.py`: the agent's scheduled and kept-alive processes, run from the image, outliving every run |
+| `services/` | The operator's half: `health.py` (signals from the transcripts), `fleet_monitor.py`, `review.py`, `common.py` (atomic writes, bounded reads) |
+| `brief/` | What the agents are told (`/opt/brief`). It still describes the retired world; the rewrites await John in `docs/drafts/` |
+| `containers/` | `entrypoint.sh` (servers, pump, seed, then the watchdog) and `serve_vehicle.sh` (the vehicle service's entrypoint) |
 | `contract/` | `diode_probe.py` (the instrument against the window) and `fake_diode.py` (a fixture that satisfies the contract and models nothing) |
+| `scripts/` | `prepare_host.sh`, `roster.py`, `volume_images.py`, `build_compose.py`, `status.py`, `journal.py`, `verify_containment.sh` |
+| `live/` | The smoke stack (`stack.py`, the cued `stub_llm.py`) and the checks run against it |
 | `docs/diode-contract.md` | **The interface.** The vehicle's builder implements it; this side probes it. Changing it means changing both halves |
 | `docs/deep_research/` | The corpus (frozen) and `integration/` — the reconciliation register, the canonical vocabulary, the design and review maps |
 | `docs/deep_research/vehicle/` | **The vehicle, as a submodule** of `tachyon-beep/space_vehicle` |
-| `scripts/`, `tests/`, `volumes/` | Host preparation and checks; the suite; runtime artefacts (`volumes/` is never source) |
+| `tests/` | The suite's root: the operator side and this repository's own files |
 
 ## Two repositories, one project
 
@@ -73,30 +75,31 @@ before you commit.
 
 ## Rules that bite
 
-- **There are two copies of `chassis.py` in a container.** A run's working directory is `/work`, so a
-  bare `import chassis` picks up the inert copy, and loading the real file yourself creates a *second*
-  module object with a different `ToolRegistry` — every tool call then fails as unknown.
-  `_load_runtime()` in `tasks/duty.py` prefers `sys.modules["chassis"]` for this reason. Don't
-  "simplify" it into an import.
-- **The supervisor and the runtime run from the image, never from `/work`** — a supervisor that
-  repaired the runtime out of the directory the runtime repairs would be repairing sand.
-  `test_the_supervisor_never_runs_the_runtime_out_of_the_codebase` enforces it.
-- **The exit-code contract** is shared vocabulary between `services/chassis.py` and
-  `services/supervisor.py`; changing one means changing the other. `0` clean, `42` on purpose
-  (handoff), `43` the run's own fault, `44` environment unusable, anything else a crash, and "alive
-  with no progress" is wedged. Ladder rungs: resume → restore the duty from the image → restore the
-  seed codebase → give up. Two invariants: a run that hits its turn or time budget exits **42**, and
-  **no rung ever touches `/home`, `/diary`, or the saved conversation**.
-- **The operator-side services are standard library only.** Adding a dependency is a design change,
-  not a convenience. The vehicle's tools need PyYAML deliberately and are wired into nothing; nothing
-  there may be imported here, and nothing here may be imported there.
-- Every published file goes through `common.write_json_atomic`; every read of an agent-writable file
-  is bounded by `MAX_READ_BYTES`. **No request header is ever written to the record — bodies only**,
-  and a test enforces it.
+- **The agent holds the pen on its whole harness, the watchdog included.** Nothing in the image, a
+  test or a hook may make `/work` read-only. Containment comes from the binds and the networks, not
+  from keeping code out of the agent's reach.
+- **The exit-code contract** is shared vocabulary between `harness/chassis.py` and
+  `harness/watchdog.py`'s `plan_recovery`; changing one means changing the other. `0` restart with
+  the conversation, `42` `done` (a fresh agent), `43` the harness ended the run as broken, `44` the
+  environment refused (pause 60 s plus up to 30 s), `45` `reset` (restore, conversation kept),
+  anything else climbs the ladder: `baseline_same` → `baseline_new` → `rescue_new` → the container
+  ends and reseeds from the image. Three exit-0s inside 120 s count as a fault.
+- **Every per-agent volume is bound per agent** (`volumes/<kind>_<slug>/data`, and the window `volumes/diode/data/<slug>`), and no agent mounts a
+  directory that holds a sibling's. That one rule is what keeps agents out of each other's state,
+  and it is what attributes a command at the window.
+- **`harness/`, `recorder/` and `pump/` are vendored from Aurora at 42faf41** and kept close to it so
+  they can be re-synced; they import by bare name, with their own conftest on `sys.path`.
+- **The operator-side code (`services/`, `scripts/`) is standard library only.** Adding a dependency
+  is a design change, not a convenience. The vehicle's tools need PyYAML deliberately and are wired
+  into nothing; nothing there may be imported here, and nothing here may be imported there.
+- Every published file goes through `common.write_json_atomic`; every read of an agent-written file
+  is bounded and does not follow a link the agent planted. **No request header is ever written to
+  the record — bodies only**, and a test enforces it.
 - `filterwarnings = ["error::DeprecationWarning"]`: a deprecation warning fails the suite.
 - Tests are named as sentences stating the property under test, and the reasoning lives in module
   docstrings and comments — which is why `E501` is off. Add to the suite; don't rewrite it.
-- `.scratch/` is gitignored scratch; `endurance/runs/` and `volumes/` are runtime artefacts.
+- `.scratch/` is gitignored scratch; `volumes/` and `volume-images/` are runtime artefacts.
+  `tests/test_retired.py` keeps the tree free of the runtime the port replaced.
 
 ## Deliberate non-features — do not "fix" these
 
@@ -104,16 +107,17 @@ before you commit.
   Deciding what they are for is the mission's first question.
 - There is no shared queue, dispatcher, lock service or role table for the fleet, and no ranking in
   the names. Building a control layer is the experiment.
-- Each compose service repeats its full mount list: a YAML sequence alias cannot be merged into a
-  longer list, so adding one mount to the fleet means ten edits.
-- `agent_2..10` sit in the `fleet` profile and `diode` in the `diode` profile, so a bare
-  `docker compose up` is a cheap one-agent stack. `vehicle` is a third profile, an alternative to
-  `diode` rather than a neighbour — two publishers into one slug is two vehicles wearing one name.
+- `done` only clears the context and starts a fresh agent. Memory, context management and tooling
+  are the agents' to build, and churn is their business; the operator surfaces observe and never act.
+- `docker-compose.yml` is generated by `scripts/build_compose.py` and repeats each service's full
+  mount list; edit the generator, never the YAML.
+- `agent_2..10` and `recorder_2..10` sit in the `fleet` profile and `diode` in the `diode` profile.
+  `vehicle` is a third profile, an alternative to `diode` rather than a neighbour — two publishers
+  into one slug is two vehicles wearing one name.
 - **Agents join `worknet` (`internal: true`) and nothing else** — never `modelnet` or `windowside`.
   That is the one hard rule, and the vehicle service obeys it too.
 - Fleet names are drawn by `scripts/roster.py` into `.env` as `FLEET_N_SLUG`/`FLEET_N_NAME`, because
-  compose reads `.env` with no flags. A stack started without it hands every agent a fallback name
-  and a home it cannot write.
+  compose reads `.env` with no flags; the roster itself is `operator/roster.json`, which no agent mounts.
 - `vendor/registry/` is gitignored and `prepare_host.sh` refuses without it; rebuild with
   `scripts/build_registry.sh`.
 
