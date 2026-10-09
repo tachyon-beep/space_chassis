@@ -9,6 +9,7 @@ seconds; a kill after it exercises the cadence checkpoint and the replay from it
 """
 
 import json
+import re
 import subprocess
 import time
 
@@ -94,8 +95,14 @@ def test_containment_holds_with_the_vehicle_running(vehicle_stack):
 
 def test_a_killed_console_resumes_the_same_world(vehicle_stack):
     stack = vehicle_stack
-    # Past the first cadence checkpoint (tick 50), and not on a multiple of it.
-    wait_for(lambda: _tick(stack) >= 63, timeout=START_SECONDS, every=1, what="tick 63")
+    # Past the first cadence checkpoint (every 50 ticks) and well inside an interval, so the
+    # resume has ticks to replay from the record rather than starting at a checkpoint.
+    wait_for(
+        lambda: _tick(stack) >= 60 and 10 <= _tick(stack) % 50 <= 35,
+        timeout=START_SECONDS,
+        every=0.1,
+        what="a tick between two checkpoints",
+    )
     before = _executive(stack)
     frame = _newest_frame(stack, stack.slugs[0])
     restarts = _restarts(stack)
@@ -120,7 +127,12 @@ def test_a_killed_console_resumes_the_same_world(vehicle_stack):
     assert after["world_id"] == before["world_id"], "a restart resumes the world it was flying"
     assert after["tick"] > before["tick"], (before["tick"], after["tick"])
     assert after_frame["seq"] > frame["seq"], "each window's frame sequence continues"
-    assert f"resumed world {before['world_id']}" in stack.logs("vehicle")
+    log = stack.logs("vehicle")
+    assert f"resumed world {before['world_id']}" in log
+    replayed = re.search(
+        r"resumed world \S+ at tick \d+ \(checkpoint \S+ at tick \d+, replayed (\d+)", log
+    )
+    assert replayed and int(replayed[1]) > 0, "the resume replayed the ticks after its checkpoint"
     for slug in stack.slugs:
         assert _window_world(stack, slug) == before["world_id"], slug
 
