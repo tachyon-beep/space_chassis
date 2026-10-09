@@ -248,3 +248,26 @@ def test_a_body_that_is_not_strict_utf8_json_is_refused_on_the_core_socket_too(
         assert response.status_code == 400
         assert response.json()["error"]["message"] == "request body is not a json object"
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"model":"m","messages":[],"temperature":1e400}',
+        b'{"model":"m","messages":[],"stream":true,"top_p":-1e999}',
+        b'{"model":"m","messages":[{"role":"user","content":"\\ud800"}]}',
+        b'{"model":"m","messages":[],"\\udfff":1}',
+    ],
+    ids=["overflow", "overflow-streamed", "lone-surrogate", "lone-surrogate-key"],
+)
+def test_a_number_that_overflows_or_a_lone_surrogate_is_refused_before_contact(
+    core_server, upstream, body
+):
+    """The security review of 0ad4571: 1e400 parses to infinity without passing parse_constant,
+    and a lone surrogate parses here but is read differently, or not at all, elsewhere."""
+    calls = []
+    upstream["response"] = lambda: calls.append(1) or _BufferedResponse(b"{}")
+    response = _raw_post(core_server, body)
+    assert response.status_code == 400
+    assert response.json()["error"]["message"].startswith("ambiguous_json")
+    assert calls == []
