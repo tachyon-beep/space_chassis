@@ -153,8 +153,11 @@ def build_forward_headers(headers, api_key):
     Drops hop-by-hop headers. When api_key is non-empty, overrides Authorization
     with it, so the recorder injects the real key and the agent never holds it.
     """
-    hop_by_hop = {"host", "content-length", "connection", "accept-encoding"}
+    hop_by_hop = {"host", "content-length", "connection", "accept-encoding", "content-type"}
     forwarded = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop}
+    # The recorder validated the body as UTF-8 JSON; the upstream is told exactly that, so no
+    # agent-chosen charset makes it decode other text than the record shows.
+    forwarded["Content-Type"] = "application/json"
     if api_key:
         forwarded["Authorization"] = f"Bearer {api_key}"
     return forwarded
@@ -176,6 +179,8 @@ def archive_name(path, stamp=None):
 # The recorder's own system calls, indirected so tests can fault them without touching the
 # process-wide os module.
 _os_write = os.write
+_fstat = os.fstat
+_pread = os.pread
 _fdatasync = os.fdatasync
 _fsync = os.fsync
 _statvfs = os.statvfs
@@ -228,9 +233,13 @@ def append_record(path, line):
             return "failed"
         try:
             buffer = line if line.endswith(b"\n") else line + b"\n"
-            size = os.fstat(fd).st_size
-            if size and os.pread(fd, 1, size - 1) != b"\n":
-                buffer = b"\n" + buffer
+            try:
+                size = _fstat(fd).st_size
+                if size and _pread(fd, 1, size - 1) != b"\n":
+                    buffer = b"\n" + buffer
+            except OSError:
+                _fenced.discard(path)
+                return "failed"
             written = 0
             while written < len(buffer):
                 try:
@@ -259,7 +268,8 @@ def append_record(path, line):
                 _fenced.add(path)
             return "durable"
         finally:
-            os.close(fd)
+            with contextlib.suppress(OSError):
+                os.close(fd)
 
 
 def _probe_write():
@@ -300,10 +310,13 @@ def record_capacity_ok():
             _record_failed_at = RECORD_CLOCK()
             return False
         _record_failed_at = None
+    with contextlib.suppress(OSError):
+        os.makedirs(TRANSCRIPT_DIR, exist_ok=True)
     try:
         st = _statvfs(TRANSCRIPT_DIR)
     except OSError:
-        return True
+        # Room that cannot be measured is not room: refuse before paying.
+        return False
     return st.f_bavail * st.f_frsize >= RECORDER_MIN_FREE_BYTES
 
 
@@ -669,6 +682,10 @@ class _DeadlinePassed(Exception):
     pass
 
 
+class _UpstreamIncomplete(Exception):
+    pass
+
+
 def relay_chunks(writer, response, record, size=65536, deadline=None):
     """Relay a response body to the client with chunked transfer framing.
 
@@ -687,6 +704,9 @@ def relay_chunks(writer, response, record, size=65536, deadline=None):
         # A socket shut at the deadline reads as an end of body: only the flag can tell.
         if deadline is not None and deadline.fired:
             raise _DeadlinePassed("upstream deadline")
+        remaining = getattr(response, "length", None)
+        if isinstance(remaining, int) and remaining > 0:
+            raise _UpstreamIncomplete(f"{remaining} declared bytes never arrived")
         writer.write(b"0\r\n\r\n")
     except Exception as e:
         error = e
@@ -716,6 +736,13 @@ def _no_constants(name):
     raise _Ambiguous(f"{name} is not a json number")
 
 
+def _int64(text):
+    value = int(text)
+    if not -(2**63) <= value < 2**63:
+        raise _Ambiguous("an integer outside 64 bits")
+    return value
+
+
 def _finite_float(text):
     value = float(text)
     if not math.isfinite(value):
@@ -741,6 +768,7 @@ def strict_request(body):
             object_pairs_hook=_no_duplicates,
             parse_constant=_no_constants,
             parse_float=_finite_float,
+            parse_int=_int64,
         )
     except _Ambiguous as e:
         return f"ambiguous_json: {e}"
@@ -1188,6 +1216,14 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                     # A socket shut at the deadline reads as an end of body: only the flag can tell.
                     if deadline.fired:
                         raise _DeadlinePassed("upstream deadline")
+                    # A bounded read does not raise on an early end: Content-Length can tell.
+                    remaining = getattr(res, "length", None)
+                    if (
+                        isinstance(remaining, int)
+                        and remaining > 0
+                        and len(response_body) <= RESPONSE_MAX_BYTES
+                    ):
+                        raise _UpstreamIncomplete(f"{remaining} declared bytes never arrived")
         except urllib.error.HTTPError as e:
             response_code = e.code
             try:
@@ -1201,9 +1237,14 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             )
             upstream_refused = True
         except Exception as e:
+            # Nothing reached the upstream, so nothing was generated: refund it, whatever ended it.
+            refund = not opened and not deadline.connected
             if deadline.fired:
                 response_code = 502
                 message = f"upstream_deadline: no complete reply within {deadline.timing.upstream:g} s"
+            elif isinstance(e, _UpstreamIncomplete):
+                response_code = 502
+                message = f"upstream_incomplete: {e}"
             else:
                 detail = repr(e)
                 if target_key:
@@ -1216,8 +1257,6 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 print(f"proxy error: {detail}", file=sys.stderr, flush=True)
                 response_code = 500
                 message = "proxy error"
-                # Nothing reached the upstream, so nothing was generated: refund it.
-                refund = not opened and not deadline.connected
             response_body = json.dumps({"error": {"message": message}}).encode("utf-8")
             response_headers = [("Content-Type", "application/json")]
         finally:
@@ -1441,19 +1480,24 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 result = "failed"
             else:
                 result = append_record(TRANSCRIPT_FILE, line)
-            if result in READABLE:
-                print(f"Recorded transaction in: {os.path.basename(TRANSCRIPT_FILE)}")
-            else:
-                print(f"Error writing transcript: {result}", file=sys.stderr)
+            if result not in READABLE:
                 record_failed()
-            if result == "appended_fsync_failed" and not _degraded_reported:
+            report_degraded = result == "appended_fsync_failed" and not _degraded_reported
+            if report_degraded:
                 _degraded_reported = True
-                print(
-                    "transcript durability degraded: a data sync failed; lines are written "
-                    "but may not survive a crash",
-                    file=sys.stderr,
-                    flush=True,
-                )
+            with contextlib.suppress(Exception):
+                # Reports only: a stdout that is gone must not cost a record already written.
+                if result in READABLE:
+                    print(f"Recorded transaction in: {os.path.basename(TRANSCRIPT_FILE)}")
+                else:
+                    print(f"Error writing transcript: {result}", file=sys.stderr)
+                if report_degraded:
+                    print(
+                        "transcript durability degraded: a data sync failed; lines are written "
+                        "but may not survive a crash",
+                        file=sys.stderr,
+                        flush=True,
+                    )
             rotate_if_needed(TRANSCRIPT_FILE)
 
 

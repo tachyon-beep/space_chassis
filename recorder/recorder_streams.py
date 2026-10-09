@@ -550,6 +550,14 @@ def reasoning_allowance():
         return DEFAULT_REASONING_ALLOWANCE
 
 
+def _set_field(data, name, value):
+    """Set a field, first removing any key that differs from it only in case: a parser that
+    matches fields ignoring case would otherwise read the agent's variant, not the composed one."""
+    for key in [key for key in data if key != name and key.lower() == name.lower()]:
+        del data[key]
+    data[name] = value
+
+
 def compose_body(body_bytes, settings, allowance=0):
     """Replace declared fields in a JSON-object request body.
 
@@ -574,7 +582,7 @@ def compose_body(body_bytes, settings, allowance=0):
         return None, "request body is not a json object"
     for field in COMPOSED_FIELDS:
         if field in settings:
-            data[field] = settings[field]
+            _set_field(data, field, settings[field])
     tokens = data.get("max_tokens")
     if (
         allowance
@@ -588,9 +596,12 @@ def compose_body(body_bytes, settings, allowance=0):
         options = data.get("stream_options")
         if not isinstance(options, dict):
             options = {}
-        options["include_usage"] = True
-        data["stream_options"] = options
-    return json.dumps(data).encode("utf-8"), None
+        _set_field(options, "include_usage", True)
+        _set_field(data, "stream_options", options)
+    try:
+        return json.dumps(data).encode("utf-8"), None
+    except (ValueError, RecursionError):
+        return None, "request body cannot be composed"
 
 
 README_TEMPLATE = """the sockets in this directory are model endpoints. each accepts POST
@@ -933,8 +944,10 @@ class StreamRegistry:
             return
         if isinstance(tokens, bool) or not isinstance(tokens, (int, float)) or tokens < 0:
             # Unknown usage keeps the reservation, but the request is over: no longer in flight,
-            # so it ages out with its hour (the security review of e70434f).
+            # so it ages out with its hour (the security review of e70434f). The hour is rolled
+            # first, so a reservation that crossed the boundary is carried before it is finished.
             with self._lock:
+                self._shared_roll(self._clock())
                 self._shared_entries = [
                     (entry[0], entry[1], False, entry[3]) if entry[0] == ticket else entry
                     for entry in self._shared_entries
