@@ -210,3 +210,41 @@ def test_the_scan_never_counts_less_than_the_parser_sees(document):
         json.dumps(document, separators=(",", ":")).encode(),
     ):
         assert recorder_streams.prescan(body) == _reference(document), body
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"model":"m","messages":[{"role":"user","content":"seen"}],"messages":[]}',
+        b'{"model":"m","messages":[],"temperature":NaN}',
+        b'{"model":"m","messages":[],"stream":true,"temperature":Infinity}',
+        b'{"model":"m","messages":[{"role":"user","content":"a","content":"b"}]}',
+    ],
+    ids=["duplicate-top", "nan", "infinity-streamed", "duplicate-nested"],
+)
+def test_a_body_parsers_could_read_two_ways_is_refused_before_contact(
+    stream_factory, core_server, upstream, transcripts, registry, body
+):
+    """The record must be what the upstream read. A duplicate key (which value wins?) or a
+    non-finite number (a streamed reply relayed, then a line that cannot be written) would let an
+    exchange happen that the transcript does not show: the security review of 28ab56d."""
+    calls = []
+    upstream["response"] = lambda: calls.append(1) or _BufferedResponse(b"{}")
+    for path in (core_server, stream_factory(max_tokens=10)):
+        response = _raw_post(path, body)
+        assert response.status_code == 400
+        assert response.json()["error"]["message"].startswith("ambiguous_json")
+    assert calls == []
+    assert _used_tokens(registry) == 0
+
+
+def test_a_body_that_is_not_strict_utf8_json_is_refused_on_the_core_socket_too(
+    core_server, upstream
+):
+    calls = []
+    upstream["response"] = lambda: calls.append(1) or _BufferedResponse(b"{}")
+    for body in (b"not json", b"[1, 2]", b'{"model": "\xff"}', b'{"a": 1} trailing'):
+        response = _raw_post(core_server, body)
+        assert response.status_code == 400
+        assert response.json()["error"]["message"] == "request body is not a json object"
+    assert calls == []
