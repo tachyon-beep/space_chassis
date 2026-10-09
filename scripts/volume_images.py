@@ -96,8 +96,8 @@ KINDS: tuple[Kind, ...] = (
         PER_AGENT,
         (
             ("agent", "/telemetry", False, ""),
-            ("monitor", "/telemetry/agents/{slug}", True, ""),
-            ("review", "/telemetry/agents/{slug}", True, ""),
+            ("monitor", "/mirror/{slug}", True, ""),
+            ("review", "/mirror/{slug}", True, ""),
         ),
     ),
     Kind(

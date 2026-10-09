@@ -347,8 +347,8 @@ def test_a_recorder_mounts_its_agent_s_record_socket_console_and_the_ledger() ->
 
 def test_the_monitor_writes_operator_telemetry_and_reads_every_agent_s_record() -> None:
     assert volume_images.mounts_for("monitor", None, 2) == [
-        (_source("telemetry", 1), f"/telemetry/agents/{_slug(1)}", True),
-        (_source("telemetry", 2), f"/telemetry/agents/{_slug(2)}", True),
+        (_source("telemetry", 1), f"/mirror/{_slug(1)}", True),
+        (_source("telemetry", 2), f"/mirror/{_slug(2)}", True),
         (_source("transcripts", 1), f"/transcripts/{_slug(1)}", True),
         (_source("transcripts", 2), f"/transcripts/{_slug(2)}", True),
         (_source("diode"), "/diode", True),
@@ -1077,3 +1077,14 @@ def test_no_image_copies_the_host_volume_tooling() -> None:
         for name in ("volume_images.py", "create_volume_image.sh", "env_file.py"):
             assert name not in text, f"{dockerfile.name} names {name}"
         assert "scripts/" not in text, dockerfile.name
+
+
+@pytest.mark.parametrize("role", ["agent", "recorder", "monitor", "review", "window"])
+def test_no_service_binds_a_target_inside_another_of_its_binds(role: str) -> None:
+    """Docker makes a nested bind's mountpoint inside the outer volume: in a read-only one it
+    cannot, and the service never starts; in a writable one it litters the volume."""
+    for index in (1, 3) if role in ("agent", "recorder") else (None,):
+        targets = [target for _source, target, _ro in volume_images.mounts_for(role, index, 3)]
+        for outer in targets:
+            for inner in targets:
+                assert not inner.startswith(outer.rstrip("/") + "/"), (role, outer, inner)

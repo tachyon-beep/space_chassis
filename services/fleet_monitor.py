@@ -35,7 +35,7 @@ import health  # noqa: E402
 from common import append_jsonl, env_int, iso, slugs_from_env, write_json_atomic  # noqa: E402
 
 TRANSCRIPTS_DIR = Path(os.environ.get("TRANSCRIPTS_DIR", "/transcripts"))
-MIRROR_DIR = Path(os.environ.get("MIRROR_DIR", "/telemetry/agents"))
+MIRROR_DIR = Path(os.environ.get("MIRROR_DIR", "/mirror"))
 DIODE_DIR = Path(os.environ.get("DIODE_DIR", "/diode"))
 TELEMETRY_DIR = Path(os.environ.get("TELEMETRY_DIR", "/telemetry"))
 LIVENESS = ("active", "capped", "idle-watchdog", "stale", "unknown")

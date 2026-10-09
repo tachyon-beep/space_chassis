@@ -1517,61 +1517,61 @@ services:
     volumes:
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_1_SLUG:-agent_1}/data
-        target: /telemetry/agents/${FLEET_1_SLUG:-agent_1}
+        target: /mirror/${FLEET_1_SLUG:-agent_1}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_2_SLUG:-agent_2}/data
-        target: /telemetry/agents/${FLEET_2_SLUG:-agent_2}
+        target: /mirror/${FLEET_2_SLUG:-agent_2}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_3_SLUG:-agent_3}/data
-        target: /telemetry/agents/${FLEET_3_SLUG:-agent_3}
+        target: /mirror/${FLEET_3_SLUG:-agent_3}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_4_SLUG:-agent_4}/data
-        target: /telemetry/agents/${FLEET_4_SLUG:-agent_4}
+        target: /mirror/${FLEET_4_SLUG:-agent_4}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_5_SLUG:-agent_5}/data
-        target: /telemetry/agents/${FLEET_5_SLUG:-agent_5}
+        target: /mirror/${FLEET_5_SLUG:-agent_5}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_6_SLUG:-agent_6}/data
-        target: /telemetry/agents/${FLEET_6_SLUG:-agent_6}
+        target: /mirror/${FLEET_6_SLUG:-agent_6}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_7_SLUG:-agent_7}/data
-        target: /telemetry/agents/${FLEET_7_SLUG:-agent_7}
+        target: /mirror/${FLEET_7_SLUG:-agent_7}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_8_SLUG:-agent_8}/data
-        target: /telemetry/agents/${FLEET_8_SLUG:-agent_8}
+        target: /mirror/${FLEET_8_SLUG:-agent_8}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_9_SLUG:-agent_9}/data
-        target: /telemetry/agents/${FLEET_9_SLUG:-agent_9}
+        target: /mirror/${FLEET_9_SLUG:-agent_9}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_10_SLUG:-agent_10}/data
-        target: /telemetry/agents/${FLEET_10_SLUG:-agent_10}
+        target: /mirror/${FLEET_10_SLUG:-agent_10}
         read_only: true
         bind:
           create_host_path: false
@@ -1675,61 +1675,61 @@ services:
     volumes:
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_1_SLUG:-agent_1}/data
-        target: /telemetry/agents/${FLEET_1_SLUG:-agent_1}
+        target: /mirror/${FLEET_1_SLUG:-agent_1}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_2_SLUG:-agent_2}/data
-        target: /telemetry/agents/${FLEET_2_SLUG:-agent_2}
+        target: /mirror/${FLEET_2_SLUG:-agent_2}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_3_SLUG:-agent_3}/data
-        target: /telemetry/agents/${FLEET_3_SLUG:-agent_3}
+        target: /mirror/${FLEET_3_SLUG:-agent_3}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_4_SLUG:-agent_4}/data
-        target: /telemetry/agents/${FLEET_4_SLUG:-agent_4}
+        target: /mirror/${FLEET_4_SLUG:-agent_4}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_5_SLUG:-agent_5}/data
-        target: /telemetry/agents/${FLEET_5_SLUG:-agent_5}
+        target: /mirror/${FLEET_5_SLUG:-agent_5}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_6_SLUG:-agent_6}/data
-        target: /telemetry/agents/${FLEET_6_SLUG:-agent_6}
+        target: /mirror/${FLEET_6_SLUG:-agent_6}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_7_SLUG:-agent_7}/data
-        target: /telemetry/agents/${FLEET_7_SLUG:-agent_7}
+        target: /mirror/${FLEET_7_SLUG:-agent_7}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_8_SLUG:-agent_8}/data
-        target: /telemetry/agents/${FLEET_8_SLUG:-agent_8}
+        target: /mirror/${FLEET_8_SLUG:-agent_8}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_9_SLUG:-agent_9}/data
-        target: /telemetry/agents/${FLEET_9_SLUG:-agent_9}
+        target: /mirror/${FLEET_9_SLUG:-agent_9}
         read_only: true
         bind:
           create_host_path: false
       - type: bind
         source: ${SPACE_VOLUMES_DIR:-./volumes}/telemetry_${FLEET_10_SLUG:-agent_10}/data
-        target: /telemetry/agents/${FLEET_10_SLUG:-agent_10}
+        target: /mirror/${FLEET_10_SLUG:-agent_10}
         read_only: true
         bind:
           create_host_path: false
