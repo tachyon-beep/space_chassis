@@ -271,3 +271,24 @@ def test_a_number_that_overflows_or_a_lone_surrogate_is_refused_before_contact(
     assert response.status_code == 400
     assert response.json()["error"]["message"].startswith("ambiguous_json")
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"model":"m","messages":[],"Messages":[{"role":"user","content":"x"}]}',
+        '{"model":"m","messages":[],"meſſages":[]}'.encode(),
+        '{"model":"m","messages":[],"max_toKens":5}'.encode(),
+    ],
+    ids=["case", "long-s", "kelvin"],
+)
+def test_keys_a_case_folding_parser_would_merge_are_refused(core_server, upstream, body):
+    """The security review of f43ab20: a parser that matches fields case-insensitively, with
+    Unicode folding (Go's encoding/json), reads these keys as one field where this parser reads
+    two. Request keys are ASCII and unique ignoring case."""
+    calls = []
+    upstream["response"] = lambda: calls.append(1) or _BufferedResponse(b"{}")
+    response = _raw_post(core_server, body)
+    assert response.status_code == 400
+    assert response.json()["error"]["message"].startswith("ambiguous_json")
+    assert calls == []
