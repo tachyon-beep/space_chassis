@@ -467,12 +467,12 @@ def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
       2. the window lands beside the agents' mount instead of inside it, so everything works and
          nobody can read it;
       3. the service gets a route to the model network, which is the one hard rule in AGENTS.md;
-      4. it serves one slug of its own name while the fleet's ten agents were each handed a
-         different one, which is the failure the roster sweep exists to prevent.
+      4. it serves a slug set other than the roster's -- one window of its own name while the fleet's
+         ten agents were each handed a different one, or a stray directory that would change the
+         world's identity and turn every restart into a refusal.
 
-    The fourth is checked by *running the script* against a stub vehicle rather than by reading it.
-    A grep for `FLEET_` in a shell script proves a string is present and nothing about which
-    directories get created; the run above produces exactly the set of windows the fleet would find.
+    The fourth is checked by *running the script* against a stub vehicle rather than by reading it:
+    one executive, the roster's slugs and nothing else, its private state, and an `exec`.
     """
     import os
 
@@ -540,101 +540,100 @@ def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
     )
 
     # **And the script, run.** A stub vehicle stands in for `/opt/vehicle`: the real console needs
-    # PyYAML and the whole corpus, and neither is what is under test here. The stub records its own
-    # arguments and then *waits*, because the script's last line is `wait` and a console that exited
-    # immediately would make this test prove the opposite of what it claims — that the service
-    # returns as soon as its children do.
+    # PyYAML and the whole corpus, and neither is what is under test here. The stub appends one line
+    # per invocation -- its arguments and its pid -- and then holds, so the test can tell one
+    # executive from several and an `exec` from a fork.
     vehicle = tmp_path / "opt" / "vehicle"
     (vehicle / "tools").mkdir(parents=True)
     (vehicle / "tools" / "console.py").write_text(
         "import json, os, sys, time\n"
         "argv = sys.argv[1:]\n"
-        "slug = argv[argv.index('--slug') + 1]\n"
         "diode = argv[argv.index('--diode-dir') + 1]\n"
-        "with open(os.path.join(diode, slug, 'args.json'), 'w') as handle:\n"
-        "    json.dump(argv, handle)\n"
-        "time.sleep(2)\n"
+        "with open(os.path.join(diode, 'served.jsonl'), 'a') as handle:\n"
+        "    handle.write(json.dumps({'argv': argv, 'pid': os.getpid()}) + '\\n')\n"
+        "time.sleep(float(os.environ.get('STUB_HOLD', '0')))\n"
     )
     diode = tmp_path / "diode"
-    (diode / "mackerel").mkdir(parents=True)
+    (diode / "stray").mkdir(parents=True)
     (diode / "not_a_directory").write_text("")
-    env = {
+    base = {
         key: value
         for key, value in os.environ.items()
         if not key.startswith(("DIODE_", "VEHICLE_", "FLEET_"))
     }
-    env.update(
+    base.update(
         DIODE_DIR=str(diode),
         VEHICLE_DIR=str(vehicle),
+        VEHICLE_STATE_DIR="/state",
         VEHICLE_SCENARIO="crisis",
         VEHICLE_SEED="7",
         DIODE_POLL_SECONDS="0.05",
         VEHICLE_RING_SLOTS="12",
-        FLEET_1_SLUG="mackerel",
-        FLEET_2_SLUG="cinnabar",
-        FLEET_10_SLUG="scabious",
+        FLEET_1_SLUG="decoy",
     )
-    process = subprocess.Popen(
-        ["sh", str(REPO / "containers" / "serve_vehicle.sh")],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-    )
-    try:
-        deadline = time.time() + 20
-        served = set()
-        while time.time() < deadline:
-            served = {path.parent.name for path in diode.glob("*/args.json")}
-            if len(served) >= 4:
-                break
-            time.sleep(0.05)
-        # The roster's ten names are swept from the environment, the directory that already exists
-        # is swept from the mount, and a file in the diode directory is not an agent.
-        assert served == {"mackerel", "cinnabar", "scabious", "vehicle"}, (
-            f"the sweep served {sorted(served)} for a roster of three and one live directory"
-        )
-    finally:
-        process.terminate()
-        process.communicate(timeout=10)
-    assert process.returncode is not None
 
-    # Every window's arguments, and the scenario reaching each of them: one console per slug with
-    # the run's identity and the ring bound the operator set.
-    for slug in ("mackerel", "scabious", "vehicle"):
-        argv = json.loads((diode / slug / "args.json").read_text())
-        assert argv[argv.index("--slug") + 1] == slug
-        assert argv[argv.index("--scenario") + 1] == "crisis", argv
-        assert argv[argv.index("--seed") + 1] == "7", argv
-        assert argv[argv.index("--ring-slots") + 1] == "12", argv
-        assert argv[argv.index("--poll") + 1] == "0.05", argv
-        assert argv[argv.index("--cycles") + 1] == "0", (
-            "the service must not exit after a fixed number of cycles"
+    def serve(slugs: str | None, hold: str = "0") -> tuple[list[dict], subprocess.CompletedProcess]:
+        (diode / "served.jsonl").unlink(missing_ok=True)
+        env = dict(base, STUB_HOLD=hold)
+        if slugs is not None:
+            env["VEHICLE_SLUGS"] = slugs
+        process = subprocess.Popen(
+            ["sh", str(REPO / "containers" / "serve_vehicle.sh")],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
         )
+        out, err = process.communicate(timeout=30)
+        result = subprocess.CompletedProcess(process.args, process.returncode, out, err)
+        result.pid = process.pid
+        lines = (
+            (diode / "served.jsonl").read_text().splitlines()
+            if (diode / "served.jsonl").exists()
+            else []
+        )
+        return [json.loads(line) for line in lines], result
 
-    # An explicit list wins over the roster, which is how an operator serves one window on purpose.
-    for path in diode.glob("*/args.json"):
-        path.unlink()
-    env["VEHICLE_SLUGS"] = "pelican"
-    started = time.time()
-    served = subprocess.run(
-        ["sh", str(REPO / "containers" / "serve_vehicle.sh")],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
+    def slugs_of(argv: list[str]) -> list[str]:
+        return [argv[i + 1] for i, flag in enumerate(argv) if flag == "--slug"]
+
+    # **One executive for the roster, exec'd.** The slug set is the world's identity in the vehicle's
+    # checkpoint: a restart whose set differs refuses, so it comes from VEHICLE_SLUGS alone -- never
+    # a scan of the window root, where a stray directory would turn every restart into a crash loop,
+    # and never a FLEET_N_SLUG the script went looking for.
+    runs, result = serve("mackerel,cinnabar,scabious")
+    assert result.returncode == 0, result.stderr
+    assert len(runs) == 1, f"one executive serves every window, not {len(runs)}"
+    assert runs[0]["pid"] == result.pid, (
+        "the script execs the console, so docker's signal reaches it"
     )
-    elapsed = time.time() - started
-    # And it *waited*. The stub holds its window open for two seconds, which is the only reason this
-    # can tell `wait` from a fork: "a service that forked and returned would be a service whose
-    # container exits while its workers keep running", and that is exactly what a script ending in
-    # `console.py … &` without the `wait` would do -- return 0 in a tenth of a second with two
-    # orphaned consoles still publishing into a volume nothing supervises.
-    assert served.returncode == 0, served.stderr
-    assert elapsed >= 1.5, f"the script returned in {elapsed:.2f}s without waiting on its consoles"
-    assert {path.parent.name for path in diode.glob("*/args.json")} == {"pelican", "vehicle"}, (
-        "VEHICLE_SLUGS is an explicit answer and must not be widened by the roster"
-    )
+    argv = runs[0]["argv"]
+    assert slugs_of(argv) == ["mackerel", "cinnabar", "scabious"], argv
+    assert "vehicle" not in slugs_of(argv), "a window no agent holds is a command authority"
+    assert "stray" not in slugs_of(argv) and "decoy" not in slugs_of(argv), argv
+    assert argv[argv.index("--state-dir") + 1] == "/state", argv
+    assert "--phase" not in argv, "a resume takes the phase from the checkpoint"
+    assert argv[argv.index("--scenario") + 1] == "crisis", argv
+    assert argv[argv.index("--seed") + 1] == "7", argv
+    assert argv[argv.index("--ring-slots") + 1] == "12", argv
+    assert argv[argv.index("--poll") + 1] == "0.05", argv
+    assert argv[argv.index("--cycles") + 1] == "0", "the service must not stop after a fixed count"
+    for slug in ("mackerel", "cinnabar", "scabious"):
+        assert (diode / slug).is_dir(), slug
+
+    # **No roster: the reference window alone.** A stack with no fleet in it is where a probe points.
+    runs, result = serve(None)
+    assert result.returncode == 0, result.stderr
+    assert [slugs_of(run["argv"]) for run in runs] == [["vehicle"]]
+
+    # **A roster that names a window twice, or names `vehicle`, is still one window each.**
+    runs, result = serve("mackerel,vehicle,mackerel")
+    assert [slugs_of(run["argv"]) for run in runs] == [["mackerel", "vehicle"]]
+
+    # **A name outside the roster's alphabet stops the service before the vehicle sees it.**
+    runs, result = serve("mackerel,../escape")
+    assert result.returncode != 0 and runs == [], result.stderr
+    assert "../escape" in result.stderr
 
 
 def test_the_vehicle_s_presentation_references_resolve_in_this_repository():
