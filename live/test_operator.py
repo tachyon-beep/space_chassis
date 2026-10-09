@@ -194,11 +194,14 @@ def test_the_fleet_cap_refuses_and_the_agent_pauses(stack):
     """
     transcript = stack.volumes / "transcripts_agent_1" / "data" / "agent_life_transcript.jsonl"
     at = mark(stack, 1)
+    offset = transcript.stat().st_size
     stack.recreate("recorder_1", {"RECORDER_TOKEN_GLOBAL_HOURLY_MAX": "1"})
 
     def refused():
         try:
-            return "across the fleet" in transcript.read_text(encoding="utf-8")
+            with transcript.open("rb") as f:
+                f.seek(offset)
+                return b"across the fleet" in f.read()
         except OSError:
             return False
 

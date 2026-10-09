@@ -26,7 +26,7 @@ RETIRED_PATHS = [
 
 BANNED = re.compile(
     r"services/(chassis|supervisor|recorder|pump)\.py"
-    r"|tasks/duty\.py|endurance/(run_local|stub_model|inject|report)"
+    r"|tasks/duty\.py|(?<![\w/.-])tasks/|endurance/(run_local|stub_model|inject|report)"
     r"|agent\.env|_load_runtime|DIODE_DUTY_DIR|PUMP_DUTY_DIR"
     r'|SERVICES_DIR\s*/\s*"(chassis|supervisor|recorder|pump)\.py"'
 )
@@ -87,18 +87,17 @@ RETIRED_PHRASES = re.compile(
 
 
 def test_no_tracked_doc_describes_the_retired_world():
-    """The documents describe the Aurora world (plan 5, Task 5). A line may name a retired thing only
-    to say it is retired, and what replaced it: it is marked `(retired)`."""
+    """The documents and what the agents are told describe the Aurora world (plan 5, Task 5)."""
     found = []
     for name in DOCS + AGENT_FACING:
         for number, line in enumerate((ROOT / name).read_text(encoding="utf-8").splitlines(), 1):
-            if RETIRED_PHRASES.search(line) and "(retired)" not in line:
+            if RETIRED_PHRASES.search(line):
                 found.append(f"{name}:{number}: {line.strip()[:120]}")
     assert found == [], "\n".join(found)
 
 
 def test_claude_md_says_home_is_a_tmpfs_that_does_not_persist():
     text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    assert re.search(r"HOME[^\n]*/home/agent[^\n]*tmpfs", text), (
-        "CLAUDE.md must state HOME is a tmpfs"
+    assert re.search(r"HOME[^\n]*/home/agent[^\n]*tmpfs[^\n]*does not persist", text), (
+        "CLAUDE.md must state HOME is a tmpfs that does not persist"
     )

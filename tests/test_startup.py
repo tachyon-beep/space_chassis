@@ -67,3 +67,9 @@ def test_the_shipped_template_states_both_stream_ceilings():
     lines = EXAMPLE.splitlines()
     for key in ("STREAM_HOURLY_MAX", "STREAM_TOKEN_HOURLY_MAX"):
         assert any(line.startswith(key + "=") for line in lines), key
+
+
+def test_the_quick_start_builds_the_crate_registry_before_host_preparation():
+    # prepare_host.sh refuses without vendor/registry, which is gitignored.
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert readme.index("scripts/build_registry.sh") < readme.index("sh scripts/prepare_host.sh")

@@ -164,7 +164,6 @@ class SmokeStack:
             f"      AGENT_SLUGS: {','.join(self.slugs)}",
             "    volumes:",
             "      - ./contract/fake_diode.py:/opt/fake/fake_diode.py:ro",
-            "    networks: !override [windowside]",
             "  fleet_monitor:",
             f"    image: {SMOKE_IMAGE}",
             "    environment:",
@@ -258,7 +257,11 @@ class SmokeStack:
         """Recreate one running service alone, with its environment changed and nothing else."""
         path = self.root / f"recreate-{service}.yml"
         lines = ["services:", f"  {service}:", "    environment:"]
-        lines += [f'      {key}: "{value}"' for key, value in environment.items()]
+        # JSON's string is a YAML double-quoted scalar; `$$` is compose's literal dollar.
+        lines += [
+            f"      {key}: {json.dumps(str(value).replace('$', '$$'))}"
+            for key, value in environment.items()
+        ]
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         if path not in self.overrides:
             self.overrides.append(path)

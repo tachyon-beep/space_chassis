@@ -53,6 +53,7 @@ Requires Docker with Compose v2 and Python 3.12+ on the host, and root once, to
 mount the volume images.
 
 ```sh
+sh scripts/build_registry.sh        # once: the offline crate registry, vendor/registry (gitignored)
 sh scripts/prepare_host.sh          # the roster, .env, and the bounded volume images
 $EDITOR .env                        # set OPENROUTER_API_KEY (or LLM_BASE_URL)
 python3 scripts/volume_images.py check
@@ -202,7 +203,7 @@ the world is intact after a change.
 ## Verifying the world
 
 ```sh
-python3 -m pytest -q -n 8                   # every suite, no Docker
+python3 -m pytest -q -n 8                   # every suite; no containers
 uvx ruff check . --no-cache && uvx ruff format --check . --no-cache
 docker compose --profile fleet config -q    # the topology parses
 sh scripts/verify_containment.sh --all      # against a running stack

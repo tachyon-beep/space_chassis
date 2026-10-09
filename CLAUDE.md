@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```sh
 git submodule update --init --recursive                # the vehicle is a submodule; do this first
-python3 -m pytest -q -n 8                              # whole suite (pytest-xdist), no Docker needed
+python3 -m pytest -q -n 8                              # whole suite (pytest-xdist); no containers, a few tests use the docker CLI
 python3 -m pytest tests/test_health.py -q              # one file
 python3 -m pytest harness/tests -q                     # one suite: the Aurora harness
 python3 -m pytest recorder/tests -q                    # the recorder and the spend caps
@@ -61,11 +61,13 @@ agent's: it may rewrite any of it, the watchdog included.
 | `harness/` → `/opt/agent` (image) → `/work` | `agent.py`, `chassis.py`, `command_runtime.py`, `watchdog.py`, the prompts: a git repository with `baseline` and `rescue` tags, copied into `/work` at every start | the agent, to rewrite; `/opt/agent` is the seed the container falls back to |
 | `/work` | a 1 GiB tmpfs: the harness repository, the saved conversation, `tombstones/` | the agent; lost when the container restarts |
 | `HOME=/home/agent` | a 256 MiB tmpfs that does not persist | the agent; empty at every start |
-| `/state`, `/pump`, `/build`, `/telemetry`, `/llm/console`, `/diode/<slug>` | that agent's own bounded volume images (`scripts/volume_images.py`) | the agent |
+| `/state`, `/pump`, `/build`, `/telemetry`, `/llm/console` | that agent's own bounded volume images (`scripts/volume_images.py`) | the agent |
+| `/diode/<slug>` | that agent's directory in the one window image, bound alone | the agent, this side; the vehicle, the far side |
 | `/llm/sock` | the agent's recorder's sockets, read-only to the agent | the recorder |
 | `/shared` | one image every agent reads and writes | the fleet |
 | `pump/pump.py` → `/usr/local/bin/pump.py`; `recorder/` → `/usr/local/lib/recorder/` | the scheduler, and the recorder its own container runs | the operator; outside `/work` |
 | `services/` → `/opt/services` | `common`, `health`, `fleet_monitor`, `review`: the operator's monitor and panel | the operator |
+| `docs/deep_research/vehicle/` → `/opt/vehicle` | the vehicle, run by the `vehicle` service with no network | the vehicle's repository |
 | `brief/` → `/opt/brief` | what the agents are told, read-only; each claim it and the prompts make is sourced in `docs/brief-claims.md` | the operator |
 | transcripts, `fleet_ledger`, `operator_telemetry`, `operator/journal/` | the record and the operator's view of it; no agent mounts them | the operator |
 
@@ -82,7 +84,7 @@ changing the other (both are the agent's to change, together).
 |---|---|---|
 | 0 | the loop finished | restart with the same conversation |
 | 42 | `done` | archive the conversation; restore `experimental`, else `baseline`, else `rescue`, fresh; sleep 60 s |
-| 43 | the harness ended the run as broken | restore with a fresh conversation |
+| 43 | the harness ended the run as broken | restore with a fresh conversation; three inside 600 s climb the ladder a rung |
 | 44 | the environment refused (a spend cap, an upstream) | pause 60 s plus up to 30 s, same code |
 | 45 | `reset` | restore with the conversation kept |
 | crash, signal | | climb the ladder |
@@ -110,8 +112,9 @@ bare name imports from its own directory in the one merged run. `filterwarnings 
 - No request header is ever written to the record — bodies only
   (`recorder/tests/test_proxy.py::test_headers_never_reach_the_transcript_or_events`).
 - The reasoning lives in module docstrings and comments, which is why `E501` is off. Test names are
-  full sentences stating the property under test. Tests never skip: one that needs docker or git
-  fails without them.
+  full sentences stating the property under test. A test that needs docker or git fails
+  without them rather than skipping; the two that skip are the vehicle reconciliation's PyYAML
+  import and one vendored harness telemetry test.
 - `.scratch/` is the gitignored scratch directory; `volumes/` and `volume-images/` are runtime
   artefacts, never source. `tests/test_retired.py` holds the tree free of the runtime the port
   replaced.
@@ -131,7 +134,7 @@ bare name imports from its own directory in the one merged run. `filterwarnings 
 - `agent_2..10` and `recorder_2..10` sit in the `fleet` profile and `diode` in the `diode` profile.
   The monitor and the review panel bind every agent's record, so any `up` needs the full roster's
   volume images.
-- Agents join `worknet` (`internal: true`) and nothing else — never `modelnet` or `windowside`.
+- Agents join `worknet` (`internal: true`) and nothing else — never `modelnet`.
   That is the one hard rule.
 - Fleet names are drawn by `scripts/roster.py` into `.env` as `FLEET_N_SLUG`/`FLEET_N_NAME`, because
   compose reads `.env` with no flags; the roster itself is `operator/roster.json`.
