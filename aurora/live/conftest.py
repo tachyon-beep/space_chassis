@@ -30,13 +30,15 @@ def pytest_collection_modifyitems(items):
 
 
 def _keep_evidence(smoke: SmokeStack) -> None:
-    EVIDENCE.mkdir(parents=True, exist_ok=True)
-    services = ["stub", "diode"]
+    # The vehicle stack's evidence beside the fixture stack's, never over it.
+    evidence = EVIDENCE if smoke.window == "diode" else EVIDENCE / smoke.window
+    evidence.mkdir(parents=True, exist_ok=True)
+    services = ["stub", smoke.window]
     for n in range(1, smoke.agents + 1):
         services += [f"agent_{n}", f"recorder_{n}"]
     for service in services:
         result = smoke.compose("logs", "--no-color", "--timestamps", service, check=False)
-        (EVIDENCE / f"{service}.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+        (evidence / f"{service}.log").write_text(result.stdout + result.stderr, encoding="utf-8")
     # The head of each transcript, for fixtures: bodies only, never a header, and a dummy key.
     for n in range(1, smoke.agents + 1):
         source = smoke.volumes / f"transcripts_agent_{n}" / "data" / "agent_life_transcript.jsonl"
@@ -45,30 +47,47 @@ def _keep_evidence(smoke: SmokeStack) -> None:
                 head = handle.read(TRANSCRIPT_HEAD_BYTES)
         except OSError:
             continue
-        (EVIDENCE / f"transcript_agent_{n}.jsonl").write_bytes(head)
+        (evidence / f"transcript_agent_{n}.jsonl").write_bytes(head)
     ps = smoke.compose("ps", "--all", check=False)
-    (EVIDENCE / "ps.txt").write_text(ps.stdout + ps.stderr, encoding="utf-8")
+    (evidence / "ps.txt").write_text(ps.stdout + ps.stderr, encoding="utf-8")
+
+
+def _started(smoke: SmokeStack) -> None:
+    smoke.start()
+    for n in range(1, smoke.agents + 1):
+        agent = f"agent_{n}"
+        wait_for(
+            lambda agent=agent: "started from the image seed" in smoke.logs(agent),
+            timeout=START_SECONDS,
+            every=2,
+            what=f"{agent}'s watchdog to start",
+        )
+        wait_for(
+            lambda n=n: postgres_answers(smoke, n),
+            timeout=60,
+            every=2,
+            what=f"agent_{n}'s postgres",
+        )
 
 
 @pytest.fixture(scope="session")
 def stack():
     smoke = SmokeStack(3, recorder_overrides={3: {"RECORDER_HOURLY_MAX": "4"}})
     try:
-        smoke.start()
-        for n in range(1, smoke.agents + 1):
-            agent = f"agent_{n}"
-            wait_for(
-                lambda agent=agent: "started from the image seed" in smoke.logs(agent),
-                timeout=START_SECONDS,
-                every=2,
-                what=f"{agent}'s watchdog to start",
-            )
-            wait_for(
-                lambda n=n: postgres_answers(smoke, n),
-                timeout=60,
-                every=2,
-                what=f"agent_{n}'s postgres",
-            )
+        _started(smoke)
+        yield smoke
+    finally:
+        if (smoke.root / "override.yml").exists():
+            _keep_evidence(smoke)
+        smoke.down()
+
+
+@pytest.fixture(scope="session")
+def vehicle_stack():
+    """The same fleet with the vehicle as its window: its own project, scratch root and /state."""
+    smoke = SmokeStack(3, window="vehicle")
+    try:
+        _started(smoke)
         yield smoke
     finally:
         if (smoke.root / "override.yml").exists():
