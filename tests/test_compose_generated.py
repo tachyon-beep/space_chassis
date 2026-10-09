@@ -272,3 +272,35 @@ def test_the_generator_scales_to_a_smaller_fleet(count: int) -> None:
     assert {name for name in services if name.startswith("agent_")} == {
         f"agent_{n}" for n in range(1, count + 1)
     }
+
+
+def test_the_recorders_carry_the_plan_4b_settings_with_their_defaults() -> None:
+    expected = {
+        "RESPONSE_MAX_BYTES": "${RESPONSE_MAX_BYTES:-16777216}",
+        "RECORDER_MIN_FREE_BYTES": "${RECORDER_MIN_FREE_BYTES:-67108864}",
+        "RECORDER_CLIENT_TIMEOUT": "${RECORDER_CLIENT_TIMEOUT:-600}",
+        "RECORDER_DEADLINE_MARGIN": "${RECORDER_DEADLINE_MARGIN:-30}",
+        "RECORDER_UPSTREAM_DEADLINE": "${RECORDER_UPSTREAM_DEADLINE:-540}",
+        "RECORDER_LATEST_START": "${RECORDER_LATEST_START:-480}",
+        "RECORDER_OPERATION_TIMEOUT": "${RECORDER_OPERATION_TIMEOUT:-60}",
+    }
+    for name, body in SERVICES.items():
+        if name.startswith("recorder_"):
+            environment = body["environment"]
+            for key, value in expected.items():
+                assert environment.get(key) == value, (name, key)
+
+
+def test_the_env_example_documents_every_recorder_setting() -> None:
+    text = (ROOT / ".env.example").read_text(encoding="utf-8")
+    for key in (
+        "REQUEST_MAX_BYTES",
+        "RESPONSE_MAX_BYTES",
+        "RECORDER_MIN_FREE_BYTES",
+        "RECORDER_CLIENT_TIMEOUT",
+        "RECORDER_DEADLINE_MARGIN",
+        "RECORDER_UPSTREAM_DEADLINE",
+        "RECORDER_LATEST_START",
+        "RECORDER_OPERATION_TIMEOUT",
+    ):
+        assert f"{key}=" in text, key
