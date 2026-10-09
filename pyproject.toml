@@ -15,6 +15,8 @@ target-version = "py312"
 exclude = [
     # endurance/runs/ is the retired endurance harness's output, left on the operator's disk.
     "vendor", ".scratch", "endurance/runs", "harness",
+    # The vehicle is its own repository, with its own ruff configuration and its own checks.
+    "docs/deep_research/vehicle",
     "recorder/proxy.py", "recorder/recorder_streams.py",
     "recorder/tests/test_proxy.py", "recorder/tests/test_recorder_streams.py",
     "recorder/tests/test_recorder_console_hostile.py", "recorder/tests/test_unix_listener.py",
@@ -22,6 +24,11 @@ exclude = [
     "recorder/tests/hostile_inputs.py",
     "pump/pump.py", "pump/tests/test_pump.py", "pump/tests/hostile_inputs.py",
 ]
+
+[tool.ruff.format]
+# ruff 0.16 formats Python inside Markdown too. The corpus is frozen evidence, the vehicle is its own
+# repository with its own rules, and the plans are history: none of them is reformatted here.
+exclude = ["docs/deep_research/**", "docs/superpowers/**"]
 
 [tool.ruff.lint]
 # The services here are deliberately standard-library-first. E501 is off

@@ -1736,7 +1736,6 @@ services:
     restart: unless-stopped
     networks: [reviewnet]
     environment:
-      REVIEW_PORT: ${REVIEW_PORT:-8090}
       REVIEW_MAX_BYTES: ${REVIEW_MAX_BYTES:-33554432}
       REVIEW_CACHE_TURNS: ${REVIEW_CACHE_TURNS:-200}
       REVIEW_DEFAULT_TURNS: ${REVIEW_DEFAULT_TURNS:-25}
@@ -1881,22 +1880,23 @@ services:
         max-size: "10m"
         max-file: "5"
 
-  # The window. The implementation is mounted in by whoever builds the vehicle. It binds the
-  # whole shared window image; each agent binds only its own directory in it.
+  # The window's fixture: contract/fake_diode.py, which satisfies the contract and models
+  # nothing; `vehicle` below is the real implementation, and one or the other runs. It binds
+  # the whole shared window image; each agent binds only its own directory in it.
   diode:
     image: space-chassis-agent
-    entrypoint: ["python", "/opt/diode/diode.py"]
+    entrypoint: ["python", "/opt/fake/fake_diode.py"]
     restart: unless-stopped
     profiles: ["diode"]
-    # The only service with both faces: `windowside` is outward, `worknet` is where the
-    # agents can see it.
-    networks: [worknet, windowside]
+    # Its interface is the volume, so it is on no network an agent is on (spec section 5).
+    networks: [windowside]
     environment:
       DIODE_DIR: /diode
       DIODE_POLL_SECONDS: ${DIODE_POLL_SECONDS:-5}
       DIODE_HOURLY_MAX: ${DIODE_HOURLY_MAX:-120}
     volumes:
       - ${SPACE_VOLUMES_DIR:-./volumes}/diode/data:/diode
+      - ./contract/fake_diode.py:/opt/fake/fake_diode.py:ro
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
@@ -1909,7 +1909,7 @@ services:
         max-file: "5"
 
   # The vehicle: the reference console, serving into the same window image the fleet reads.
-  # `diode` above is the slot for another implementation; start one or the other. It is on
+  # `diode` above is the contract fixture; start one or the other. It is on
   # `worknet` alone: a vehicle with a route to the model network could reach the fleet's mind.
   vehicle:
     image: space-chassis-agent

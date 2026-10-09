@@ -112,7 +112,6 @@ def copy_definition(destination: Path) -> Path:
     return destination
 
 
-
 def _in_words(n: int) -> str:
     """Enough of a number-to-words conversion for a count in the low hundreds.
 
@@ -157,8 +156,6 @@ def _in_words(n: int) -> str:
     return f"{head} {_in_words(n % 100)}"
 
 
-
-
 def _docker_ignores(relative: str) -> str | None:
     """The last `.dockerignore` line that decides `relative`, or None for "nothing does".
 
@@ -186,8 +183,6 @@ def _docker_ignores(relative: str) -> str | None:
         ):
             verdict = "excluded" if not negated else "included"
     return verdict
-
-
 
 
 def test_the_vehicle_passes_the_contract_probe(tmp_path):
@@ -277,6 +272,7 @@ def test_the_vehicle_passes_the_contract_probe(tmp_path):
         console.terminate()
         with contextlib.suppress(subprocess.TimeoutExpired):
             console.wait(timeout=10)
+
 
 def test_the_crews_error_model_is_a_distribution(tmp_path):
     """The crew can be wrong, and the model of how was read by nothing — including by arithmetic.
@@ -368,6 +364,7 @@ def test_the_crews_error_model_is_a_distribution(tmp_path):
     rewrite({"misheard": 0.4444, "misattributed": 0.3333, "forgot": 0.2222})
     assert run_linter(fixture).returncode == 0, "a rounded set of weights was refused"
 
+
 def test_the_changelog_row_for_the_linter_is_held_against_the_linter():
     """A row of prose about the linter, and four of its five countable figures were stale.
 
@@ -392,7 +389,9 @@ def test_the_changelog_row_for_the_linter_is_held_against_the_linter():
             line
             for line in (
                 REPO / "docs" / "deep_research" / "integration" / "reconciliation" / "README.md"
-            ).read_text().splitlines()
+            )
+            .read_text()
+            .splitlines()
             if line.startswith("| `../../vehicle/tools/check_vehicle.py`")
         ),
         None,
@@ -453,6 +452,7 @@ def test_the_changelog_row_for_the_linter_is_held_against_the_linter():
         mutated = stated(row.replace(old, stale, 1))
         assert mutated[key] != live[key], f"the reader did not see the stale {key}: {mutated[key]}"
 
+
 def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
     """Criterion 3d: the far side of the window has to be a thing the stack can actually run.
 
@@ -499,11 +499,13 @@ def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
         "a bare `docker compose up` is the cheap one-agent stack; the window must not join it"
     )
 
-    # **The same directory the agents read, and nothing else.** `diode` is the slot and this is the
-    # implementation, so the mount list is identical on purpose; the comparison is to the file rather
+    # **The same directory the agents read, and nothing else.** `diode` is the fixture and this is the
+    # implementation, so their window mounts are identical on purpose; the comparison is to the file rather
     # than to a literal, because an agent's own mount moving is exactly the change that would leave
     # this service publishing into an orphan.
-    assert service["volumes"] == reference["volumes"], (
+    # The fixture's source, which only the `diode` slot mounts, is not part of the window.
+    window = [v for v in reference["volumes"] if v.endswith(":/diode")]
+    assert service["volumes"] == window, (
         "the window must appear inside the agents' own diode mount, not beside it"
     )
     assert [v for v in service["volumes"] if v.endswith(":/diode")], service["volumes"]

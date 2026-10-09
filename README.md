@@ -103,7 +103,8 @@ the one-line-per-agent view for a terminal.
 
 A transcript records the whole request on every turn, so the files grow fast,
 and the panel therefore parses a bounded tail of each file rather than the whole
-of it, with everything older one link away in its raw form. A tool's *result*
+of it. Each turn in that window is served untruncated in its raw form; anything
+older is read from the transcript on the host. A tool's *result*
 is not in the turn that called it: it arrives in the next request, so the panel
 pairs them by id.
 
@@ -167,7 +168,7 @@ agent can read or change any transcript, its own included.
 |---|---|
 | `harness/` | Aurora's agent, chassis, command runtime, watchdog and prompts: the seed at `/opt/agent`. |
 | `recorder/` | The credential, the transcript and the spend caps. One recorder per agent, one unix socket each. |
-| `pump/` | Scheduled and kept-alive processes, per agent, surviving everything. |
+| `pump/` | Scheduled and kept-alive processes, per agent. The schedule survives every restart; a process does not outlive its container, and keepalives are started again. |
 | `services/` | The operator's view: `health.py`, `fleet_monitor.py`, `review.py`, and `common.py` (atomic writes, bounded reads). |
 | `containers/` | The agent's entrypoint, and the vehicle service's. |
 | `brief/` | What they are told. |

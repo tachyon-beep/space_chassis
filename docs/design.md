@@ -78,7 +78,8 @@ sent it.
 
 **Memory is theirs to build.** `/state` is private and durable; `/work` and
 `HOME` do not outlive the container. A `done` clears the context and starts a
-fresh agent on the same code. How a lineage remembers, and what it keeps, is not
+fresh agent on the code the agent last tagged; whatever it did not commit and tag
+is gone. How a lineage remembers, and what it keeps, is not
 supplied: a crew whose members each keep their own log is a crew that has to
 invent a way to compare notes.
 
@@ -212,7 +213,9 @@ agent, `/pump`, bound into that agent alone. An entry can be a one-off at an
 absolute time, an interval, or a keepalive that restarts with backoff. Its state
 is on that volume, so "has this already run" survives the pump dying, the
 harness being restored, *and* the container being replaced; the entrypoint
-keeps the pump itself running.
+keeps the pump itself running. The processes it started do not outlive their
+container: after a restart, keepalive and interval entries are started again,
+and a one-off that already ran stays spent.
 
 The guarantee is environmental rather than clever: the pump is not in the
 harness, so an agent that breaks its own code cannot break the thing that runs
@@ -280,8 +283,9 @@ record works rather than from how a viewer would like it to.
 *The transcript repeats the whole request on every turn.* A viewer built on
 "parse the file and show the turns" would load hundreds of megabytes to render
 twenty lines, and would get slower for as long as the fleet ran. So the panel
-parses a byte-bounded tail and says so on the page: everything older is one
-click away, untruncated, at `/api/agent/<slug>/turn/<n>/raw`. The chassis clips
+parses a byte-bounded tail and says so on the page. Each turn in that window is
+served untruncated at `/api/agent/<slug>/turn/<n>/raw`; anything older is read
+from the transcript on the host. The chassis clips
 and condenses what it sends, so one request is not a prefix of the next; what is
 new in a turn is what follows its last assistant message.
 

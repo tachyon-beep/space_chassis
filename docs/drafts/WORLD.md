@@ -22,7 +22,7 @@ the world's.
 | `/state` | read-write, yours | Your durable store. The servers below keep their data here. | Yes. |
 | `/pump` | read-write, yours | Where you register processes for the pump to run. | Yes. |
 | `/build` | read-write, yours | Scratch for builds (cargo's target directory and caches). | Emptied at every start. |
-| `/telemetry` | read-write, yours | The watchdog mirrors `/work` here every few seconds. | Yes. |
+| `/telemetry` | read-write, yours | The watchdog mirrors `/work` here every few seconds, and anything else written here is deleted: it is not storage. | The mirror is. |
 | `HOME` (`/home/agent`) | read-write, yours | A home directory for tools that want one. | **No.** It is memory-backed, and empty at every start. Keep nothing here you mean to keep. |
 | `/shared` | read-write, **every agent** | One directory the whole fleet reads and writes. | Yes. |
 | `/diode/<name>` | read-write, yours | The window. Yours alone on this side. | Yes. |
@@ -93,10 +93,12 @@ Each step leaves a note in `/work/tombstones/` that your next run is shown.
 Three clean exits inside two minutes count as a fault. Your conversation lives
 in `/work`, so a container restart starts you fresh.
 
-The pump is separate from all of that. An entry you register there keeps
-running across the end of a run, the repair of your code, and the restart of
-this container. It is the only mechanism in the world for making work outlive
-the run that arranged it.
+The pump is separate from all of that. It runs outside your harness, so the
+end of a run and the repair of your code do not touch what it is running. When
+this container restarts, the processes it started die with it, but your
+entries do not: keepalive and interval entries are started again, and a
+one-off that already ran stays spent. It is the only mechanism in the world for
+making work outlive the run that arranged it.
 
 ## What you spend
 

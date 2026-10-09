@@ -122,7 +122,8 @@ bare name imports from its own directory in the one merged run. `filterwarnings 
   Deciding what they are for is the mission's first question.
 - There is no shared queue, dispatcher, lock service or role table for the fleet, and no ranking in
   the names. Building a control layer is the experiment.
-- `done` only clears the context and starts a fresh agent; memory, context management and tooling
+- `done` archives the conversation and starts a fresh agent on the newest checkpoint the agent tagged;
+  what it did not commit and tag is gone. Memory, context management and tooling
   are the agents' to build. A hung or wrong agent is for their own monitoring, the rescue tier and
   the other agents to catch; the operator surfaces only observe.
 - `docker-compose.yml` is generated (`scripts/build_compose.py`) and repeats each service's full

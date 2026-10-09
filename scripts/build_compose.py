@@ -243,12 +243,12 @@ def _review(count: int) -> str:
     )
     text += _environment(
         (
-            ("REVIEW_PORT", "${REVIEW_PORT:-8090}"),
             ("REVIEW_MAX_BYTES", "${REVIEW_MAX_BYTES:-33554432}"),
             ("REVIEW_CACHE_TURNS", "${REVIEW_CACHE_TURNS:-200}"),
             ("REVIEW_DEFAULT_TURNS", "${REVIEW_DEFAULT_TURNS:-25}"),
         )
     )
+    # REVIEW_PORT is the host's side of the mapping; inside, the panel listens on its default.
     text += "    ports:\n" + '      - "${REVIEW_BIND:-127.0.0.1}:${REVIEW_PORT:-8090}:8090"\n'
     text += "    volumes:\n" + _binds("review", None, count)
     text += (
@@ -264,16 +264,16 @@ def _review(count: int) -> str:
 
 def _diode() -> str:
     text = (
-        "  # The window. The implementation is mounted in by whoever builds the vehicle. It binds the\n"
-        "  # whole shared window image; each agent binds only its own directory in it.\n"
+        "  # The window's fixture: contract/fake_diode.py, which satisfies the contract and models\n"
+        "  # nothing; `vehicle` below is the real implementation, and one or the other runs. It binds\n"
+        "  # the whole shared window image; each agent binds only its own directory in it.\n"
         "  diode:\n"
         f"    image: {IMAGE}\n"
-        '    entrypoint: ["python", "/opt/diode/diode.py"]\n'
+        '    entrypoint: ["python", "/opt/fake/fake_diode.py"]\n'
         "    restart: unless-stopped\n"
         '    profiles: ["diode"]\n'
-        "    # The only service with both faces: `windowside` is outward, `worknet` is where the\n"
-        "    # agents can see it.\n"
-        "    networks: [worknet, windowside]\n"
+        "    # Its interface is the volume, so it is on no network an agent is on (spec section 5).\n"
+        "    networks: [windowside]\n"
     )
     text += _environment(
         (
@@ -283,6 +283,7 @@ def _diode() -> str:
         )
     )
     text += f"    volumes:\n      - {WINDOW_BIND}\n"
+    text += "      - ./contract/fake_diode.py:/opt/fake/fake_diode.py:ro\n"
     text += (
         "    read_only: true\n"
         "    tmpfs: [/tmp]\n"
@@ -296,7 +297,7 @@ def _diode() -> str:
 def _vehicle() -> str:
     text = (
         "  # The vehicle: the reference console, serving into the same window image the fleet reads.\n"
-        "  # `diode` above is the slot for another implementation; start one or the other. It is on\n"
+        "  # `diode` above is the contract fixture; start one or the other. It is on\n"
         "  # `worknet` alone: a vehicle with a route to the model network could reach the fleet's mind.\n"
         "  vehicle:\n"
         f"    image: {IMAGE}\n"
