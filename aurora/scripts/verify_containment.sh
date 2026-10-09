@@ -194,6 +194,22 @@ else:
     else
         bad "$agent's /diode holds '$entries', not ${slug:-<no slug>} alone"
     fi
+    # The window root is the vehicle's: an agent writes only inside its own window.
+    case $(verdict "$agent" sh -c 'if touch /diode/.probe 2>/dev/null; then rm -f /diode/.probe; echo wrote; else echo refused; fi') in
+        refused) ok "$agent cannot write the window root" ;;
+        wrote) bad "$agent can write the window root" ;;
+        *) bad "$agent could not be probed for writing the window root" ;;
+    esac
+    # The vehicle's private state (checkpoints, lock, durable record: hidden truth) is bound into
+    # no agent. Read host-side: the agent's own /state makes a target check from inside useless.
+    sources=$(docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' "$($COMPOSE ps -q "$agent" 2>/dev/null)" 2>/dev/null)
+    if [ -z "$sources" ]; then
+        bad "$agent's mounts could not be inspected"
+    elif printf '%s' "$sources" | grep -q '/vehicle_state/'; then
+        bad "$agent mounts the vehicle's private state"
+    else
+        ok "$agent mounts nothing of the vehicle's private state"
+    fi
     for private in /transcripts /ledger; do
         if ! printf '%s\n' "$mounts" | grep -qx /; then
             bad "$agent's mount table could not be read, so $private is unchecked"
@@ -270,6 +286,22 @@ if [ $# -ge 2 ]; then
         in_agent "$listener" pkill -f "nc -lk $PEER_PORT" >/dev/null 2>&1
     else
         bad "could not start a listener on $listener"
+    fi
+fi
+
+echo "== the vehicle binds its window and its state"
+vehicle=$($COMPOSE ps -q vehicle 2>/dev/null)
+if [ -z "$vehicle" ]; then
+    skip "the vehicle is not running"
+else
+    binds=$(docker inspect -f '{{range .Mounts}}{{if eq .Type "bind"}}{{.Destination}} {{end}}{{end}}' "$vehicle" 2>/dev/null \
+        | tr ' ' '\n' | sed '/^$/d' | sort | tr '\n' ' ' | sed 's/ $//')
+    if [ "$binds" = "/diode /state" ]; then
+        ok "the vehicle binds /diode and /state and nothing else"
+    elif [ -z "$binds" ]; then
+        bad "the vehicle's binds could not be inspected"
+    else
+        bad "the vehicle binds '$binds', not /diode and /state alone"
     fi
 fi
 
