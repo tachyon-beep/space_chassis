@@ -1,12 +1,15 @@
 #!/bin/sh
 # Prepare the host for the stack: the roster, the environment file, and the bounded volume images.
 #
-# Every volume an agent or a recorder writes is a preallocated ext4 image, loop-mounted under
+# Every volume an agent, a recorder or the vehicle writes is a preallocated ext4 image, loop-mounted under
 # volumes/ (scripts/volume_images.py is the manifest). This script draws the fleet's names, plans
 # the images against the free disk, creates the ones that are missing, and checks them. Mounting an
 # image and creating its data/ directory need root; this script never runs sudo itself. The image
 # creator tries `sudo -n mount` and otherwise prints the exact commands, and they are collected
 # here into one block for the operator, followed by the /etc/fstab lines that mount them at boot.
+#
+# The total for ten agents is 177.3125G by default (.env.example lists each size). 40G of it is the
+# vehicle's private state, allocated whether or not the vehicle profile is ever started.
 #
 # Exit status: 0 when every image is ready; 2 when the operator has steps to run (the block above
 # says which), or when the old layout must be archived first; 1 on any error.

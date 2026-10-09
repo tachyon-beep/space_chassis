@@ -507,11 +507,14 @@ def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
     # than to a literal, because an agent's own mount moving is exactly the change that would leave
     # this service publishing into an orphan.
     # The fixture's source, which only the `diode` slot mounts, is not part of the window.
-    window = [v for v in reference["volumes"] if v.endswith(":/diode")]
-    assert service["volumes"] == window, (
+    window = [v for v in reference["volumes"] if isinstance(v, str) and v.endswith(":/diode")]
+    assert window and service["volumes"][: len(window)] == window, (
         "the window must appear inside the agents' own diode mount, not beside it"
     )
-    assert [v for v in service["volumes"] if v.endswith(":/diode")], service["volumes"]
+    # Its one other mount is its own private state, which no other service binds.
+    others = service["volumes"][len(window) :]
+    assert [entry["target"] for entry in others] == ["/state"], others
+    assert "/vehicle_state/data" in others[0]["source"]
     # **No network at all.** This asserted `worknet` alone, on the reasoning that the vehicle obeys
     # the agents' rule; the rule's purpose was to keep the vehicle off the model network, and no network
     # serves it better. The vehicle's interface is the window volume, as the fixture's is (spec 5), and

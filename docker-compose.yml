@@ -1923,11 +1923,13 @@ services:
       dockerfile: Dockerfile.agent
       target: vehicle
     restart: unless-stopped
+    init: true
     profiles: ["vehicle"]
     network_mode: none
     environment:
       DIODE_DIR: /diode
       VEHICLE_DIR: /opt/vehicle
+      VEHICLE_STATE_DIR: /state
       VEHICLE_SLUGS: ${VEHICLE_SLUGS:-${FLEET_SLUGS:-vehicle}}
       VEHICLE_SCENARIO: ${VEHICLE_SCENARIO:-nominal}
       VEHICLE_SEED: ${VEHICLE_SEED:-0}
@@ -1935,6 +1937,11 @@ services:
       VEHICLE_RING_SLOTS: ${VEHICLE_RING_SLOTS:-300}
     volumes:
       - ${SPACE_VOLUMES_DIR:-./volumes}/diode/data:/diode
+      - type: bind
+        source: ${SPACE_VOLUMES_DIR:-./volumes}/vehicle_state/data
+        target: /state
+        bind:
+          create_host_path: false
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
