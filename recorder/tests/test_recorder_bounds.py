@@ -12,6 +12,7 @@ total: a `RecursionError` is a parse error, never a dead handler thread.
 import json
 
 import proxy
+import pytest
 import recorder_streams
 from test_proxy import (  # noqa: F401 -- fixtures, by name
     _BufferedResponse,
@@ -161,3 +162,51 @@ def test_a_response_over_its_byte_cap_is_withheld_and_recorded_truncated(
     assert "response_too_large" in response.json()["error"]["message"]
     entry = _entries(transcripts)[-1]
     assert entry["response"]["raw_body_truncated"] is True
+
+
+def test_a_body_built_to_make_the_scan_backtrack_is_scanned_in_linear_time():
+    """A string that cannot close (an odd backslash run at the end) must not cost a rescan of the
+    rest of the body at every quote: the security review of 91065d6 found the regex did."""
+    import time
+
+    for body in (b'"\\' * 200_000, b'"' + b'\\"' * 200_000 + b"\\", b'["\\\\\\' * 100_000):
+        started = time.monotonic()
+        recorder_streams.over_caps(body, recorder_streams.REQUEST_CAPS)
+        recorder_streams.prescan(body)
+        assert time.monotonic() - started < 2.0, body[:12]
+
+
+def _reference(value, depth=1):
+    """(max depth, containers, values) of a parsed document, counted the way the scan counts."""
+    if isinstance(value, dict):
+        deepest, containers, values = depth, 1, 1
+        for _key, item in value.items():
+            values += 1
+            d, c, v = _reference(item, depth + 1)
+            deepest, containers, values = max(deepest, d), containers + c, values + v
+        return deepest, containers, values
+    if isinstance(value, list):
+        deepest, containers, values = depth, 1, 1
+        for item in value:
+            d, c, v = _reference(item, depth + 1)
+            deepest, containers, values = max(deepest, d), containers + c, values + v
+        return deepest, containers, values
+    return depth - 1, 0, 1
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"a": [1, 2, {"b": "x"}]},
+        {"q": 'he said "[{}]"', "e": "\\", "f": '\\\\"', "g": ["\\", '"', 'a\\"b']},
+        [[[]], {}, {"": [None, True, False, -1.5e3]}],
+        {"text": "line\nbreak\ttab ☃ \\u0022"},
+        [{"k" * 5: [{"deep": [[[["v"]]]]}]}],
+    ],
+)
+def test_the_scan_never_counts_less_than_the_parser_sees(document):
+    for body in (
+        json.dumps(document).encode(),
+        json.dumps(document, separators=(",", ":")).encode(),
+    ):
+        assert recorder_streams.prescan(body) == _reference(document), body

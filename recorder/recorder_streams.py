@@ -449,18 +449,47 @@ def reservation_for(composed_bytes, allowance):
 # refuses it before anything parses it.
 REQUEST_CAPS = (64, 32_768, 131_072)
 RESPONSE_CAPS = (64, 8_192, 32_768)
-_TOKEN = re.compile(rb'"[^"\\]*(?:\\.[^"\\]*)*(?:"|\Z)|[\[{]|[\]}]|[^\s,:\[\]{}"]+', re.S)
+# Everything but strings: one structural byte, or one run of scalar text. No alternative can
+# backtrack, so a search is linear in what it skips.
+_STRUCTURE = re.compile(rb'[\[{]|[\]}]|"|[^\s,:\[\]{}"]+')
+
+
+def _string_end(data, position):
+    """The index just past the closing quote of the string whose body starts at position.
+
+    A quote closes the string when the run of backslashes before it is even. Each quote and each
+    backslash is looked at once, so the walk is linear; a string that never closes runs to the end.
+    """
+    while True:
+        quote = data.find(b'"', position)
+        if quote == -1:
+            return len(data)
+        run = 0
+        back = quote - 1
+        while back >= position and data[back] == 0x5C:
+            run += 1
+            back -= 1
+        position = quote + 1
+        if run % 2 == 0:
+            return position
 
 
 def _structure(data, caps=None):
-    """Walk the tokens of a JSON-ish body: (depth, containers, values, first cap exceeded).
+    """Walk a JSON-ish body: (depth, containers, values, first cap exceeded).
 
-    Strings, with their escapes, are one token each, so punctuation inside them is not structure.
-    Nothing is validated. With caps, the walk stops at the first cap exceeded.
+    A string, escapes and all, is one value, so punctuation inside it is not structure. Nothing is
+    validated. With caps, the walk stops at the first cap exceeded. The security review of 91065d6
+    found the earlier single-regex form quadratic on strings that cannot close; this one is linear.
     """
     depth = deepest = containers = values = 0
-    for match in _TOKEN.finditer(data):
-        first = match.group()[:1]
+    position = 0
+    while True:
+        match = _STRUCTURE.search(data, position)
+        if match is None:
+            break
+        token = match.group()
+        position = match.end()
+        first = token[:1]
         if first in (b"[", b"{"):
             depth += 1
             containers += 1
@@ -469,6 +498,9 @@ def _structure(data, caps=None):
         elif first in (b"]", b"}"):
             depth = max(0, depth - 1)
             continue
+        elif first == b'"':
+            values += 1
+            position = _string_end(data, position)
         else:
             values += 1
         if caps is not None:
