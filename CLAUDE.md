@@ -6,12 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```sh
 git submodule update --init --recursive                # the vehicle is a submodule; do this first
-python3 -m pytest -q                                   # whole suite, no Docker needed
-python3 -m pytest tests/test_chassis.py -q             # one file
-python3 -m pytest harness/tests -q                     # the Aurora harness: its own process until plan 5 retires services/chassis.py
-python3 -m pytest recorder/tests -q                    # Aurora's recorder and the spend caps: its own process, like harness/tests
-python3 -m pytest pump/tests -q                        # Aurora's pump: its own process until plan 5 retires services/pump.py
-python3 -m pytest tests/test_chassis.py::test_a_conversation_round_trips -q
+python3 -m pytest -q -n 8                              # whole suite (pytest-xdist), no Docker needed
+python3 -m pytest tests/test_health.py -q              # one file
+python3 -m pytest harness/tests -q                     # one suite: the Aurora harness
+python3 -m pytest recorder/tests -q                    # the recorder and the spend caps
+python3 -m pytest pump/tests -q                        # the pump
 python3 -m pytest docs/deep_research/vehicle/tests/test_vehicle_config.py -q   # the vehicle's referee
 python3 -m pytest live -q                               # the first live run: builds the image and runs the smoke stack; minutes
 
