@@ -40,9 +40,11 @@ PER_AGENT = "per_agent"
 SHARED = "shared"
 
 # The roles that mount images: each agent and its recorder have one container per slug; the
-# monitor, the review panel and the window services (the vehicle and the fake diode) see the fleet.
+# monitor, the review panel and the window services (the vehicle and the fake diode) are one
+# container each. The `vehicle` role is the vehicle service alone: its private state, which no other
+# role mounts (the `window` role is shared with the fixture).
 AGENT_ROLES = ("agent", "recorder")
-FLEET_ROLES = ("monitor", "review", "window")
+FLEET_ROLES = ("monitor", "review", "window", "vehicle")
 
 # The interpolation placeholder compose resolves; the generated compose carries it.
 SOURCE_ROOT = "${SPACE_VOLUMES_DIR:-./volumes}"
@@ -150,6 +152,16 @@ KINDS: tuple[Kind, ...] = (
         "SPACE_OPERATOR_TELEMETRY_SIZE",
         SHARED,
         (("monitor", "/telemetry", False, ""), ("review", "/telemetry", True, "")),
+    ),
+    # The vehicle's private state (ADR 0002 H): checkpoints, its lock and the durable per-cycle
+    # record -- hashes, lineage and hidden truth -- mounted by the vehicle service alone, never under
+    # the window image or a second bind of it. Allocated whether or not the vehicle profile runs.
+    Kind(
+        "vehicle_state",
+        "40G",
+        "SPACE_VEHICLE_STATE_SIZE",
+        SHARED,
+        (("vehicle", "/state", False, ""),),
     ),
 )
 
