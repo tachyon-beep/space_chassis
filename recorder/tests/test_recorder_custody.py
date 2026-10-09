@@ -193,7 +193,7 @@ def test_a_partial_transcript_is_withheld_and_the_next_turn_is_recorded_cleanly(
 def test_a_streamed_reply_is_recorded_after_relay_and_says_so(
     stream_factory, upstream, transcripts
 ):
-    from test_proxy import _StreamingResponse, _event
+    from test_proxy import _event, _StreamingResponse
 
     upstream["response"] = lambda: _StreamingResponse(
         [
