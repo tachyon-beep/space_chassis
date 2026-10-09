@@ -140,10 +140,11 @@ def test_the_readme_gives_the_operator_the_vehicle_s_procedures():
         "exit 3",
         "VEHICLE_SLUGS",
         "--closed-interlock",
-        "rebuild of the agent image",
+        "rebuild of the vehicle image",
         "Python patch version",
         "configuration or engine code",
         "kernel update",
+        "pinned by digest",
         "checkpoint interval",
         "not wired",
     ):
