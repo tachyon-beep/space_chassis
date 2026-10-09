@@ -188,7 +188,7 @@ each `/work` repository from outside.
 
 A run's history grows without bound, so a request sends only the newest messages
 that fit — which means a run can lose the beginning of its own conversation
-without noticing. The chassis's three details:
+without noticing. The chassis's four details:
 
 - **Pinned messages.** The system prompt and the first user message are sent
   whatever their age. A run that has dropped its opening problem does not know
@@ -199,6 +199,12 @@ without noticing. The chassis's three details:
 - **Never an orphaned result.** The window never opens on a tool result whose
   call was dropped. Every upstream rejects that, so a window that did would turn
   a long run into a crash loop that looked like a model fault.
+- **Room outside the window.** The window counts messages only; the tool
+  schemas and the model's reply sit outside it. A request past the model's
+  context is a 400, which the chassis repairs once, at the same budget, and then
+  ends as exit 43 with a fresh conversation. The default window leaves room on
+  the default model for both (`tests/test_window_headroom.py`); a host given a
+  smaller model is given a smaller window, by the rule in `.env.example`.
 
 What falls out of the window is not summarised for the agent. The `compact` tool
 reports how full the window is and can delete the oldest messages at a time the
