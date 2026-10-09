@@ -387,61 +387,84 @@ def git_reset_all(work_dir=WORK_DIR, ref=BASELINE_REF):
     return commit
 
 
-def _prune_directory(directory, patterns, budget, keep_newest):
-    """Remove the archives past the newest ARCHIVE_KEEP within budget; return how many went."""
+def _prune_directory(directory, patterns, budget, keep):
+    """Remove the archives past the newest ARCHIVE_KEEP within budget; return how many went.
+
+    The directory is opened once, never through a link, and everything after works on that
+    descriptor: a directory swapped for a link while this runs cannot redirect a delete.
+    """
     try:
-        if not stat.S_ISDIR(os.lstat(directory).st_mode):
-            return 0
-        names = os.listdir(directory)
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     except OSError:
         return 0
-    found = []
-    for name in names:
-        if not any(pattern.fullmatch(name) for pattern in patterns):
-            continue
+    try:
         try:
-            st = os.lstat(os.path.join(directory, name))
+            names = os.listdir(fd)
         except OSError:
-            continue
-        if stat.S_ISREG(st.st_mode):
-            found.append((name == keep_newest, st.st_mtime_ns, name, st.st_size))
-    found.sort(reverse=True)
-    kept = used = removed = 0
-    for index, (_newest, _mtime, name, size) in enumerate(found):
-        if index == 0 or (kept < ARCHIVE_KEEP and used + size <= budget):
-            kept += 1
-            used += size
-            continue
-        # The first archive over the count or the budget, and everything older, goes.
-        for _n, _m, old_name, _s in found[index:]:
+            return 0
+        found = []
+        for name in names:
+            if not any(pattern.fullmatch(name) for pattern in patterns):
+                continue
             try:
-                os.remove(os.path.join(directory, old_name))
-                removed += 1
-            except OSError as exc:
-                print(f"archive prune failed for {old_name}: {exc}", flush=True)
-        break
-    return removed
+                st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode):
+                found.append((name in keep, st.st_mtime_ns, name, st.st_size))
+        found.sort(reverse=True)
+        kept = used = removed = 0
+        for index, (protected, _mtime, name, size) in enumerate(found):
+            if index == 0 or protected or (kept < ARCHIVE_KEEP and used + size <= budget):
+                kept += 1
+                used += size
+                continue
+            # The first archive over the count or the budget, and everything older, goes.
+            for is_kept, _m, old_name, _s in found[index:]:
+                if is_kept:
+                    continue
+                try:
+                    os.remove(old_name, dir_fd=fd)
+                    removed += 1
+                except OSError as exc:
+                    print(f"archive prune failed for {old_name}: {exc}", flush=True)
+            break
+        return removed
+    finally:
+        os.close(fd)
 
 
-def prune_archives(work_dir=WORK_DIR, keep_newest=None):
+def newest_chassis_archive(work_dir=WORK_DIR):
+    """The chassis's newest conversation archive by the stamp in its name, or None.
+
+    On exit 43 the chassis has archived the conversation before the watchdog restores; its name,
+    not its modification time, says it is the newest.
+    """
+    try:
+        names = os.listdir(os.path.join(work_dir, "tombstones"))
+    except OSError:
+        return None
+    stamped = [name for name in names if TOMBSTONE_ARCHIVES[0].fullmatch(name)]
+    return max(stamped, default=None)
+
+
+def prune_archives(work_dir=WORK_DIR, keep=()):
     """Bound the archived conversations in tombstones/ and the git directory; never raise.
 
-    keep_newest names the archive just made, kept whatever its modification time says.
+    keep names archives kept whatever their modification times say: the ones just made.
     """
+    keep = {name for name in keep if name}
     removed = 0
     try:
         removed += _prune_directory(
-            os.path.join(work_dir, "tombstones"),
-            TOMBSTONE_ARCHIVES,
-            ARCHIVE_TOMBSTONE_BYTES,
-            keep_newest,
+            os.path.join(work_dir, "tombstones"), TOMBSTONE_ARCHIVES, ARCHIVE_TOMBSTONE_BYTES, keep
         )
         try:
             git_dir = git_command(work_dir, "rev-parse", "--absolute-git-dir").decode().strip()
         except Exception as exc:
             print(f"archive prune skipped the git directory: {exc}", flush=True)
         else:
-            removed += _prune_directory(git_dir, GIT_ARCHIVES, ARCHIVE_GIT_BYTES, keep_newest)
+            removed += _prune_directory(git_dir, GIT_ARCHIVES, ARCHIVE_GIT_BYTES, keep)
     except Exception as exc:
         print(f"archive prune failed: {exc}", flush=True)
     if removed:
@@ -554,9 +577,10 @@ class Recovery:
         if fresh:
             # Pruned whenever the conversation starts fresh, including after exit 43, whose
             # archive the chassis has already written: once first, to make room for the copy,
-            # and again after it, keeping the archive just made whatever its clock says.
-            prune_archives(self.work_dir)
-            prune_archives(self.work_dir, keep_newest=self.fresh_session())
+            # and again after it, keeping the archives just made whatever their clocks say.
+            keep = {newest_chassis_archive(self.work_dir)}
+            prune_archives(self.work_dir, keep=keep)
+            prune_archives(self.work_dir, keep=keep | {self.fresh_session()})
         session_path = os.path.join(self.work_dir, "session_context.json")
         pending_session = self.path + ".session"
         if not fresh:

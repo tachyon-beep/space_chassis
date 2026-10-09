@@ -156,3 +156,47 @@ def test_a_fresh_restore_prunes_before_it_copies(tmp_path, monkeypatch):
     monkeypatch.setattr(watchdog.shutil, "copyfile", watched)
     watchdog.Recovery(str(tmp_path)).restore("baseline", commit, "elective", "test", True)
     assert at_copy and at_copy[0] <= watchdog.ARCHIVE_KEEP
+
+
+def test_the_exit_43_archive_survives_whatever_its_clock_says(tmp_path):
+    # Twenty older archives with later mtimes (a clock stepped back): the chassis's new one, the
+    # newest by its name's stamp, is kept by both prunes.
+    commit = repo_at(tmp_path)
+    tombstones = tmp_path / "tombstones"
+    _archives(tombstones, 20, prefix="session_", start=100)
+    for name in _listing(tombstones):
+        os.utime(tombstones / name, (4e9, 4e9))
+    made = tombstones / "session_20261009_235959_000000.json"
+    made.write_text("[]")
+    os.utime(made, (1000, 1000))
+    watchdog.Recovery(str(tmp_path)).restore("baseline", commit, "baseline_new", "exit 43", True)
+    assert made.exists()
+    assert len(_listing(tombstones)) == 20
+
+
+def test_a_tombstones_swapped_for_a_link_mid_prune_is_not_followed(tmp_path, monkeypatch):
+    # A process the agent left running moves tombstones/ into durable storage and leaves a link
+    # behind, after the prune has looked at it: the deletes must not land in the new place.
+    repo_at(tmp_path)
+    tombstones = tmp_path / "tombstones"
+    _archives(tombstones, 25)
+    elsewhere = tmp_path.parent / f"{tmp_path.name}-state"
+    real_listdir = os.listdir
+    swapped = []
+
+    def swap_then_list(target):
+        if not swapped and str(target).endswith("tombstones") or (
+            not swapped and isinstance(target, int)
+        ):
+            swapped.append(True)
+            import shutil
+
+            shutil.copytree(tombstones, elsewhere)
+            shutil.rmtree(tombstones)
+            tombstones.symlink_to(elsewhere)
+        return real_listdir(target)
+
+    monkeypatch.setattr(watchdog.os, "listdir", swap_then_list)
+    watchdog.prune_archives(str(tmp_path))
+    assert swapped
+    assert len(_listing(elsewhere)) == 25
