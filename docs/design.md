@@ -188,7 +188,7 @@ each `/work` repository from outside.
 
 A run's history grows without bound, so a request sends only the newest messages
 that fit — which means a run can lose the beginning of its own conversation
-without noticing. The chassis's four details:
+without noticing. The chassis's five details:
 
 - **Pinned messages.** The system prompt and the first user message are sent
   whatever their age. A run that has dropped its opening problem does not know
@@ -205,6 +205,18 @@ without noticing. The chassis's four details:
   ends as exit 43 with a fresh conversation. The default window leaves room on
   the default model for both (`tests/test_window_headroom.py`); a host given a
   smaller model is given a smaller window, by the rule in `.env.example`.
+- **Reasoning rides on tool calls.** An assistant message that calls a tool
+  keeps the model's `reasoning_content` and sends it again in every later
+  request, because the provider requires it: DeepSeek's thinking-mode guide
+  (api-docs.deepseek.com/guides/thinking_mode) says reasoning from a turn with a
+  tool call must be passed back, and refuses a request with tools that omits
+  it; OpenRouter (openrouter.ai/docs/use-cases/reasoning-tokens) takes
+  `reasoning_content` as an alias of `reasoning` and says preserving it matters
+  for tool calls. A reply with no content carries its reasoning as content.
+  `harness/tests/test_session_persistence.py::test_tool_loop_resends_assistant_reasoning_content`
+  holds it. Aurora's last-resort repair strips reasoning (`strip_reasoning`),
+  which a provider enforcing the contract may refuse; that is the agents' code
+  to change.
 
 What falls out of the window is not summarised for the agent. The `compact` tool
 reports how full the window is and can delete the oldest messages at a time the
