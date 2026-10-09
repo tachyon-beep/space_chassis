@@ -775,21 +775,22 @@ class StreamRegistry:
         self._clock = clock
 
     def _shared_roll(self, now):
-        """Empty the shared pool when the clock hour has turned.
+        """Start the shared pool's new clock hour.
 
-        The pool's window is the clock hour, not a rolling one. A reservation
-        in flight across the boundary is simply forgotten with the old hour's
-        entries; its settle then finds no entry and changes nothing. Called
-        with the lock already held.
+        The pool's window is the clock hour, not a rolling one. Entries are
+        (ticket, tokens, in_flight). A reservation still in flight across the
+        boundary is carried into the new hour, where its settle corrects it
+        (John's decision, plan 4b); a settled or charged entry ages out with its
+        hour. Called with the lock already held.
         """
         hour = int(now // BUDGET_WINDOW)
         if hour != self._shared_hour:
             self._shared_hour = hour
-            self._shared_entries = []
+            self._shared_entries = [entry for entry in self._shared_entries if entry[2]]
 
     def _shared_used(self):
         """Tokens held against the shared pool this hour. Lock already held."""
-        return sum(spent for _, spent in self._shared_entries)
+        return sum(entry[1] for entry in self._shared_entries)
 
     def _prune_histories(self, now):
         """Age out spent stamps and forget the streams left with none.
@@ -911,7 +912,7 @@ class StreamRegistry:
             self._ticket += 1
             ticket = self._ticket
             tokens.append((now, reserved, ticket))
-            self._shared_entries.append((ticket, reserved))
+            self._shared_entries.append((ticket, reserved, True))
         return composed, None, ticket
 
     def settle(self, stream, ticket, tokens):
@@ -930,7 +931,8 @@ class StreamRegistry:
         with self._lock:
             self._shared_roll(self._clock())
             self._shared_entries = [
-                (held, tokens if held == ticket else spent) for held, spent in self._shared_entries
+                (held, tokens, False) if held == ticket else (held, spent, flight)
+                for held, spent, flight in self._shared_entries
             ]
             history = self._token_histories.get(stream)
             if not history:
@@ -963,7 +965,7 @@ class StreamRegistry:
             self._ticket += 1
             self._token_histories.setdefault(stream, []).append((now, tokens, self._ticket))
             self._shared_roll(now)
-            self._shared_entries.append((self._ticket, tokens))
+            self._shared_entries.append((self._ticket, tokens, False))
 
     def state(self, streams_enabled=False, console_error=None, now=None):
         """The current streams.json document."""

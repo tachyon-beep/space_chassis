@@ -102,8 +102,13 @@ class FleetLedger:
             fcntl.flock(lock, fcntl.LOCK_EX)
             yield
 
-    def _read(self, now):
-        """Return (live entries by ticket, line count, whether any line expired or was unreadable)."""
+    def _read(self, now, expired=None):
+        """Return (live entries by ticket, line count, whether any line expired or was unreadable).
+
+        A ticket's settle line carries `settled`; any line after it for that ticket is ignored, so
+        a ticket settles once. With `expired` a dict, the entries that left the hour but are still
+        on disk are put in it, for a late settle to report against.
+        """
         latest = {}
         lines = 0
         stale = False
@@ -124,6 +129,8 @@ class FleetLedger:
                     ):
                         stale = True
                         continue
+                    if latest.get(ticket, {}).get("settled"):
+                        continue
                     latest[ticket] = entry
         except FileNotFoundError:
             pass
@@ -133,6 +140,8 @@ class FleetLedger:
                 live[ticket] = entry
             else:
                 stale = True
+                if expired is not None:
+                    expired[ticket] = entry
         return live, lines, stale
 
     def _append(self, entry):
@@ -185,26 +194,40 @@ class FleetLedger:
             return None, ticket
 
     def settle(self, ticket, tokens):
-        """Replace a reservation with what was spent. Unknown usage leaves the reservation."""
+        """Replace a reservation with what was spent, once.
+
+        Returns "settled", "already_settled", {"late": delta} for a reservation that already left
+        the hour (not recharged), "unknown" for one compaction has dropped, or None when nothing
+        was asked (no ticket, unknown usage: the reservation stands).
+        """
         if ticket is None or not _valid_tokens(tokens):
-            return
+            return None
         try:
-            self._settle(ticket, tokens)
+            return self._settle(ticket, tokens)
         except OSError as e:
             # The upstream has already answered: the exchange must still be recorded and
             # delivered, so a ledger that has gone away keeps the reservation and says so.
             print(f"fleet ledger settle failed, reservation kept: {e}", file=sys.stderr, flush=True)
+            return None
 
     def _settle(self, ticket, tokens):
         with self._locked():
             now = self._clock()
-            live, lines, stale = self._read(now)
+            expired = {}
+            live, lines, stale = self._read(now, expired)
             if ticket not in live:
-                return
-            entry = dict(live[ticket], tokens=int(tokens))
+                if ticket in expired:
+                    if expired[ticket].get("settled"):
+                        return "already_settled"
+                    return {"late": int(tokens) - expired[ticket]["tokens"]}
+                return "unknown"
+            if live[ticket].get("settled"):
+                return "already_settled"
+            entry = dict(live[ticket], tokens=int(tokens), settled=True)
             self._append(entry)
             live[ticket] = entry
             self._compact_if_needed(live, lines + 1, stale)
+            return "settled"
 
     def used(self):
         with self._locked():
@@ -237,6 +260,7 @@ class CoreCaps:
         self._requests = []
         self._tokens = []
         self._ticket = 0
+        self._settled = set()
 
     def admit(self, body):
         """Charge one core request. Returns (refusal, ticket)."""
@@ -263,17 +287,33 @@ class CoreCaps:
             return None, (self._ticket, fleet_ticket)
 
     def settle(self, ticket, tokens):
-        """Replace a request's reservation with what it spent; unknown usage keeps it."""
+        """Replace a request's reservation with what it spent, once; unknown usage keeps it.
+
+        Returns "settled", "already_settled", or {"late": delta} for a reservation that already
+        left the hour, which is not recharged. None when nothing was asked.
+        """
         if ticket is None or not _valid_tokens(tokens):
-            return
+            return None
         local, fleet_ticket = ticket
         with self._lock:
-            self._tokens = [
-                (stamp, int(tokens) if held == local else spent, held)
-                for stamp, spent, held in self._tokens
-            ]
-        if self.ledger is not None:
+            now = self._clock()
+            held = [entry for entry in self._tokens if entry[2] == local]
+            live = {entry[2] for entry in self._tokens}
+            self._settled &= live
+            if local in self._settled:
+                return "already_settled"
+            if not held or now - held[0][0] >= BUDGET_WINDOW:
+                result = {"late": int(tokens) - held[0][1]} if held else "unknown"
+            else:
+                self._tokens = [
+                    (stamp, int(tokens) if who == local else spent, who)
+                    for stamp, spent, who in self._tokens
+                ]
+                self._settled.add(local)
+                result = "settled"
+        if self.ledger is not None and result == "settled":
             self.ledger.settle(fleet_ticket, tokens)
+        return result
 
     def cancel(self, ticket):
         """Refund a request that never reached the upstream: its tokens and its request count."""

@@ -1008,6 +1008,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 status=status_code,
                 duration_seconds=round(time.monotonic() - started, 3),
                 elapsed_s=round(deadline.elapsed(), 3),
+                refusal=message[:200],
             )
             self._finish_local(stream, req_data, status_code, message)
             return
@@ -1154,14 +1155,19 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         spent = usage.get("total_tokens") if isinstance(usage, dict) else None
         if isinstance(spent, bool) or not isinstance(spent, (int, float)):
             spent = 0 if upstream_refused else None
+        settled = None
         if refund:
             self._cancel(stream, registry, caps, fleet, ticket, fleet_ticket)
         elif registry is not None and stream != "core":
             registry.settle(stream, ticket, spent)
             if fleet is not None:
-                fleet.settle(fleet_ticket, spent)
+                settled = fleet.settle(fleet_ticket, spent)
         elif stream == "core" and caps is not None:
-            caps.settle(ticket, spent)
+            settled = caps.settle(ticket, spent)
+        if isinstance(settled, dict) and "late" in settled:
+            close_fields["late_adjustment"] = settled["late"]
+        elif settled == "unknown":
+            close_fields["late_adjustment"] = "unknown"
 
         record = self.log_transcript(
             req_data, res_data, stream=stream, after_relay=relayed is not None
