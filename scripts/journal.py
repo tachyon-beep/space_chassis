@@ -172,7 +172,21 @@ def stream_work(compose: list[str], service: str, limit: int, timeout: float) ->
     """`/work/.git` as a tar stream, or why not: "too large", "timed out", "exec failed: <rc>"."""
     try:
         proc = subprocess.Popen(
-            [*compose, "exec", "-T", service, "tar", "-cf", "-", "-C", "/work", ".git"],
+            # The watchdog's archived conversations sit in the git directory too; the extractor
+            # discards them (_wanted), so they are left out rather than counted against the limit.
+            [
+                *compose,
+                "exec",
+                "-T",
+                service,
+                "tar",
+                "--exclude=.git/session_recovery_*",
+                "-cf",
+                "-",
+                "-C",
+                "/work",
+                ".git",
+            ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

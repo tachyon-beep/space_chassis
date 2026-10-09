@@ -36,6 +36,8 @@ FALSE = {
     r"Tests never skip": "two tests skip",
     # core_caps.FleetLedger counts a rolling hour.
     r"on the clock hour": "the fleet pool is a rolling hour",
+    # journal._wanted keeps objects, packs and refs; the archived conversations never reach it.
+    r"archived\s+conversations\s+and\s+all": "the journal keeps objects and refs only",
     # /diode/<slug> is a directory inside one shared window image.
     r"`/diode/<slug>` \| that agent's own bounded volume images": "the window image is shared",
 }

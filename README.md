@@ -110,7 +110,7 @@ is not in the turn that called it: it arrives in the next request, so the panel
 pairs them by id.
 
 `scripts/journal.py` keeps the other half of the record: periodic snapshots of
-each agent's `/work` repository (tags, archived conversations and all) and of
+each agent's `/work` repository (its commits, branches and tags) and of
 `/shared`, with container restart counts and the watchdog's exit lines, in
 `operator/journal/`. `/work` is memory-backed and lost when a container is
 replaced, so the journal is how a reseed or a moved tag is attributable after

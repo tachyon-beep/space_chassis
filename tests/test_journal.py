@@ -74,7 +74,14 @@ FAKE_DOCKER = r"""#!/bin/sh
 case "$*" in
     *" exec -T "*" tar "*)
         [ -n "${FAKE_SLEEP:-}" ] && sleep "$FAKE_SLEEP"
-        if [ -n "${FAKE_TAR_FILE:-}" ]; then cat "$FAKE_TAR_FILE"; else tar -cf - -C "$FAKE_REPO_PARENT" .git; fi
+        if [ -n "${FAKE_TAR_FILE:-}" ]; then cat "$FAKE_TAR_FILE"; exit "${FAKE_TAR_RC:-0}"; fi
+        # The journal's own tar arguments, run against the test repository in place of /work.
+        while [ "$1" != tar ]; do shift; done; shift
+        n=$#; i=0
+        while [ "$i" -lt "$n" ]; do
+            a=$1; shift; [ "$a" = /work ] && a=$FAKE_REPO_PARENT; set -- "$@" "$a"; i=$((i + 1))
+        done
+        tar "$@"
         exit "${FAKE_TAR_RC:-0}" ;;
     *" ps --format"*) printf 'agent_1\n'; exit 0 ;;
     *" ps -q "*) for last in "$@"; do :; done; printf 'cid-%s\n' "$last"; exit 0 ;;
@@ -545,3 +552,15 @@ def test_any_name_git_refuses_is_left_to_git_and_never_blinds_the_snapshot(world
         "refs/journal/shared/20261009T120000Z",
     ).split()
     assert "notes.txt" in listing
+
+
+def test_the_journal_tar_leaves_out_the_archived_conversations(world, tmp_path):
+    # The watchdog copies each archived conversation into the git directory; the extractor
+    # discards them, so they would only count against JOURNAL_MAX_BYTES and blind the journal.
+    (world.parent / ".git" / "session_recovery_1.json").write_text("x" * 1000)
+    data = journal.stream_work(["docker", "compose", "-p", "probe"], "agent_1", 1 << 30, 60)
+    assert isinstance(data, bytes), data
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tar:
+        names = tar.getnames()
+    assert ".git/HEAD" in names
+    assert not [name for name in names if "session_recovery_" in name], names
