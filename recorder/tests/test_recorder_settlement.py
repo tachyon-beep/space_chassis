@@ -169,3 +169,28 @@ def test_a_charged_entry_is_not_carried_across_the_hour():
     assert registry.state(streams_enabled=True)["shared_tokens"]["used"] == 500
     clock.now = recorder_streams.BUDGET_WINDOW + 1
     assert registry.state(streams_enabled=True)["shared_tokens"]["used"] == 0
+
+
+def test_a_finished_request_with_unknown_usage_is_not_carried_into_the_next_hour():
+    """The security review of e70434f: unknown usage left an entry in flight forever, carried into
+    every new hour, so broken streams could exhaust the shared pool for good."""
+    clock = _Clock(recorder_streams.BUDGET_WINDOW - 1)
+    registry = recorder_streams.StreamRegistry(clock=clock)
+    registry.apply({"aux": {"budget": 50, "max_tokens": 10}}, {})
+    _, refusal, ticket = registry.admit("aux", b'{"model": "m", "messages": []}')
+    assert refusal is None
+    registry.settle("aux", ticket, None)
+    clock.now = recorder_streams.BUDGET_WINDOW + 1
+    assert registry.state(streams_enabled=True)["shared_tokens"]["used"] == 0
+
+
+def test_an_in_flight_reservation_is_carried_one_hour_and_no_further():
+    clock = _Clock(recorder_streams.BUDGET_WINDOW - 1)
+    registry = recorder_streams.StreamRegistry(clock=clock)
+    registry.apply({"aux": {"budget": 50, "max_tokens": 10}}, {})
+    _, refusal, _ticket = registry.admit("aux", b'{"model": "m", "messages": []}')
+    assert refusal is None
+    clock.now = recorder_streams.BUDGET_WINDOW + 1
+    assert registry.state(streams_enabled=True)["shared_tokens"]["used"] > 0
+    clock.now = 2 * recorder_streams.BUDGET_WINDOW + 1
+    assert registry.state(streams_enabled=True)["shared_tokens"]["used"] == 0
