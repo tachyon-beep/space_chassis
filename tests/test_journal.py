@@ -526,3 +526,22 @@ def test_a_relative_root_works(world, monkeypatch):
         ["docker", "compose", "-p", "probe"], ["agent_1"], Path("journal"), world.volumes, NOW
     )
     assert records[0]["work"] == "ok", records[0]
+
+
+@pytest.mark.parametrize("name", [".git::$INDEX_ALLOCATION", ".GIT::$DATA", "GIT~2.", ".gIt  ."])
+def test_any_name_git_refuses_is_left_to_git_and_never_blinds_the_snapshot(world, name):
+    shared = world.volumes / "shared" / "data"
+    (shared / "notes.txt").write_text("joint work\n")
+    (shared / name).write_text("x")
+    world.once()
+    record = json.loads((world.journal / "shared.jsonl").read_text().splitlines()[0])
+    assert record["shared"].startswith("ok"), record
+    listing = git(
+        "--git-dir",
+        str(world.journal / "shared.git"),
+        "ls-tree",
+        "-r",
+        "--name-only",
+        "refs/journal/shared/20261009T120000Z",
+    ).split()
+    assert "notes.txt" in listing

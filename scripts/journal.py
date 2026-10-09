@@ -402,7 +402,8 @@ def import_snapshot(repo: Path, copy: Path, info: dict, stamp: str) -> str:
 
 
 def git_refuses(name: str) -> bool:
-    """A path component host git will not add (.git in any case, its short name, trailing dots)."""
+    """A `.git` in any spelling git treats as one: dropped from the copy so a nested repository is
+    never a repository. Not the authority on what git will index -- `git add --ignore-errors` is."""
     folded = name.rstrip(". ").lower()
     return folded == ".git" or re.fullmatch(r"git~\d+", folded) is not None
 
@@ -483,8 +484,15 @@ def snapshot_shared(repo: Path, shared: Path, stamp: str, limit: int) -> str:
                         dirs.remove(name)
         _ensure_repo(repo)
         env = {"GIT_INDEX_FILE": index}
-        if host_git(repo, f"--work-tree={work}", "add", "-A", "--force", extra_env=env).returncode:
+        # git is the authority on which names it will not index; a copy of its rules here would
+        # differ from it somewhere, and any difference would blind the snapshot. --ignore-errors
+        # leaves those paths out (exit 1) and indexes the rest.
+        added = host_git(
+            repo, f"--work-tree={work}", "add", "-A", "--force", "--ignore-errors", extra_env=env
+        )
+        if added.returncode not in (0, 1):
             return "rejected: add"
+        skipped += added.stderr.decode(errors="replace").count("unable to add")
         tree = host_git(repo, "write-tree", extra_env=env)
         if tree.returncode:
             return "rejected: write-tree"
