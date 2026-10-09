@@ -32,7 +32,14 @@ if str(SERVICES_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICES_DIR))
 
 import health  # noqa: E402
-from common import append_jsonl, env_int, iso, slugs_from_env, write_json_atomic  # noqa: E402
+from common import (  # noqa: E402
+    JSONL_MAX_BYTES,
+    append_jsonl,
+    env_int,
+    iso,
+    slugs_from_env,
+    write_json_atomic,
+)
 
 TRANSCRIPTS_DIR = Path(os.environ.get("TRANSCRIPTS_DIR", "/transcripts"))
 MIRROR_DIR = Path(os.environ.get("MIRROR_DIR", "/mirror"))
@@ -80,8 +87,11 @@ def publish(slugs: list[str], now: float) -> dict:
         "summary": fleet_summary(rows),
     }
     write_json_atomic(TELEMETRY_DIR / "fleet.json", snapshot)
+    # A summary derived from the transcripts, on the bounded operator_telemetry image: it rotates.
     append_jsonl(
-        TELEMETRY_DIR / "fleet.jsonl", {"at": snapshot["at"], "summary": snapshot["summary"]}
+        TELEMETRY_DIR / "fleet.jsonl",
+        {"at": snapshot["at"], "summary": snapshot["summary"]},
+        max_bytes=JSONL_MAX_BYTES,
     )
     return snapshot
 
