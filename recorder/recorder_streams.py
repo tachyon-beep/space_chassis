@@ -940,6 +940,20 @@ class StreamRegistry:
                 for stamp, spent, held in history
             ]
 
+    def cancel(self, stream, ticket):
+        """Refund a request that never reached the upstream: its reservation and its count."""
+        if ticket is None:
+            return
+        with self._lock:
+            history = self._token_histories.get(stream, [])
+            stamps = [stamp for stamp, _spent, held in history if held == ticket]
+            self._token_histories[stream] = [entry for entry in history if entry[2] != ticket]
+            requests = self._histories.get(stream, [])
+            for stamp in stamps:
+                if stamp in requests:
+                    requests.remove(stamp)
+            self._shared_entries = [entry for entry in self._shared_entries if entry[0] != ticket]
+
     def charge(self, stream, tokens):
         """Record tokens spent on a stream outside any reservation."""
         if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens <= 0:

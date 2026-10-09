@@ -275,6 +275,20 @@ class CoreCaps:
         if self.ledger is not None:
             self.ledger.settle(fleet_ticket, tokens)
 
+    def cancel(self, ticket):
+        """Refund a request that never reached the upstream: its tokens and its request count."""
+        if ticket is None:
+            return
+        local, fleet_ticket = ticket
+        with self._lock:
+            stamps = [stamp for stamp, _spent, held in self._tokens if held == local]
+            self._tokens = [entry for entry in self._tokens if entry[2] != local]
+            for stamp in stamps:
+                with contextlib.suppress(ValueError):
+                    self._requests.remove(stamp)
+        if self.ledger is not None:
+            self.ledger.settle(fleet_ticket, 0)
+
     def used(self):
         with self._lock:
             now = self._clock()

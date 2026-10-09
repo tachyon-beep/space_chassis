@@ -1,5 +1,10 @@
+import contextlib
+import dataclasses
+import functools
 import gzip
+import http.client
 import http.server
+import math
 import shutil
 import socket
 import socketserver
@@ -262,12 +267,175 @@ class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_FORWARD_OPENER = urllib.request.build_opener(_RefuseRedirects)
+@dataclasses.dataclass(frozen=True)
+class Timing:
+    """The request deadlines, in seconds from the start of a request (SV O3, per request here).
+
+    The harness's client gives a reply up to client_timeout; the recorder answers inside it with
+    margin to spare. The upstream phase ends at t0 + upstream however late it began, and no
+    request starts its upstream phase later than t0 + latest_start.
+    """
+
+    client_timeout: float = 600
+    margin: float = 30
+    upstream: float = 540
+    latest_start: float = 480
+    operation: float = 60
+
+
+def timing_from_environment():
+    def number(name, default):
+        raw = os.environ.get(name, "").strip()
+        try:
+            return float(raw) if raw else default
+        except ValueError:
+            return float("nan")
+
+    base = Timing()
+    return Timing(
+        client_timeout=number("RECORDER_CLIENT_TIMEOUT", base.client_timeout),
+        margin=number("RECORDER_DEADLINE_MARGIN", base.margin),
+        upstream=number("RECORDER_UPSTREAM_DEADLINE", base.upstream),
+        latest_start=number("RECORDER_LATEST_START", base.latest_start),
+        operation=number("RECORDER_OPERATION_TIMEOUT", base.operation),
+    )
+
+
+def timing_problems(timing):
+    """Why a timing profile cannot work; empty when it can."""
+    problems = []
+    for field in dataclasses.fields(timing):
+        value = getattr(timing, field.name)
+        if not isinstance(value, (int, float)) or not math.isfinite(value):
+            problems.append(f"{field.name} is not a finite number")
+        elif value < 0 or (value == 0 and field.name != "margin"):
+            problems.append(f"{field.name} must be positive")
+    if problems:
+        return problems
+    if timing.latest_start >= timing.upstream:
+        problems.append("latest_start must be earlier than upstream")
+    if timing.upstream > timing.client_timeout - timing.margin:
+        problems.append("upstream must end inside client_timeout - margin")
+    if timing.operation > timing.upstream:
+        problems.append("operation must not exceed upstream")
+    return problems
+
+
+TIMING = timing_from_environment()
+DEADLINE_CLOCK = time.monotonic
+# The per-operation socket timeout runs this far past the deadline, so the timer, not the socket,
+# is what ends a request at its deadline.
+OPERATION_GRACE = 1.0
+
+
+def _shut(sock):
+    """Shut a socket for both directions; whatever state it is in, quietly."""
+    if sock is None:
+        return
+    with contextlib.suppress(OSError, ValueError, AttributeError):
+        socket.socket.shutdown(sock, socket.SHUT_RDWR)
+
+
+class Deadline:
+    """One request's clock, and the socket its timer shuts at t0 + upstream."""
+
+    def __init__(self, timing=None, clock=None):
+        self.timing = timing if timing is not None else TIMING
+        self.clock = clock if clock is not None else DEADLINE_CLOCK
+        self.t0 = self.clock()
+        self.connected = False
+        self.fired = False
+        self._sock = None
+        self._lock = threading.Lock()
+        self._timer = None
+
+    def elapsed(self):
+        return self.clock() - self.t0
+
+    def left(self):
+        return self.t0 + self.timing.upstream - self.clock()
+
+    def may_start(self):
+        return self.clock() - self.t0 <= self.timing.latest_start
+
+    def operation_timeout(self):
+        return max(0.05, min(self.timing.operation, self.left() + OPERATION_GRACE))
+
+    def arm(self):
+        self._timer = threading.Timer(max(0.0, self.left()), self.fire)
+        self._timer.daemon = True
+        self._timer.name = "recorder-deadline"
+        self._timer.start()
+
+    def disarm(self):
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+
+    def fire(self):
+        with self._lock:
+            self.fired = True
+            sock = self._sock
+        _shut(sock)
+
+    def register(self, sock):
+        """The upstream socket now exists: the request counts as sent from here on."""
+        with self._lock:
+            self._sock = sock
+            self.connected = True
+            fired = self.fired
+        if fired:
+            _shut(sock)
+
+
+class WatchedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, *args, deadline=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._deadline = deadline
+
+    def connect(self):
+        super().connect()
+        if self._deadline is not None:
+            self._deadline.register(self.sock)
+
+
+class WatchedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, *args, deadline=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._deadline = deadline
+
+    def connect(self):
+        # The TLS wrap replaces the socket object; the wrapped one is what the timer must shut.
+        super().connect()
+        if self._deadline is not None:
+            self._deadline.register(self.sock)
+
+
+class _WatchedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        connection = functools.partial(WatchedHTTPConnection, deadline=getattr(req, "deadline", None))
+        return self.do_open(connection, req)
+
+
+class _WatchedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        connection = functools.partial(WatchedHTTPSConnection, deadline=getattr(req, "deadline", None))
+        return self.do_open(connection, req, context=self._context)
+
+
+_FORWARD_OPENER = urllib.request.build_opener(_RefuseRedirects, _WatchedHTTPHandler, _WatchedHTTPSHandler)
 
 
 def forward_open(req, timeout=60):
-    """Open an upstream request without following redirects."""
+    """Open an upstream request without following redirects.
+
+    A request carrying a `deadline` attribute registers its upstream socket with it, so the
+    deadline's timer can cut the exchange at any phase.
+    """
     return _FORWARD_OPENER.open(req, timeout=timeout)
+
+
+_real_forward_open = forward_open
 
 
 def _capped_text(value, limit):
@@ -355,7 +523,11 @@ def iter_response_chunks(response, size=65536):
         yield piece
 
 
-def relay_chunks(writer, response, record, size=65536):
+class _DeadlinePassed(Exception):
+    pass
+
+
+def relay_chunks(writer, response, record, size=65536, deadline=None):
     """Relay a response body to the client with chunked transfer framing.
 
     Each piece is fed to the record as it passes, so nothing holds the body
@@ -366,8 +538,13 @@ def relay_chunks(writer, response, record, size=65536):
     error = None
     try:
         for piece in iter_response_chunks(response, size):
+            if deadline is not None and deadline.fired:
+                raise _DeadlinePassed("upstream deadline")
             record.feed(piece)
             writer.write(b"%X\r\n" % len(piece) + piece + b"\r\n")
+        # A socket shut at the deadline reads as an end of body: only the flag can tell.
+        if deadline is not None and deadline.fired:
+            raise _DeadlinePassed("upstream deadline")
         writer.write(b"0\r\n\r\n")
     except Exception as e:
         error = e
@@ -615,6 +792,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         sys.stdout.flush()
 
     def do_POST(self):
+        deadline = Deadline()
         if self.path != "/api/v1/chat/completions":
             self.send_error(404, "Not Found")
             return
@@ -652,6 +830,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 id=event_id,
                 status=400,
                 duration_seconds=round(time.monotonic() - started, 3),
+                elapsed_s=round(deadline.elapsed(), 3),
             )
             self._finish_local(stream, req_data, 400, f"structure_limit: {over} over its limit")
             return
@@ -711,8 +890,29 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 id=event_id,
                 status=status_code,
                 duration_seconds=round(time.monotonic() - started, 3),
+                elapsed_s=round(deadline.elapsed(), 3),
             )
             self._finish_local(stream, req_data, status_code, message)
+            return
+
+        if not deadline.may_start():
+            # Too late to give the upstream its time: refused before contact, and refunded.
+            self._cancel(stream, registry, caps, fleet, ticket, fleet_ticket)
+            log_event(
+                "close",
+                stream,
+                id=event_id,
+                status=503,
+                duration_seconds=round(time.monotonic() - started, 3),
+                elapsed_s=round(deadline.elapsed(), 3),
+            )
+            self._finish_local(
+                stream,
+                req_data,
+                503,
+                f"deadline_insufficient: {deadline.elapsed():.1f} s gone of a "
+                f"{deadline.timing.latest_start:g} s start allowance",
+            )
             return
 
         target_url, target_key = upstream_for(stream)
@@ -724,21 +924,29 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             headers=headers_to_forward,
             method="POST",
         )
+        req.deadline = deadline
 
         response_body = b""
         response_code = 500
         response_headers = []
         relayed = None
         upstream_refused = False
+        opened = False
+        refund = False
 
+        deadline.arm()
         try:
-            with forward_open(req, timeout=60) as res:
+            with forward_open(req, timeout=deadline.operation_timeout()) as res:
+                opened = True
                 response_code = res.status
                 response_headers = passthrough_headers(res.getheaders())
                 if req_data.get("stream") is True:
-                    relayed = self._relay(response_code, response_headers, res)
+                    relayed = self._relay(response_code, response_headers, res, deadline)
                 else:
                     response_body = res.read(RESPONSE_MAX_BYTES + 1)
+                    # A socket shut at the deadline reads as an end of body: only the flag can tell.
+                    if deadline.fired:
+                        raise _DeadlinePassed("upstream deadline")
         except urllib.error.HTTPError as e:
             response_code = e.code
             try:
@@ -752,18 +960,27 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             )
             upstream_refused = True
         except Exception as e:
-            detail = repr(e)
-            if target_key:
-                for form in (
-                    target_key,
-                    repr(target_key)[1:-1],
-                    repr(repr(target_key)[1:-1])[1:-1],
-                ):
-                    detail = detail.replace(form, "[key]")
-            print(f"proxy error: {detail}", file=sys.stderr, flush=True)
-            response_code = 500
-            response_body = json.dumps({"error": {"message": "proxy error"}}).encode("utf-8")
+            if deadline.fired:
+                response_code = 502
+                message = f"upstream_deadline: no complete reply within {deadline.timing.upstream:g} s"
+            else:
+                detail = repr(e)
+                if target_key:
+                    for form in (
+                        target_key,
+                        repr(target_key)[1:-1],
+                        repr(repr(target_key)[1:-1])[1:-1],
+                    ):
+                        detail = detail.replace(form, "[key]")
+                print(f"proxy error: {detail}", file=sys.stderr, flush=True)
+                response_code = 500
+                message = "proxy error"
+                # Nothing reached the upstream, so nothing was generated: refund it.
+                refund = not opened and not deadline.connected
+            response_body = json.dumps({"error": {"message": message}}).encode("utf-8")
             response_headers = [("Content-Type", "application/json")]
+        finally:
+            deadline.disarm()
 
         untrusted = False
         if relayed is not None:
@@ -793,6 +1010,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             "id": event_id,
             "status": response_code,
             "duration_seconds": round(time.monotonic() - started, 3),
+            "elapsed_s": round(deadline.elapsed(), 3),
         }
         usage = res_data.get("usage") if isinstance(res_data, dict) and not untrusted else None
         if isinstance(usage, dict):
@@ -820,7 +1038,9 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         spent = usage.get("total_tokens") if isinstance(usage, dict) else None
         if isinstance(spent, bool) or not isinstance(spent, (int, float)):
             spent = 0 if upstream_refused else None
-        if registry is not None and stream != "core":
+        if refund:
+            self._cancel(stream, registry, caps, fleet, ticket, fleet_ticket)
+        elif registry is not None and stream != "core":
             registry.settle(stream, ticket, spent)
             if fleet is not None:
                 fleet.settle(fleet_ticket, spent)
@@ -851,7 +1071,19 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
         self.close_connection = True
 
-    def _relay(self, response_code, response_headers, res):
+    @staticmethod
+    def _cancel(stream, registry, caps, fleet, ticket, fleet_ticket):
+        """Refund a request that never reached the upstream: its reservation and its count."""
+        if stream == "core":
+            if caps is not None:
+                caps.cancel(ticket)
+            return
+        if registry is not None:
+            registry.cancel(stream, ticket)
+        if fleet is not None:
+            fleet.settle(fleet_ticket, 0)
+
+    def _relay(self, response_code, response_headers, res, deadline=None):
         """Stream an upstream response to the client and return its record.
 
         The response is framed as chunked transfer encoding rather than by
@@ -869,7 +1101,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         except Exception:
             self.close_connection = True
             return record
-        error = relay_chunks(self.wfile, res, record)
+        error = relay_chunks(self.wfile, res, record, deadline=deadline)
         if error is not None:
             self.close_connection = True
         return record
@@ -1150,6 +1382,10 @@ def poll_safely(registry, servers, sock_dir, console_path, state_path):
 
 
 def main():
+    problems = timing_problems(TIMING)
+    if problems:
+        print(f"error: recorder timing: {'; '.join(problems)}", file=sys.stderr, flush=True)
+        sys.exit(1)
     if (
         not os.environ.get("HOST_LLM_BASE_URL", "").strip()
         and not os.environ.get("LLM_BASE_URL", "").strip()

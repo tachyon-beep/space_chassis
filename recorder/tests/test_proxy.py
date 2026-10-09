@@ -1107,10 +1107,11 @@ def test_an_upstream_error_releases_the_reservation(stream_factory, upstream, re
     assert _used_tokens(registry) == 0
 
 
-def test_a_transport_failure_keeps_its_reservation(stream_factory, upstream, registry):
-    # A request that failed in transit may have reached the upstream and been
-    # generated; its spend is unknown, so the reservation stands.
+def test_a_transport_failure_after_connecting_keeps_its_reservation(stream_factory, upstream, registry):
+    # A request that failed in transit after its connection was made may have reached the
+    # upstream and been generated; its spend is unknown, so the reservation stands.
     def dropped(request, timeout=None):
+        request.deadline.register(None)
         raise OSError("connection reset")
 
     with pytest.MonkeyPatch.context() as mp:
@@ -1120,6 +1121,20 @@ def test_a_transport_failure_keeps_its_reservation(stream_factory, upstream, reg
 
     assert response.status_code == 500
     assert _used_tokens(registry) >= 400
+
+
+def test_a_transport_failure_before_connecting_is_refunded(stream_factory, upstream, registry):
+    # Nothing reached the upstream, so nothing was generated: the reservation is cancelled.
+    def unreachable(request, timeout=None):
+        raise OSError("connection refused")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("proxy.forward_open", unreachable)
+        path = stream_factory(max_tokens=400)
+        response = _post(path, {"model": "m", "messages": []})
+
+    assert response.status_code == 500
+    assert _used_tokens(registry) == 0
 
 
 def test_a_close_event_carries_cache_usage_fields(core_server, upstream, transcripts):
