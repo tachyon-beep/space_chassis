@@ -44,6 +44,9 @@
 # The scenario, the seed, the ring and the slug set are the world's identity: a restart that names
 # any of them differently refuses rather than flying a different world under the same name.
 set -eu
+# No pathname expansion anywhere: a slug is a name, never a pattern, and a glob would be a scan of
+# the working directory -- the very thing the slug set must never come from.
+set -f
 
 : "${DIODE_DIR:=/diode}"
 : "${VEHICLE_DIR:=/opt/vehicle}"

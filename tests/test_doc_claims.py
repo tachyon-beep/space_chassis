@@ -140,8 +140,13 @@ def test_the_readme_gives_the_operator_the_vehicle_s_procedures():
         "exit 3",
         "VEHICLE_SLUGS",
         "--closed-interlock",
+        "rebuild of the agent image",
+        "checkpoint interval",
+        "not wired",
     ):
         assert phrase in section, phrase
+    # Clearing a window keeps its directory: agent binds use create_host_path: false.
+    assert "`volumes/diode/data/*`'s contents" not in section
 
 
 def test_claude_md_states_the_vehicle_s_private_state_and_one_executive():

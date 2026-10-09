@@ -633,6 +633,22 @@ def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
     runs, result = serve("mackerel,vehicle,mackerel")
     assert [slugs_of(run["argv"]) for run in runs] == [["mackerel", "vehicle"]]
 
+    # **A slug is never a pattern.** Run from a directory that has entries, `*` must not become
+    # them: a glob is a scan of the working directory, and a scan changes the world's identity.
+    cwd = tmp_path / "cwd"
+    (cwd / "bin").mkdir(parents=True)
+    (diode / "served.jsonl").unlink(missing_ok=True)
+    globbed = subprocess.run(
+        ["sh", str(REPO / "containers" / "serve_vehicle.sh")],
+        cwd=cwd,
+        env=dict(base, STUB_HOLD="0", VEHICLE_SLUGS="*"),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert globbed.returncode != 0 and not (diode / "bin").exists(), globbed.stderr
+    assert not (diode / "served.jsonl").exists()
+
     # **A name outside the roster's alphabet stops the service before the vehicle sees it.**
     runs, result = serve("mackerel,../escape")
     assert result.returncode != 0 and runs == [], result.stderr
