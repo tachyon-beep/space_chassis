@@ -85,6 +85,8 @@ class SmokeStack:
         self.root = Path(root) if root is not None else REPO / f".smoke-{os.getpid()}"
         self._runner = runner
         self._torn_down = False
+        # Override files added after `up` by recreate(), kept on every later compose call.
+        self.overrides: list[Path] = []
         atexit.register(self.down)
 
     @property
@@ -191,6 +193,7 @@ class SmokeStack:
             str(REPO / "docker-compose.yml"),
             "-f",
             str(self.root / "override.yml"),
+            *[argument for path in self.overrides for argument in ("-f", str(path))],
             "--profile",
             "fleet",
             "--profile",
@@ -250,6 +253,16 @@ class SmokeStack:
         services += [f"agent_{n}" for n in range(1, self.agents + 1)]
         services += ["diode", "fleet_monitor", "review"]
         self.compose("up", "-d", *services)
+
+    def recreate(self, service: str, environment: dict[str, str]) -> None:
+        """Recreate one running service alone, with its environment changed and nothing else."""
+        path = self.root / f"recreate-{service}.yml"
+        lines = ["services:", f"  {service}:", "    environment:"]
+        lines += [f'      {key}: "{value}"' for key, value in environment.items()]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        if path not in self.overrides:
+            self.overrides.append(path)
+        self.compose("up", "-d", "--force-recreate", "--no-deps", service)
 
     def start(self) -> None:
         try:

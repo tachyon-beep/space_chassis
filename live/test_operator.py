@@ -3,13 +3,15 @@ and the review panel.
 
 These sort after test_acceptance.py and start from what it leaves: agent_1 on its marked baseline
 and talking; agent_2 reseeded, with test 9.8's plants still in /state and /shared; agent_3 capped
-at four requests an hour and pausing.
+at four requests an hour and pausing. The last test leaves recorder_1 refusing for the rest of
+the hour, so it stays last.
 """
 
 import json
 import subprocess
 import sys
 
+from probes import mark, wait_in_log, watchdog_alive
 from stack import REPO, allowed_environment, wait_for
 
 QUIET = 20
@@ -180,3 +182,26 @@ def test_the_monitor_publishes_signals_and_review_serves_them(stack):
     by_slug = {row["slug"]: row for row in fleet["agents"]}
     assert by_slug["agent_3"]["signals"]["refusals"] >= 1
     assert by_slug["agent_1"]["turns_loaded"] >= 1
+
+
+def test_the_fleet_cap_refuses_and_the_agent_pauses(stack):
+    """Spec 9.7's second path: the fleet's pool, not the agent's own allowance.
+
+    recorder_1 is recreated with a fleet pool of one token and nothing else changed. The fleet's
+    ledger already holds this hour's tokens, so agent_1's next request is refused as the fleet's,
+    and in agent_1's own log that refusal comes before the pause, so a pause from the recorder's
+    restart cannot pass for the cap's.
+    """
+    transcript = stack.volumes / "transcripts_agent_1" / "data" / "agent_life_transcript.jsonl"
+    at = mark(stack, 1)
+    stack.recreate("recorder_1", {"RECORDER_TOKEN_GLOBAL_HOURLY_MAX": "1"})
+
+    def refused():
+        try:
+            return "across the fleet" in transcript.read_text(encoding="utf-8")
+        except OSError:
+            return False
+
+    wait_for(refused, timeout=PAUSE_WINDOW, every=3, what="a fleet-cap 429 in agent_1's transcript")
+    wait_in_log(stack, 1, at, r"429 .*across the fleet", r"action pause", timeout=PAUSE_WINDOW)
+    assert watchdog_alive(stack, 1)
