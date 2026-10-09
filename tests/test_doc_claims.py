@@ -141,6 +141,9 @@ def test_the_readme_gives_the_operator_the_vehicle_s_procedures():
         "VEHICLE_SLUGS",
         "--closed-interlock",
         "rebuild of the agent image",
+        "Python patch version",
+        "configuration or engine code",
+        "kernel update",
         "checkpoint interval",
         "not wired",
     ):

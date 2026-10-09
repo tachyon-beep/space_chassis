@@ -232,11 +232,14 @@ identity: a restart that names any of them differently refuses.
   claimed in the cycle a crash interrupted is lost with no result. A corrupt
   checkpoint falls back to the generation before it. The work a restart redoes
   is bounded by one checkpoint interval.
-- **A rebuild of the agent image that changes Python or libc** -- a
-  `docker compose build --pull` for any reason -- makes the checkpoint
-  incompatible (it records the Python version and the platform), and every
-  restart after it refuses until a new world is begun. Rebuild the vehicle's
-  image only when a new world is acceptable.
+- **A rebuild of the agent image** that changes the Python patch version, libc
+  (or the platform), or the vehicle's configuration or engine code makes the
+  checkpoint incompatible, and every restart after it refuses until a new world
+  is begun. A `docker compose build --pull` can pick up a new Python patch from
+  the unpinned `python:3.13-slim` base, and in practice every vehicle pointer
+  bump changes its configuration or engine. A host kernel update does not
+  matter. Rebuild the image the vehicle runs only when a new world is
+  acceptable; pinning the base image by digest makes that a deliberate event.
 - **A deliberate new world** -- a new mission, a changed roster, scenario or
   seed, a vehicle update, or an exit 3 that will not clear: stop the fleet and
   the vehicle (an agent's window is bound by inode, so moving it under a running
