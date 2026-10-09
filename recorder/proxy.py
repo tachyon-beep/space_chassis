@@ -1,3 +1,4 @@
+import base64
 import contextlib
 import dataclasses
 import functools
@@ -187,7 +188,9 @@ _statvfs = os.statvfs
 
 # The JSON transcript's append results. A line is readable when it was written whole.
 READABLE = frozenset({"appended", "appended_fsync_failed", "durable"})
-RECORDER_MIN_FREE_BYTES = int(os.environ.get("RECORDER_MIN_FREE_BYTES", str(64 * 1024 * 1024)))
+# Room for the largest line the recorder can write: a request and a reply of 16 MiB each, written
+# as UTF-8 with escapes bounded (raw bodies that would inflate go in as base64).
+RECORDER_MIN_FREE_BYTES = int(os.environ.get("RECORDER_MIN_FREE_BYTES", str(128 * 1024 * 1024)))
 
 # After a record that could not be written, requests are refused uncharged until a probe write
 # to the transcript's directory succeeds again, at most once per RECORD_RETRY_SECONDS.
@@ -786,12 +789,31 @@ def strict_request(body):
     return None
 
 
+# Control bytes other than tab, newline and return escape to six bytes each in a JSON string.
+_ESCAPE_HEAVY = bytes(b for b in range(0x20) if b not in (0x09, 0x0A, 0x0D))
+
+
 def raw_record(data, limit=RAW_RECORD_CHARS):
-    """A body that is not recorded as JSON: as text, cut at limit characters (None: whole)."""
-    text = data.decode("utf-8", errors="replace")
-    if limit is not None and len(text) > limit:
-        return {"raw_body": text[:limit], "raw_body_truncated": True}
-    return {"raw_body": text}
+    """A body that is not recorded as JSON: as text, cut at limit bytes (None: whole).
+
+    A body that is not valid UTF-8, or that carries control bytes, is recorded as base64: escaped
+    in a JSON string each such byte would cost up to six (the security review of 45ed794), and
+    base64 costs four for three, whatever the bytes.
+    """
+    truncated = limit is not None and len(data) > limit
+    if truncated:
+        data = data[:limit]
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        text = None
+    if text is None or len(data.translate(None, _ESCAPE_HEAVY)) != len(data):
+        record = {"raw_body_base64": base64.b64encode(data).decode("ascii")}
+    else:
+        record = {"raw_body": text}
+    if truncated:
+        record["raw_body_truncated"] = True
+    return record
 
 
 def sse_payload(line):
@@ -1474,7 +1496,12 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
         with _transcript_lock:
             try:
-                line = json.dumps(entry, ensure_ascii=True, allow_nan=False).encode("ascii")
+                # UTF-8, so text costs its own size; ASCII escapes only for a string that cannot
+                # be encoded (a lone surrogate the upstream sent).
+                try:
+                    line = json.dumps(entry, ensure_ascii=False, allow_nan=False).encode("utf-8")
+                except UnicodeEncodeError:
+                    line = json.dumps(entry, ensure_ascii=True, allow_nan=False).encode("ascii")
             except (TypeError, ValueError) as e:
                 print(f"Error writing transcript: {e}", file=sys.stderr)
                 result = "failed"

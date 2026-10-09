@@ -219,3 +219,40 @@ def test_capacity_that_cannot_be_checked_refuses_rather_than_pays(
     assert response.status_code == 503
     assert calls == [] and _used_tokens(registry) == 0
     assert threading and socket  # used by the helpers imported above
+
+
+def _line_size(transcripts):
+    return len((transcripts / "transcript.jsonl").read_bytes().splitlines()[-1])
+
+
+def test_a_reply_of_control_bytes_is_recorded_as_base64_not_six_times_its_size(
+    stream_factory, upstream, transcripts
+):
+    """The security review of 45ed794: recording raw replies whole let escapes inflate a line six
+    times past the bytes relayed (each NUL becomes \\u0000), past the free-space floor."""
+    import base64
+
+    reply = b"\x00" * (2 << 20)
+    upstream["response"] = lambda: _BufferedResponse(reply)
+    path = stream_factory(max_tokens=10)
+    assert _post(path, {"model": "m", "messages": []}).status_code == 200
+    entry = json.loads((transcripts / "transcript.jsonl").read_bytes().splitlines()[-1])
+    assert base64.b64decode(entry["response"]["raw_body_base64"]) == reply
+    assert _line_size(transcripts) < 1.5 * len(reply)
+
+
+def test_non_ascii_text_costs_its_own_size_in_the_transcript(stream_factory, upstream, transcripts):
+    text = "é" * (1 << 20)
+    upstream["response"] = lambda: _BufferedResponse(json.dumps(ENOSPC_BODY).encode())
+    path = stream_factory(max_tokens=10)
+    assert (
+        _post(path, {"model": "m", "messages": [{"role": "user", "content": text}]}).status_code
+        == 200
+    )
+    entry = json.loads((transcripts / "transcript.jsonl").read_bytes().splitlines()[-1])
+    assert entry["request"]["messages"][0]["content"] == text
+    assert _line_size(transcripts) < 1.2 * len(text.encode("utf-8"))
+
+
+def test_the_free_space_floor_fits_the_largest_line():
+    assert proxy.RECORDER_MIN_FREE_BYTES >= 128 * 1024 * 1024
