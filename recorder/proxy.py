@@ -173,6 +173,98 @@ def archive_name(path, stamp=None):
     return f"{root}-{stamp}{ext}.gz"
 
 
+# The recorder's own system calls, indirected so tests can fault them without touching the
+# process-wide os module.
+_os_write = os.write
+_fdatasync = os.fdatasync
+_fsync = os.fsync
+_statvfs = os.statvfs
+
+# The JSON transcript's append results. A line is readable when it was written whole.
+READABLE = frozenset({"appended", "appended_fsync_failed", "durable"})
+RECORDER_MIN_FREE_BYTES = int(os.environ.get("RECORDER_MIN_FREE_BYTES", str(64 * 1024 * 1024)))
+
+_fenced = set()
+_append_locks = {}
+_append_locks_guard = threading.Lock()
+_degraded_reported = False
+
+
+def _fsync_directory(directory):
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        _fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _append_lock(path):
+    with _append_locks_guard:
+        return _append_locks.setdefault(path, threading.Lock())
+
+
+def append_record(path, line):
+    """Append one line durably. Returns failed | partial | appended | appended_fsync_failed | durable.
+
+    A torn tail left by a dead writer is repaired with a newline first, so every line starts on a
+    boundary. The whole buffer goes out through short writes and EINTR. The data is synced, and on
+    a path's first append in this process (and after any failure) its directory is synced too,
+    with the parent when makedirs had to create it. durable means all of that returned.
+    """
+    with _append_lock(path):
+        directory = os.path.dirname(path) or "."
+        try:
+            created = not os.path.isdir(directory)
+            os.makedirs(directory, exist_ok=True)
+            fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_CLOEXEC, 0o644)
+        except OSError:
+            _fenced.discard(path)
+            return "failed"
+        try:
+            buffer = line if line.endswith(b"\n") else line + b"\n"
+            size = os.fstat(fd).st_size
+            if size and os.pread(fd, 1, size - 1) != b"\n":
+                buffer = b"\n" + buffer
+            written = 0
+            while written < len(buffer):
+                try:
+                    count = _os_write(fd, buffer[written:])
+                except InterruptedError:
+                    continue
+                except OSError:
+                    _fenced.discard(path)
+                    return "partial" if written else "failed"
+                if count == 0:
+                    _fenced.discard(path)
+                    return "partial" if written else "failed"
+                written += count
+            try:
+                _fdatasync(fd)
+            except OSError:
+                _fenced.discard(path)
+                return "appended_fsync_failed"
+            if path not in _fenced:
+                try:
+                    _fsync_directory(directory)
+                    if created:
+                        _fsync_directory(os.path.dirname(os.path.abspath(directory)))
+                except OSError:
+                    return "appended"
+                _fenced.add(path)
+            return "durable"
+        finally:
+            os.close(fd)
+
+
+def record_capacity_ok():
+    """Whether the transcript volume has room for the exchange the recorder is about to pay for."""
+    try:
+        st = _statvfs(TRANSCRIPT_DIR)
+    except OSError:
+        return True
+    return st.f_bavail * st.f_frsize >= RECORDER_MIN_FREE_BYTES
+
+
 def rotate_if_needed(path, max_bytes=None):
     """Archive a transcript to gzip and truncate it once it reaches max_bytes.
 
@@ -192,7 +284,15 @@ def rotate_if_needed(path, max_bytes=None):
         tmp = final + ".tmp"
         with open(path, "rb") as src, gzip.open(tmp, "wb") as dst:
             shutil.copyfileobj(src, dst, 65536)
+        # The archive is durable before the live file is cut: a crash between the two must not
+        # lose the lines it holds.
+        descriptor = os.open(tmp, os.O_RDONLY)
+        try:
+            _fsync(descriptor)
+        finally:
+            os.close(descriptor)
         os.rename(tmp, final)
+        _fsync_directory(os.path.dirname(final) or ".")
         with open(path, "w", encoding="utf-8"):
             pass
         return final
@@ -835,6 +935,23 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self._finish_local(stream, req_data, 400, f"structure_limit: {over} over its limit")
             return
 
+        if not record_capacity_ok():
+            # A reply that could not be recorded would be withheld after it was paid for; with the
+            # volume this full, refuse before paying (plan 4b ruling 5).
+            req_data = raw_record(req_body[:4096])
+            event_id = request_id()
+            log_event("open", stream, id=event_id, model=None, messages=0)
+            log_event(
+                "close", stream, id=event_id, status=503, elapsed_s=round(deadline.elapsed(), 3)
+            )
+            self._finish_local(
+                stream,
+                req_data,
+                503,
+                f"record_capacity: under {RECORDER_MIN_FREE_BYTES} bytes free for the transcript",
+            )
+            return
+
         refused = None
         ticket = None
         fleet_ticket = None
@@ -1029,7 +1146,6 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                     }
                 )
             close_fields["usage"] = recorded
-        log_event("close", stream, **close_fields)
 
         # An upstream that answered with an error status generated nothing,
         # so the request settles at zero. A request whose usage is unknown
@@ -1047,7 +1163,26 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         elif stream == "core" and caps is not None:
             caps.settle(ticket, spent)
 
-        self.log_transcript(req_data, res_data, stream=stream)
+        record = self.log_transcript(
+            req_data, res_data, stream=stream, after_relay=relayed is not None
+        )
+        close_fields["record"] = record
+        if relayed is None and record not in READABLE:
+            # John's rule: every reply an agent acts on is on record. This one is not, so the
+            # agent does not get it; what it cost is charged above all the same.
+            close_fields["status"] = 502
+            close_fields["upstream_status"] = response_code
+            response_code = 502
+            response_body = json.dumps(
+                {
+                    "error": {
+                        "message": "record_failed: the recorder could not write this exchange "
+                        "to the transcript"
+                    }
+                }
+            ).encode("utf-8")
+            response_headers = [("Content-Type", "application/json")]
+        log_event("close", stream, **close_fields)
 
         if relayed is None:
             self.send_response(response_code)
@@ -1134,9 +1269,16 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             return str(content)
 
-    def log_transcript(self, request_data, response_data, stream="core"):
-        """Appends a new conversation step to the transcript file and dumps it to stdout."""
-        os.makedirs(TRANSCRIPT_DIR, exist_ok=True)
+    def log_transcript(self, request_data, response_data, stream="core", *, after_relay=False):
+        """Append the exchange to the JSON transcript and return the append's result.
+
+        The JSON transcript is the record, written through append_record; the plain-text copy and
+        the stdout dump stay best-effort. A streamed reply is recorded after it was relayed, and
+        its line says so.
+        """
+        global _degraded_reported
+        with contextlib.suppress(OSError):
+            os.makedirs(TRANSCRIPT_DIR, exist_ok=True)
 
         entry = {
             "timestamp": utc_timestamp(),
@@ -1144,6 +1286,8 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             "request": request_data,
             "response": response_data,
         }
+        if after_relay:
+            entry["recorded_after_relay"] = True
 
         print("\n" + "=" * 80)
         print(f"PROXY INTERCEPTED REQUEST | Model: {request_data.get('model')}")
@@ -1199,11 +1343,24 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
         with _transcript_lock:
             try:
-                with open(TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(entry) + "\n")
-                print(f"Recorded transaction in: {os.path.basename(TRANSCRIPT_FILE)}")
-            except Exception as e:
+                line = json.dumps(entry, ensure_ascii=True, allow_nan=False).encode("ascii")
+            except (TypeError, ValueError) as e:
                 print(f"Error writing transcript: {e}", file=sys.stderr)
+                result = "failed"
+            else:
+                result = append_record(TRANSCRIPT_FILE, line)
+            if result in READABLE:
+                print(f"Recorded transaction in: {os.path.basename(TRANSCRIPT_FILE)}")
+            else:
+                print(f"Error writing transcript: {result}", file=sys.stderr)
+            if result == "appended_fsync_failed" and not _degraded_reported:
+                _degraded_reported = True
+                print(
+                    "transcript durability degraded: a data sync failed; lines are written "
+                    "but may not survive a crash",
+                    file=sys.stderr,
+                    flush=True,
+                )
             rotate_if_needed(TRANSCRIPT_FILE)
 
         plain_log_lines = []
@@ -1268,6 +1425,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"Error writing plain transcript: {e}", file=sys.stderr)
             rotate_if_needed(PLAIN_TRANSCRIPT_FILE)
+        return result
 
 
 class UnixHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
