@@ -75,7 +75,7 @@ agent's: it may rewrite any of it, the watchdog included.
 | `/shared` | one image every agent reads and writes | the fleet |
 | `pump/pump.py` → `/usr/local/bin/pump.py`; `recorder/` → `/usr/local/lib/recorder/` | the scheduler, and the recorder its own container runs | the operator; outside `/work` |
 | `services/` → `/opt/services` | `common`, `health`, `fleet_monitor`, `review`: the operator's monitor and panel | the operator |
-| `docs/deep_research/vehicle/` → `/opt/vehicle` | the vehicle, in its own image `space-chassis-vehicle` (Dockerfile.agent's `vehicle` stage), run by the `vehicle` service with no network; no agent image carries any of it (`agent` is the default stage) | the vehicle's repository |
+| `docs/deep_research/vehicle/` → `/opt/vehicle` | the vehicle, in its own image `space-chassis-vehicle` (Dockerfile.agent's `vehicle` stage), run by the `vehicle` service with no network: one process for every window, its slugs `VEHICLE_SLUGS`, its private state (checkpoints, lock, record) on its own `/state` image that nothing else mounts; no agent image carries any of it (`agent` is the default stage) | the vehicle's repository; its deployment is ours |
 | `brief/` → `/opt/brief` | what the agents are told, read-only; each claim it and the prompts make is sourced in `docs/brief-claims.md` | the operator |
 | transcripts, `fleet_ledger`, `operator_telemetry`, `operator/journal/` | the record and the operator's view of it; no agent mounts them | the operator |
 

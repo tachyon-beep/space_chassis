@@ -118,3 +118,35 @@ def test_the_root_instructions_point_at_governance():
 def test_the_readme_says_images_built_before_the_split_carry_the_vehicle():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "built before 2026-10-10" in text and "verify_containment.sh" in text
+
+
+def test_no_document_says_the_vehicle_runs_a_console_per_window():
+    # serve_vehicle.sh execs one executive for every window (plan 7, Task 1).
+    for name in DOCS:
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert not re.search(r"one (console|process) per (slug|window)", text), name
+
+
+def test_the_readme_gives_the_operator_the_vehicle_s_procedures():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    section = text[text.index("## The vehicle") :]
+    section = section[: section.index("\n## ", 1)]
+    for phrase in (
+        "first start",
+        "resumes",
+        "exactly one result",
+        "new world",
+        "stop the fleet",
+        "exit 3",
+        "VEHICLE_SLUGS",
+        "--closed-interlock",
+    ):
+        assert phrase in section, phrase
+
+
+def test_claude_md_states_the_vehicle_s_private_state_and_one_executive():
+    text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    row = next(
+        line for line in text.splitlines() if "/opt/vehicle" in line and line.startswith("|")
+    )
+    assert "/state" in row and "one process for every window" in row, row
