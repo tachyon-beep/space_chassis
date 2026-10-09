@@ -102,7 +102,10 @@ def test_the_journal_snapshots_every_agent_and_runs_no_agent_code(stack):
         (hooks / hook).write_text(MARKER.format(markers=markers, name=f"hook-{hook}"))
         (hooks / hook).chmod(0o755)
     planted = f"[core]\n\tfsmonitor = {scripts['fsmonitor']}\n\thooksPath = {hooks}\n"
-    stack.exec("agent_2", "sh", "-c", "cat >> /work/.git/config", stdin=planted)
+    appended = stack.exec("agent_2", "sh", "-c", "cat >> /work/.git/config", stdin=planted)
+    assert appended.returncode == 0, appended.stderr
+    config = stack.exec("agent_2", "cat", "/work/.git/config").stdout
+    assert str(hooks) in config and str(scripts["fsmonitor"]) in config, config
 
     journal_root = stack.root / "journal"
     result = _host(

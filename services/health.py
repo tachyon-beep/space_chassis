@@ -416,6 +416,16 @@ def agent_view(
     found = signals(records, events, now=now, caps=caps)
     last = found["last_request_at"]
     transcript_age = max(0.0, now - last) if last is not None else None
+    # The recorder writes the transcript; its size and mtime are the recorder's, not the agent's.
+    # A window that began mid-file is marked, so no surface shows a partial count as whole, and a
+    # newest line larger than the whole window still leaves the file's own clock to read.
+    try:
+        written = (Path(transcripts) / "agent_life_transcript.jsonl").stat()
+    except OSError:
+        written = None
+    found["window"]["truncated"] = written is not None and written.st_size > MAX_READ_BYTES
+    if transcript_age is None and written is not None and written.st_size > 0:
+        transcript_age = max(0.0, now - written.st_mtime)
     mirror = Path(mirror)
     work = _walk(mirror, ["work"])
     if work is None:

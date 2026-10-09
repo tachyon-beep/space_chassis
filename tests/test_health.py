@@ -332,3 +332,23 @@ def test_claim_text_loses_its_control_characters_for_display():
     assert health.printable("note\x1b]0;pwned\x07\x1b[2J end\x9b") == "note?]0;pwned??[2J end?"
     assert health.printable("tab\tand newline\nkept as spaces") == "tab and newline kept as spaces"
     assert health.printable(None) == "-"
+
+
+def test_a_transcript_line_larger_than_the_window_still_reads_as_talking(tmp_path: Path):
+    transcripts = tmp_path / "t"
+    transcripts.mkdir()
+    big = json.dumps(
+        {
+            "timestamp": "2026-10-09T00:00:00Z",
+            "stream": "core",
+            "request": {"messages": [SYSTEM, USER, {"role": "user", "content": "x" * (5 << 20)}]},
+            "response": {"choices": []},
+        }
+    )
+    (transcripts / "agent_life_transcript.jsonl").write_text(big + "\n")
+    mirror = _mirror(tmp_path)
+    now = (transcripts / "agent_life_transcript.jsonl").stat().st_mtime + 5
+    view = health.agent_view(transcripts, mirror, now=now, quiet=60, caps={})
+    assert view["liveness"] == "active"
+    assert view["transcript_age"] is not None and view["transcript_age"] < 60
+    assert view["signals"]["window"]["truncated"] is True

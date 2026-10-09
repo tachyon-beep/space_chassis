@@ -381,7 +381,7 @@ def test_shared_is_snapshotted_by_content_and_its_gitattributes_run_nothing(worl
 
     world.once()
     record = json.loads((world.journal / "shared.jsonl").read_text().splitlines()[0])
-    assert record["shared"] == "ok: 1 special file(s) skipped", record
+    assert record["shared"] == "ok: 3 entr(ies) skipped", record
     listing = git(
         "--git-dir",
         str(world.journal / "shared.git"),
@@ -446,3 +446,83 @@ def test_extracted_files_are_never_executable_or_special(world, tmp_path):
     for path in (tmp_path / "into").rglob("*"):
         mode = path.lstat().st_mode
         assert stat.S_ISREG(mode) or stat.S_ISDIR(mode), path
+
+
+def test_a_name_git_refuses_is_skipped_not_a_blinded_snapshot(world):
+    shared = world.volumes / "shared" / "data"
+    (shared / "notes.txt").write_text("joint work\n")
+    (shared / ".GIT").mkdir()
+    (shared / ".GIT" / "config").write_text("[core]\n")
+    (shared / "git~1").write_text("x")
+    (shared / ".git. ").write_text("x")
+    world.once()
+    record = json.loads((world.journal / "shared.jsonl").read_text().splitlines()[0])
+    assert record["shared"].startswith("ok"), record
+
+
+def test_an_unreadable_shared_file_is_skipped_and_the_pass_completes(world):
+    shared = world.volumes / "shared" / "data"
+    (shared / "notes.txt").write_text("joint work\n")
+    locked = shared / "locked.txt"
+    locked.write_text("secret\n")
+    locked.chmod(0)
+    try:
+        records = world.once()
+    finally:
+        locked.chmod(0o644)
+    assert records[0]["work"] == "ok"
+    record = json.loads((world.journal / "shared.jsonl").read_text().splitlines()[0])
+    assert record["shared"].startswith("ok"), record
+    assert "skipped" in record["shared"]
+
+
+def test_copying_a_fifo_never_blocks(tmp_path):
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    assert journal.copy_regular(fifo, tmp_path / "out", 1 << 20) is None
+    assert not (tmp_path / "out").exists()
+
+
+def test_the_shared_cap_is_enforced_while_copying(tmp_path):
+    source = tmp_path / "big"
+    source.write_bytes(b"x" * 4096)
+    assert journal.copy_regular(source, tmp_path / "out", 1024) is None
+    assert journal.copy_regular(source, tmp_path / "ok", 8192) == 4096
+
+
+def test_a_host_git_timeout_rejects_the_snapshot_and_leaves_nothing(world, monkeypatch):
+    real = journal.host_git
+
+    def slow_fsck(repo, *args, **kwargs):
+        if "fsck" in args:
+            raise subprocess.TimeoutExpired(["git", "fsck"], 1)
+        return real(repo, *args, **kwargs)
+
+    monkeypatch.setattr(journal, "host_git", slow_fsck)
+    record = world.once()[0]
+    assert record["work"].startswith("rejected: fsck"), record
+    repo = host_repo(world)
+    assert git("--git-dir", str(repo), "for-each-ref", "--format=%(refname)").strip() == ""
+    loose = [p for p in (repo / "objects").rglob("*") if p.is_file() and "pack" not in p.parts]
+    assert loose == []
+
+
+def test_the_host_repository_has_a_cap(world, monkeypatch):
+    monkeypatch.setattr(journal, "JOURNAL_REPO_MAX_BYTES", 1)
+    record = world.once()[0]
+    assert record["work"].startswith("skipped: repository over"), record
+
+
+def test_the_printed_summary_carries_no_terminal_controls():
+    line = journal.summary_line(
+        {"at": "t", "slug": "otter", "work": "refused: .git/\x1b]0;pwned\x07/x", "restarts": 0}
+    )
+    assert "\x1b" not in line and "\x07" not in line and "refused" in line
+
+
+def test_a_relative_root_works(world, monkeypatch):
+    monkeypatch.chdir(world.root)
+    records = journal.journal_once(
+        ["docker", "compose", "-p", "probe"], ["agent_1"], Path("journal"), world.volumes, NOW
+    )
+    assert records[0]["work"] == "ok", records[0]

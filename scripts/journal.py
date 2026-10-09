@@ -59,9 +59,13 @@ sys.path.insert(0, str(PROJECT / "services"))
 sys.path.insert(0, str(PROJECT / "scripts"))
 
 from common import append_jsonl, read_bounded, write_text_atomic  # noqa: E402
+from health import printable  # noqa: E402
 
 JOURNAL_MAX_BYTES = 256 * 1024 * 1024
 JOURNAL_TIMEOUT_SECONDS = 120
+# The host repository per agent grows with every pass that brings new objects (an agent's repack
+# brings its whole history again): past this, snapshots are skipped and say so.
+JOURNAL_REPO_MAX_BYTES = 4 * 1024 * 1024 * 1024
 MAX_MEMBERS = 200_000
 JSON_BYTES = 1 << 20
 WATCHDOG_LINES = 200
@@ -110,6 +114,7 @@ def host_git(
     extra_env: dict | None = None,
 ) -> subprocess.CompletedProcess:
     """git on the journal's own repository, and nothing else: the only way this module runs git."""
+    repo = Path(repo).resolve()
     env = _base_env()
     env.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0")
     if extra_env and "GIT_INDEX_FILE" in extra_env:
@@ -317,15 +322,41 @@ def _ensure_repo(repo: Path) -> None:
 
 
 def _drop_refs(repo: Path, prefix: str) -> None:
-    listed = host_git(repo, "for-each-ref", "--format=%(refname)", prefix)
-    for name in listed.stdout.decode(errors="replace").split():
-        host_git(repo, "update-ref", "-d", name)
+    with contextlib.suppress(subprocess.SubprocessError, OSError):
+        listed = host_git(repo, "for-each-ref", "--format=%(refname)", prefix)
+        for name in listed.stdout.decode(errors="replace").split():
+            host_git(repo, "update-ref", "-d", name)
+
+
+def _tree_bytes(root: Path) -> int:
+    total = 0
+    for directory, _dirs, files in os.walk(root):
+        for file in files:
+            with contextlib.suppress(OSError):
+                total += os.lstat(os.path.join(directory, file)).st_size
+    return total
 
 
 def import_snapshot(repo: Path, copy: Path, info: dict, stamp: str) -> str:
     """Object files in as files, refs by value, then a full fsck; a failure leaves nothing behind."""
     _ensure_repo(repo)
     source = copy / ".git" / "objects"
+    incoming = (
+        sum(
+            path.lstat().st_size
+            for path in source.rglob("*")
+            if path.is_file()
+            and (
+                LOOSE.fullmatch(".git/objects/" + path.relative_to(source).as_posix())
+                or PACK.fullmatch(".git/objects/" + path.relative_to(source).as_posix())
+            )
+            and not (repo / "objects" / path.relative_to(source)).exists()
+        )
+        if source.is_dir()
+        else 0
+    )
+    if _tree_bytes(repo / "objects") + incoming > JOURNAL_REPO_MAX_BYTES:
+        return f"skipped: repository over {JOURNAL_REPO_MAX_BYTES} bytes"
     copied: list[Path] = []
     for directory, _dirs, files in os.walk(source):
         for file in files:
@@ -357,58 +388,99 @@ def import_snapshot(repo: Path, copy: Path, info: dict, stamp: str) -> str:
     elif head.startswith("refs/") and head[len("refs/") :] in refs:
         refs["HEAD"] = refs[head[len("refs/") :]]
     for name, sha in refs.items():
-        if host_git(repo, "update-ref", f"refs/journal/{stamp}/{name}", sha).returncode:
-            return reject(f"update-ref {name}")
-    if host_git(repo, "fsck", "--no-dangling", "--no-progress").returncode:
-        return reject("fsck")
+        try:
+            if host_git(repo, "update-ref", f"refs/journal/{stamp}/{name}", sha).returncode:
+                return reject(f"update-ref {name}")
+        except subprocess.SubprocessError:
+            return reject(f"update-ref {name} timed out")
+    try:
+        if host_git(repo, "fsck", "--no-dangling", "--no-progress").returncode:
+            return reject("fsck")
+    except subprocess.SubprocessError:
+        return reject("fsck timed out")
     return "ok"
 
 
+def git_refuses(name: str) -> bool:
+    """A path component host git will not add (.git in any case, its short name, trailing dots)."""
+    folded = name.rstrip(". ").lower()
+    return folded == ".git" or re.fullmatch(r"git~\d+", folded) is not None
+
+
+def copy_regular(source: Path, target: Path, budget: int) -> int | None:
+    """Copy one regular file without following a link or blocking on a FIFO, within budget."""
+    try:
+        handle = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(handle).st_mode):
+            return None
+        written = 0
+        with open(target, "xb") as out:
+            while chunk := os.read(handle, 1 << 20):
+                written += len(chunk)
+                if written > budget:
+                    break
+                out.write(chunk)
+        if written > budget:
+            target.unlink()
+            return None
+        return written
+    except OSError:
+        with contextlib.suppress(OSError):
+            target.unlink()
+        return None
+    finally:
+        os.close(handle)
+
+
 def snapshot_shared(repo: Path, shared: Path, stamp: str, limit: int) -> str:
-    """/shared by content: a host temp copy, links as links, every .git entry dropped."""
+    """/shared by content: one walk into a host temp copy, links as links, git's refused names out."""
     if not shared.is_dir():
         return "absent"
-    total = entries = 0
-    for directory, dirs, files in os.walk(shared):
-        dirs[:] = [d for d in dirs if d != ".git"]
-        for name in dirs + files:
-            entries += 1
-            if entries > MAX_MEMBERS:
-                return f"skipped: over {MAX_MEMBERS} entries"
-            with contextlib.suppress(OSError):
-                info = os.lstat(os.path.join(directory, name))
-                if stat.S_ISREG(info.st_mode):
-                    total += info.st_size
-            if total > limit:
-                return f"skipped: over {limit} bytes"
-
     work = repo.parent / ".shared-tmp" / stamp
     index = repo.parent / ".shared-tmp" / f"{stamp}.index"
     shutil.rmtree(work, ignore_errors=True)
-    skipped = 0
+    total = entries = skipped = 0
     try:
         work.mkdir(parents=True)
         for directory, dirs, files in os.walk(shared):
             relative = Path(directory).relative_to(shared)
-            dirs[:] = [d for d in dirs if d != ".git"]
-            for name in list(dirs):
+            for name in list(dirs) + files:
+                entries += 1
+                if entries > MAX_MEMBERS:
+                    return f"skipped: over {MAX_MEMBERS} entries"
                 source = Path(directory) / name
-                if source.is_symlink():
-                    os.symlink(os.readlink(source), work / relative / name)
-                    dirs.remove(name)
-                else:
-                    (work / relative / name).mkdir()
-            for name in files:
-                if name == ".git":
-                    continue
-                source = Path(directory) / name
-                mode = source.lstat().st_mode
-                if stat.S_ISLNK(mode):
-                    os.symlink(os.readlink(source), work / relative / name)
-                elif stat.S_ISREG(mode):
-                    shutil.copyfile(source, work / relative / name, follow_symlinks=False)
-                else:
+                target = work / relative / name
+                is_dir = name in dirs
+                if git_refuses(name):
                     skipped += 1
+                    if is_dir:
+                        dirs.remove(name)
+                    continue
+                try:
+                    mode = source.lstat().st_mode
+                    if stat.S_ISLNK(mode):
+                        os.symlink(os.readlink(source), target)
+                        if is_dir:
+                            dirs.remove(name)
+                    elif stat.S_ISDIR(mode):
+                        target.mkdir()
+                    elif stat.S_ISREG(mode):
+                        if source.lstat().st_size > limit - total:
+                            return f"skipped: over {limit} bytes"
+                        copied = copy_regular(source, target, limit - total)
+                        if copied is None:
+                            skipped += 1
+                        else:
+                            total += copied
+                    else:
+                        skipped += 1
+                except OSError:
+                    skipped += 1
+                    if is_dir and name in dirs:
+                        dirs.remove(name)
         _ensure_repo(repo)
         env = {"GIT_INDEX_FILE": index}
         if host_git(repo, f"--work-tree={work}", "add", "-A", "--force", extra_env=env).returncode:
@@ -428,7 +500,7 @@ def snapshot_shared(repo: Path, shared: Path, stamp: str, limit: int) -> str:
         shutil.rmtree(work, ignore_errors=True)
         with contextlib.suppress(OSError):
             index.unlink()
-    return "ok" if not skipped else f"ok: {skipped} special file(s) skipped"
+    return "ok" if not skipped else f"ok: {skipped} entr(ies) skipped"
 
 
 # ------------------------------------------------------------------ the containers
@@ -533,6 +605,13 @@ def journal_once(
     return records
 
 
+def summary_line(record: dict) -> str:
+    """One printable line per agent: refusal reasons can carry names the agent chose."""
+    return printable(
+        f"{record['at']} {record['slug']}: work {record['work']}, restarts {record.get('restarts')}"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     when = parser.add_mutually_exclusive_group(required=True)
@@ -545,10 +624,11 @@ def main(argv: list[str] | None = None) -> int:
     import volume_images  # noqa: PLC0415 -- reads the env file only when no --volumes is given
 
     volumes = args.volumes or volume_images.volumes_root()
+    root = args.root.resolve()
     compose = shlex.split(os.environ.get("COMPOSE") or DEFAULT_COMPOSE)
     while True:
         agents = os.environ.get("AGENTS", "").split() or running_agents(compose)
-        for record in journal_once(compose, agents, args.root, volumes, dt.datetime.now(dt.UTC)):
+        for record in journal_once(compose, agents, root, volumes, dt.datetime.now(dt.UTC)):
             print(
                 f"{record['at']} {record['slug']}: work {record['work']}, restarts {record['restarts']}"
             )
