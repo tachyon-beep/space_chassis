@@ -242,7 +242,11 @@ def window_results(root: Path, slug: str) -> dict | None:
 def liveness(
     transcript_age: float | None, mirror_age: float | None, last_capped: bool, quiet: float
 ) -> str:
-    """Two clocks: the recorder's (the agent is talking) and the mirror's (the watchdog is up)."""
+    """Two clocks: the recorder's (the agent is talking) and the mirror's (the watchdog is up).
+
+    `quiet` must exceed the watchdog's longest sleep: an exit-44 pause holds its loop, and so its
+    mirror, for up to 90 s. QUIET_SECONDS (900) does.
+    """
     if transcript_age is not None and transcript_age < quiet:
         return "capped" if last_capped else "active"
     if mirror_age is not None and mirror_age < quiet:

@@ -13,6 +13,7 @@ import sys
 from stack import REPO, allowed_environment, wait_for
 
 QUIET = 20
+PAUSE_WINDOW = 180
 
 
 def _host(stack, *argv: str, extra: dict | None = None, timeout: float = 300):
@@ -26,7 +27,7 @@ def _host(stack, *argv: str, extra: dict | None = None, timeout: float = 300):
     )
 
 
-def status(stack) -> dict:
+def status(stack, quiet: float = QUIET) -> dict:
     result = _host(
         stack,
         "scripts/status.py",
@@ -34,7 +35,7 @@ def status(stack) -> dict:
         "--volumes",
         str(stack.volumes),
         "--quiet-seconds",
-        str(QUIET),
+        str(quiet),
         "--compose",
         " ".join(stack.compose_command()),
         "--roster",
@@ -81,7 +82,9 @@ def test_status_reports_an_agent_stopped_mid_loop_as_an_idle_watchdog_and_a_froz
         every=5,
         what="agent_1 to be active again",
     )
-    assert status(stack)["agent_3"]["liveness"] in ("capped", "idle-watchdog")
+    # A pausing watchdog sleeps in its loop for 60-90 s and mirrors nothing meanwhile, so a quiet
+    # window shorter than the pause can read a capped agent as stale; the default (900 s) cannot.
+    assert status(stack, quiet=PAUSE_WINDOW)["agent_3"]["liveness"] == "capped"
 
 
 MARKER = "#!/bin/sh\n: > '{markers}/{name}-'$$\n"
