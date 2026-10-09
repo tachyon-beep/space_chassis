@@ -38,10 +38,6 @@ PERMANENT = (
     "tests/test_retired.py",  # this file names what it bans
     "docs/superpowers/",  # the specs and plans: the record of how the port was made
     "docs/deep_research/",  # the frozen corpus (CLAUDE.md: its map is integration/)
-    "brief/",  # agent-facing: shipped as is until John approves docs/drafts/ (spec §6, §10.2)
-    "harness/system_prompt.txt",  # likewise
-    "harness/user_prompt.txt",  # likewise
-    "docs/drafts/",  # quotes what the shipped text still says
 )
 
 
@@ -75,6 +71,14 @@ def test_nothing_still_refers_to_the_old_runtime():
 
 
 DOCS = ("CLAUDE.md", "AGENTS.md", "README.md", "docs/design.md", ".env.example")
+# What the agents are told: the brief at /opt/brief and the prompts in their harness (spec §6).
+AGENT_FACING = (
+    "brief/MISSION.md",
+    "brief/WORLD.md",
+    "brief/PROTOCOL.md",
+    "harness/system_prompt.txt",
+    "harness/user_prompt.txt",
+)
 RETIRED_PHRASES = re.compile(
     r"AGENT_HOME|/diary\b|volumes/home|duty\.py|endurance/run|RUN_MAX_|SUPERVISOR_INACTIVITY"
     r"|two copies of|handoff note|recap\.md|lifecycle\.jsonl|\bthe supervisor\b",
@@ -86,7 +90,7 @@ def test_no_tracked_doc_describes_the_retired_world():
     """The documents describe the Aurora world (plan 5, Task 5). A line may name a retired thing only
     to say it is retired, and what replaced it: it is marked `(retired)`."""
     found = []
-    for name in DOCS:
+    for name in DOCS + AGENT_FACING:
         for number, line in enumerate((ROOT / name).read_text(encoding="utf-8").splitlines(), 1):
             if RETIRED_PHRASES.search(line) and "(retired)" not in line:
                 found.append(f"{name}:{number}: {line.strip()[:120]}")

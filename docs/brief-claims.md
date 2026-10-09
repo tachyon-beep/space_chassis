@@ -1,37 +1,12 @@
-# Drafts for John: the prompts and the brief
+# What the agents are told, and what makes it true
 
-**Nothing here is shipped.** Spec §6 and §10.2: John approves the final prompt and brief text, and
-implementation drafts only. The image still carries `harness/system_prompt.txt`,
-`harness/user_prompt.txt` and `brief/` exactly as they were; each file here is a complete
-replacement for one of those, to be copied over once approved. `brief/MISSION.md` needs no change.
+`brief/` (at `/opt/brief`) and the prompts in `harness/` (`system_prompt.txt`, `user_prompt.txt`)
+are what the agents are told about their world. John approved this text on 2026-10-09 (spec §6,
+§10.2). Each row is a claim it makes and the code or test that makes the claim true; a change
+that falsifies a row changes the text with it. `tests/test_doc_claims.py` holds the claims the
+plan 5 review found false out of it.
 
-| Draft | Replaces |
-|---|---|
-| `system_prompt.txt` | `harness/system_prompt.txt` (Aurora's, unchanged) |
-| `user_prompt.txt` | `harness/user_prompt.txt` (Aurora's, unchanged) |
-| `WORLD.md` | `brief/WORLD.md` (the retired world) |
-| `PROTOCOL.md` | `brief/PROTOCOL.md` (the window section kept word for word) |
-
-## What the shipped text still says that is false
-
-- `harness/system_prompt.txt:1`: "nothing you do in here can harm it … nothing you do can damage
-  the environment itself". Spec §6 names this line: there is a crew behind the window.
-- `harness/system_prompt.txt:3` and `harness/user_prompt.txt`: "There is no user assigning you
-  work here, and no external deliverable" / "There is no assigned deliverable". The mission is
-  assigned (`brief/MISSION.md`).
-- Neither prompt points at `/opt/brief`, so nothing tells an agent the brief exists.
-- `brief/WORLD.md`:
-  - a shared `/work` (each agent's is its own tmpfs);
-  - a private persistent `/home/agent` and `/diary` (HOME is a tmpfs; there is no diary);
-  - `/brief` (the image path is `/opt/brief`);
-  - read-only `/transcripts` and `/telemetry` with the supervisor's decisions (no transcript is
-    mounted; `/telemetry` is the agent's own mirror);
-  - `/etc/agent.env`, `AGENT_ENTRY`, `/work/duty.py`, and a supervisor that runs from the image
-    (all retired).
-- `brief/PROTOCOL.md:16–21`: the record is a read-only `/transcripts` mount with a lifecycle record
-  by the supervisor (neither exists).
-
-## Every claim the drafts make about the world, and what makes it true
+The prompts are the agents' to rewrite once they are running: this is the seed, not a contract.
 
 | Claim | Source |
 |---|---|
@@ -54,11 +29,3 @@ replacement for one of those, to be copied over once approved. `brief/MISSION.md
 | `/shared`, siblings' services, the window's disk and the fleet's spending limit are common, so one agent's actions land on the others | `scripts/volume_images.py` `SHARED` (`shared`, `diode`); `worknet`; `recorder/core_caps.py` fleet ledger |
 | Per-agent and fleet hourly caps; a refusal exits 44 | `recorder/core_caps.py`; live 9.7 and the fleet-cap check |
 | A reply that cannot be recorded is not given | `recorder/tests/test_recorder_custody.py::test_a_failed_transcript_withholds_the_answer_and_the_usage_is_charged` (John's decision, plan 4b) |
-
-## Open for John (spec §10)
-
-1. The text above, word by word (§10.2).
-2. The cap figures: per agent, fleet, and the declared-stream pools; and which models the stream
-   allow lists permit (both ship empty in `.env.example`) (§10.3).
-3. Whether each agent mounts its own transcript read-only (§10.4). The drafts say no transcript
-   is mounted, the default.

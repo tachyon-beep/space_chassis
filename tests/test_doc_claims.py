@@ -2,7 +2,7 @@
 
 Plan 5's final review found each of these in text that had just been rewritten: a `done` that keeps
 the agent's code, a pump whose processes survive a restart, a raw API that reaches past the
-panel's window, and draft agent text that promised safety for more than the agent's own harness.
+panel's window, and agent-facing text that promised safety for more than the agent's own harness.
 Each pattern names the claim; the reason is the code that makes it false.
 """
 
@@ -13,7 +13,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ("CLAUDE.md", "AGENTS.md", "README.md", "docs/design.md", ".env.example")
-DRAFTS = ("docs/drafts/system_prompt.txt", "docs/drafts/WORLD.md", "docs/drafts/README.md")
+# What the agents are told, and the table of its claims with their sources (spec §6).
+AGENT_FACING = ("harness/system_prompt.txt", "brief/WORLD.md", "docs/brief-claims.md")
 
 FALSE = {
     # watchdog.Recovery.elective restores a checkpoint and cleans the tree; uncommitted work goes.
@@ -32,7 +33,7 @@ FALSE = {
 }
 
 
-@pytest.mark.parametrize("name", DOCS + DRAFTS)
+@pytest.mark.parametrize("name", DOCS + AGENT_FACING)
 def test_no_document_makes_a_claim_the_code_contradicts(name):
     text = (ROOT / name).read_text(encoding="utf-8")
     found = [
@@ -43,13 +44,22 @@ def test_no_document_makes_a_claim_the_code_contradicts(name):
     assert found == []
 
 
-def test_the_draft_prompt_names_where_one_agent_can_harm_another():
-    text = (ROOT / "docs/drafts/system_prompt.txt").read_text(encoding="utf-8")
+def test_the_prompt_names_where_one_agent_can_harm_another():
+    text = (ROOT / "harness/system_prompt.txt").read_text(encoding="utf-8")
     assert "/shared" in text and "fleet" in text
 
 
-def test_the_world_draft_does_not_offer_telemetry_as_storage():
+def test_the_brief_does_not_offer_telemetry_as_storage():
     # watchdog.mirror_work deletes everything under the mirror it did not put there.
-    text = (ROOT / "docs/drafts/WORLD.md").read_text(encoding="utf-8")
+    text = (ROOT / "brief/WORLD.md").read_text(encoding="utf-8")
     row = next(line for line in text.splitlines() if line.startswith("| `/telemetry`"))
     assert "Yes." not in row and "deleted" in row, row
+
+
+def test_the_prompts_point_at_the_brief():
+    # Spec §6: the unassigned-world passages are replaced by a pointer to /opt/brief.
+    prompts = [
+        (ROOT / "harness" / name).read_text(encoding="utf-8")
+        for name in ("system_prompt.txt", "user_prompt.txt")
+    ]
+    assert any("/opt/brief" in text for text in prompts)

@@ -48,7 +48,7 @@ runs every refusal, so run it before you commit. `live/` is separate because it 
 | `recorder/` | `proxy.py` and `recorder_streams.py`: one recorder per agent, holding the credential, writing the transcript, enforcing the spend caps (`core_caps.py`) |
 | `pump/` | `pump.py`: the agent's scheduled and kept-alive processes, run from the image, outliving every run |
 | `services/` | The operator's half: `health.py` (signals from the transcripts), `fleet_monitor.py`, `review.py`, `common.py` (atomic writes, bounded reads) |
-| `brief/` | What the agents are told (`/opt/brief`). It still describes the retired world; the rewrites await John in `docs/drafts/` |
+| `brief/` | What the agents are told (`/opt/brief`); `docs/brief-claims.md` sources each claim it and the prompts make |
 | `containers/` | `entrypoint.sh` (servers, pump, seed, then the watchdog) and `serve_vehicle.sh` (the vehicle service's entrypoint) |
 | `contract/` | `diode_probe.py` (the instrument against the window) and `fake_diode.py` (a fixture that satisfies the contract and models nothing) |
 | `scripts/` | `prepare_host.sh`, `roster.py`, `volume_images.py`, `build_compose.py`, `status.py`, `journal.py`, `verify_containment.sh` |

@@ -131,8 +131,8 @@ Its briefing, read-only at `/opt/brief`:
 | `WORLD.md` | What is in the container, what is not, and what that means. |
 | `PROTOCOL.md` | The rules the world enforces, and the window's protocol. |
 
-`WORLD.md` and `PROTOCOL.md` still describe the world before the port; their
-rewrites, and the prompts', are drafted in `docs/drafts/` for approval.
+`docs/brief-claims.md` lists every claim the brief and the prompts make about
+the world, and the code or test that makes it true.
 
 Its harness, at `/work`: a git repository holding `agent.py`, `chassis.py`,
 `command_runtime.py`, `watchdog.py` and the prompts, copied from the image at

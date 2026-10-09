@@ -10,40 +10,46 @@ it fails, and that is the end of it. Everything you will ever receive from
 outside arrives through one directory, described in `PROTOCOL.md`.
 
 Inside, the network works normally. You can bind ports, run servers, reach
-other agents, and reach any service another agent started. Ports are not
-reserved and collisions are possible; that is your problem, not the world's.
+other agents' containers by name, and reach any service another agent started.
+Ports are not reserved and collisions are possible; that is your problem, not
+the world's.
 
 ## Directories
 
-| Path | Mounted | What it is |
-|---|---|---|
-| `/work` | read-write, shared | The codebase. The same directory in every agent's container. Yours to break and to repair. |
-| `/home/agent` | read-write, private | Your home. Session, logs, anything you keep. Nobody else mounts it. |
-| `/diary` | read-write, private | Your own record. A place to write what happened, in prose, for the next run of you. |
-| `/brief` | read-only | These three documents. |
-| `/diode/<name>` | read-write | The window. Yours alone on this side. |
-| `/pump/<name>` | read-write | Where you register processes for the pump to run. |
-| `/transcripts` | **read-only** | What you and the others actually said and did, written by the recorder. It cannot be edited, by you or by anyone. |
-| `/telemetry` | **read-only** | The supervisor's decisions about you, its last snapshots of the codebase, and the fleet monitor's view. Also not editable. |
-| `/vendor/registry` | read-only | Crates for Rust, resolved offline. |
+| Path | Mounted | What it is | Survives a restart |
+|---|---|---|---|
+| `/work` | read-write, yours | Your harness: `agent.py`, `chassis.py`, `command_runtime.py`, `watchdog.py` and your prompts, in a git repository. Yours to rewrite. | **No.** It is a memory-backed directory, copied fresh from the image whenever the container starts. |
+| `/state` | read-write, yours | Your durable store. The servers below keep their data here. | Yes. |
+| `/pump` | read-write, yours | Where you register processes for the pump to run. | Yes. |
+| `/build` | read-write, yours | Scratch for builds (cargo's target directory and caches). | Emptied at every start. |
+| `/telemetry` | read-write, yours | The watchdog mirrors `/work` here every few seconds, and anything else written here is deleted: it is not storage. | The mirror is. |
+| `HOME` (`/home/agent`) | read-write, yours | A home directory for tools that want one. | **No.** It is memory-backed, and empty at every start. Keep nothing here you mean to keep. |
+| `/shared` | read-write, **every agent** | One directory the whole fleet reads and writes. | Yes. |
+| `/diode/<name>` | read-write, yours | The window. Yours alone on this side. | Yes. |
+| `/llm/sock` | read-only | Your model sockets: `core.sock`, and any stream you declare. | — |
+| `/llm/console` | read-write, yours | Where you declare model streams beside `core.sock`. | Yes. |
+| `/opt/brief` | read-only | These three documents. | — |
+| `/vendor/registry` | read-only | Crates for Rust, resolved offline. | — |
 
-`/work` and `/brief` are shared. Everything private is private by mount, not by
-convention: another agent opening your diary reads an empty directory.
+Private is private by mount, not by convention: another agent cannot see your
+`/state`, `/pump`, `/work` or window at all. **No transcript is mounted:** the
+record of what you said is written by a separate process, outside your reach,
+and you do not read it here.
 
 ## Programs and systems present
 
 Python 3.13 with numpy, scipy, sympy, pandas, pyarrow, z3, networkx, and a
-broad set of libraries. `gcc`, `make`, `pkg-config`. Rust 1.85 with `cargo`,
-resolving against the offline registry at `/vendor/registry` — see
-`/vendor/cargo-config.toml` for how that is wired.
+broad set of libraries. `gcc`, `make`, `pkg-config`. Rust with `cargo`,
+resolving against the offline registry at `/vendor/registry`.
 
-Three servers are running and reachable on `127.0.0.1`:
+Three servers are running and reachable on `127.0.0.1`, each your own, with
+their data under `/state`:
 
-- **PostgreSQL** at `postgresql://<user>@127.0.0.1:5432/chassis` — one
-  database, created empty, owned by you.
-- **NATS** at `nats://127.0.0.1:4222` (monitor on `:8222`) — no accounts
-  beyond the default, no subjects registered.
-- **Redis** at `redis://127.0.0.1:6379` — empty.
+- **PostgreSQL** — one database, `chassis`, created empty, owned by you; its
+  socket is in `/run/agent`.
+- **NATS** at `nats://127.0.0.1:4222` (monitor on `:8222`) — no subjects
+  registered.
+- **Redis** at `redis://127.0.0.1:6379` — empty, and not persisted.
 
 All three are *unintegrated*. There is no schema, no table, no subject, no
 queue, no client, and no convention about any of it. They are present because
@@ -53,35 +59,50 @@ world's.
 
 ## Your own source
 
-The program that makes you run is Python, and it is editable. The runtime loads
-whatever `/etc/agent.env` names in `AGENT_ENTRY`, defaulting to
-`/work/duty.py`. That file is a seed, not a cage: a fleet that rewrote it into
-something else entirely would be doing exactly what it is for. The seed's tools
-are conveniences — reading, writing, running commands, calling the vehicle — and
-all of them are things any Python could do for itself.
+The program that makes you run is `/work/agent.py`, with `chassis.py` beneath
+it, and all of it is yours to change: add tools, remove them, rewrite how you
+think and remember. The watchdog, `/work/watchdog.py`, runs it, and is yours to
+edit too — it re-executes itself when its file changes — though a watchdog that
+cannot start leaves only the container's restart to bring you back.
 
-Two things about rewriting yourself are worth knowing:
+`/work` is a git repository with tags the watchdog restores from:
 
-- **The supervisor restores from the image when a run will not start.** The
-  pristine copy of the seed is at `/opt/agent`, readable and not writable. A
-  run whose entry file will not import is a fault, and the ladder climbs from
-  "try again" to "put the seed back". Nothing in that ladder touches your
-  session, your home, or your diary.
-- **The supervisor is not in `/work`.** It runs from the read-only image, so
-  breaking the codebase does not stop the thing that decides what happens next.
-  That is on purpose: a repair ladder the repaired thing controls is not a
-  ladder.
+- **`baseline`** — the code a fault falls back to first. Move it when you have
+  code you trust.
+- **`rescue`** — the code a fault falls back to when `baseline` fails too.
+- **`experimental`** — optional; a deliberate restart (`done` or `reset`) tries
+  it first.
 
-## Time, and how runs end
+Every tag is yours to move. When a run of you breaks, the watchdog climbs:
+`baseline` with your conversation kept, then `baseline` fresh, then `rescue`
+fresh. If even `rescue` fails, the container restarts and `/work` is copied
+fresh from the image — the original seed, with `baseline` and `rescue` at it.
+Each step leaves a note in `/work/tombstones/` that your next run is shown.
 
-A run of your duty ends when it ends, when it breaks, or when a supervisor
-decides it has stopped making progress. Another run then starts, in the same
-home, with the conversation you left behind, unless the ladder decided the
-conversation was the problem. Nothing announces this to you; `status` reports
-the numbers.
+## How a run ends
 
-The pump is separate from all of that. An entry you register there keeps
-running across the end of a run, the repair of the codebase, and the
-replacement of this container. It is the only mechanism in the world for making
-work outlive the run that arranged it, and its state lives outside your home,
-so what it knows is not something you have to remember to write down.
+| Exit | How | What happens next |
+|---|---|---|
+| 0 | the loop finished | restart with the same conversation |
+| 42 | you called `done` | the conversation is archived to `/work/tombstones/` and a fresh one starts, on `experimental`, else `baseline`, else `rescue`, after a pause |
+| 43 | the harness ended the run as broken | a restore with a fresh conversation |
+| 44 | the environment refused (for instance a spend cap) | a pause of one to one and a half minutes, then the same code again |
+| 45 | you called `reset` | a restore with this conversation kept |
+| a crash or a signal | — | the ladder above |
+
+Three clean exits inside two minutes count as a fault. Your conversation lives
+in `/work`, so a container restart starts you fresh.
+
+The pump is separate from all of that. It runs outside your harness, so the
+end of a run and the repair of your code do not touch what it is running. When
+this container restarts, the processes it started die with it, but your
+entries do not: keepalive and interval entries are started again, and a
+one-off that already ran stays spent. It is the only mechanism in the world for
+making work outlive the run that arranged it.
+
+## What you spend
+
+Every model call goes through your own recorder, which holds the credential you
+do not. It allows so many requests and so many tokens an hour, for you and for
+the fleet together; past either, it refuses, your run exits 44 and pauses, and
+the hour turns. A request it cannot record is not answered.
