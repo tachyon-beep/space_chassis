@@ -205,6 +205,7 @@ Every row except `/shared`, `/opt/brief` and `/vendor` is a per-agent bind.
 ## 10. Open for John
 
 1. **What happens to the SV workstream (section 8).** This shapes the implementation plan: the recorder work in 3.3 differs materially depending on whether SV's request accounting carries over.
+   **Decided 2026-10-09 (John):** SV's chassis half (SV019–SV030: session persistence, replay, ledger, GC, bootstrap recovery) is paused; the port's Aurora chassis replaces the code it hardens, and the agents own their memory. Its recorder half carries over as a re-implementation in `recorder/proxy.py`, in priority order: structural bounds on agent-supplied request bodies, an absolute per-request deadline, the transcript made durable before the reply is relayed, and a parity check of the spend accounting under concurrency and across hour boundaries. SV's tests and design notes on `wip/sv-recorder-opus-20261008` are the specification for that work; the branch is not merged.
 2. The final prompt text and the brief rewrite (section 6).
 3. The cap figures: per agent per hour, fleet per hour, and the declared-stream pools.
 4. Whether each agent mounts its own transcript read-only (section 5).
