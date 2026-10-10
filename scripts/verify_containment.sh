@@ -211,6 +211,23 @@ else:
     else
         ok "$agent mounts nothing of the vehicle's private state"
     fi
+    # Nor its source (John, 2026-10-10: no risk of information sharing). The image carries none of
+    # it (6b), so a bind is the one way back: any mount from inside a vehicle checkout, or of a
+    # directory that holds this one's (the repository, docs/, ...). Read from the same sources.
+    if [ -z "$sources" ]; then
+        bad "$agent's mounts could not be inspected for the vehicle's source"
+    else
+        exposed=""
+        for source in $sources; do
+            case "$source/" in */deep_research/vehicle/*) exposed=$source ;; esac
+            case "$PROJECT/docs/deep_research/vehicle/" in "${source%/}"/*) exposed=$source ;; esac
+        done
+        if [ -n "$exposed" ]; then
+            bad "$agent mounts the vehicle's source ($exposed)"
+        else
+            ok "$agent mounts nothing of the vehicle's source"
+        fi
+    fi
     for private in /transcripts /ledger; do
         if ! printf '%s\n' "$mounts" | grep -qx /; then
             bad "$agent's mount table could not be read, so $private is unchecked"
