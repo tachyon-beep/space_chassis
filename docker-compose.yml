@@ -25,6 +25,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.agent
+      target: agent
     restart: unless-stopped
     init: true
     hostname: agent_1
@@ -1913,9 +1914,14 @@ services:
   # interface is the window volume, as the fixture's is (spec 5), and its code opens no
   # socket. On `worknet` it was a named host the agents could address and whose restarts
   # they could observe, which is evidence about hidden vehicle state outside the instruments.
+  # Its image is its own, the only one carrying /opt/vehicle; built only by name, with
+  # `docker compose --profile vehicle build`, and its entrypoint is the serve script.
   vehicle:
-    image: space-chassis-agent
-    entrypoint: ["/usr/local/bin/serve_vehicle.sh"]
+    image: space-chassis-vehicle
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      target: vehicle
     restart: unless-stopped
     profiles: ["vehicle"]
     network_mode: none

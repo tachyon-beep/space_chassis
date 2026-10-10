@@ -26,6 +26,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEST = REPO_ROOT / "docker-compose.yml"
 DEFAULT_COUNT = 10
 IMAGE = "space-chassis-agent"
+# The vehicle's own image: the agents' image carries nothing of the vehicle (Dockerfile.agent's
+# stages; John, 2026-10-10).
+VEHICLE_IMAGE = "space-chassis-vehicle"
 WINDOW_BIND = f"{volume_images.SOURCE_ROOT}/diode/data:/diode"
 VENDOR_BINDS = (
     "./vendor/registry:/vendor/registry:ro",
@@ -103,7 +106,7 @@ def _environment(pairs) -> str:
 def _agent(n: int, count: int) -> str:
     text = f"  agent_{n}:\n    image: {IMAGE}\n"
     if n == 1:
-        text += "    build:\n      context: .\n      dockerfile: Dockerfile.agent\n"
+        text += "    build:\n      context: .\n      dockerfile: Dockerfile.agent\n      target: agent\n"
     if n > 1:
         text += '    profiles: ["fleet"]\n'
     text += (
@@ -301,9 +304,11 @@ def _vehicle() -> str:
         "  # interface is the window volume, as the fixture's is (spec 5), and its code opens no\n"
         "  # socket. On `worknet` it was a named host the agents could address and whose restarts\n"
         "  # they could observe, which is evidence about hidden vehicle state outside the instruments.\n"
+        "  # Its image is its own, the only one carrying /opt/vehicle; built only by name, with\n"
+        "  # `docker compose --profile vehicle build`, and its entrypoint is the serve script.\n"
         "  vehicle:\n"
-        f"    image: {IMAGE}\n"
-        '    entrypoint: ["/usr/local/bin/serve_vehicle.sh"]\n'
+        f"    image: {VEHICLE_IMAGE}\n"
+        "    build:\n      context: .\n      dockerfile: Dockerfile.agent\n      target: vehicle\n"
         "    restart: unless-stopped\n"
         '    profiles: ["vehicle"]\n'
         "    network_mode: none\n"

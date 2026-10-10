@@ -160,6 +160,7 @@ cat <<'NEXT'
 Next:
   1. put the model credential in .env (OPENROUTER_API_KEY, or LLM_BASE_URL + LLM_API_KEY)
   2. docker compose --profile fleet up --build
+     (the vehicle's own image: docker compose --profile vehicle build)
   3. watch it: python3 scripts/status.py
 
 The fleet starts as ten agents on an internal network with no route outward, each on its own
