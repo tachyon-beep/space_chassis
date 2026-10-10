@@ -187,3 +187,26 @@ John/Emmy to settle.
 **Owner readiness opinion:** the interface is mapped end to end, with the agreed leads; the open
 items are product work with named owners (#39, #21/Phase B, the build guard) and two John decisions
 (the commit gate, the merge). None is an unlocatable change.
+
+---
+
+## Addendum v1.1 — §8 causation label (2026-10-10, after Emmy's coordination update)
+
+**Causation is unproven.** #39 is the leading hypothesis for the failed probe check, held
+independently by this owner, the vehicle line and the Nyx coordinator; it is not an established
+cause. Where §8 above calls a scheduler or vehicle stall "unlikely", that judgement is withdrawn:
+**scheduler delay remains an open alternative.** The coordinator's facts stand alongside §8's: the
+missing result stayed missing for the probe's full 15 s wait; earlier commands worked; a later
+unknown command was refused; published state advanced. No timeline proves the race: the console's
+stderr was discarded, and the test's temporary directory no longer exists.
+
+The coordinator is running one captured reproduction of the existing, unchanged test at
+`8c6f71d`; its result supersedes the inference here. This owner starts no #39 fix and no
+reproduction of its own.
+
+**Disclosure:** before this update arrived, this session ran the root suite once more (`nice -n 19`,
+569 passed, about 20:37 AEDT) as the commit gate for `d82827f`/`f99d0d3`. That run includes this
+test, so it may have overlapped the start of the coordinator's reproduction and added host load;
+the coordinator should weigh its timing accordingly. This addendum's commit ran no tests, so as not
+to overlap the reproduction (a documentation-only change; a departure from `practice.md`'s
+root-suite gate, recorded here).
