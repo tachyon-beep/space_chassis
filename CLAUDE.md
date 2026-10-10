@@ -34,6 +34,14 @@ not in it: it starts containers. The smoke stack `live/stack.py` builds (three a
 recorders, the cued stub model in `live/stub_llm.py`, the contract fixture as the window, a dummy
 key) is the fastest way to see whether the world still works end to end.
 
+## Governance
+
+`governance/README.md` is the place to start: the project divides into two lines with nothing
+shared, the chassis (this repository, except the vehicle) and the vehicle (`tachyon-beep/space_vehicle`).
+It holds each line's snapshot, decision log, practice, interface and open items, and the rules for
+coordinating between them. The chassis line owns `governance/` except `governance/vehicle/`, which
+the vehicle line writes and the chassis commits verbatim. Nothing in it may reach an image.
+
 ## The scope boundary
 
 **This repository builds everything except the vehicle.** Nothing here models physics or names a

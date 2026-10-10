@@ -106,3 +106,8 @@ def test_the_brief_states_the_archive_bound_the_watchdog_keeps():
     assert "newest twenty" in text and "128 MiB" in text and "64 MiB" in text
     for name in ("session_recovery_<n>.json", "corrupt_session_<date>_<time>_<micro>.json"):
         assert name in text, name
+
+
+def test_the_root_instructions_point_at_governance():
+    for name in ("CLAUDE.md", "AGENTS.md"):
+        assert "governance/README.md" in (ROOT / name).read_text(encoding="utf-8"), name

@@ -162,3 +162,10 @@ def test_the_image_carries_no_agent_env():
 def test_the_image_still_carries_the_vehicle():
     assert "COPY --chown=agent:agent docs/deep_research/vehicle/ /opt/vehicle/" in DOCKERFILE
     assert "containers/serve_vehicle.sh /usr/local/bin/serve_vehicle.sh" in DOCKERFILE
+
+
+def test_governance_never_reaches_an_image():
+    # governance/ holds the design reasoning and the vehicle's records: the fleet must never see it.
+    ignored = (REPO / ".dockerignore").read_text(encoding="utf-8").splitlines()
+    assert "governance/" in ignored
+    assert "governance" not in DOCKERFILE
