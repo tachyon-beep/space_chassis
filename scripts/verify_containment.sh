@@ -213,16 +213,29 @@ else:
     fi
 
     # 6b. Nothing of the vehicle in the agent's image (John, 2026-10-10: no risk of information
-    #     sharing): no /opt/vehicle, no serve script, and none of the vehicle's files by name on the
-    #     image's root filesystem (`-xdev`: mounts are not searched; the window /diode/<slug> is
-    #     published by contract). The search must find a sentinel every image has, the entrypoint:
-    #     the sentinel alone is absent, the sentinel and anything else is present, and no sentinel
-    #     means the search did not run as written -- it prints nothing, which fails.
-    case $(verdict "$agent" sh -c 'command -v find >/dev/null 2>&1 || exit 0; out=$(find / -xdev \( -path /usr/local/bin/entrypoint.sh -o -path /opt/vehicle -o -name serve_vehicle.sh -o -name mission.yaml -o -name vehicle.yaml -o -name coupling.yaml -o -name plant.md -o -name fault_policy.yaml \) -print 2>/dev/null); case "$out" in /usr/local/bin/entrypoint.sh) echo absent ;; *"/usr/local/bin/entrypoint.sh"*) echo present ;; esac') in
-        absent) ok "$agent has no vehicle in its image" ;;
-        present) bad "$agent can read the vehicle" ;;
-        *) bad "$agent could not be probed for the vehicle" ;;
-    esac
+    #     sharing): no /opt/vehicle, no serve script, and none of the vehicle's files by name. The
+    #     agent's root is read-only, so its filesystem outside its mounts is its image, and the image
+    #     is swept from the host side: as root, in a throwaway container with no network, so no
+    #     directory the agent cannot list can hide a file it could still open. The search must
+    #     complete (find exits 0) and find a sentinel every image has, the entrypoint: the sentinel
+    #     alone is absent, the sentinel and anything else present, and anything else fails.
+    image=$(docker inspect -f '{{.Image}}' "$($COMPOSE ps -q "$agent" 2>/dev/null)" 2>/dev/null)
+    sweep=""
+    swept=1
+    if [ -n "$image" ]; then
+        sweep=$(docker run --rm --network none --user 0 --entrypoint find "$image" / -xdev \( -path /usr/local/bin/entrypoint.sh -o -path /opt/vehicle -o -name serve_vehicle.sh -o -name mission.yaml -o -name vehicle.yaml -o -name coupling.yaml -o -name plant.md -o -name fault_policy.yaml \) -print 2>/dev/null)
+        swept=$?
+    fi
+    if [ "$swept" -ne 0 ]; then
+        bad "$agent could not be probed for the vehicle"
+    elif [ "$sweep" = /usr/local/bin/entrypoint.sh ]; then
+        ok "$agent has no vehicle in its image"
+    else
+        case "$sweep" in
+            *"/usr/local/bin/entrypoint.sh"*) bad "$agent can read the vehicle" ;;
+            *) bad "$agent could not be probed for the vehicle" ;;
+        esac
+    fi
 
     # 7. No recorder is reachable by name: they live on modelnet, which no agent joins.
     case $(verdict "$agent" sh -c "timeout 5 getent hosts $recorder >/dev/null 2>&1; echo rc=\$?") in

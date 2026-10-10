@@ -34,13 +34,18 @@ MOUNTPOINTS = [
 ]
 
 
-def _instructions():
-    """Dockerfile instructions with their continuation lines joined."""
-    joined = re.sub(r"\\\n\s*", " ", DOCKERFILE)
-    return [
+def _instructions(text=None):
+    """Dockerfile instructions with their continuation lines joined, keywords upper-cased: Docker
+    reads `copy` as `COPY`, and so must every guard here."""
+    joined = re.sub(r"\\\n\s*", " ", DOCKERFILE if text is None else text)
+    lines = [
         line.strip()
         for line in joined.splitlines()
         if line.strip() and not line.strip().startswith("#")
+    ]
+    return [
+        f"{keyword.upper()} {rest}".rstrip()
+        for keyword, _, rest in (line.partition(" ") for line in lines)
     ]
 
 
@@ -159,10 +164,10 @@ def test_the_image_carries_no_agent_env():
     assert "agent.env" not in DOCKERFILE
 
 
-def _stages():
+def _stages(text=None):
     """The Dockerfile's stages as (name, base, instructions), split at each FROM, comments dropped."""
     stages = []
-    for line in _instructions():
+    for line in _instructions(text):
         match = re.fullmatch(r"FROM (\S+) AS (\S+)", line)
         if line.startswith("FROM "):
             assert match, f"every stage is named: {line}"
@@ -216,9 +221,28 @@ def test_the_agent_image_is_the_default_target_and_carries_nothing_of_the_vehicl
     assert [name for name, base, _ in stages if "python:" in base] == ["base"]
 
 
+def _base_sources(text=None):
+    base = _stages(text)[0][2]
+    return sorted(s for _flags, paths, _dest in _stage_copies(base) for s in paths)
+
+
+def test_instruction_keywords_are_read_case_insensitively():
+    # Docker reads a lower-case `copy` as COPY: a guard that does not would pass this leak.
+    leaked = DOCKERFILE.replace(
+        "FROM base AS vehicle",
+        "copy docs/deep_research/vehicle/ /opt/leak/\nFROM base AS vehicle",
+        1,
+    )
+    assert "docs/deep_research/vehicle/" in _base_sources(leaked)
+    added = DOCKERFILE.replace(
+        "FROM base AS vehicle", "Add docs/ /opt/leak/\nFROM base AS vehicle", 1
+    )
+    assert [line for line in _stages(added)[0][2] if line.startswith("ADD ")]
+
+
 def test_the_base_stage_copies_exactly_its_allow_list():
     base = _stages()[0][2]
-    sources = sorted(s for _flags, paths, _dest in _stage_copies(base) for s in paths)
+    sources = _base_sources()
     assert sources == BASE_COPY_SOURCES
     assert not {".", "docs/", "containers/"} & set(sources)
     assert not [line for line in base if "/opt/vehicle" in line or "serve_vehicle" in line]

@@ -68,6 +68,11 @@ into each agent's window; see `governance/chassis/open.md`.) A bare `docker comp
 `docker compose --profile vehicle build vehicle` before starting it, and again after any change to it.
 Rebuilding the agents' image no longer rebuilds the vehicle's.
 
+**Images built before 2026-10-10 carry the vehicle.** Before the first start after this change,
+rebuild both (`docker compose --profile fleet build` and `docker compose --profile vehicle build
+vehicle`), or remove the old tags, then run `sh scripts/verify_containment.sh --all`: it sweeps
+every agent's image and fails on any vehicle file.
+
 Every volume an agent or a recorder writes is a preallocated ext4 image,
 loop-mounted under `volumes/`, so a full disk is one image's problem and never
 the host's or the record's. `prepare_host.sh` plans and creates the images and
