@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.13-slim AS base
 
 # The floor of the world. Everything here is either a thing you cannot
 # bootstrap from nothing (a compiler, an interpreter, the Python they are made
@@ -63,21 +63,10 @@ COPY --chown=agent:agent brief/ /opt/brief/
 # the two modules they import. Nothing the fleet runs is here.
 COPY --chown=agent:agent services/common.py services/health.py services/fleet_monitor.py services/review.py /opt/services/
 
-# **The vehicle, which is the far side of the window.** `docs/deep_research/vehicle/` is the
-# configuration the reference console serves: it is baked here rather than mounted, for the same
-# reason the harness is -- the image is self-contained and the copy is read-only, so the thing
-# serving the window cannot be edited by anything reading it. It lives under `docs/` in the
-# repository because it is vendored there as a submodule; nothing here imports it.
-COPY --chown=agent:agent docs/deep_research/vehicle/ /opt/vehicle/
-
-# The entrypoint and the vehicle's service script. Their modes are stated rather than inherited:
-# COPY preserves whatever the host file happened to be.
+# The entrypoint. Its mode is stated rather than inherited: COPY preserves whatever the host file
+# happened to be.
 COPY containers/entrypoint.sh /usr/local/bin/entrypoint.sh
-# The vehicle's half of the window: the console loop, as a service. It is a script rather than a
-# compose `command:` because the container is read-only and the loop needs no shell features --
-# see the script's own header for what it decides and what it deliberately leaves to the operator.
-COPY containers/serve_vehicle.sh /usr/local/bin/serve_vehicle.sh
-RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/serve_vehicle.sh \
+RUN chmod 0755 /usr/local/bin/entrypoint.sh \
     && find /opt /usr/local/lib/recorder -name __pycache__ -type d -prune -exec rm -rf {} +
 
 # Nothing an agent can write is on an image-owned process's import or config path: no user
@@ -108,3 +97,25 @@ RUN git init -q \
 
 WORKDIR /work
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+
+# ---------------------------------------------------------------------------------------------------
+# **The vehicle's image, and only the vehicle's** (`docker compose --profile vehicle build`).
+#
+# `docs/deep_research/vehicle/` is the configuration the reference console serves, baked rather than
+# mounted so the thing serving the window cannot be edited by anything reading it. It is in this
+# stage alone because an agent that could read it could read every fault policy and failure chain
+# and run `console.py --plan` to print the mission's fault schedule: John, 2026-10-10, "we don't want
+# any risk of information sharing". The stage is the base plus the vehicle and its service script,
+# so the vehicle runs on the same Python and libc as the base it was built with.
+FROM base AS vehicle
+COPY --chown=agent:agent docs/deep_research/vehicle/ /opt/vehicle/
+# The console loop, as a service: a script rather than a compose `command:` because the container is
+# read-only and the loop needs no shell features (see its own header).
+COPY --chmod=0755 containers/serve_vehicle.sh /usr/local/bin/serve_vehicle.sh
+RUN find /opt/vehicle -name __pycache__ -type d -prune -exec rm -rf {} +
+ENTRYPOINT ["/usr/local/bin/serve_vehicle.sh"]
+
+# **The agents' image: the base, and nothing of the vehicle.** It is the last stage, so a bare
+# `docker build` of this file is this image; the vehicle's is only ever built by name.
+FROM base AS agent
