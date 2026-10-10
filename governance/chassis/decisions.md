@@ -22,7 +22,7 @@ each costs if wrong (`docs/superpowers/ledgers/`).
 | 2026-10-09 | Prompt and brief text needs John's approval: implementation drafts it, and only approved text ships. | spec §6 |
 | 2026-10-09 | "Deconflict with the other agent. I need both of you working." The chassis works in its own worktree and its own vehicle clone, and never touches the vehicle line's checkout. | session instruction; `practice.md` |
 | 2026-10-10 | One `governance/` folder for the two lines. **The two lines divide the whole project, with no third or spill-over line; shared plumbing is split between them.** | session instruction; `../README.md` |
-| 2026-10-10 | **One program (Space Aurora), two project teams, one product.** The teams are of equal importance and work together in parallel: the chassis (the Aurora containers and harness) and the vehicle (the simulation). Emmy coordinates the program. The no-third-line rule divides ownership of the work, not the product. | John, in this session | `../README.md` |
+| 2026-10-10 | **One program (Space Aurora), two project teams, one product.** The teams are of equal importance and work together in parallel: the chassis (the Aurora containers and harness) and the vehicle (the simulation). Emmy coordinates the program. The no-third-line rule divides ownership of the work, not the product. There are no shared tasks: every task has one lead team that sets the rule, and the other team follows it where it has to do the same. | John, in this session | `../README.md` |
 
 ## The design's rulings (spec §1)
 

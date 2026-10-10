@@ -20,6 +20,10 @@ parallel; Emmy coordinates the program (John, 2026-10-10). This folder calls eac
 *line*. What divides is the work, never the product: every path, branch and task has exactly one
 owning team, there is no third team, and nothing is co-owned (John, 2026-10-10).
 
+**There are no shared tasks.** Every task has one lead team, and the lead sets the rule. Where the
+other team has to do the same thing on its side, it follows the lead's rule rather than setting its
+own (John, 2026-10-10).
+
 | project team (line) | what it builds | where it lives | governance |
 |---|---|---|---|
 | **space_chassis** | The AI chassis: the world the fleet of agents lives in. Aurora's harness per agent, the recorder, the pump, the operator services, the containers, the brief, and the vehicle's deployment. | this repository | `chassis/` |
