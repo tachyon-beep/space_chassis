@@ -2,7 +2,8 @@
 
 As of **2026-10-10**, `tachyon-beep/space_vehicle` **main @ `64fc58c`**; #21 in flight on
 `codex/wp08-resume` @ `45f4267` (implementation `06f08a3` plus five review fix rounds; the last
-confirmation approved). Maintained by the Space Vehicle session.
+confirmation approved). Maintained by Space Vehicle [610587]. Custody inventory for Emmy (AUR-GOV-02):
+`records/2026-10-10-aur-gov-02-vehicle-custody-inventory.md`.
 **Verify against the code before trusting any line here** — this file summarises; the repository,
 its issues and its ADRs are authoritative where they disagree.
 
