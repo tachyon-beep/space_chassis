@@ -339,14 +339,30 @@ def test_a_vehicle_stack_runs_the_vehicle_in_place_of_the_fixture(vehicle_stack)
     assert "vehicle" in argv[argv.index("up") :] and "diode" not in argv[argv.index("up") :]
 
 
-def test_the_vehicle_override_runs_the_smoke_image_on_a_short_poll(vehicle_stack):
+def test_the_vehicle_override_runs_the_vehicle_s_smoke_image_on_a_short_poll(vehicle_stack):
     smoke, _ = vehicle_stack
     text = smoke.override_text()
     assert "  vehicle:\n" in text and "  diode:\n" not in text
     block = text[text.index("  vehicle:\n") :]
-    assert f"    image: {stack_module.SMOKE_IMAGE}\n" in block
+    # The vehicle has its own image (plan 8): the agents' carries nothing of it to serve.
+    assert f"    image: {stack_module.SMOKE_VEHICLE_IMAGE}\n" in block
+    assert stack_module.SMOKE_VEHICLE_IMAGE != "space-chassis-vehicle"
+    assert ":" in stack_module.SMOKE_VEHICLE_IMAGE
     # A checkpoint every 50 ticks has to come in seconds, not the operator's minutes.
     assert 'DIODE_POLL_SECONDS: "0.2"' in block
+
+
+def test_the_smoke_build_builds_the_vehicle_s_image_only_when_it_is_the_window(tmp_path):
+    def builds(window):
+        runner = Runner()
+        smoke = stack_module.SmokeStack(3, root=tmp_path / window, runner=runner, window=window)
+        smoke._torn_down = True
+        smoke.build()
+        calls = [argv for argv, _ in runner.calls if "build" in argv]
+        return [argv[argv.index("build") + 1 :] for argv in calls]
+
+    assert builds("vehicle") == [["agent_1", "vehicle"]]
+    assert builds("diode") == [["agent_1"]]
 
 
 def test_a_vehicle_stack_has_its_own_project_and_root(tmp_path):
@@ -366,5 +382,6 @@ def test_the_vehicle_override_parses_against_the_base_compose(vehicle_stack):
     result = real.compose("config", "--format", "json", check=False)
     assert result.returncode == 0, result.stderr
     vehicle = json.loads(result.stdout)["services"]["vehicle"]
-    assert vehicle["image"] == stack_module.SMOKE_IMAGE
+    assert vehicle["image"] == stack_module.SMOKE_VEHICLE_IMAGE
+    assert vehicle["build"]["target"] == "vehicle"
     assert vehicle["environment"]["VEHICLE_SLUGS"] == "agent_1,agent_2,agent_3"
