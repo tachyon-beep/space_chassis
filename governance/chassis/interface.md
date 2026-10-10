@@ -25,7 +25,7 @@ The service as it lands with the adoption (`vehicle-adoption`; the generator is
 | Mounts | `/diode` is the whole window image, read-write. `/state` is the 40G `vehicle_state` image, which only this service mounts. Each is a bind of its own image; neither is under the other. |
 | Network | `network_mode: none` (`0ccc4cc`). |
 | Hardening | `read_only: true`, `tmpfs: [/tmp]`, `cap_drop: [ALL]`, `no-new-privileges`, `mem_limit: 512m`, `restart: unless-stopped`. |
-| Image | The shared agent image, `FROM python:3.13-slim@sha256:70729b46…`. The vehicle's checkpoint records the Python patch version and libc, so changing that digest is a new-world event (README "The vehicle"). |
+| Image | Its own: `space-chassis-vehicle`, `Dockerfile.agent`'s `vehicle` stage (the base plus `/opt/vehicle` and the serve script as its entrypoint). It is built only by name (`docker compose --profile vehicle build`), and the agents' image carries nothing of it (plan 8). The vehicle's checkpoint records the Python patch version and libc, so a rebuild that changes either is a new-world event (README "The vehicle", on `vehicle-adoption`). |
 | Operator procedures | README "The vehicle" covers the first start, restart, a deliberate new world and exit 3, from the vehicle's adoption package §3–§4. |
 
 On `aurora-port` today (vehicle `dd79e76`), the service still runs the pre-adoption script, which
@@ -38,11 +38,11 @@ Each agent binds only its own `/diode/<slug>` and cannot write the window root.
 `scripts/verify_containment.sh` holds that, plus "no agent mounts `vehicle_state`" (read host-side)
 and "the vehicle binds `/diode` and `/state` and nothing else".
 
-**Open, P1 (`open.md`):** every agent runs the same image, which bakes the whole vehicle definition
-at `/opt/vehicle` (`Dockerfile.agent:76`). As user `agent`, any fleet agent can read every
-`domains/*/fault_policy.yaml`, the failure chains, `plant.md` and the vehicle's design notes. It can
-also run `tools/console.py --plan` to print the mission's fault schedule, and the default scenario
-and seed are guessable. This was confirmed on 2026-10-10.
+**No agent's image carries the vehicle** (plan 8, 2026-10-10). `verify_containment.sh` sweeps each
+agent's filesystem for it by name. Before the split, every agent could read every
+`domains/*/fault_policy.yaml` and run `tools/console.py --plan` for the mission's fault schedule.
+**Open, P1, the window half (`open.md`):** at the pinned `dd79e76` the vehicle writes the run's
+scenario, seed and armed faults into each agent's own `pending.json`. That closes with the adoption.
 
 ## Adoption status
 

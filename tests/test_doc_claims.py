@@ -75,11 +75,13 @@ def test_the_prompts_point_at_the_brief():
     assert any("/opt/brief" in text for text in prompts)
 
 
-def test_claude_md_states_43_s_escalation_and_the_vehicle_in_the_image():
+def test_claude_md_states_43_s_escalation_and_where_the_vehicle_lives():
     text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
     row = next(line for line in text.splitlines() if line.startswith("| 43 |"))
     assert "600 s" in row, row  # watchdog: three 43s inside 600 s escalate the tier
-    assert "/opt/vehicle" in text
+    vehicle = next(line for line in text.splitlines() if "/opt/vehicle" in line)
+    # The vehicle's own image alone carries it (Dockerfile.agent's stages; John, 2026-10-10).
+    assert "space-chassis-vehicle" in vehicle and "no agent" in vehicle, vehicle
 
 
 def test_every_default_the_example_states_is_the_one_compose_uses():
