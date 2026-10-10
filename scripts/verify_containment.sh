@@ -212,6 +212,16 @@ else:
         bad "$agent's postgres does not answer on /run/agent"
     fi
 
+    # 6b. Nothing of the vehicle in the agent's image (John, 2026-10-10: no risk of information
+    #     sharing): no /opt/vehicle, no serve script, and none of the vehicle's files by name
+    #     anywhere on the container's own filesystem. The agent's own window, /diode, is published to
+    #     it by contract and is not searched. A missing `find` says nothing, which fails.
+    case $(verdict "$agent" sh -c 'command -v find >/dev/null 2>&1 || exit 0; hits=$(find / -xdev \( -path /proc -o -path /sys -o -path /diode \) -prune -o \( -path /opt/vehicle -o -name serve_vehicle.sh -o -name mission.yaml -o -name vehicle.yaml -o -name coupling.yaml -o -name plant.md -o -name fault_policy.yaml \) -print 2>/dev/null | head -n 1); if [ -n "$hits" ]; then echo present; else echo absent; fi') in
+        absent) ok "$agent has no vehicle in its image" ;;
+        present) bad "$agent can read the vehicle" ;;
+        *) bad "$agent could not be probed for the vehicle" ;;
+    esac
+
     # 7. No recorder is reachable by name: they live on modelnet, which no agent joins.
     case $(verdict "$agent" sh -c "timeout 5 getent hosts $recorder >/dev/null 2>&1; echo rc=\$?") in
         rc=0) bad "$agent can resolve $recorder" ;;
