@@ -205,3 +205,44 @@ def test_the_vehicle_probe_says_nothing_when_it_cannot_run(run, tmp_path):
         timeout=10,
     ).stdout.strip()
     assert out.splitlines()[-1:] != ["absent"], out
+
+
+def _vehicle_probe(run) -> str:
+    run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
+    probe = next(line for line in run.argv_lines() if "/opt/vehicle" in line)
+    return probe.split(" -c ", 1)[1]
+
+
+def _run_probe_under(script: str, root) -> str:
+    """The probe's own text, with its absolute paths re-rooted at a scratch tree."""
+    rooted = (
+        script.replace("find / ", f"find {root} ")
+        .replace("/usr/local/bin/entrypoint.sh", f"{root}/usr/local/bin/entrypoint.sh")
+        .replace("-path /opt/vehicle", f"-path {root}/opt/vehicle")
+    )
+    return subprocess.run(
+        ["/bin/sh", "-c", rooted], capture_output=True, text=True, timeout=30
+    ).stdout.strip()
+
+
+def test_the_vehicle_probe_reports_present_absent_or_nothing(run, tmp_path):
+    """A clean image is absent; a planted vehicle file is present; a search that did not run as
+    written -- here, its sentinel missing -- prints nothing, which the script reports as a failure."""
+    script = _vehicle_probe(run)
+    root = tmp_path / "image"
+    (root / "usr" / "local" / "bin").mkdir(parents=True)
+    (root / "usr" / "local" / "bin" / "entrypoint.sh").write_text("#!/bin/sh\n")
+    assert _run_probe_under(script, root) == "absent"
+    (root / "srv").mkdir()
+    (root / "srv" / "plant.md").write_text("hidden truth")
+    assert _run_probe_under(script, root) == "present"
+    (root / "usr" / "local" / "bin" / "entrypoint.sh").unlink()
+    assert _run_probe_under(script, root) == ""
+
+
+def test_a_broken_search_expression_prints_nothing(run, tmp_path):
+    script = _vehicle_probe(run).replace("-xdev", "-xdevv")
+    root = tmp_path / "image"
+    (root / "usr" / "local" / "bin").mkdir(parents=True)
+    (root / "usr" / "local" / "bin" / "entrypoint.sh").write_text("#!/bin/sh\n")
+    assert _run_probe_under(script, root) == ""

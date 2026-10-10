@@ -8,7 +8,7 @@ for issues; this file holds the ones that steer the line, and the questions for 
 
 1. **The fleet can read the vehicle's hidden design.** *2026-10-10: the image half is done (plan 8:
    `d7a1172`, `4cb4ede`, `6e5370d`). The agents' image carries nothing of the vehicle, and
-   `verify_containment.sh` sweeps each agent for it. The window half stays open until the vehicle
+   `verify_containment.sh` sweeps each agent image's root filesystem for it. The window half stays open until the vehicle
    adoption lands. At the pinned `dd79e76`, the vehicle writes `scenario`, `seed`, `arms` and `dwell`
    into each agent's `pending.json` and `vehicle.scenario` into `state.json`. From `64fc58c` that
    identity is in the window root's `.executive.json`, which no agent binds.* The original finding:
