@@ -287,6 +287,25 @@ def test_an_agent_that_mounts_the_vehicle_s_state_is_a_failure(run):
     assert "FAIL  agent_1's mounts could not be inspected" in blind.stdout
 
 
+def test_an_agent_that_mounts_the_vehicle_s_source_is_a_failure(run):
+    """John, 2026-10-10: no risk of information sharing. The image carries none of the vehicle, so
+    a bind from a vehicle checkout, or of a directory holding this one's, is the way back."""
+    probe = {"COMPOSE": "docker compose -p probe", "AGENTS": "agent_1"}
+    clean = run(**probe, MOUNT_SOURCES="/v/state_x/data /v/diode/data/x /srv/build_x ")
+    assert "PASS  agent_1 mounts nothing of the vehicle's source" in clean.stdout
+    for leak in (
+        "/home/someone/space_chassis/docs/deep_research/vehicle",
+        "/elsewhere/docs/deep_research/vehicle/tools",
+        str(REPO),
+        str(REPO / "docs"),
+        "/",
+    ):
+        leaked = run(**probe, MOUNT_SOURCES=f"/v/state_x/data {leak} ")
+        assert "FAIL  agent_1 mounts the vehicle's source" in leaked.stdout, leak
+    blind = run(**probe)
+    assert "FAIL  agent_1's mounts could not be inspected for the vehicle's source" in blind.stdout
+
+
 def test_the_window_root_write_probe_fails_closed(run):
     refused = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", DIODE_ROOT_VERDICT="refused")
     assert "PASS  agent_1 cannot write the window root" in refused.stdout
