@@ -205,7 +205,7 @@ The coordinator is running one captured reproduction of the existing, unchanged 
 reproduction of its own.
 
 **Disclosure:** before this update arrived, this session ran the root suite once more (`nice -n 19`,
-569 passed, about 20:37 AEDT) as the commit gate for `d82827f`/`f99d0d3`. That run includes this
+569 passed; started after 20:34:49 and finished before 20:36:58 AEDT) as the commit gate for `d82827f`/`f99d0d3`. That run includes this
 test, so it may have overlapped the start of the coordinator's reproduction and added host load;
 the coordinator should weigh its timing accordingly. This addendum's commit ran no tests, so as not
 to overlap the reproduction (a documentation-only change; a departure from `practice.md`'s
