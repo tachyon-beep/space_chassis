@@ -1,6 +1,6 @@
 # Chassis — interface to the vehicle line
 
-As of **2026-10-10**, `aurora-port` @ `84b1c49` and `vehicle-adoption` @ `044b5c5`. Maintained by
+As of **2026-10-10**, `aurora-port` @ `e3eff27` and `vehicle-adoption` @ `be63f93`. Maintained by
 the Space Chassis session. **Verify against the code before trusting any line here.** The other
 side is `../vehicle/interface.md`. Edits to this file are the chassis's to make. The vehicle line
 proposes changes on filigree `space_chassis-93010ff54e` or by message.
@@ -36,8 +36,8 @@ commit, never before.
 
 Each agent binds only its own `/diode/<slug>` (`scripts/verify_containment.sh` check 5). With the
 adoption (`vehicle-adoption`), the script also checks that no agent can write the window root, that no
-agent mounts `vehicle_state` (read host-side), and that the vehicle binds `/diode` and `/state` and
-nothing else.
+agent mounts `vehicle_state` or the vehicle's source (both read host-side, from the agent's mount
+sources), and that the vehicle binds `/diode` and `/state` and nothing else.
 
 **No agent's image carries the vehicle** (plan 8, 2026-10-10). `verify_containment.sh` sweeps each
 agent image's root filesystem for it by name (not its mounts). Before the split, every agent could read every
