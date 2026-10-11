@@ -22726,8 +22726,8 @@ def test_a_console_with_nothing_to_claim_is_never_rewritten_so_a_batch_put_in_pl
     for land in (in_place, renamed_over):
         armed = [True]
 
-        def agent_lands_after_the_read(path, *, dir_fd=None, land=land, armed=armed):
-            read = real_read(path, dir_fd=dir_fd)
+        def agent_lands_after_the_read(path, *, dir_fd=None, label=None, land=land, armed=armed):
+            read = real_read(path, dir_fd=dir_fd, label=label)
             if armed[0] and path == "console.json":
                 armed[0] = False
                 land()
@@ -22828,6 +22828,457 @@ def test_a_resume_after_quiet_cycles_left_the_agent_s_console_in_place_adopts_it
     assert os.stat(diode / "alpha" / "console.json").st_ino == left
     assert json.loads((diode / "alpha" / "state.json").read_text())["variables"]["ack_alarm_enable"] is False
     resumed.close()
+
+
+def test_a_claim_takes_the_console_by_rename_so_a_batch_put_in_place_after_its_read_is_the_one_claimed(tmp_path, monkeypatch):
+    """#39, option B: what the claim takes is what is claimed; it never rewrites over a file it did not read.
+
+    Tier 1 stopped rewriting quiet consoles, but a console that held a batch was still read and then
+    rewritten by `os.replace`, so a second batch put in place between the two was renamed over,
+    unread. The claim now renames the console aside and reads what it took: the batch read first was
+    superseded by the agent's own later write, as on any filesystem, and the later one is the claim,
+    one result per command — whether the agent replaced the file or wrote into it. Nothing is left
+    at a private name afterwards.
+    """
+    console, _plant, world = console_tools()
+    diode = tmp_path / "diode"
+    executive = console.Executive(world, diode, phase="translunar_coast")
+    executive.attach("alpha")
+    alpha = diode / "alpha"
+    real_read = console.read_ingress
+    later = ["set_rcs_mode mode=manual", "zzz_second_batch"]
+
+    def in_place() -> None:
+        submit(alpha, later)
+
+    def renamed_over() -> None:
+        incoming = alpha / ".agent.console.json.tmp"
+        incoming.write_text(json.dumps({"commands": later}), encoding="utf-8")
+        os.replace(incoming, alpha / "console.json")
+
+    for land in (in_place, renamed_over):
+        armed = [True]
+
+        def agent_lands_after_the_read(path, *, dir_fd=None, label=None, land=land, armed=armed):
+            read = real_read(path, dir_fd=dir_fd, label=label)
+            if armed[0] and path == "console.json":
+                armed[0] = False
+                land()
+            return read
+
+        clear_results(alpha)
+        submit(alpha, ["zzz_first_batch"])
+        monkeypatch.setattr(console, "read_ingress", agent_lands_after_the_read)
+        executive.cycle()
+        monkeypatch.setattr(console, "read_ingress", real_read)
+        bodies = results_of(alpha)
+        assert len(bodies) == 2, (land.__name__, bodies)
+        assert not any("zzz_first_batch" in body for body in bodies), (land.__name__, bodies)
+        assert json.loads((alpha / "console.json").read_text())["commands"] == [], land.__name__
+        assert not [p.name for p in alpha.iterdir() if p.name.startswith(".console.json.")], land.__name__
+    assert executive.failure_count == 0, list(executive.failures)
+
+
+def test_a_console_written_while_the_claim_has_it_aside_is_never_overwritten_and_is_claimed_next(tmp_path, monkeypatch):
+    """#39, option B: the emptied console is put back by `link`, which fails rather than replace one.
+
+    Between the take and the put-back the console is absent (accepted, John 2026-10-11: agents read
+    an absent console as transient). A batch the agent writes then is left exactly as written — the
+    put-back finds it and stands aside — and the next cycle claims it, one result per command.
+    """
+    console, _plant, world = console_tools()
+    diode = tmp_path / "diode"
+    executive = console.Executive(world, diode, phase="translunar_coast")
+    window = executive.attach("alpha")
+    alpha = diode / "alpha"
+    real_read_take = console.Window._read_take
+    armed = [True]
+
+    def agent_writes_during_the_gap(self, root, name):
+        answer = real_read_take(self, root, name)
+        if armed[0]:
+            armed[0] = False
+            assert not (alpha / "console.json").exists()
+            submit(alpha, ["zzz_written_in_the_gap"], {"gap": True})
+        return answer
+
+    monkeypatch.setattr(console.Window, "_read_take", agent_writes_during_the_gap)
+    submit(alpha, ["zzz_first"])
+    executive.cycle()
+    assert armed == [False]
+    assert json.loads((alpha / "console.json").read_text()) == {"commands": ["zzz_written_in_the_gap"], "variables": {"gap": True}}
+    assert len(results_of(alpha)) == 1
+    executive.cycle()
+    assert len(results_of(alpha)) == 2 and window.variables == {"gap": True}
+    assert json.loads((alpha / "console.json").read_text()) == {"commands": [], "variables": {"gap": True}}
+    assert executive.failure_count == 0, list(executive.failures)
+
+
+def test_a_take_that_cannot_be_made_durable_is_answered_once_when_it_can_and_the_window_waits_meanwhile(tmp_path, monkeypatch):
+    """#39, option B: no answer before the take is durable, so the record can never outrun it.
+
+    With a record, the take is followed by the window directory's `fsync` before anything is
+    answered. When that fails, nothing of the batch runs or is answered, the take stays pending and
+    the window claims nothing — its console untouched — until a later cycle's barrier succeeds; then
+    the batch is answered exactly once.
+    """
+    console, _plant, world = console_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = console.Executive(world, diode, phase="translunar_coast", state_dir=state)
+    executive.attach("alpha")
+    alpha = diode / "alpha"
+    executive.cycle()
+    window_dir = os.path.realpath(alpha)
+    real_fsync, failing = os.fsync, [True]
+
+    def fsync(fd):
+        if failing[0] and os.path.realpath(f"/proc/self/fd/{fd}") == window_dir:
+            raise OSError(errno.EIO, "injected")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    submit(alpha, ["zzz_one", "zzz_two"])
+    executive.cycle()
+    assert results_of(alpha) == [] and executive.failure_count == 1, list(executive.failures)
+    assert "cannot be made durable" in executive.failures[-1]["error"]
+    taken = [p.name for p in alpha.iterdir() if p.name.startswith(".console.json.take.")]
+    assert len(taken) == 1, taken
+    submit(alpha, ["zzz_waits"])
+    executive.cycle()
+    assert results_of(alpha) == [] and json.loads((alpha / "console.json").read_text())["commands"] == ["zzz_waits"]
+    failing[0] = False
+    executive.cycle()
+    assert len(results_of(alpha)) == 2
+    executive.cycle()
+    assert len(results_of(alpha)) == 3
+    assert not [p.name for p in alpha.iterdir() if p.name.startswith(".console.json.")]
+    executive.close()
+
+
+def test_a_take_that_cannot_be_removed_is_moved_aside_and_only_one_that_can_be_neither_blocks_the_window(tmp_path, monkeypatch):
+    """#39, option B: one take per window, ever; quarantine before block; the block names its way out.
+
+    A take that cannot be removed (a directory with a read-only subtree, say) is renamed to a
+    `.console.json.dead.*` name that nothing reads, and claiming goes on. Only a take that can be
+    neither removed nor moved aside blocks the window: it claims nothing, its console waits untouched,
+    and every cycle records a failure naming the take; removing it unblocks the window.
+    """
+    console, _plant, world = console_tools()
+    diode = tmp_path / "diode"
+    executive = console.Executive(world, diode, phase="translunar_coast")
+    executive.attach("alpha")
+    alpha = diode / "alpha"
+    real_remove, real_rename = console.Window._remove_entry, os.rename
+
+    def cannot_remove(self, root, name):
+        if name.startswith(console.TAKE_PREFIX):
+            raise PermissionError(errno.EACCES, "injected")
+        return real_remove(self, root, name)
+
+    monkeypatch.setattr(console.Window, "_remove_entry", cannot_remove)
+    submit(alpha, ["zzz_one"])
+    executive.cycle()
+    assert len(results_of(alpha)) == 1
+    dead = [p.name for p in alpha.iterdir() if p.name.startswith(".console.json.dead.")]
+    assert len(dead) == 1 and "moved aside" in executive.failures[-1]["error"], (dead, executive.failures)
+    submit(alpha, ["zzz_two"])
+    executive.cycle()
+    assert len(results_of(alpha)) == 2, "a take moved aside does not block"
+
+    def cannot_rename_aside(src, dst, *args, **kwargs):
+        if str(dst).startswith(console.DEAD_PREFIX):
+            raise PermissionError(errno.EACCES, "injected")
+        return real_rename(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "rename", cannot_rename_aside)
+    submit(alpha, ["zzz_three"])
+    executive.cycle()
+    assert len(results_of(alpha)) == 3
+    stuck = [p for p in alpha.iterdir() if p.name.startswith(".console.json.take.")]
+    assert len(stuck) == 1
+    before = executive.failure_count
+    submit(alpha, ["zzz_waits"])
+    for _ in range(2):
+        executive.cycle()
+    assert len(results_of(alpha)) == 3 and executive.failure_count == before + 2
+    assert stuck[0].name in executive.failures[-1]["error"] and "unblocks" in executive.failures[-1]["error"]
+    assert json.loads((alpha / "console.json").read_text())["commands"] == ["zzz_waits"]
+    monkeypatch.setattr(console.Window, "_remove_entry", real_remove)
+    stuck[0].unlink()
+    executive.cycle()
+    assert len(results_of(alpha)) == 4
+
+
+class _Killed(BaseException):
+    """A SIGKILL, in process: it escapes every `except Exception` and leaves the disk as the kill would."""
+
+
+def _boot(console, world, diode: Path, state: Path):
+    """A fresh executive as `main` starts one: its boot marker written before its first claim."""
+    executive = console.Executive(world, diode, phase="translunar_coast", state_dir=state)
+    executive.attach("alpha")
+    console.write_boot_marker(executive.state_fd, executive.boot_id)
+    return executive
+
+
+def test_a_resume_recovers_the_map_from_the_ended_boot_s_take_and_never_from_an_older_one(tmp_path, monkeypatch):
+    """#39, option B: a take speaks for the map only to the resume right after the boot that made it.
+
+    Codex's counterexample, driven through the real claim: the vehicle takes a batch carrying map B
+    and is killed before it puts the console back. The resume finds the console absent and B's map
+    only in the take: it adopts B, puts the console back showing it and retires the take, and B's
+    commands are lost (claimed when taken). Then the ordering that would resurrect an old map: boot 1
+    is killed holding a take with map A; boot 2 adopts the console's newer map B and is killed before
+    retiring that take; the agent then writes a console with no map. Boot 3 must not adopt A from the
+    take (it is not the ended boot's): it retires it, and the map comes back unknown, never stale.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+
+    def killed_after_the_take(diode: Path, state: Path, variables: dict):
+        executive = _boot(console, world, diode, state)
+        recorded_run(executive, diode, {}, 2, snapshot_at=2)
+        submit(diode / "alpha", ["zzz_lost"], variables)
+
+        def killed(self, *args, **kwargs):
+            raise _Killed
+
+        monkeypatch.setattr(console.Window, "_republish", killed)
+        with pytest.raises(_Killed):
+            executive.cycle()
+        monkeypatch.undo()
+        with contextlib.suppress(Exception):
+            executive.close()
+        return executive.boot_id
+
+    diode, state = tmp_path / "one" / "diode", tmp_path / "one" / "state"
+    (tmp_path / "one").mkdir()
+    alpha = diode / "alpha"
+    boot = killed_after_the_take(diode, state, {"ack_alarm_enable": False, "map": "B"})
+    assert not (alpha / "console.json").exists()
+    assert [p.name for p in alpha.iterdir() if p.name.startswith(".console.json.take.")] == [f"{console.TAKE_PREFIX}{boot}.1"]
+    resumed, _ = resume_from(console, checkpoint, world, diode, state)
+    window = resumed.windows["alpha"]
+    assert window.variables == {"ack_alarm_enable": False, "map": "B"} and window.variables_known
+    assert json.loads((alpha / "console.json").read_text()) == {"commands": [], "variables": {"ack_alarm_enable": False, "map": "B"}}
+    assert not [p.name for p in alpha.iterdir() if p.name.startswith(".console.json.")] and window.take is None
+    resumed.cycle()
+    assert results_of(alpha) == []
+    resumed.close()
+
+    diode, state = tmp_path / "three" / "diode", tmp_path / "three" / "state"
+    (tmp_path / "three").mkdir()
+    alpha = diode / "alpha"
+    boot1 = killed_after_the_take(diode, state, {"map": "A"})
+    submit(alpha, [], {"map": "B"})
+    real_carry = console.Window._carry_take
+
+    def killed_while_retiring(self, root, durable):
+        if self.take is not None and self.take[1] == "retire":
+            raise _Killed
+        return real_carry(self, root, durable)
+
+    monkeypatch.setattr(console.Window, "_carry_take", killed_while_retiring)
+    with pytest.raises(_Killed):
+        resume_from(console, checkpoint, world, diode, state)
+    monkeypatch.undo()
+    take = alpha / f"{console.TAKE_PREFIX}{boot1}.1"
+    assert take.exists() and json.loads(take.read_text())["variables"] == {"map": "A"}
+    assert json.loads((state / ".boot.json").read_text())["boot_id"] != boot1, "boot 2 named itself before reading any window"
+    (alpha / "console.json").write_text(json.dumps({"commands": ["zzz_no_map"]}), encoding="utf-8")
+    resumed, _ = resume_from(console, checkpoint, world, diode, state)
+    window = resumed.windows["alpha"]
+    assert not window.variables_known and window.variables == {}, window.variables
+    assert not take.exists(), "a take that is not the ended boot's is retired before the first claim, unread"
+    resumed.close()
+
+
+def test_a_take_whose_removal_is_not_yet_durable_holds_the_window_and_a_power_loss_cannot_resurrect_an_older_map(tmp_path, monkeypatch):
+    """#39, option B (B5): retiring a take is durable before the window claims or adopts anything more.
+
+    The take is answered and removed, but the directory `fsync` that makes the removal durable fails.
+    Until it succeeds the window claims nothing and adopts no map — a quiet console with a new map is
+    left unadopted — and every cycle names the failure. A power loss in that state can bring the take
+    back (its map A); the console the agent has since rewritten without a map leaves the resume to
+    the take, and A is right, because no newer map was ever adopted. Once the barrier succeeds the
+    window takes up the console as usual.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = _boot(console, world, diode, state)
+    alpha = diode / "alpha"
+    recorded_run(executive, diode, {}, 2, snapshot_at=2)
+    window_dir = os.path.realpath(alpha)
+    real_fsync = os.fsync
+    seen, failing = [0], [True]
+
+    def fsync(fd):
+        if os.path.realpath(f"/proc/self/fd/{fd}") == window_dir:
+            seen[0] += 1
+            if failing[0] and seen[0] >= 2:
+                raise OSError(errno.EIO, "injected")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    submit(alpha, ["zzz_one"], {"map": "A"})
+    executive.cycle()
+    window = executive.windows["alpha"]
+    assert len(results_of(alpha)) == 1 and window.variables == {"map": "A"}
+    assert window.take is not None and window.take[1] == "barrier", window.take
+    assert "removal of the take" in executive.failures[-1]["error"]
+    take_name = window.take[0]
+    submit(alpha, ["zzz_waits"], {"map": "W"})
+    executive.cycle()
+    assert len(results_of(alpha)) == 1 and window.variables == {"map": "A"}, "no claim while the removal is not durable"
+    submit(alpha, [], {"map": "B"})
+    executive.cycle()
+    assert window.variables == {"map": "A"}, "no map is adopted while the removal is not durable"
+    (alpha / "console.json").write_text(json.dumps({"commands": ["zzz_no_map"]}), encoding="utf-8")
+    # A power loss now: the unlink was never made durable, so the take comes back.
+    (alpha / take_name).write_text(json.dumps({"commands": ["zzz_one"], "variables": {"map": "A"}}), encoding="utf-8")
+    monkeypatch.undo()
+    with contextlib.suppress(Exception):
+        executive.close()
+    resumed, _ = resume_from(console, checkpoint, world, diode, state)
+    assert resumed.windows["alpha"].variables == {"map": "A"}
+    assert not (alpha / take_name).exists()
+    resumed.cycle()
+    assert len(results_of(alpha)) == 2, "the console the agent wrote is claimed once; the take's batch is not run again"
+    resumed.close()
+
+
+def test_once_a_take_s_removal_is_durable_the_window_claims_again_and_a_sweep_s_barrier_survives_its_retries(tmp_path, monkeypatch):
+    """#39, option B (B5): a pending barrier holds the window, and the window carries on once it succeeds.
+
+    The live half of the retirement barrier: while the removal's `fsync` fails a submitted batch waits,
+    untouched; when it succeeds the barrier completes and the same cycle claims the batch, once. And
+    the sweep of earlier boots' takes keeps its barrier across retries: a removal whose `fsync` failed
+    is not forgotten because the next cycle finds nothing left to remove — the window waits until the
+    `fsync` succeeds, and only then claims.
+    """
+    console, _plant, world = console_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = console.Executive(world, diode, phase="translunar_coast", state_dir=state)
+    window = executive.attach("alpha")
+    alpha = diode / "alpha"
+    executive.cycle()
+    window_dir = os.path.realpath(alpha)
+    real_fsync = os.fsync
+    seen, failing = [0], [True]
+
+    def fsync(fd):
+        if os.path.realpath(f"/proc/self/fd/{fd}") == window_dir:
+            seen[0] += 1
+            if failing[0] and seen[0] >= 2:
+                raise OSError(errno.EIO, "injected")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    submit(alpha, ["zzz_one"])
+    executive.cycle()
+    assert len(results_of(alpha)) == 1 and window.take is not None and window.take[1] == "barrier"
+    submit(alpha, ["zzz_two"])
+    executive.cycle()
+    assert len(results_of(alpha)) == 1 and json.loads((alpha / "console.json").read_text())["commands"] == ["zzz_two"]
+    failing[0] = False
+    executive.cycle()
+    assert window.take is None and len(results_of(alpha)) == 2
+    assert json.loads((alpha / "console.json").read_text())["commands"] == []
+
+    # The sweep's barrier, remembered across retries.
+    stale = alpha / f"{console.TAKE_PREFIX}{'0' * 32}.1"
+    stale.write_text(json.dumps({"commands": ["zzz_stale"], "variables": {"stale": True}}), encoding="utf-8")
+    window.swept, seen[0], failing[0] = False, 1, True
+    submit(alpha, ["zzz_three"])
+    executive.cycle()
+    assert not stale.exists() and window.sweep_barrier and not window.swept
+    executive.cycle()
+    assert len(results_of(alpha)) == 2 and window.sweep_barrier, "nothing left to remove, but the barrier is still owed"
+    failing[0] = False
+    executive.cycle()
+    assert not window.sweep_barrier and window.swept and len(results_of(alpha)) == 3
+    assert "stale" not in window.variables
+    executive.close()
+
+
+def test_a_resume_whose_sweep_cannot_be_made_durable_recovers_the_map_later_through_the_claim_and_repair_never_hides_it(tmp_path, monkeypatch):
+    """#39, option B (B5): a deferred recovery keeps the ended boot's take, and no repair makes a console meanwhile.
+
+    The vehicle is killed holding a take with map A, the console absent. At the resume, retiring an
+    older boot's take cannot be made durable, so the recovery waits: nothing is adopted and the take is
+    kept. A cycle then finds `output/` gone and repairs the window — without a console, which would
+    read as present and hide A. When the barrier succeeds, the claim finishes the recovery: A is
+    adopted, the console is put back showing it, and the take is retired.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = _boot(console, world, diode, state)
+    alpha = diode / "alpha"
+    recorded_run(executive, diode, {}, 2, snapshot_at=2)
+    submit(alpha, ["zzz_lost"], {"map": "A"})
+
+    def killed(self, *args, **kwargs):
+        raise _Killed
+
+    monkeypatch.setattr(console.Window, "_republish", killed)
+    with pytest.raises(_Killed):
+        executive.cycle()
+    monkeypatch.undo()
+    with contextlib.suppress(Exception):
+        executive.close()
+    older = alpha / f"{console.TAKE_PREFIX}{'0' * 32}.4"
+    older.write_text(json.dumps({"commands": [], "variables": {"map": "older"}}), encoding="utf-8")
+    window_dir = os.path.realpath(alpha)
+    real_fsync, failing = os.fsync, [True]
+
+    def fsync(fd):
+        if failing[0] and os.path.realpath(f"/proc/self/fd/{fd}") == window_dir:
+            raise OSError(errno.EIO, "injected")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    resumed, _ = resume_from(console, checkpoint, world, diode, state)
+    window = resumed.windows["alpha"]
+    assert window.recovering is not None and not window.variables_known
+    assert not older.exists() and not (alpha / "console.json").exists()
+    evidence = alpha / window.recovering[0]
+    assert evidence.exists()
+    shutil.rmtree(alpha / "output")
+    resumed.cycle()
+    assert (alpha / "output").is_dir() and not (alpha / "console.json").exists(), "the repair made no console"
+    resumed.cycle()
+    assert window.recovering is not None and not window.variables_known
+    failing[0] = False
+    resumed.cycle()
+    assert window.recovering is None and window.variables == {"map": "A"}
+    assert json.loads((alpha / "console.json").read_text()) == {"commands": [], "variables": {"map": "A"}}
+    assert not evidence.exists() and results_of(alpha) == []
+    resumed.close()
+
+
+def test_the_boot_marker_is_written_by_a_serving_start_and_its_name_cannot_be_a_journal(tmp_path, capsys):
+    """#39, option B: the state directory names the boot that serves it, and the name is reserved.
+
+    A fresh start with a state directory writes `.boot.json` naming its boot before its first claim,
+    and a resume writes its own over it before reading any window; `--plan` writes none. A `--journal`
+    at that path would be replaced by the next start's marker, so it is refused by name before
+    anything is written.
+    """
+    _checkpoint, console, _plant, world = checkpoint_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    assert console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"]) == 0
+    first = json.loads((state / ".boot.json").read_text())["boot_id"]
+    assert (state / f"journal.{first}.jsonl").exists()
+    assert console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"]) == 0
+    second = json.loads((state / ".boot.json").read_text())["boot_id"]
+    assert second != first and (state / f"journal.{second}.jsonl").exists()
+    assert console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--plan"]) == 0
+    assert json.loads((state / ".boot.json").read_text())["boot_id"] == second
+    other = tmp_path / "other"
+    other.mkdir()
+    capsys.readouterr()
+    assert console.main(["--diode-dir", str(tmp_path / "d2"), "--state-dir", str(other), "--journal", str(other / ".boot.json"), "--slug", "alpha"]) == 3
+    assert "boot marker" in capsys.readouterr().err
+    assert sorted(p.name for p in other.iterdir()) == []
 
 
 def test_a_console_that_is_not_a_regular_file_is_refused_without_blocking(tmp_path):
@@ -26591,8 +27042,8 @@ def test_a_claimed_batch_and_its_results_are_durable_before_the_record_and_the_n
     The tick row says a batch was claimed and answered; if the console's rewrite were still only in
     the page cache, a crash could bring the commands back and run them twice. The note says a result
     is on disk; if the result's file or its directory entry were not durable, a crash could lose a
-    result the record calls written. So on a cycle that claimed a batch, the rewritten `console.json`
-    and the window's directory are `fsync`ed before the tick row; each result file and then the
+    result the record calls written. So on a cycle that claimed a batch, the take (the window's
+    directory), the console put back and the directory again are `fsync`ed before the tick row (#39, option B); each result file and then the
     `output/` directory are `fsync`ed before that window's note; and the note is written right after
     the window's results, before its frame, mirror and generated files. A quiet cycle is still one
     `fsync`.
@@ -26642,7 +27093,10 @@ def test_a_claimed_batch_and_its_results_are_durable_before_the_record_and_the_n
         return "other:" + target
 
     kinds = [kind(t) for t in order]
-    assert kinds == ["console", "window-dir", "record", "result", "result", "output-dir", "record", "frame"], kinds
+    # #39, option B: the take is durable (the window directory) before anything is answered; the emptied
+    # console put back is `fsync`ed, and one more `fsync` of the directory makes both the put-back and the
+    # take's removal durable — all before the row.
+    assert kinds == ["window-dir", "console", "window-dir", "record", "result", "result", "output-dir", "record", "frame"], kinds
     executive.close()
 
 

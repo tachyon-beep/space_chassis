@@ -19466,6 +19466,53 @@ linter's new `check_free_return` holds the vector to the design's figures (to a 
 millimetre per second) and re-flies it on every run, which takes about two-thirds of a second, and
 refuses a vector that strikes the Moon or returns to a perigee more than a kilometre off target.
 
+### #39, option B: the claim takes the console by renaming it, and never writes over a file
+
+**What tier 1 left.** A console that held something to claim was still read and then replaced by
+`os.replace`, so a batch put in place between the two was still renamed over, unread.
+
+**Option B** (John, 2026-10-11) takes the console instead of rewriting it.
+
+**The claim.**
+1. **Take:** the console is renamed to a private take name, `.console.json.take.<boot>.<n>`. A
+   rename moves exactly what is at the name at that instant, a link as a link, and erases nothing.
+2. **Claim:** what was taken is the claim. A batch put in place before the take supersedes the one
+   read, as on any filesystem.
+3. **Durability, with a record:** when the run keeps a record (a journal), the take is made durable,
+   by an `fsync` of the window directory, before anything is answered. If it cannot be, nothing is
+   answered or run, and the take waits. Without a record, these barriers are omitted, as they always
+   were.
+4. **Put back:** the emptied console is put back by `link`, which fails rather than replace a console
+   the agent has written meanwhile. That console is left for the next claim. The console can
+   therefore be briefly absent while a claim takes it; John accepted this, with agents reading an
+   absent console as transient.
+5. **Retire:** the take is removed, or moved aside to `.console.json.dead.*` if it cannot be. With a
+   record, the removal is made durable before the window claims or adopts anything more. While that
+   directory `fsync` fails, the window waits, even though the take is gone. One take per window, ever.
+   A take that can be neither removed nor moved aside blocks the window, and names itself every
+   cycle.
+
+**A resume** takes the window's map from the console's own `variables`. Failing that, it uses the
+take of the boot that just ended, which the new state-directory marker `.boot.json` identifies; an
+older take is never evidence. Failing both, the map is unknown, as before (ADR 0002 (xxxv), #42).
+`prepare` and `repair` put a console back only where none is.
+
+**Review and qualification.**
+- The design was reviewed in five Codex rounds (`B`, `B2`–`B5`).
+- The implementation was reviewed in four (candidates 0–3), and candidate 3 was approved.
+- A bounded selection of 25 tests passed under a reviewed systemd supervisor, whose 20
+  failure-injection controls all passed first.
+
+| finding (who) | what `f75420c` did | what it does now | the test failed at `f75420c` with |
+|---|---|---|---|
+| #39 a batch replaced between a non-quiet read and its rewrite was erased (tier-1 residual; Codex) | read, then `os.replace` over whatever was there | renames the console aside and answers what was taken; the later batch is the claim | the first batch answered and the later one never |
+| a console written during the claim could be overwritten (option B design) | (no gap: the rewrite overwrote it) | the put-back `link` fails and the agent's console is claimed next | not applicable: new behaviour; regression test added |
+| a crash mid-claim could lose or revert the map (Codex rounds 1–5) | the console's own map, or unknown | the console's map, else the ended boot's take, else unknown; never an older boot's take | not applicable: new mechanism; crash-ordering tests added |
+
+| figure | before | after |
+|---|---:|---:|
+| referee tests | 528 | **537** |
+
 ## The invariants, and which of them are enforced
 
 

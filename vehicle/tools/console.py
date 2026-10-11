@@ -197,6 +197,7 @@ import math
 import os
 import re
 import secrets
+import shutil
 import stat
 import sys
 import time
@@ -299,6 +300,12 @@ RECORD_FILE = ".executive.json"
 # The state directory's own two files beside the checkpoint generations: which diode directory it
 # serves, and one journal segment per boot (ADR 0002 J: `journal.<segment>.jsonl`, segment = boot).
 SERVES_FILE = "serves.json"
+# The state directory's boot marker (#39, option B): the executive's boot id, written durably before a
+# serving start reads any window, so that a resume knows which boot's take may speak for a window's map.
+BOOT_FILE = ".boot.json"
+# A window's private names for the claim's take (#39, option B) and for a take that could not be removed.
+TAKE_PREFIX = ".console.json.take."
+DEAD_PREFIX = ".console.json.dead."
 JOURNAL_SEGMENT = "journal.{boot_id}.jsonl"
 JOURNAL_SEGMENT_NAME = re.compile(r"journal\.([A-Za-z0-9_-]{1,64})\.jsonl")
 # The record's format (ADR 0002 J, child 4), named in every segment's header row. A change to what a
@@ -501,12 +508,16 @@ def dumps_json(payload: Any, **kwargs: Any) -> str:
     return json.dumps(payload, allow_nan=False, **kwargs)
 
 
-def write_json_atomic(path: str | os.PathLike[str], payload: Any, *, dir_fd: int | None = None, durable: bool = False) -> None:
-    write_text_atomic(path, dumps_json(payload, indent=2, sort_keys=False) + "\n", dir_fd=dir_fd, sync_file=durable, sync_dir=durable)
+def write_json_atomic(
+    path: str | os.PathLike[str], payload: Any, *, dir_fd: int | None = None, durable: bool = False, noclobber: bool = False
+) -> None:
+    write_text_atomic(
+        path, dumps_json(payload, indent=2, sort_keys=False) + "\n", dir_fd=dir_fd, noclobber=noclobber, sync_file=durable, sync_dir=durable
+    )
 
 
 def read_regular_bounded(
-    path: str | os.PathLike[str], *, dir_fd: int | None = None
+    path: str | os.PathLike[str], *, dir_fd: int | None = None, label: str | None = None
 ) -> tuple[bytes | None, str | None]:
     """The bytes of a regular file of bounded size, or the sentence that says why not.
 
@@ -518,7 +529,7 @@ def read_regular_bounded(
     named rather than loaded. Every agent-writable read goes through here; the operator's own record
     does too, because a rule with an exemption is a rule with a hole.
     """
-    label = Path(os.fspath(path)).name
+    label = label or Path(os.fspath(path)).name
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd)
     except FileNotFoundError:
@@ -565,7 +576,7 @@ def read_regular_bounded(
 
 
 def read_ingress(
-    path: str | os.PathLike[str], *, dir_fd: int | None = None
+    path: str | os.PathLike[str], *, dir_fd: int | None = None, label: str | None = None
 ) -> tuple[dict[str, Any] | None, str | None]:
     """The console's payload, or the sentence that says why it is not one.
 
@@ -578,7 +589,7 @@ def read_ingress(
     let through to the executive. The caller claims the console in every one of these cases, so a
     broken writer produces one refusal and not one per cycle (ADR 0001).
     """
-    raw, problem = read_regular_bounded(path, dir_fd=dir_fd)
+    raw, problem = read_regular_bounded(path, dir_fd=dir_fd, label=label)
     if raw is None:
         return None, problem
     try:
@@ -2608,6 +2619,21 @@ def results_on_disk(output_fd: int, slug: str, entries: list[dict[str, Any]]) ->
     return scan
 
 
+def read_boot_marker(state_fd: int | None) -> str | None:
+    """The boot id the state directory's marker names, or `None` (no state directory, no marker, or not one)."""
+    if state_fd is None:
+        return None
+    marker = read_json_bounded(BOOT_FILE, dir_fd=state_fd)
+    boot = marker.get("boot_id") if marker else None
+    return boot if isinstance(boot, str) and boot else None
+
+
+def write_boot_marker(state_fd: int | None, boot_id: str) -> None:
+    """Name this boot in the state directory's marker, durably (file and directory `fsync`ed)."""
+    if state_fd is not None:
+        write_json_atomic(BOOT_FILE, {"boot_id": boot_id}, dir_fd=state_fd, durable=True)
+
+
 def read_serves_record(dir_fd: int) -> tuple[str | None, str | None]:
     """The diode directory this state directory serves, `(None, None)` for none, or a refusal.
 
@@ -3080,7 +3106,9 @@ class Executive:
                     # preparation: `prepare` wrote `pending.json` at tick 0 (addendum B7).
                     self._record_failure(window, "check", exc, tick)
                     try:
-                        window.repair()
+                        # Never a console while a resume's recovery waits (#39, option B): it would read as present
+                        # and hide the ended boot's take, the only copy of the map; the recovery puts it back.
+                        window.repair(console=window.recovering is None)
                     except Exception as again:  # noqa: BLE001 - recorded, like the absence
                         self._record_failure(window, "prepare", again, tick)
                     finally:
@@ -4182,6 +4210,23 @@ class Window:
         self.boot_id = uuid.uuid4().hex
         self.started = utc_now()
         self.accepted = 0
+        # The claim's take (#39, option B): `[name, phase]` while a console taken aside still has work to
+        # do — "unanswered" until the take is durable and read, "retire" until it is removed or moved
+        # aside, "barrier" until that removal is durable. While it is set the window claims nothing and
+        # adopts no map: one take per window, ever, so a take can never outlive a newer map.
+        self.take: list[str] | None = None
+        self.take_seq = 0
+        # A republish that failed after a take, so the next claim's republish of the absent console is
+        # not also refused as an absent console.
+        self.republish_owed = False
+        # Whether this boot has cleared the window of takes from other boots and of moved-aside ones, and
+        # whether a removal it made still waits for its directory `fsync` (remembered across retries).
+        self.swept = False
+        self.sweep_barrier = False
+        # A resume's map recovery not yet finished, because its sweep's barrier failed: `[evidence]`, the
+        # ended boot's take it keeps for the retry (or `[None]`). The window claims and adopts nothing
+        # until the recovery is done.
+        self.recovering: list[str | None] | None = None
 
     # -- the directory ----------------------------------------------------------------------
     def open_handles(self) -> Handles:
@@ -4276,12 +4321,12 @@ class Window:
             "ring_slots": self.ring_slots,
             "world_id": None,
         }, dir_fd=handles.root)
-        try:
-            os.lstat(self.console, dir_fd=handles.root)
-        except FileNotFoundError:
-            write_json_atomic(self.console, {"commands": [], "variables": {}}, dir_fd=handles.root)
+        # Made only where none is (#39, option B): a link fails rather than replace a console an agent
+        # put there after any check, which `lstat` then `os.replace` did.
+        with contextlib.suppress(FileExistsError):
+            write_json_atomic(self.console, {"commands": [], "variables": {}}, dir_fd=handles.root, noclobber=True)
 
-    def repair(self) -> None:
+    def repair(self, *, console: bool = True) -> None:
         """Make a window's missing directories again, and an empty console where none is — nothing else.
 
         Repair is not initialisation (addendum B7): a directory lost while the vehicle runs, or while
@@ -4296,78 +4341,173 @@ class Window:
             for name in (self.output, self.telemetry):
                 with contextlib.suppress(FileExistsError):
                     os.mkdir(name, dir_fd=root)
-            try:
-                os.lstat(self.console, dir_fd=root)
-            except FileNotFoundError:
-                write_json_atomic(self.console, self.claimed_console(), dir_fd=root)
+            # A resume repairs without the console (#39, option B): `recover_map` puts it back once it knows
+            # the map, and a console made here first would read as present and hide the take's.
+            if console:
+                with contextlib.suppress(FileExistsError):
+                    write_json_atomic(self.console, self.claimed_console(), dir_fd=root, noclobber=True)
         finally:
             os.close(root)
 
     # -- the claim --------------------------------------------------------------------------
     def claim(self) -> list[Any] | str:
-        """Read the console and clear it, *before* acting on anything.
+        """Take the console aside and answer what was taken, *before* acting on anything.
 
-        The contract is unambiguous about the order: "**Intake is destructive and atomic.** Each
-        cycle the vehicle reads the file, then rewrites it with `commands` emptied and `variables`
-        preserved... **Clear before you act.**" So the rewrite happens here and the commands are
-        returned for the executive to validate afterwards. A console that is not one — absent, a
-        link, not a regular file, oversized, invalid, not an object — is *also* claimed, with the
-        previous variables, and the reason is returned instead of a batch for the one refusal result
+        The contract's order: "**Intake is destructive and atomic.** ... **Clear before you act.**" So
+        the claim happens here and the commands are returned for the executive to validate afterwards.
+        A console that is not one — a link, not a regular file, oversized, invalid, not an object — is
+        *also* claimed, and the reason is returned instead of a batch for the one refusal result
         (ADR 0001).
 
         **Preserved verbatim; honoured separately.** `variables` is "persistent — the vehicle never
         clears it": the object the agent wrote becomes the preserved map as written (replace, not
-        merge; a payload without a `variables` object keeps the previous map), and it is bounded by
+        merge; a payload without a `variables` object keeps the previous map), bounded by
         construction because it came from a file of at most `MAX_READ_BYTES`. What the vehicle acts
-        on is `honoured()`'s business, computed from the preserved map once per cycle, after the
-        claim, and never raising on any JSON value.
+        on is `honoured()`'s business, computed from the preserved map once per cycle.
 
-        **A console with nothing to claim is not rewritten (#39).** The rewrite is a read followed by
-        an `os.replace`, and no rename can check that the file it replaces is the file it read: a batch
-        the agent put in place between the two was renamed over, unread — no result, no record. The
-        claim ran on every cycle, the ~20 a second with nothing in them included, and every erased
-        batch the chassis's contract probe caught was a quiet cycle's. So a console that is an object
-        whose `commands` is exactly `[]` and that already shows the map — its own `variables` object,
-        which is adopted, or no `variables` key while the window has no map to show — is left as it
-        is: nothing written, nothing erased. A console that is not one, that has no `commands` key,
-        or that leaves out `variables` while the window knows a map, is rewritten as before, so the
-        file always shows the preserved map. **Residual:** every rewrite that remains — of a console
-        that held a batch, of one that is not a console, of a bare one while the window knows a map —
-        still erases a file the agent put in place between its read and its rewrite; the contract
-        says so (John, 2026-10-11, tier 1), and the take that closes it is the next package.
+        **A console with nothing to claim is left as it is (#39, tier 1):** an object whose `commands`
+        is exactly `[]` and that already shows the map — its own `variables` object, adopted, or no
+        `variables` key while the window has none. Decided from types alone, before the map is
+        adopted, so no JSON value can make it raise.
+
+        **Anything else is taken by a rename, never rewritten over (#39, option B).** The claim was a
+        read and then an `os.replace` of a fresh copy, and no rename can check that the file it
+        replaces is the file it read: a batch put in place between the two was renamed over, unread.
+        Now the console is renamed aside — `rename` moves whatever is at the name at that instant, a
+        link as a link — and **what was taken is the claim**, read through its private name; a batch
+        the agent put in place before the take superseded the one read, as on any filesystem. The
+        take is durable before anything is answered (#21's rule: the record may not outrun it). The
+        emptied console is then put back by a `link`, which fails rather than replace a console the
+        agent has already written again; that one is left for the next claim. So the console is never
+        a vehicle file older than the agent's newest, and is briefly absent while a claim takes it
+        (John, 2026-10-11: agents read an absent console as transient).
+
+        **One take per window, ever** (`self.take`): a take whose durability, removal or removal's
+        durability fails stays pending, the window claims nothing and adopts no map until it is
+        done, and each cycle retries it; a take that cannot be removed is moved aside, and only one
+        that can be neither blocks the window, naming itself every cycle. Nothing after the take
+        withholds a batch that was answered: a failure there is recorded beside its verdicts.
         """
         root = self._handles().root
+        durable = self.executive.journal is not None
+        if self.recovering is not None and not self._finish_recovery(root, durable):
+            return []
+        if not self.swept and not self._sweep(root, durable):
+            return []
+        if self.take is not None:
+            outcome = self._carry_take(root, durable)
+            if outcome is not None or self.take is not None:
+                return [] if outcome is None else outcome
         payload, problem = read_ingress(self.console, dir_fd=root)
         if payload is None:
-            write_json_atomic(self.console, self.claimed_console(), dir_fd=root, durable=self.executive.journal is not None)
+            try:
+                info = os.lstat(self.console, dir_fd=root)
+            except FileNotFoundError:
+                return self._republish_absent(root, durable, str(problem))
+            if stat.S_ISDIR(info.st_mode):
+                raise RuntimeError(f"{self.slug}/{self.console} is a directory; a console is a file, and a directory is not taken")
+        else:
+            commands = payload.get("commands")
+            variables = payload.get("variables")
+            if (
+                isinstance(commands, list)
+                and not commands
+                and (isinstance(variables, dict) or ("variables" not in payload and not self.variables_known))
+            ):
+                if isinstance(variables, dict):
+                    self._adopt(variables)
+                return []
+        self.take_seq += 1
+        name = f"{TAKE_PREFIX}{self.executive.boot_id}.{self.take_seq}"
+        try:
+            os.rename(self.console, name, src_dir_fd=root, dst_dir_fd=root)
+        except FileNotFoundError:
+            return []
+        self.take = [name, "unanswered"]
+        outcome = self._carry_take(root, durable)
+        return [] if outcome is None else outcome
+
+    def _adopt(self, variables: dict[str, Any]) -> None:
+        """Replace, not merge: the object the agent wrote *is* the preserved map."""
+        self.variables = variables
+        self.variables_known = True
+        self._honoured = None
+
+    def _failed(self, exc: BaseException) -> None:
+        """A failure after the take, recorded against the window beside whatever the claim answers."""
+        self.executive._record_failure(self, "claim", exc, self.executive.tick)
+
+    @staticmethod
+    def _errno(exc: OSError) -> str:
+        return f"{errno.errorcode.get(exc.errno or 0, type(exc).__name__)}: {exc.strerror}"
+
+    @classmethod
+    def _describe(cls, exc: BaseException) -> str:
+        return cls._errno(exc) if isinstance(exc, OSError) else f"{type(exc).__name__}: {exc}"
+
+    def _carry_take(self, root: int, durable: bool) -> list[Any] | str | None:
+        """Carry the pending take as far as it goes: durable, read and answered, republished, removed, durable.
+
+        Returns the claim's answer when this call read the take, else `None`. Whatever stays undone is
+        left in `self.take`, and the window claims nothing until a later cycle finishes it.
+        """
+        assert self.take is not None
+        name, phase = self.take
+        outcome: list[Any] | str | None = None
+        if phase == "unanswered":
+            if durable:
+                try:
+                    os.fsync(root)
+                except OSError as exc:
+                    self._failed(
+                        RuntimeError(
+                            f"the console taken as {self.slug}/{name} cannot be made durable ({self._errno(exc)}); none of it "
+                            "is answered or run until it is, and the window claims nothing meanwhile"
+                        )
+                    )
+                    return None
+            outcome = self._read_take(root, name)
+            try:
+                # `False` is the agent's newer console, left for the next claim: either way none is owed.
+                # Its directory entry is made durable by the take's removal barrier below, one `fsync` for both.
+                self._republish(root, durable, sync_dir=False)
+                self.republish_owed = False
+            except Exception as exc:  # noqa: BLE001 - after the read nothing may withhold the answer
+                self.republish_owed = True
+                self._failed(
+                    RuntimeError(
+                        f"the emptied console could not be put back after the take ({self._describe(exc)}); it is absent until "
+                        "the next claim puts it back"
+                    )
+                )
+            self.take[1] = phase = "retire"
+        if phase == "retire":
+            if not self._remove_take(root, name):
+                return outcome
+            self.take[1] = phase = "barrier"
+        if durable:
+            try:
+                os.fsync(root)
+            except OSError as exc:
+                self._failed(
+                    RuntimeError(
+                        f"the removal of the take {self.slug}/{name} cannot be made durable ({self._errno(exc)}); the window "
+                        "claims nothing and adopts no map until it is"
+                    )
+                )
+                return outcome
+        self.take = None
+        return outcome
+
+    def _read_take(self, root: int, name: str) -> list[Any] | str:
+        """What was taken is the claim: its commands, or the reason it is not a console; its map, adopted."""
+        payload, problem = read_ingress(name, dir_fd=root, label=self.console)
+        if payload is None:
             return str(problem)
         commands = payload.get("commands")
         variables = payload.get("variables")
-        # Decided before the map is adopted, and from `isinstance` alone, so no JSON value can make it
-        # raise: an exception here would leave the window unclaimed every cycle.
-        quiet = (
-            isinstance(commands, list)
-            and not commands
-            and (isinstance(variables, dict) or ("variables" not in payload and not self.variables_known))
-        )
-        # Replace, not merge: the object the agent wrote *is* the preserved map. A file with no
-        # `variables` object keeps the previous one, which is what "never clears it" means.
         if isinstance(variables, dict):
-            self.variables = variables
-            self.variables_known = True
-            self._honoured = None
-        if quiet:
-            return []
-        # A claim that takes a batch is made durable — the file and the directory — before the record
-        # says it was answered: a crash must not bring the commands back to run twice (child 4's review
-        # finding 6). An empty claim is a quiet cycle's and costs no `fsync`; without a record nothing
-        # relies on the claim being durable, and nothing is `fsync`ed.
-        write_json_atomic(
-            self.console,
-            self.claimed_console(),
-            dir_fd=root,
-            durable=commands not in (None, []) and self.executive.journal is not None,
-        )
+            self._adopt(variables)
         if commands is None:
             return []
         if not isinstance(commands, list):
@@ -4376,6 +4516,173 @@ class Window:
                 "there is no batch here to run"
             )
         return commands
+
+    def _republish(self, root: int, durable: bool, *, sync_dir: bool | None = None) -> bool:
+        """Put the emptied console back where none is; `False` when the agent has already written one."""
+        text = dumps_json(self.claimed_console(), indent=2, sort_keys=False) + "\n"
+        try:
+            write_text_atomic(
+                self.console, text, dir_fd=root, noclobber=True, sync_file=durable, sync_dir=durable if sync_dir is None else sync_dir
+            )
+        except FileExistsError:
+            return False
+        return True
+
+    def _republish_absent(self, root: int, durable: bool, problem: str) -> list[Any] | str:
+        """An absent console: put the emptied one back, refused once — unless the agent made one meanwhile."""
+        owed, self.republish_owed = self.republish_owed, False
+        if not self._republish(root, durable):
+            return []
+        return [] if owed else problem
+
+    def _remove_entry(self, root: int, name: str) -> None:
+        if stat.S_ISDIR(os.lstat(name, dir_fd=root).st_mode):
+            shutil.rmtree(name, dir_fd=root)
+        else:
+            os.unlink(name, dir_fd=root)
+
+    def _remove_take(self, root: int, name: str) -> bool:
+        """Remove the take, else move it aside where nothing reads it; `False` only when neither can be done."""
+        dead = DEAD_PREFIX + name[len(TAKE_PREFIX):]
+        return self._retire_entry(root, name, dead, blocking=True)
+
+    def _retire_entry(self, root: int, name: str, dead: str, *, blocking: bool) -> bool:
+        """Remove `name`, else rename it to `dead`; `False` only when neither works.
+
+        **Any** exception counts, not only `OSError`: `rmtree` on a deeply nested directory an agent swapped
+        in raises `RecursionError`, and an exception escaping here would drop an answer already read.
+        """
+        try:
+            self._remove_entry(root, name)
+            return True
+        except FileNotFoundError:
+            return True
+        except Exception as exc:  # noqa: BLE001 - see the docstring
+            try:
+                os.rename(name, dead, src_dir_fd=root, dst_dir_fd=root)
+            except Exception as again:  # noqa: BLE001 - named in the failure
+                consequence = (
+                    "the window claims nothing until it is gone, and removing it unblocks it" if blocking
+                    else "nothing reads it, and it does not block the window"
+                )
+                self._failed(
+                    RuntimeError(
+                        f"{self.slug}/{name} cannot be removed ({self._describe(exc)}) or moved aside ({self._describe(again)}); "
+                        + consequence
+                    )
+                )
+                return False
+            self._failed(
+                RuntimeError(
+                    f"{self.slug}/{name} cannot be removed ({self._describe(exc)}); it is moved aside to {dead}, which "
+                    "nothing reads, and removed when the window next starts"
+                )
+            )
+            return True
+
+    def _sweep(self, root: int, durable: bool, *, keep: str | None = None) -> bool:
+        """Once a boot, before any claim or adoption: retire takes other boots left, and takes moved aside.
+
+        None of them is read. Each is removed, else moved aside; one that can be neither is named and
+        left (it is not this boot's, so nothing ever reads it, and it blocks nothing). The removals are
+        made durable before the window claims or adopts anything (B5): `False` while that barrier
+        fails, and the next cycle tries again. `keep` is the take a resume is still reading.
+        """
+        current = f"{TAKE_PREFIX}{self.executive.boot_id}."
+        pending = {self.take[0]} if self.take is not None else set()
+        if keep is not None:
+            pending.add(keep)
+        try:
+            names = os.listdir(root)
+        except OSError as exc:
+            self._failed(RuntimeError(f"the window {self.slug} cannot be listed for leftover takes ({self._errno(exc)})"))
+            return False
+        for entry in names:
+            if entry in pending:
+                continue
+            if entry.startswith(DEAD_PREFIX):
+                dead = entry
+            elif entry.startswith(TAKE_PREFIX) and not entry.startswith(current):
+                dead = DEAD_PREFIX + entry[len(TAKE_PREFIX):]
+            else:
+                continue
+            self.sweep_barrier = True
+            if entry == dead:
+                try:
+                    self._remove_entry(root, entry)
+                except FileNotFoundError:
+                    pass
+                except Exception as exc:  # noqa: BLE001 - named; a moved-aside file blocks nothing
+                    self._failed(RuntimeError(f"{self.slug}/{entry}, moved aside earlier, cannot be removed ({self._describe(exc)}); nothing reads it"))
+            else:
+                self._retire_entry(root, entry, dead, blocking=False)
+        if self.sweep_barrier and durable:
+            try:
+                os.fsync(root)
+            except OSError as exc:
+                self._failed(
+                    RuntimeError(
+                        f"the removal of earlier takes from {self.slug} cannot be made durable ({self._errno(exc)}); the window "
+                        "claims nothing and adopts no map until it is"
+                    )
+                )
+                return False
+        self.sweep_barrier = False
+        self.swept = True
+        return True
+
+    def recover_map(self, root: int, prev_boot: str | None) -> None:
+        """A resume's map (#39, option B): the console's own, else the take of the boot that ended, else unknown.
+
+        A take speaks for the map only to the resume right after the boot that made it (`prev_boot`,
+        from the state directory's boot marker): one take per window means it is that boot's last, so
+        its map is the newest claimed unless the console carries its own, which is newer. An absent
+        console is put back with the map chosen; a console the agent made meanwhile is read once more.
+        The take is then retired before the first claim, like any take.
+        """
+        durable = self.executive.journal is not None
+        evidence = None
+        if prev_boot:
+            prefix = f"{TAKE_PREFIX}{prev_boot}."
+            numbered = []
+            for entry in os.listdir(root):
+                if entry.startswith(prefix) and entry[len(prefix):].isdigit():
+                    numbered.append((int(entry[len(prefix):]), entry))
+            if numbered:
+                evidence = max(numbered)[1]
+        self.recovering = [evidence]
+        self._finish_recovery(root, durable)
+
+    def _finish_recovery(self, root: int, durable: bool) -> bool:
+        """The resume's recovery, retried each cycle until its sweep is durable; `False` while it waits.
+
+        Every other take is retired, durably, before the map is read (B3 §1 step 1, B5); while that
+        barrier fails, nothing is adopted and the ended boot's take is kept for the retry.
+        """
+        assert self.recovering is not None
+        evidence = self.recovering[0]
+        if not self._sweep(root, durable, keep=evidence):
+            return False
+        self.recovering = None
+        payload, _problem = read_ingress(self.console, dir_fd=root)
+        if payload is not None and isinstance(payload.get("variables"), dict):
+            self._adopt(payload["variables"])
+        elif evidence is not None:
+            taken, _problem = read_ingress(evidence, dir_fd=root, label=self.console)
+            if taken is not None and isinstance(taken.get("variables"), dict):
+                self._adopt(taken["variables"])
+        if payload is None:
+            try:
+                os.lstat(self.console, dir_fd=root)
+            except FileNotFoundError:
+                if not self._republish(root, durable):
+                    again, _problem = read_ingress(self.console, dir_fd=root)
+                    if again is not None and isinstance(again.get("variables"), dict):
+                        self._adopt(again["variables"])
+        if evidence is not None:
+            self.take = [evidence, "retire"]
+            self._carry_take(root, durable)
+        return True
 
     def claimed_console(self) -> dict[str, Any]:
         """What the claim rewrites the console to: commands emptied, the preserved `variables` — when known.
@@ -5032,6 +5339,18 @@ def _resume(
             # Said once it is so (confirmation G6): a failed rewrite says only that it failed, above.
             sys.stderr.write(f"[console] resume: the root record at {executive.diode_dir / RECORD_FILE} was rewritten: {why}; the mismatch is journaled\n")
 
+    # **The boot marker, before any window is read (#39, option B).** The boot that ended is read from it
+    # and this boot is written over it, durably, so a take speaks for a window's map only to the resume
+    # right after the boot that made it; the record cannot say this, because a boot's segment header is
+    # written with its first cycle. Once written it is never rolled back, whatever later refuses.
+    prev_boot = read_boot_marker(executive.state_fd)
+    try:
+        write_boot_marker(executive.state_fd, executive.boot_id)
+    except Exception as exc:  # noqa: BLE001 - the refusal names it
+        raise ResumeRefused(
+            f"the boot marker {BOOT_FILE} cannot be written into the state directory ({type(exc).__name__}: {exc}); a resume "
+            "that cannot say which boot it is cannot tell a window's last take from an older one"
+        ) from exc
     republished: list[dict[str, Any]] = []
     for window in executive.windows.values():
         window.variables_known = False
@@ -5039,11 +5358,10 @@ def _resume(
             try:
                 handles = window.open_handles()
             except WindowAbsent:
-                window.repair()
+                window.repair(console=False)
                 handles = window.open_handles()
-            payload, _problem = read_ingress(window.console, dir_fd=handles.root)
-            if payload is not None and isinstance(payload.get("variables"), dict):
-                window.variables, window.variables_known, window._honoured = payload["variables"], True, None
+            # The console's map, else the ended boot's take's, else unknown (ADR 0002 (xxxv)).
+            window.recover_map(handles.root, prev_boot)
             republished.extend(executive.publish_obligations(window))
         except Exception as exc:  # noqa: BLE001 - the window's, recorded; the world resumes
             executive._record_failure(window, "resume", exc, tick)
@@ -5312,6 +5630,14 @@ def main(argv: list[str] | None = None) -> int:
                 return 3
             if state_fd is not None and state_path is not None:
                 starting.hold(state_fd, state_path)
+            # The boot marker's name is reserved (#39, option B): a journal written there would be
+            # replaced by the next boot's marker. Refused before anything is written.
+            if journal_explicit is not None and state_path is not None and journal_explicit == state_path / BOOT_FILE:
+                sys.stderr.write(
+                    f"--journal {args.journal} names the state directory's boot marker {state_path / BOOT_FILE}, which the "
+                    "executive rewrites at every start; name another file\n"
+                )
+                return 3
 
         def errno_name(exc: BaseException) -> str:
             if isinstance(exc, OSError):
@@ -5771,6 +6097,14 @@ def main(argv: list[str] | None = None) -> int:
                     f"the world's first checkpoint cannot be written into {state_dir} ({exc}); nothing is bound yet, and a "
                     "world without a checkpoint cannot be resumed (ADR 0002 H)"
                 )
+            # The boot marker (#39, option B), before the first claim: a fresh world has no map to recover,
+            # so it only names this boot, for the next resume to tell this boot's take from an older one.
+            try:
+                write_boot_marker(state_fd, executive.boot_id)
+            except Exception as exc:  # noqa: BLE001 - the refusal names it
+                with contextlib.suppress(OSError):  # the refusal is what is reported (fifth round)
+                    executive.close()
+                return refuse(f"the boot marker {state_path / BOOT_FILE} cannot be written ({errno_name(exc)}); nothing has been claimed")
 
         rings = sorted(set(resolved_slots.values()))
         ring = str(rings[0]) if len(rings) == 1 else ",".join(f"{s}:{resolved_slots[s]}" for s in slugs)
