@@ -22538,6 +22538,147 @@ def test_variables_survive_the_claim_verbatim_and_only_gates_and_the_allowance_a
     assert json.loads((alpha / "console.json").read_text())["variables"] == {"rcs_mode_auto_enable": False}
 
 
+def test_a_console_with_nothing_to_claim_is_never_rewritten_so_a_batch_put_in_place_during_its_read_is_not_erased(tmp_path, monkeypatch):
+    """#39: the claim renamed its rewrite over a batch the agent put in place after the read, unread.
+
+    The claim was a read and then an `os.replace`, on every cycle, the ~20 a second with nothing in
+    them included; a batch whose own `os.replace` landed between the two was renamed over — no
+    result, no record — and every such loss the chassis's contract probe caught was a quiet cycle's.
+    A console with nothing to claim is now left alone: across quiet cycles its inode and its mtime do
+    not move, and a batch that lands while a quiet console is being read is still there afterwards
+    and is claimed by the next cycle, one result per command — whether the agent writes it into the
+    file the claim read (in place) or renames a new file over it (the contract's way, the probe's).
+    """
+    console, _plant, world = console_tools()
+    diode = tmp_path / "diode"
+    executive = console.Executive(world, diode, phase="translunar_coast")
+    executive.attach("alpha")
+    alpha = diode / "alpha"
+    executive.cycle()
+    before = os.stat(alpha / "console.json")
+    for _ in range(3):
+        executive.cycle()
+    after = os.stat(alpha / "console.json")
+    assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+
+    real_read = console.read_ingress
+    batch = ["set_rcs_mode mode=manual", "zzz_not_a_verb"]
+
+    def in_place() -> None:
+        submit(alpha, batch)
+
+    def renamed_over() -> None:
+        incoming = alpha / ".agent.console.json.tmp"
+        incoming.write_text(json.dumps({"commands": batch}), encoding="utf-8")
+        os.replace(incoming, alpha / "console.json")
+
+    for land in (in_place, renamed_over):
+        armed = [True]
+
+        def agent_lands_after_the_read(path, *, dir_fd=None, land=land, armed=armed):
+            read = real_read(path, dir_fd=dir_fd)
+            if armed[0] and path == "console.json":
+                armed[0] = False
+                land()
+            return read
+
+        monkeypatch.setattr(console, "read_ingress", agent_lands_after_the_read)
+        clear_results(alpha)
+        executive.cycle()
+        assert armed == [False], land.__name__
+        assert json.loads((alpha / "console.json").read_text())["commands"] == batch, land.__name__
+        assert results_of(alpha) == [], land.__name__
+        executive.cycle()
+        bodies = results_of(alpha)
+        assert len(bodies) == 2, (land.__name__, bodies)
+        assert json.loads((alpha / "console.json").read_text())["commands"] == [], land.__name__
+    assert executive.failure_count == 0, list(executive.failures)
+
+
+def test_what_counts_as_nothing_to_claim_is_decided_by_shape_alone_and_the_console_always_shows_the_map(tmp_path):
+    """#39's quiet rule, shape by shape: skip only a console that already shows the preserved map.
+
+    `{"commands": [], "variables": {...}}` is quiet whatever the map holds — the agent's own file
+    already shows the map it set, which is adopted (replace, not merge) and honoured, so writing it
+    back would change nothing but the inode. `{"commands": []}` with no `variables` is quiet only
+    while the window has no map to show; while it has one, the console is rewritten once to show it
+    ("never clears it"), and is quiet after that. No `commands` key, a `variables` that is not an
+    object, and anything that is not a console are rewritten as before. The rule reads only types,
+    so no JSON value can make it raise.
+    """
+    console, _plant, world = console_tools()
+    diode = tmp_path / "diode"
+    executive = console.Executive(world, diode, phase="translunar_coast")
+    window = executive.attach("alpha")
+    alpha = diode / "alpha"
+
+    def inode() -> int:
+        return os.stat(alpha / "console.json").st_ino
+
+    # An agent's map-only console: adopted and honoured, the agent's file left in place.
+    submit(alpha, [], {"ack_alarm_enable": False, "probe_marker": True})
+    written = inode()
+    executive.cycle()
+    assert inode() == written
+    assert window.variables == {"ack_alarm_enable": False, "probe_marker": True} and window.variables_known
+    assert json.loads((alpha / "state.json").read_text())["variables"]["ack_alarm_enable"] is False
+    # No `variables` while the map is known: rewritten once to show it, then quiet.
+    (alpha / "console.json").write_text(json.dumps({"commands": []}), encoding="utf-8")
+    bare = inode()
+    executive.cycle()
+    shown = json.loads((alpha / "console.json").read_text())
+    assert shown == {"commands": [], "variables": {"ack_alarm_enable": False, "probe_marker": True}}
+    assert inode() != bare
+    settled = inode()
+    executive.cycle()
+    assert inode() == settled
+    # The same bare console while the window has no map (as after a resume that found none): quiet.
+    window.variables, window.variables_known, window._honoured = {}, False, None
+    (alpha / "console.json").write_text(json.dumps({"commands": []}), encoding="utf-8")
+    bare = inode()
+    executive.cycle()
+    assert inode() == bare and json.loads((alpha / "console.json").read_text()) == {"commands": []}
+    # Shapes that are not "nothing to claim": each is rewritten, and none raises.
+    window.variables, window.variables_known, window._honoured = {"kept": 1}, True, None
+    for shape in (
+        {"variables": {"kept": 1}},
+        {"commands": [], "variables": [1]},
+        {"commands": [], "variables": None},
+        {"commands": {}, "variables": {"kept": 1}},
+        {"commands": False, "variables": {"kept": 1}},
+    ):
+        (alpha / "console.json").write_text(json.dumps(shape), encoding="utf-8")
+        before = inode()
+        executive.cycle()
+        assert inode() != before, shape
+        assert json.loads((alpha / "console.json").read_text()) == {"commands": [], "variables": {"kept": 1}}, shape
+    assert executive.failure_count == 0, list(executive.failures)
+
+
+def test_a_resume_after_quiet_cycles_left_the_agent_s_console_in_place_adopts_its_map(tmp_path):
+    """#39 needs no change to a resume: a console the claim no longer rewrites still carries the map.
+
+    A quiet cycle leaves the agent's own map-only console in place rather than a copy of it; ADR 0002
+    G keeps `variables` out of the checkpoint and reads them back from the console, so the resumed
+    window must honour exactly the map that file carries, as it would have from the vehicle's copy.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = console.Executive(world, diode, phase="translunar_coast", state_dir=state)
+    executive.attach("alpha")
+    submit(diode / "alpha", [], {"ack_alarm_enable": False})
+    recorded_run(executive, diode, {}, 3, snapshot_at=3)
+    left = os.stat(diode / "alpha" / "console.json").st_ino
+    executive.close()
+    resumed, _ = resume_from(console, checkpoint, world, diode, state)
+    window = resumed.windows["alpha"]
+    assert window.variables == {"ack_alarm_enable": False} and window.variables_known
+    resumed.cycle()
+    assert os.stat(diode / "alpha" / "console.json").st_ino == left
+    assert json.loads((diode / "alpha" / "state.json").read_text())["variables"]["ack_alarm_enable"] is False
+    resumed.close()
+
+
 def test_a_console_that_is_not_a_regular_file_is_refused_without_blocking(tmp_path):
     """A FIFO or a device at `console.json` blocked the read forever; a deep nest blew the stack.
 

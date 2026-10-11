@@ -4321,6 +4321,20 @@ class Window:
         construction because it came from a file of at most `MAX_READ_BYTES`. What the vehicle acts
         on is `honoured()`'s business, computed from the preserved map once per cycle, after the
         claim, and never raising on any JSON value.
+
+        **A console with nothing to claim is not rewritten (#39).** The rewrite is a read followed by
+        an `os.replace`, and no rename can check that the file it replaces is the file it read: a batch
+        the agent put in place between the two was renamed over, unread — no result, no record. The
+        claim ran on every cycle, the ~20 a second with nothing in them included, and every erased
+        batch the chassis's contract probe caught was a quiet cycle's. So a console that is an object
+        whose `commands` is exactly `[]` and that already shows the map — its own `variables` object,
+        which is adopted, or no `variables` key while the window has no map to show — is left as it
+        is: nothing written, nothing erased. A console that is not one, that has no `commands` key,
+        or that leaves out `variables` while the window knows a map, is rewritten as before, so the
+        file always shows the preserved map. **Residual:** every rewrite that remains — of a console
+        that held a batch, of one that is not a console, of a bare one while the window knows a map —
+        still erases a file the agent put in place between its read and its rewrite; the contract
+        says so (John, 2026-10-11, tier 1), and the take that closes it is the next package.
         """
         root = self._handles().root
         payload, problem = read_ingress(self.console, dir_fd=root)
@@ -4329,12 +4343,21 @@ class Window:
             return str(problem)
         commands = payload.get("commands")
         variables = payload.get("variables")
+        # Decided before the map is adopted, and from `isinstance` alone, so no JSON value can make it
+        # raise: an exception here would leave the window unclaimed every cycle.
+        quiet = (
+            isinstance(commands, list)
+            and not commands
+            and (isinstance(variables, dict) or ("variables" not in payload and not self.variables_known))
+        )
         # Replace, not merge: the object the agent wrote *is* the preserved map. A file with no
         # `variables` object keeps the previous one, which is what "never clears it" means.
         if isinstance(variables, dict):
             self.variables = variables
             self.variables_known = True
             self._honoured = None
+        if quiet:
+            return []
         # A claim that takes a batch is made durable — the file and the directory — before the record
         # says it was answered: a crash must not bring the commands back to run twice (child 4's review
         # finding 6). An empty claim is a quiet cycle's and costs no `fsync`; without a record nothing

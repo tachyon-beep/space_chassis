@@ -19401,6 +19401,37 @@ that write neither the record nor a checkpoint.
 |---|---:|---:|
 | referee tests | 522 | **525** |
 
+### #39: a console with nothing to claim is not rewritten
+
+The claim read `console.json` and then renamed a fresh copy over it on every cycle, including the ~20
+a second with nothing in them. No rename can check that the file it replaces is the file it read, so
+a batch an agent put in place between the two was renamed over unread: no result and no record. The
+chassis's contract probe lost batches this way under load, and every loss it traced was a quiet
+cycle's (`evidence-1.tar.gz`, three of three).
+
+Three designs that took the console by `renameat2(RENAME_EXCHANGE)` were reviewed and declined:
+recovering the window's `variables` after a crash in a raced claim needs evidence the agent cannot
+forge, and ADR 0002 G keeps that map only in the agent's console. John chose the smallest change on
+2026-10-11:
+- **What changed:** a console that already shows the map is left as it is. That means `commands`
+  exactly `[]`, and either its own `variables` object (adopted) or no `variables` key while the window
+  has none. The test reads only types, before the map is adopted, so no JSON value can make it raise.
+- **Unchanged:** every other console is rewritten as before; resume, the record and the durability
+  order are untouched.
+- **Residual, stated in the claim's docstring and proposed for the contract:** a rewrite that remains
+  still erases a file put in place between its read and its rewrite.
+- **Next:** a take that cannot lose a batch, by renaming the console aside and republishing only if
+  nothing is there. It is its own package, with a console that may briefly be absent (accepted by
+  John).
+
+| finding (who) | what `f443996` did | what it does now | the test failed at `f443996` with |
+|---|---|---|---|
+| #39 a quiet rewrite erased a batch landing during its read (chassis diagnostic; Codex review) | rewrote the console every cycle, so the batch was renamed over unread | a quiet console is left in place; the batch is claimed next cycle, one result per command, whether written in place or renamed over | the console's inode changed across quiet cycles; the landed batch read back as `[]` and never got a result |
+
+| figure | before | after |
+|---|---:|---:|
+| referee tests | 525 | **528** |
+
 ## The invariants, and which of them are enforced
 
 
