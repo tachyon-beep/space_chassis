@@ -938,6 +938,25 @@ still raises. A failing disk reports a writeback error at `close`, so this is th
 went on after a fragment. The same holds where the start path refuses with the executive open: the
 refusal is what is reported. And the engine identity's read of a file names it, as its `stat` does.
 
+*Amended by #39 option B (2026-10-11): John's decision; design and implementation reviewed by Codex
+(`gpt-6-astra` high), the design in five rounds and the implementation in four; decided by the owner.*
+(xlv) **A claim takes the console by rename, and a take speaks for the map only to the next resume.**
+- **G is unchanged:** `variables` stay out of the checkpoint.
+- **New state:** a claim leaves a private take in the window (`.console.json.take.<boot>.<n>`) until
+  it is retired, and H gains one file in the state directory, `.boot.json`. A serving start with a state
+  directory writes this boot's id there, durably: a resume does so before it recovers any window, and a
+  fresh start after preparing its windows but before its first claim. A refused preflight never writes
+  it, and once recovery has begun it is never rolled back.
+- **A resume takes a window's map** from:
+  1. the console's own `variables`;
+  2. failing that, the take of the boot that just ended (the marker's previous id), which is then
+     retired;
+  3. failing that, unknown, as (xxxv) says.
+
+  A take from an older boot is never evidence and is retired unread.
+- **The residual stands, and narrows:** a second crash before the console shows a recovered map can
+  still leave it unknown. Issue #42 tracks why an unknown map matters.
+
 ### K — A corrupt or incompatible checkpoint, and the crash loop (maintainer with chassis reviewer)
 
 Fixed by WP08's acceptance: "corrupt/incompatible checkpoints fail explicitly". The question is what
