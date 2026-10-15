@@ -1,4 +1,9 @@
-FROM python:3.13-slim AS base
+FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS base
+
+# The base is pinned by digest (python:3.13-slim's index on 2026-10-10). The vehicle's checkpoint
+# records the Python patch version and libc, and the vehicle stage is this base, so a base that moved
+# under its tag would make every vehicle restart after a rebuild refuse. Changing this digest is a
+# new-world event (README, "The vehicle").
 
 # The floor of the world. Everything here is either a thing you cannot
 # bootstrap from nothing (a compiler, an interpreter, the Python they are made

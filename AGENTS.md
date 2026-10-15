@@ -8,8 +8,7 @@ read those before arguing with a rule below.
 
 ## Governance
 
-Start at `governance/README.md`: Space Aurora is one program building one product, with two project
-teams of equal importance working in parallel; it says who owns what across the two lines of work (the chassis, this
+Start at `governance/README.md`: who owns what across the two lines of work (the chassis, this
 repository; the vehicle, `tachyon-beep/space_vehicle`), each line's current state, its decisions,
 how it is worked, and what is open. It is never copied into an image.
 
@@ -38,7 +37,7 @@ docker compose --profile fleet config -q    # the topology parses
 sh scripts/prepare_host.sh                  # roster, .env, and the bounded volume images
 python3 scripts/status.py --verbose         # one line per agent, from the record
 sh scripts/verify_containment.sh --all      # safety claims vs. a running stack
-python3 -m pytest live -q                   # the smoke stack: three agents, a stub model; the fastest end-to-end proof
+systemd-run --user --scope -p CPUQuota=35% -p MemoryMax=1G nice -n 19 python3 -m pytest live -q   # the smoke stacks, one at a time, inside their capped scope; the fastest end-to-end proof
 ```
 
 One `pytest` collects every suite: the operator side and the assertions about this repository's own

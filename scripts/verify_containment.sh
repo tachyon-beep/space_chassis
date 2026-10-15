@@ -194,6 +194,40 @@ else:
     else
         bad "$agent's /diode holds '$entries', not ${slug:-<no slug>} alone"
     fi
+    # The window root is the vehicle's: an agent writes only inside its own window.
+    # A missing `touch` says nothing, which fails: only a write that was tried and refused passes.
+    case $(verdict "$agent" sh -c 'command -v touch >/dev/null 2>&1 || exit 0; if touch /diode/.probe 2>/dev/null; then rm -f /diode/.probe; echo wrote; else echo refused; fi') in
+        refused) ok "$agent cannot write the window root" ;;
+        wrote) bad "$agent can write the window root" ;;
+        *) bad "$agent could not be probed for writing the window root" ;;
+    esac
+    # The vehicle's private state (checkpoints, lock, durable record: hidden truth) is bound into
+    # no agent. Read host-side: the agent's own /state makes a target check from inside useless.
+    sources=$(docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' "$($COMPOSE ps -q "$agent" 2>/dev/null)" 2>/dev/null)
+    if [ -z "$sources" ]; then
+        bad "$agent's mounts could not be inspected"
+    elif printf '%s ' "$sources" | grep -qE '/vehicle_state(/| )'; then
+        bad "$agent mounts the vehicle's private state"
+    else
+        ok "$agent mounts nothing of the vehicle's private state"
+    fi
+    # Nor its source (John, 2026-10-10: no risk of information sharing). The image carries none of
+    # it (6b), so a bind is the one way back: any mount from inside a vehicle checkout, or of a
+    # directory that holds this one's (the repository, docs/, ...). Read from the same sources.
+    if [ -z "$sources" ]; then
+        bad "$agent's mounts could not be inspected for the vehicle's source"
+    else
+        exposed=""
+        for source in $sources; do
+            case "$source/" in */deep_research/vehicle/*) exposed=$source ;; esac
+            case "$PROJECT/docs/deep_research/vehicle/" in "${source%/}"/*) exposed=$source ;; esac
+        done
+        if [ -n "$exposed" ]; then
+            bad "$agent mounts the vehicle's source ($exposed)"
+        else
+            ok "$agent mounts nothing of the vehicle's source"
+        fi
+    fi
     for private in /transcripts /ledger; do
         if ! printf '%s\n' "$mounts" | grep -qx /; then
             bad "$agent's mount table could not be read, so $private is unchecked"
@@ -223,7 +257,7 @@ else:
     sweep=""
     swept=1
     if [ -n "$image" ]; then
-        sweep=$(docker run --rm --network none --user 0 --entrypoint find "$image" / -xdev \( -path /usr/local/bin/entrypoint.sh -o -path /opt/vehicle -o -name serve_vehicle.sh -o -name mission.yaml -o -name vehicle.yaml -o -name coupling.yaml -o -name plant.md -o -name fault_policy.yaml \) -print 2>/dev/null)
+        sweep=$(docker run --rm --network none --cpus 0.2 --memory 256m --memory-swap 256m --label "space_chassis.sweep=${SWEEP_LABEL:-operator}" --user 0 --entrypoint find "$image" / -xdev \( -path /usr/local/bin/entrypoint.sh -o -path /opt/vehicle -o -name serve_vehicle.sh -o -name mission.yaml -o -name vehicle.yaml -o -name coupling.yaml -o -name plant.md -o -name fault_policy.yaml \) -print 2>/dev/null)
         swept=$?
     fi
     if [ "$swept" -ne 0 ]; then
@@ -270,6 +304,22 @@ if [ $# -ge 2 ]; then
         in_agent "$listener" pkill -f "nc -lk $PEER_PORT" >/dev/null 2>&1
     else
         bad "could not start a listener on $listener"
+    fi
+fi
+
+echo "== the vehicle binds its window and its state"
+vehicle=$($COMPOSE ps -q vehicle 2>/dev/null)
+if [ -z "$vehicle" ]; then
+    skip "the vehicle is not running"
+else
+    binds=$(docker inspect -f '{{range .Mounts}}{{if eq .Type "bind"}}{{.Destination}} {{end}}{{end}}' "$vehicle" 2>/dev/null \
+        | tr ' ' '\n' | sed '/^$/d' | sort | tr '\n' ' ' | sed 's/ $//')
+    if [ "$binds" = "/diode /state" ]; then
+        ok "the vehicle binds /diode and /state and nothing else"
+    elif [ -z "$binds" ]; then
+        bad "the vehicle's binds could not be inspected"
+    else
+        bad "the vehicle binds '$binds', not /diode and /state alone"
     fi
 fi
 
