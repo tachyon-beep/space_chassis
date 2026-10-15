@@ -33,9 +33,9 @@ The full picture and the plan: [`docs/vehicle-completion/`](../docs/vehicle-comp
 
 ## Work that existed only on John's machine
 
-Pushed to 26 `wip/` branches on 2026-10-15 (D18), including 102 dropped stashes on `wip/stashes`. Inventory and disposition:
+Pushed to 37 `wip/` branches on 2026-10-15 (D18), including 102 dropped stashes on `wip/stashes` and the `space_vehicle` mirrors. Inventory and disposition:
 [`records/2026-10-15-wip-branch-inventory.md`](records/2026-10-15-wip-branch-inventory.md).
-the probe diagnostics are merged (#8); `#39` Option B with `#23` is draft PR #9; the host step is done; Phase B (plan 7)
+The probe diagnostics are merged (#8); `#39` Option B with `#23` is draft PR #9; the host step is done; Phase B (plan 7)
 conflicts with the restructure and waits on the chassis line; the September and WP01 branches had
 already landed; `wip/local-state` holds the latest completeness report, filigree export and brief v5.
 
