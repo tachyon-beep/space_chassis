@@ -53,15 +53,20 @@ tell you where.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
+import importlib.util
+import inspect
 import json
 import math
 import os
 import re
 import sys
 import time
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import yaml
@@ -292,6 +297,14 @@ class World:
     # arithmetic that turns the state into the channel. The frame's `values` is declared
     # `map[channel_id, ...]`, and this is the registry that says which channel id is what.
     points: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # **D5's seam: state id -> the domain rule that advances it**, loaded from
+    # `domains/<name>/rules.py` by `load_rules` and refused there rather than here if it registers a
+    # state its domain does not own. Empty for a world with no rule files, which is every toy world
+    # the referee builds and, until the first rule lands, the vehicle.
+    rules: dict[str, DomainRule] = field(default_factory=dict)
+    # domain -> every key a rule of that domain may read, mapped to the state it names (or `None`
+    # for a node key): the domain's own states and nodes, and what `reads:` and `writes:` declare.
+    rule_reads: dict[str, dict[str, State | None]] = field(default_factory=dict)
 
     def states_on(self, node: str) -> list[State]:
         return [s for s in self.states if s.node == node]
@@ -419,6 +432,423 @@ def _listed(directory: Path) -> list[os.DirEntry[str]]:
         return []
 
 
+# ------------------------------------------------------------------------------------------------
+# **D5: the domain-rule seam** (`governance/decisions.md` D5, `plant.md` §2).
+#
+# A rule is the code a state's class needs and no configuration can carry — an `algebraic` state's
+# relation, a `discrete` state's transitions, a `dynamics` state's equations. It lives beside the
+# domain's YAML in `domains/<name>/rules.py`, so eleven domains of rule work do not all land in this
+# file, and this file keeps what is the plant's: the scheduler, the integrator classes, the stocks
+# and the step loop. A rule never runs on its own; `advance()` calls it when the frozen order reaches
+# its state, exactly where the class's refusal used to be.
+#
+# The contract, which `load_rules` holds and the linter reports through `rule_refusals`:
+#
+#   * `rules.py` is standard-library Python, and only the deterministic part of it: the imports are
+#     `RULE_IMPORTS` and nothing else, so no clock, no randomness, no files, no environment. `plant.md`
+#     §6 is the reason — a rule that reads the wall clock is a replay divergence with a physics name.
+#   * It defines `RULES`, a dict from state id to a function `rule(inputs, params, dt) -> value`.
+#     `inputs` is a read-only view of this tick's values restricted to what the domain owns or
+#     declares in `reads:`/`writes:`; `params` is the state's own declaration in `components.yaml`;
+#     `dt` is the horizon in seconds. The return value is the state's new value. `None` means "cannot
+#     compute this tick" and is recorded as a gap, not as a value.
+#   * A rule is registered only for a state the domain owns, of a class that needs one, and not
+#     already computed by its configuration (a `derivation`, the effect path, the trajectory or the
+#     scalar Δv integrator). Anything else is refused by name.
+#
+# A state whose class needs a rule and has none is still the debt it was: the seam adds a place to
+# put code and changes no count until code is put there.
+# ------------------------------------------------------------------------------------------------
+
+RULES_FILE = "rules.py"
+
+# The classes a domain rule may advance. `lag`, `stock` and `delay` are integrators the plant owns
+# (`plant.md` §3); `hazard` is the plant's because its draw is the RNG stream's, which a rule may not
+# touch.
+RULE_METHODS = ("algebraic", "discrete", "dynamics")
+
+# The only modules a rule may import: arithmetic and data structures, nothing that observes the
+# world outside the snapshot. `random`, `time`, `datetime`, `os`, `pathlib`, `io`, `sys` and every
+# third-party package are refused by not being here.
+RULE_IMPORTS = frozenset(
+    {
+        "__future__",
+        "bisect",
+        "cmath",
+        "collections",
+        "dataclasses",
+        "enum",
+        "fractions",
+        "functools",
+        "itertools",
+        "math",
+        "operator",
+        "typing",
+    }
+)
+
+# Builtins that reach outside the snapshot (`open`, `input`), run code the check never saw (`eval`,
+# `exec`, `compile`, `__import__`), or reach round the import rule by name (`getattr` and friends,
+# `globals`, `vars`).
+RULE_FORBIDDEN_NAMES = frozenset(
+    {
+        "__import__",
+        "breakpoint",
+        "compile",
+        "delattr",
+        "eval",
+        "exec",
+        "exit",
+        "getattr",
+        "globals",
+        "help",
+        "input",
+        "locals",
+        "open",
+        "quit",
+        "setattr",
+        "vars",
+    }
+)
+
+
+@dataclass(frozen=True)
+class DomainRule:
+    """One registered rule: the state it advances, the domain it belongs to, and where it lives."""
+
+    state: str
+    domain: str
+    function: Callable[[Mapping[str, Any], Mapping[str, Any], float], Any]
+    source: str
+
+
+def rule_source_refusals(path: Path, text: str) -> list[tuple[str, str]]:
+    """What in a `rules.py` could make a rule read something other than its snapshot.
+
+    Static, over the syntax tree, before the module is executed: an import outside `RULE_IMPORTS`, a
+    name in `RULE_FORBIDDEN_NAMES`, any dunder name or attribute (the way round an import rule is
+    `__builtins__` or `.__globals__`), and `global`/`nonlocal`, which is how a function keeps state
+    between calls that the snapshot does not hold.
+    """
+    where = path.as_posix()
+    try:
+        tree = ast.parse(text, filename=where)
+    except SyntaxError as exc:
+        return [(f"{where}:{exc.lineno}", f"does not parse: {exc.msg}")]
+    found: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        line = f"{where}:{getattr(node, 'lineno', 0)}"
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            if isinstance(node, ast.ImportFrom) and node.level:
+                found.append(
+                    (line, "is a relative import; a rule imports the standard library only")
+                )
+                continue
+            names = (
+                [alias.name for alias in node.names]
+                if isinstance(node, ast.Import)
+                else [str(node.module)]
+            )
+            for name in names:
+                if name.split(".")[0] not in RULE_IMPORTS:
+                    found.append(
+                        (
+                            line,
+                            f"imports {name!r}. A rule imports only {sorted(RULE_IMPORTS)}: no clock, "
+                            "no randomness, no files and nothing outside the standard library, "
+                            "because a rule that can observe the world outside its snapshot is a "
+                            "replay divergence (`plant.md` §6)",
+                        )
+                    )
+        elif isinstance(node, ast.Name) and (
+            node.id in RULE_FORBIDDEN_NAMES or node.id.startswith("__")
+        ):
+            found.append((line, f"uses {node.id!r}, which reaches outside the rule's snapshot"))
+        elif isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            found.append(
+                (line, f"reads the attribute {node.attr!r}, which reaches round the import rule")
+            )
+        elif isinstance(node, ast.Global | ast.Nonlocal):
+            found.append(
+                (
+                    line,
+                    "declares `global`/`nonlocal`: a rule is a pure function of its snapshot, and "
+                    "state kept between calls is state no checkpoint carries",
+                )
+            )
+    return found
+
+
+def _configured_rule(state: State) -> str | None:
+    """The rule the configuration already supplies for this state, if any — the same predicates
+    `advance()` branches on, so a domain rule can never shadow one."""
+    spec = state.spec
+    if state.method == "algebraic" and (spec.get("provenance") or {}).get("derivation") is not None:
+        return "its `provenance.derivation`"
+    if state.method == "discrete":
+        commanded = command_only_movers(spec)
+        elsewhere = [m for m in (spec.get("moved_by") or []) if not str(m).startswith("command:")]
+        owned = effect_owned_movers(spec)
+        if owned and not commanded:
+            commanded, elsewhere = owned, []
+        if commanded and not elsewhere:
+            return "the effect path (it is moved only by commands or one-way events)"
+    if state.method == "dynamics":
+        if spec.get("rule") == TRAJECTORY_RULE:
+            return f"the plant's `{TRAJECTORY_RULE}` integrator"
+        if spec.get("driven_by") is not None and isinstance(spec.get("mass_kg"), int | float):
+            return "the plant's scalar `dv/dt = F/m` integrator"
+    return None
+
+
+def load_rules(
+    root: Path, states: list[State]
+) -> tuple[dict[str, DomainRule], list[tuple[str, str]]]:
+    """Every `domains/<name>/rules.py`, loaded and checked: the registry, and what was refused.
+
+    The refusals are the linter's too (`rule_refusals`), so the loader and the linter cannot
+    disagree about which rules are admissible. A refused rule is not registered.
+    """
+    by_id = {state.id: state for state in states}
+    rules: dict[str, DomainRule] = {}
+    refusals: list[tuple[str, str]] = []
+    domains = root / "domains"
+    if not domains.is_dir():
+        return rules, refusals
+    for directory in sorted(p for p in domains.iterdir() if p.is_dir()):
+        path = directory / RULES_FILE
+        if not path.is_file():
+            continue
+        where = f"domains/{directory.name}/{RULES_FILE}"
+        components = (
+            load_yaml(directory / "components.yaml")
+            if (directory / "components.yaml").is_file()
+            else {}
+        )
+        domain = str(components.get("domain", directory.name))
+        source_refusals = rule_source_refusals(Path(where), path.read_text())
+        if source_refusals:
+            refusals.extend(source_refusals)
+            continue
+        spec = importlib.util.spec_from_file_location(f"vehicle_rules_{directory.name}", path)
+        if spec is None or spec.loader is None:
+            refusals.append((where, "cannot be loaded as a module"))
+            continue
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except Exception as exc:  # the refusal is the report; the module's own error is its text
+            refusals.append((where, f"raised {type(exc).__name__} while loading: {exc}"))
+            continue
+        registry = getattr(module, "RULES", None)
+        if not isinstance(registry, dict):
+            refusals.append(
+                (where, "defines no `RULES` dict, so nothing in it is registered to any state")
+            )
+            continue
+        for state_id, function in registry.items():
+            at = f"{where}:RULES[{state_id!r}]"
+            state = by_id.get(str(state_id))
+            if state is None:
+                refusals.append((at, "is registered for a state no domain declares"))
+                continue
+            if state.domain != domain:
+                refusals.append(
+                    (
+                        at,
+                        f"is a rule for {state.id!r}, which domain {state.domain!r} owns and "
+                        f"{domain!r} does not. Domains do not call each other (`plant.md` §2), so "
+                        "a rule lives with the state it advances",
+                    )
+                )
+                continue
+            if state.method not in RULE_METHODS:
+                refusals.append(
+                    (
+                        at,
+                        f"is a rule for a `{state.method}` state. A domain rule advances "
+                        f"{', '.join(RULE_METHODS)}; `lag`, `stock` and `delay` are integrators "
+                        "the plant owns, and `hazard` draws from the RNG stream a rule may not read",
+                    )
+                )
+                continue
+            configured = _configured_rule(state)
+            if configured is not None:
+                refusals.append(
+                    (
+                        at,
+                        f"would be a second rule for {state.id!r}, which {configured} already computes",
+                    )
+                )
+                continue
+            if not callable(function):
+                refusals.append((at, f"is {function!r}, which is not a function"))
+                continue
+            try:
+                inspect.signature(function).bind(None, None, None)
+            except (TypeError, ValueError):
+                refusals.append((at, "does not take `(inputs, params, dt)`"))
+                continue
+            rules[state.id] = DomainRule(
+                state=state.id, domain=domain, function=function, source=where
+            )
+    return rules, refusals
+
+
+def rule_refusals(root: Path) -> list[tuple[str, str]]:
+    """The loader's refusals over the domain rule files, for `check_vehicle.py` to report.
+
+    Reads only the domain declarations, not the whole world: a rule refusal is a statement about
+    `rules.py` and the states it names, and the linter has its own reports for everything else.
+    """
+    states: list[State] = []
+    domains = root / "domains"
+    if domains.is_dir():
+        for directory in sorted(p for p in domains.iterdir() if p.is_dir()):
+            if not (directory / "components.yaml").is_file():
+                continue
+            components = load_yaml(directory / "components.yaml")
+            domain = str(components.get("domain", directory.name))
+            for spec in components.get("state") or []:
+                if isinstance(spec, dict) and spec.get("id"):
+                    states.append(
+                        State(
+                            id=str(spec["id"]),
+                            domain=domain,
+                            node=str(spec.get("node", "internal")),
+                            method=str(spec.get("method")),
+                            unit=str(spec.get("unit", "")),
+                            spec=spec,
+                        )
+                    )
+    return load_rules(root, states)[1]
+
+
+def rule_readable(
+    world: World, declarations: dict[str, dict[str, Any]]
+) -> dict[str, dict[str, State | None]]:
+    """domain -> every key a rule of that domain may read: what it owns and what it declares.
+
+    A domain's own states and nodes, and the nodes its `reads:` and `writes:` name with every state on
+    them. A node key maps to `None`; a state id maps to its state, so a read goes through
+    `state_level` and finds a state on the sentinel or on a crowded node by its own id.
+    """
+    readable: dict[str, dict[str, State | None]] = {}
+    for domain in sorted({rule.domain for rule in world.rules.values()}):
+        keys: dict[str, State | None] = {}
+        nodes = {s.node for s in world.states if s.domain == domain and s.node != "internal"}
+        declared = declarations.get(domain) or {}
+        for name in ("reads", "writes"):
+            nodes.update(str(n) for n in (declared.get(name) or []))
+        for node in sorted(nodes):
+            keys[node] = None
+        for state in world.states:
+            if state.domain == domain or state.node in nodes:
+                keys[state.id] = state
+        readable[domain] = keys
+    return readable
+
+
+def _frozen(value: Any) -> Any:
+    """A read-only copy of a value handed to a rule: a rule cannot write the snapshot it reads."""
+    if isinstance(value, dict | MappingProxyType):
+        return MappingProxyType({k: _frozen(v) for k, v in value.items()})
+    if isinstance(value, list | tuple):
+        return tuple(_frozen(v) for v in value)
+    return value
+
+
+class RuleInputs(Mapping[str, Any]):
+    """The snapshot a rule reads: this tick's values, restricted to what its domain may read.
+
+    A key outside the domain's declaration is refused by name rather than returned, and a declared
+    key with no value this tick is a gap whose `needs` names it — the same two outcomes an edge's
+    driver has. `.get(key, default)` raises too, deliberately: a default here is a plausible number
+    standing in for an input nobody supplied.
+    """
+
+    __slots__ = ("_domain", "_readable", "_values", "_where")
+
+    def __init__(
+        self, values: dict[str, Any], readable: dict[str, State | None], domain: str, where: str
+    ) -> None:
+        self._values = values
+        self._readable = readable
+        self._domain = domain
+        self._where = where
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in self._readable:
+            raise Unconfigured(
+                self._where,
+                f"its rule reads {key!r}, which domain {self._domain!r} neither owns nor declares "
+                "in `reads:`. Domains do not call each other (`plant.md` §2): a read is declared, "
+                "and a same-tick read is an edge",
+            )
+        state = self._readable[key]
+        value = state_level(self._values, state) if state is not None else self._values.get(key)
+        if value is None:
+            raise Unconfigured(
+                self._where, f"its rule reads {key!r}, which has no value this tick", needs=key
+            )
+        return _frozen(value)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(sorted(self._readable))
+
+    def __len__(self) -> int:
+        return len(self._readable)
+
+
+class RuleParams(Mapping[str, Any]):
+    """The state's own declaration, read-only, with `UNCONFIGURED` refused rather than returned."""
+
+    __slots__ = ("_spec", "_where")
+
+    def __init__(self, spec: dict[str, Any], where: str) -> None:
+        self._spec = spec
+        self._where = where
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in self._spec:
+            raise Unconfigured(
+                f"{self._where}.{key}",
+                "is a parameter its rule reads and the state does not declare",
+            )
+        value = self._spec[key]
+        if unset_paths(value) or value == "UNCONFIGURED":
+            raise Unconfigured(f"{self._where}.{key}", "is UNCONFIGURED, and its rule needs it")
+        return _frozen(value)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._spec)
+
+    def __len__(self) -> int:
+        return len(self._spec)
+
+
+def call_rule(world: World, state: State, values: dict[str, Any], dt: float) -> Any:
+    """Run the registered rule for one state on its snapshot, or raise the gap it could not close."""
+    rule = world.rules[state.id]
+    where = f"domains/{state.domain}/components.yaml:state {state.id}"
+    readable = world.rule_reads.get(rule.domain)
+    if readable is None:
+        readable = rule_readable(world, {})[rule.domain]
+    inputs = RuleInputs(values, readable, rule.domain, where)
+    params = RuleParams(state.spec, where)
+    try:
+        value = rule.function(inputs, params, dt)
+    except Unconfigured:
+        raise
+    except Exception as exc:
+        # A rule that raises is a bug in the rule, not a debt in the configuration, so it is not a
+        # gap: it stops the tick, naming the file it came from.
+        raise RuntimeError(f"{rule.source}: the rule for {state.id!r} raised {exc!r}") from exc
+    if value is None:
+        raise Unconfigured(where, f"its rule ({rule.source}) returned no value this tick")
+    return value
+
+
 def load_world(root: Path) -> World:
     """Build the world, or refuse the configuration.
 
@@ -432,8 +862,13 @@ def load_world(root: Path) -> World:
 
     states: list[State] = []
     internal_order: dict[str, Any] = {}
+    declarations: dict[str, dict[str, Any]] = {}
     for directory in sorted(p for p in (root / "domains").iterdir() if p.is_dir()):
         components = load_yaml(directory / "components.yaml")
+        declarations[str(components.get("domain", directory.name))] = {
+            "reads": components.get("reads") or [],
+            "writes": components.get("writes") or [],
+        }
         # The sentinel states' within-domain order. The linter requires this declaration of every
         # domain with more than one state on the sentinel and validates it against the states; the
         # plant is the reader that makes it mean something, so it travels with the world.
@@ -633,6 +1068,14 @@ def load_world(root: Path) -> World:
     sentinel_block, _ = world.sentinel_states()
     world.states = scheduled_states + sentinel_block
     world.advance_order["internal"] = [s.id for s in sentinel_block]
+
+    # D5's rules, refused as a configuration is: a rule file the linter would refuse is a world this
+    # loader will not build, rather than one that runs with the offending rule quietly dropped.
+    rules, refused = load_rules(root, world.states)
+    if refused:
+        raise Unconfigured(refused[0][0], "; ".join(f"{w}: {why}" for w, why in refused))
+    world.rules = rules
+    world.rule_reads = rule_readable(world, declarations)
     return world
 
 
@@ -1457,11 +1900,15 @@ def advance(world: World, state: State, values: dict[str, Any], dt: float) -> di
     # scheduled state rather than a graph neighbour. The name is the same declaration a derivation
     # binds, and the linter holds it to the same rule: the producer must advance first.
     named_driver = state.method == "dynamics" and state.spec.get("driven_by") is not None
+    # A registered domain rule reads what its domain declares (`RuleInputs`), so "no edge reaches
+    # it" is not "nothing drives it" for a state that has one.
+    ruled = state.id in world.rules
     if (
         state.method in {"lag", "stock", "delay", "dynamics"}
         and not incoming
         and not preloaded
         and not named_driver
+        and not ruled
     ):
         raise Unconfigured(
             where, f"is a {state.method} with no incoming edge, so nothing drives it"
@@ -1483,6 +1930,12 @@ def advance(world: World, state: State, values: dict[str, Any], dt: float) -> di
                 f"coupling.yaml:edge {edge.id}",
                 f"drives {state.id} and carries no sensitivity value, so the plant cannot apply it",
             )
+
+    # **D5: the domain's rule, where it has registered one.** Only for a class the plant does not
+    # integrate itself and only where the configuration supplies no rule — `load_rules` refuses
+    # everything else — so this is reached exactly where the class's refusal would have been.
+    if ruled:
+        return state_values(world, state, call_rule(world, state, values, dt))
 
     if state.method == "lag":
         # **The rule this branch did not have.** The lag integrator relaxes the state toward the
@@ -2381,8 +2834,16 @@ def resolve_declared_states(world: World, values: dict[str, Any]) -> list[str]:
             continue
         derivation = (state.spec.get("provenance") or {}).get("derivation")
         if derivation is None:
-            continue
-        value, _ = derivation_value(derivation, world.documents, readings=values)
+            if state.id not in world.rules:
+                continue
+            # D5: an `algebraic` rule is memoryless for the same reason a derivation is, so it is
+            # resolved at t=0 in the same pass and left absent, as the tick would, where it cannot be.
+            try:
+                value = call_rule(world, state, values, tick_seconds(world))
+            except Unconfigured:
+                continue
+        else:
+            value, _ = derivation_value(derivation, world.documents, readings=values)
         if value is None:
             continue
         entries = state_values(world, state, value)
@@ -3107,6 +3568,10 @@ def _classify(world: World, state: State) -> str:
         derivation = (state.spec.get("provenance") or {}).get("derivation")
         if derivation is not None:
             return "ready"
+    if state.id in world.rules:
+        # D5: the rule is in `domains/<name>/rules.py`, so nothing is left to write for this state;
+        # what stops it, if anything, is an input, and `build_order` reads that from the tick.
+        return "ready"
     if state.method == "delay" and isinstance(state.spec.get("delay_s"), (int, float)):
         # **The seventh class joined the ones the plant can advance, and this classifier did
         # not hear about it.** `loop_transport_t` declares its `initial`, its `delay_s` and
