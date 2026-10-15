@@ -138,8 +138,11 @@ Verlet in coast, RK4 in burns; quaternion renormalised every tick (`plant.md` §
 (`E-RCS-DYN` with a sensitivity), control allocation (`rcs.attitude_error`), main-engine burns.
 **In flight:** slice 1, the orbit propagation rule for `gnc.orbital_state` (and the attitude/body-rate
 drive if it falls out), taken by the Repo readiness thread on 2026-10-15 in worktree `vehicle/wp07-orbit`;
-vehicle code and tests only. It can be accepted against an analytic orbit before WP03 supplies the
-mission's real state vector (`mission.yaml.initial_state.position_xyz_km` is `UNCONFIGURED`).
+vehicle code and tests only. On that branch (unmerged as of this commit) it declares a free-return
+start state in `mission.yaml.initial_state` (the declared conic hit the Moon), adds a coast integrator
+branch in `plant.py` for `cislunar_point_masses` dynamics, and puts the gravity model in
+`vehicle/tools/trajectory.py`; it reports 273 → 270 debts and 53 states advancing. The figures in
+this suite are `main`'s and move when it merges.
 
 **Accepts:** two-body propagation against an analytic orbit over the mission horizon within the
 published precision; torque-free rotation conserves angular momentum; a reference burn reproduces its
