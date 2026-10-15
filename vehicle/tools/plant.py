@@ -416,6 +416,24 @@ def corpus_files(root: Path) -> list[Path]:
     return [path for path in files if _present(path)]
 
 
+def domain_rule_files(root: Path) -> list[Path]:
+    """Every `domains/<name>/rules.py` (D5), sorted as paths, by `corpus_files`' own discipline.
+
+    A rule is physics the configuration does not carry, so a checkpoint's engine identity hashes it
+    beside the corpus (`checkpoint.engine_identity`): a run must not resume across a rule change. The
+    listing is `corpus_files`' — `os.scandir`, an error raising with its path, only absence quiet —
+    so an unreadable `domains/` is never a shorter list of rules either.
+    """
+    found = [
+        Path(entry.path)
+        for domain in _listed(root / "domains")
+        if domain.is_dir()
+        for entry in _listed(Path(domain.path))
+        if entry.name == RULES_FILE
+    ]
+    return [path for path in sorted(found) if _present(path)]
+
+
 def _present(path: Path) -> bool:
     """Whether `path` exists, following links: `False` only for its absence; any other error raises, naming it (`corpus_files`)."""
     try:

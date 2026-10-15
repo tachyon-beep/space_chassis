@@ -91,7 +91,8 @@ no current) and the previous verifies and its world matches; a refusal naming bo
 fail; `None` when neither exists; and an **incompatible** current is refused at once and the
 previous generation is never opened, because it was written by the same build.
 
-**`engine`** is a SHA-256 over the bytes of `plant.corpus_files(root)` and of `tools/plant.py`,
+**`engine`** is a SHA-256 over the bytes of `plant.corpus_files(root)`, of every
+`domains/<name>/rules.py` (`plant.domain_rule_files`, the D5 rules) and of `tools/plant.py`,
 `tools/console.py` and `tools/faults.py` — what the physics and the executive read — rather than
 the git commit, which is recorded beside it and never checked: with the commit, a README round
 would end every saved run (ADR 0002 I). This module is not in the hash on purpose: a change to how
@@ -122,7 +123,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plant import corpus_files, load_world  # noqa: E402
+from plant import corpus_files, domain_rule_files, load_world  # noqa: E402
 
 FORMAT = "vehicle.checkpoint.v3"
 CURRENT = "checkpoint.json"
@@ -189,7 +190,8 @@ def decode(raw: bytes) -> Any:
 
 # -- identity -----------------------------------------------------------------------------------
 def engine_identity(root: Path) -> str:
-    """SHA-256 over the corpus and the three engine tools, each framed by its path and length.
+    """SHA-256 over the corpus, the domain rules and the three engine tools, each framed by its path
+    and length.
 
     Every file is examined with `os.stat`, so an error — its absence included — raises naming it; not
     with `Path.is_file`, which from Python 3.14 answers `False` for any `OSError` and made an `EIO`
@@ -197,7 +199,10 @@ def engine_identity(root: Path) -> str:
     """
     root = Path(root)
     digest = hashlib.sha256()
-    names = [path.relative_to(root).as_posix() for path in corpus_files(root)] + list(ENGINE_TOOLS)
+    # The domain rules (D5) are physics as much as the corpus is: a checkpoint written before a rule
+    # changed must not resume after it.
+    hashed = [*corpus_files(root), *domain_rule_files(root)]
+    names = [path.relative_to(root).as_posix() for path in hashed] + list(ENGINE_TOOLS)
     for name in names:
         path = root / name
         if not stat.S_ISREG(os.stat(path).st_mode):
