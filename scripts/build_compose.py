@@ -272,8 +272,8 @@ def _diode() -> str:
         '    entrypoint: ["python", "/opt/fake/fake_diode.py"]\n'
         "    restart: unless-stopped\n"
         '    profiles: ["diode"]\n'
-        "    # Its interface is the volume, so it is on no network an agent is on (spec section 5).\n"
-        "    networks: [windowside]\n"
+        "    # Its interface is the volume, so it needs no network at all (spec section 5).\n"
+        "    network_mode: none\n"
     )
     text += _environment(
         (
@@ -341,8 +341,6 @@ networks:
   # The review panel's own network: no gateway, and no other member.
   reviewnet:
     internal: true
-  # An operator may attach a diode here instead of giving it a route to the public internet.
-  windowside: {}
 """
 
 

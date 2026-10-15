@@ -25,7 +25,7 @@ that sounds like "the fleet cannot see the window" belongs here.
 
 ```sh
 git submodule update --init --recursive     # the vehicle is a submodule; without it, collection is partial
-python3 -m pytest -q -n 8                   # the whole suite, no Docker needed
+python3 -m pytest -q -n 8                   # the whole suite; no containers, a few tests use the docker CLI
 uvx ruff check . --no-cache                 # ruff is not installed here; uvx fetches it
 docker compose --profile fleet config -q    # the topology parses
 sh scripts/prepare_host.sh                  # roster, .env, and the bounded volume images
@@ -116,7 +116,7 @@ runs every refusal, so run it before you commit. `live/` is separate because it 
 - `agent_2..10` and `recorder_2..10` sit in the `fleet` profile and `diode` in the `diode` profile.
   `vehicle` is a third profile, an alternative to `diode` rather than a neighbour — two publishers
   into one slug is two vehicles wearing one name.
-- **Agents join `worknet` (`internal: true`) and nothing else** — never `modelnet` or `windowside`.
+- **Agents join `worknet` (`internal: true`) and nothing else** — never `modelnet`.
   That is the one hard rule. The vehicle service and the diode fixture are on no network an agent is on.
 - Fleet names are drawn by `scripts/roster.py` into `.env` as `FLEET_N_SLUG`/`FLEET_N_NAME`, because
   compose reads `.env` with no flags; the roster itself is `operator/roster.json`, which no agent mounts.

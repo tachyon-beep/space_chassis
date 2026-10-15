@@ -30,6 +30,14 @@ FALSE = {
     # nothing brings back a watchdog it leaves hung.
     r"What you can damage on this side is yourself": "agents can damage each other",
     r"always\s+be\s+brought\s+back": "a hung watchdog is brought back by nothing",
+    # tests/test_live_stack.py and tests/test_compose_generated.py call the compose CLI.
+    r"no Docker( needed| required)?\b": "a few offline tests parse compose with the docker CLI",
+    # tests/test_vehicle_reconciliation.py importorskips yaml; a harness telemetry test skips.
+    r"Tests never skip": "two tests skip",
+    # core_caps.FleetLedger counts a rolling hour.
+    r"on the clock hour": "the fleet pool is a rolling hour",
+    # /diode/<slug> is a directory inside one shared window image.
+    r"`/diode/<slug>` \| that agent's own bounded volume images": "the window image is shared",
 }
 
 
@@ -63,3 +71,23 @@ def test_the_prompts_point_at_the_brief():
         for name in ("system_prompt.txt", "user_prompt.txt")
     ]
     assert any("/opt/brief" in text for text in prompts)
+
+
+def test_claude_md_states_43_s_escalation_and_the_vehicle_in_the_image():
+    text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    row = next(line for line in text.splitlines() if line.startswith("| 43 |"))
+    assert "600 s" in row, row  # watchdog: three 43s inside 600 s escalate the tier
+    assert "/opt/vehicle" in text
+
+
+def test_every_default_the_example_states_is_the_one_compose_uses():
+    import re as _re
+
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    defaults = dict(_re.findall(r"\$\{([A-Z0-9_]+):-([^}$]*)\}", compose))
+    wrong = []
+    for line in (ROOT / ".env.example").read_text(encoding="utf-8").splitlines():
+        match = _re.fullmatch(r"#?([A-Z][A-Z0-9_]*)=(\S+)", line)
+        if match and defaults.get(match[1]) and defaults[match[1]] != match[2]:
+            wrong.append(f"{match[1]}: example {match[2]}, compose {defaults[match[1]]}")
+    assert wrong == []

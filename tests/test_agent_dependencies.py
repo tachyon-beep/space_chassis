@@ -4,7 +4,8 @@ Aurora's version pins its own manifest and the Dockerfile's install of it. This 
 its own -- a scientific and systems toolkit with the drivers for the database and the bus -- so the
 exact list is pinned here: a change to it is a decision about capability, and should show in a
 diff of this test. Aurora-only entries (its garden, books and stage dependencies, filigree,
-model2vec, pypdf, netCDF4 and the like) are not part of this world.
+model2vec, netCDF4 and the like) are not part of this world; pypdf is in this world's manifest
+too, so it is pinned below.
 """
 
 import re

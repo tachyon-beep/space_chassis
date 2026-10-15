@@ -312,11 +312,19 @@ def test_the_env_example_documents_every_recorder_setting() -> None:
 
 def test_the_diode_profile_runs_the_contract_fixture_off_worknet() -> None:
     # Spec §3 and §5: the `diode` profile is contract/fake_diode.py, whose interface is the
-    # volume, so it joins no network an agent is on; windowside has a gateway (spec §2).
+    # volume, so it needs no network at all, like the vehicle.
     diode = SERVICES["diode"]
     assert diode["entrypoint"] == ["python", "/opt/fake/fake_diode.py"]
     assert "./contract/fake_diode.py:/opt/fake/fake_diode.py:ro" in diode["volumes"]
-    assert diode["networks"] == ["windowside"]
+    assert diode.get("network_mode") == "none" and "networks" not in diode, sorted(diode)
+
+
+def test_no_network_but_the_recorders_has_a_gateway() -> None:
+    # windowside was the diode's, with a gateway; with nothing on it, it is gone.
+    assert "windowside" not in TEXT
+    networks = TEXT[TEXT.index("\nnetworks:\n") :]
+    for name in ("worknet", "reviewnet"):
+        assert f"  {name}:\n    internal: true" in networks, name
 
 
 def test_the_review_panel_listens_on_the_port_its_mapping_targets() -> None:

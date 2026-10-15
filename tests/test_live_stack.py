@@ -98,7 +98,7 @@ def test_the_override_points_each_recorder_at_the_stub_and_keeps_the_fake_diode_
             in text
         )
     assert '      RECORDER_HOURLY_MAX: "4"' in text
-    assert "networks: !override [windowside]" in text
+    assert "windowside" not in text  # the base runs the fixture on no network
     assert 'VERIFY_STUB_DELAY_SECONDS: "2.0"' in text
     assert f"      - {smoke.cues}:/cues" in text
     assert "AGENT_SLUGS: agent_1,agent_2,agent_3" in text
@@ -297,3 +297,20 @@ def test_a_recreate_override_parses_against_the_base_compose(stack):
     result = real.compose("config", check=False)
     assert result.returncode == 0, result.stderr
     assert 'RECORDER_TOKEN_GLOBAL_HOURLY_MAX: "1"' in result.stdout
+
+
+def test_a_recreate_value_reaches_compose_exactly_whatever_it_holds(stack):
+    """Needs docker on the host, like `docker compose config -q` in CLAUDE.md: absent, it fails."""
+    smoke, _ = stack
+    smoke.prepare()
+    awkward = 'a"b$c\\d'
+    smoke.recreate("recorder_1", {"RECORDER_TOKEN_GLOBAL_HOURLY_MAX": awkward})
+    real = stack_module.SmokeStack(3, root=smoke.root)
+    real._torn_down = True
+    real.overrides = list(smoke.overrides)
+    result = real.compose("config", "--format", "json", check=False)
+    assert result.returncode == 0, result.stderr
+    environment = json.loads(result.stdout)["services"]["recorder_1"]["environment"]
+    # The printed configuration is itself a compose file, so a literal dollar is printed as `$$`;
+    # an unescaped `$c` would have been interpolated away.
+    assert environment["RECORDER_TOKEN_GLOBAL_HOURLY_MAX"] == awkward.replace("$", "$$")
