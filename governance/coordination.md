@@ -1,7 +1,27 @@
 # Coordination between the lines
 
-As of **2026-10-10**, `tachyon-beep/space_chassis` `aurora-port` @ `84b1c49`. Owned by the chassis
+As of **2026-10-10 19:51 AEDT**, `tachyon-beep/space_chassis` `aurora-port` @ `db1ed2d`. Owned by the chassis
 line, from a draft by the vehicle line. **Verify against the code before trusting any line here.**
+
+## Programme leadership — 2026-10-10
+
+**Emmy is programme lead now; both Claude line owners continue their assigned work.** John's
+08:48 UTC (19:48 AEDT) instruction, relayed through coordinating chat
+`01a12334-35ad-748b-99eb-2d3a16598084`, authorises taking over as lead and working through the
+computer and this governance folder. The quotation, provenance and bounded documentation scope
+are recorded in [MASTER_GOVERNANCE_PLAN.md](MASTER_GOVERNANCE_PLAN.md). Space Aurora remains one
+programme, two equal project teams and one product, with one lead team per task and separate
+repositories; no restructuring is authorised.
+
+Programme leadership is distinct from a future transfer of exclusive engineering/operational
+custody. That transfer still requires the master plan's readiness review, John's explicit
+confirmation that both designated owners are offline, final delta reconciliation and Emmy's
+acceptance. None has been declared here; recognising leadership requires no owner shutdown.
+
+For this documentation checkpoint, owner contact is handled by the coordinating chat's separate
+native-browser worker. The documentation writer records proposed follow-ups in the master plan
+and sends no duplicate owner instructions. Line-owned reports remain theirs to write; reading
+them does not ratify a handover or change their status.
 
 ## Channels
 
