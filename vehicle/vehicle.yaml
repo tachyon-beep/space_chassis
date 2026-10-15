@@ -206,6 +206,12 @@ environment:
     provenance:
       basis: historical
       source: "the figure that makes gnc_diode.md:1175-1177 wrong: its example position has |r| = 1723.3 km, i.e. 14.1 km below this radius"
+  - id: earth_equatorial_radius_km
+    value: 6378.137
+    unit: km
+    provenance:
+      basis: historical
+      source: "WGS 84 semi-major axis; the radius a return conic's vacuum perigee altitude is measured from (tools/trajectory.py)"
   - id: gravity_earth_mu
     value: 3.986004418e14
     unit: "m3/s2"

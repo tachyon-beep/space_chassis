@@ -9096,6 +9096,106 @@ def check_presentation(
     )
 
 
+def check_free_return(vehicle: dict[str, Any], mission: dict[str, Any], report: Report) -> None:
+    """Fly the declared start vector, because a free return is a claim only a flight can check.
+
+    `check_trajectory` holds the conic: five elements that are arithmetic of each other. The
+    vector the plant starts from is not that conic — flown under the Moon's gravity, the conic
+    aimed at the Moon's centre strikes the surface — but the free return `tools/trajectory.py
+    --design` solved beside it, and its figures are recorded in
+    `initial_state.free_return_design.solution`. Two things are held here, both on every run
+    (the flight is about two-thirds of a second):
+
+    - the declared vector is the one the recorded node, argument of perigee and speed scale
+      produce from the elements, to a metre and a millimetre per second, so the six numbers the
+      plant reads cannot drift from the figures that explain them;
+    - flown from MET 0 by `trajectory.fly`, it passes the Moon at the recorded pericynthion and
+      time and comes back to the recorded vacuum perigee, each at the precision it is written to,
+      and that perigee is within a kilometre of the design's target.
+
+    An unset vector is the walk's debt, not this rule's.
+    """
+    state = mission.get("initial_state") or {}
+    if not isinstance(state.get("position_xyz_km"), list) or not isinstance(
+        state.get("velocity_xyz_m_s"), list
+    ):
+        return
+    where = "mission.yaml:initial_state"
+    design = state.get("free_return_design") or {}
+    solution = design.get("solution") or {}
+    elements = state.get("osculating_elements") or {}
+    needed = {
+        "free_return_design.solution.speed_scale": solution.get("speed_scale"),
+        "osculating_elements.right_ascension_of_ascending_node_deg": elements.get(
+            "right_ascension_of_ascending_node_deg"
+        ),
+        "osculating_elements.argument_of_perigee_deg": elements.get("argument_of_perigee_deg"),
+    }
+    missing = sorted(k for k, v in needed.items() if not isinstance(v, (int, float)))
+    if missing:
+        report.refuse(
+            f"{where}.position_xyz_km",
+            f"is declared but {', '.join(missing)} is not, so nothing says where the vector came "
+            "from: a start state is the output of a design, and the design's figures are owed",
+        )
+        return
+    if not isinstance(vehicle, dict):
+        return  # an unparseable `vehicle.yaml` is reported where it is loaded
+    import trajectory  # the plant's own gravity model, beside this file
+
+    try:
+        gravity = trajectory.Gravity.from_vehicle(vehicle)
+        moon = trajectory.moon_at_met0(vehicle, mission)
+    except (KeyError, TypeError, ValueError) as missing:
+        report.refuse(
+            f"{where}.position_xyz_km",
+            f"cannot be flown: {missing!s} is not declared where the flight reads it "
+            "(`vehicle.yaml#environment` for the gravity, `lunar_ephemeris_at_arrival` for the Moon)",
+        )
+        return
+    del moon
+    r, v = trajectory.designed_start(mission, gravity.mu_earth)
+    declared = trajectory.declared_start(mission)
+    assert declared is not None
+    dr = max(abs(a - b) for a, b in zip(r, declared[0], strict=True))
+    dv = max(abs(a - b) for a, b in zip(v, declared[1], strict=True))
+    if dr > 1.0 or dv > 1e-3:
+        report.refuse(
+            f"{where}.position_xyz_km",
+            f"is {dr:.3g} m and {dv:.3g} m/s from the vector the recorded node, argument of "
+            "perigee and speed scale produce from the osculating elements: the six numbers the "
+            "plant starts from and the figures that explain them have moved apart",
+        )
+        return
+    got = trajectory.fly(vehicle, mission)
+    if got["periselene_alt_km"] <= 0.0:
+        report.refuse(
+            f"{where}.position_xyz_km",
+            f"strikes the Moon: closest approach is {got['periselene_alt_km']:.1f} km from its "
+            f"centre's surface radius at MET {got['periselene_met_h']:.2f} h",
+        )
+        return
+    for field in ("periselene_alt_km", "periselene_met_h", "return_perigee_alt_km"):
+        recorded = solution.get(field)
+        if not isinstance(recorded, (int, float)):
+            report.refuse(
+                f"{where}.free_return_design.solution.{field}",
+                "is not recorded, so the flight below has nothing to be held to",
+            )
+        elif not agrees_with_derivation(float(recorded), got[field]):
+            report.refuse(
+                f"{where}.free_return_design.solution.{field}",
+                f"records {recorded!r} and flying the declared vector gives {got[field]:.6g}",
+            )
+    target = design.get("return_perigee_alt_km")
+    if isinstance(target, (int, float)) and abs(got["return_perigee_alt_km"] - float(target)) > 1.0:
+        report.refuse(
+            f"{where}.free_return_design.return_perigee_alt_km",
+            f"is the target, {target!r} km, and the declared vector returns to "
+            f"{got['return_perigee_alt_km']:.1f} km: not the free return it was designed to be",
+        )
+
+
 def check_trajectory(doc: dict[str, Any], report: Report) -> None:
     """Re-derive the patched-conic elements, because a state vector is checkable arithmetic.
 
@@ -18682,6 +18782,7 @@ def main(argv: list[str] | None = None) -> int:
         if channels is not None:
             check_objectives(mission, registry, report)
         check_trajectory(mission, report)
+        check_free_return(vehicle, mission, report)
         check_met_clock(mission, report)
     check_cabin_pairing(registry, presentation, report, root)
     check_atmosphere_symmetry(root, report)

@@ -87,7 +87,7 @@ flag.
 It needs `PyYAML`. It is deliberately *not* wired into the operator-side services, which are
 standard library only.
 
-Current state: **composes, with 273 declared debts.** A debt is reported and is fatal under
+Current state: **composes, with 270 declared debts.** A debt is reported and is fatal under
 `--strict`; a refusal is fatal always. The linter refuses a build, it does not warn:
 
 **The direction of travel, because the headline alone reads the wrong way.** The count went
@@ -220,9 +220,9 @@ ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.m
 pricing is now derived from a phase list rather than assumed.
 
 **All eleven domains have landed** — 148 channels, 139 states over 59 scheduled nodes, 142
-thresholds, 58 verbs and 128 classified events across the eleven directories, with 273 declared debts
+thresholds, 58 verbs and 128 classified events across the eleven directories, with 270 declared debts
 and every one of them named. **108 of the 139 states are fully configured and 31 carry a debt**, and
-a real tick advances **52** of the 139 states, and the build order's **52** ready are that same set
+a real tick advances **53** of the 139 states, and the build order's **53** ready are that same set
 — the second of those figures is the objective's own second completion criterion, and both
 are read out of `tools/plant.py`'s output by `test_the_readme_status_matches_the_tools`. Since round
 58 the first line of `--build-order` *is* a tick's own gap list rather than a second opinion about
@@ -235,9 +235,9 @@ recurring finding arriving at its own status section. That completes the design'
 asks for the dictionary and linter, then a spike on electrical, thermal and consumables) and goes
 well past it: what remains is not a domain but the **plant**, and the debts are its shopping list.
 
-Two counts, and the difference is deliberate. The **273** is every obligation the linter can name:
-**195** literal `UNCONFIGURED` scalars and **78** prose obligations in `open_debts` and edge records.
-The plant independently reports **195** literal unset scalars, matching that subtotal; the linter
+Two counts, and the difference is deliberate. The **270** is every obligation the linter can name:
+**192** literal `UNCONFIGURED` scalars and **78** prose obligations in `open_debts` and edge records.
+The plant independently reports **192** literal unset scalars, matching that subtotal; the linter
 also names the **78** prose obligations. Graph sensitivities are reported against their owning
 edges rather than added a second time. Until round 46 the scalar subtotal was
 itself incomplete: the domain files were walked for unset values by `check_domain` and the coupling
@@ -1629,7 +1629,7 @@ The reference plant's `advance()` implements two of `plant.md` §3's seven integ
 this was written, and the split is worth stating plainly: **`algebraic`, `discrete` and `dynamics`
 are rules the configuration deliberately does not carry** — `delay` *is* carried, as a `delay_s` and
 a ring, and the vehicle's one delay state is in *ready now* — and counting them together with the
-states a tick cannot reach because a coupling is missing, so 45 of the 139 states need code.
+states a tick cannot reach because a coupling is missing, so 44 of the 139 states need code.
 (This said *before the plant can walk a whole tick*, which was true when it was written and is not
 now: a tick walks all 139 of them and records what it cannot advance. See *The tick stopped at its
 first debt* below.)
@@ -1828,10 +1828,10 @@ the distinction between a value nobody has written down and a state nothing can 
 ```
 139 states, by what blocks them:
 
-    52   37 %  ready now — the states a real tick advances
+    53   38 %  ready now — the states a real tick advances
     27   19 %  owes a value — the cheapest to close, and the debt count already tracks them
     15   11 %  owes an edge — a coupling with no sensitivity, or a state nothing drives
-    45   32 %  owes a rule — `algebraic`, `discrete`, `dynamics` or `hazard`: domain code
+    44   32 %  owes a rule — `algebraic`, `discrete`, `dynamics` or `hazard`: domain code
 ```
 
 **Just under half the vehicle owes a rule, and that is by construction.** `plant.md` §3's four rule classes are
@@ -19431,6 +19431,40 @@ forge, and ADR 0002 G keeps that map only in the agent's console. John chose the
 | figure | before | after |
 |---|---:|---:|
 | referee tests | 525 | **528** |
+
+## The vehicle has a trajectory, and it goes round the Moon
+
+`orbital_state` was the first `dynamics` state that could be landed without anyone's design
+decision: it needed a start vector and a gravity model, and both are arithmetic. Neither was as
+small as it looked.
+
+**The conic in `mission.yaml` cannot be flown.** `osculating_elements` were solved as a Kepler
+ellipse that reaches the Moon's *centre* at MET 73 h, and the two elements left owed were the two
+mirror planes that contain it. Flown under the Moon's gravity, both planes strike the surface about
+three hours early. A transfer that reaches the Moon is aimed past it, so the start state is a
+design, not a lookup: `tools/trajectory.py --design` keeps the parking orbit's inclination and
+perigee radius, varies the node, the argument of perigee and the perigee speed, and solves for the
+free return with closest approach at 73.0 h, a return conic whose vacuum perigee is 40 km, and the
+lowest pericynthion of that family. The answer is node 2.7879°, argument of perigee 47.689351°, a
+speed 1.6 m/s under the conic's, a pericynthion of 768.6 km and a return to 40.2 km. Neither
+analytic mirror plane is it: the nearer one (node 2.311°) has no free return at 73 h at all.
+
+**One gravity model, two integrators.** The Earth and the Moon are point masses in `EARTH_J2000`,
+indirect term included, and the Moon flies its own two-body conic from the recorded Horizons vector.
+The design propagates with RK4; the plant advances `orbital_state` (`rule: cislunar_point_masses`)
+with velocity Verlet at the tick, which is `plant.md` §3's "Verlet in coast". A thrust edge with a
+non-zero driver is refused with `needs="attitude"`, because a force without a direction is not one.
+
+| figure | before | after |
+|---|---:|---:|
+| states a real tick advances | 52 | **53** |
+| owes a rule | 45 | **44** |
+| declared debts | 273 | **270** |
+
+The three debts are `position_xyz_km`, `velocity_xyz_m_s` and `state_vector_debt.basis`. The
+linter's new `check_free_return` holds the vector to the design's figures (to a metre and a
+millimetre per second) and re-flies it on every run, which takes about two-thirds of a second, and
+refuses a vector that strikes the Moon or returns to a perigee more than a kilometre off target.
 
 ## The invariants, and which of them are enforced
 
