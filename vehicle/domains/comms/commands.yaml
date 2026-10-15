@@ -201,6 +201,36 @@ commands:
         one verb acquires six argument schemas (vocabulary V-06), so it lives in the domain whose
         resource it spends
 
+  - verb: play_recorder
+    argument_schema:
+      state: {type: enum, values: ["on", "off"]}
+    authority: A1
+    gate: {kind: preference, variable: play_recorder_enable}
+    interlocks: none
+    conflict_domain: comms.recorder
+    allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
+                     lunar_orbit_docked, transearth_coast, entry]
+    irreversible: false
+    idempotent: true
+    execution_class: declarative
+    maximum_queue_age_s: 60
+    help: >-
+      Play the on-board record to the ground, or stop. While playing, the recorder drains at the
+      high bit rate, 51.2 kbit/s, but only while the link can carry it: the high-gain antenna
+      selected, the S-band high-rate mode at the high telemetry profile, and the power amplifier
+      on. On any other link the recorder holds what it has, so playing over an omni loses
+      nothing and delivers nothing. Declarative and reversible: stopping keeps the rest of the
+      record for the next contact.
+    provenance:
+      basis: chosen
+      reason: >-
+        the quiet-coast task's verb (`09-quiet-coast-episode.md` §1). Apollo replayed stored data
+        over the high-gain antenna (`apollo_diode.md:903`) and had tape-recorder play controls on
+        the crew panel and by up-telemetry; the exact switch is not sourced (B2), so the verb is
+        the declared form. The playback rate is the published high bit rate, 51.2 kbit/s
+        (`apollo_diode.md:165`), because the DSE's own playback rate was not found (ADR 0003
+        item 7)
+
 # --------------------------------------------------------------------------------------
 # Deliberately absent.
 # --------------------------------------------------------------------------------------
