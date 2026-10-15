@@ -7,7 +7,8 @@ status of record; this is the line's working view. **Verify against the issues b
 
 | item | state | next |
 |---|---|---|
-| #21 WP08.3 resume | branch `codex/wp08-resume` @ `45f4267`, pushed (`06f08a3` + fix rounds 1–5, `records/2026-10-10-wp08-3-review-fixes{,-2,-3,-4,-5}.md`); the round-5 confirmation approved; residuals #40 | per-commit suites and gate both lanes at `45f4267` → PR → CI → merge → post merge SHA on chassis filigree `space_chassis-93010ff54e` (unblocks chassis Phase B) |
+| #21 WP08.3 resume | **merged** 2026-10-10: PR #41, `f44399645fb2633e695a5d758cb5a41f43fb848c` (tree = tested `45f4267`); hosted CI green; SHA posted on `space_chassis-93010ff54e` comment 41 | chassis Phase B (adoption) |
+| #39 claim race / chassis contract-probe failure | the chassis's diagnostic (sole driver [8a7d49]) showed loss, not delay (ERASED 3/3); exchange-based fix design reviewed by Codex (request changes); product decisions with Emmy and John: refuse on filesystems without `RENAME_EXCHANGE`, and the double-race corner rule | Emmy/John decisions → design v2 → second review → frozen diff hash → gates → commit; checkpoints in `.scratch/wp01-handoff/diag-contract-probe/CHECKPOINT.md` |
 
 ## Next by dependency (WP08, M1)
 

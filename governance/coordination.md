@@ -1,7 +1,44 @@
 # Coordination between the lines
 
-As of **2026-10-10**, `tachyon-beep/space_chassis` `aurora-port` @ `84b1c49`. Owned by the chassis
+As of **2026-10-10 20:41 AEDT**, `tachyon-beep/space_chassis` `aurora-port` @ `61355752`. Owned by the chassis
 line, from a draft by the vehicle line. **Verify against the code before trusting any line here.**
+
+## Programme leadership — 2026-10-10
+
+**Emmy is programme lead now; both Claude line owners continue their assigned work.** John's
+08:48 UTC (19:48 AEDT) instruction, relayed through coordinating chat
+`01a12334-35ad-748b-99eb-2d3a16598084`, authorises taking over as lead and working through the
+computer and this governance folder. The quotation, provenance and bounded documentation scope
+are recorded in [MASTER_GOVERNANCE_PLAN.md](MASTER_GOVERNANCE_PLAN.md). Space Aurora remains one
+programme, two equal project teams and one product, with one lead team per task and separate
+repositories; no restructuring is authorised.
+
+Programme leadership is distinct from a future transfer of exclusive engineering/operational
+custody. That transfer still requires the master plan's readiness review, John's explicit
+confirmation that both designated owners are offline, final delta reconciliation and Emmy's
+acceptance. None has been declared here; recognising leadership requires no owner shutdown.
+
+For this documentation checkpoint, owner contact is handled by the coordinating chat's separate
+native-browser worker. The documentation writer records proposed follow-ups in the master plan
+and sends no duplicate owner instructions. Line-owned reports remain theirs to write; reading
+them does not ratify a handover or change their status. Emmy's explicit reviews in master-plan
+sections 9–10 and 13 mark **AUR-GOV-02 v1, AUR-GOV-03 v1.1 and AUR-GOV-07 v1 SUFFICIENT**.
+**AUR-GOV-04 v1.2 requires CORRECTIONS**: its claim that `pending.json` is absent from the
+contract contradicts `docs/diode-contract.md:35`. The existing Chassis Code claimant owns the
+bounded addendum, also correcting its unresolved-precedence framing because practice explicitly
+defers to AGENTS.md; the browser worker routes it. Both report versions are verified published
+through `613557528ffc42d4ea8d4ae0a3b3a2c453825ffa`. AUR-GOV-06 still waits for the corrected
+input and separate assignment. These verdicts do not accept the product or transfer custody.
+Owner reports remain unchanged by Emmy's documentation writer. Section 11's coordinator-only
+validation/publication authority did not waive any gate; this review ran no tests or commits.
+Section 12 records the completed checks: root 569 passed, lint/format passed, but the full suite
+failed its vehicle malformed-batch contract probe (1 failed, 1722 passed). The coordinator files
+remain uncommitted and unpublished pending resolution of that required gate. Section 13 records
+the owner's root-only report gates and no-test addendum disclosure separately from content
+acceptance: practice expressly defers to AGENTS.md, so it cannot waive the whole-suite rule.
+John's explicit, scoped gate decision is needed to permit documentation-only durability while
+that failure remains; otherwise the existing gate stands. No exception has been inferred.
+The existing index is preserved, with this review recorded only in the working coordinator files.
 
 ## Channels
 

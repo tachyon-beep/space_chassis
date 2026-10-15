@@ -1,8 +1,8 @@
 # Vehicle — snapshot
 
-As of **2026-10-10**, `tachyon-beep/space_vehicle` **main @ `64fc58c`**; #21 in flight on
-`codex/wp08-resume` @ `45f4267` (implementation `06f08a3` plus five review fix rounds; the last
-confirmation approved). Maintained by Space Vehicle [610587]. Custody inventory for Emmy (AUR-GOV-02):
+As of **2026-10-10 (21:56Z)**, `tachyon-beep/space_vehicle` **main @ `f443996`**
+(`f44399645fb2633e695a5d758cb5a41f43fb848c`, #21 merged via PR #41). In flight: #39, the claim race (design in review;
+diagnostic branch `codex/diag-ingress-trace` @ `1caab23`, unqualified evidence only). Maintained by Space Vehicle [610587]. Custody inventory for Emmy (AUR-GOV-02):
 `records/2026-10-10-aur-gov-02-vehicle-custody-inventory.md`.
 **Verify against the code before trusting any line here** — this file summarises; the repository,
 its issues and its ADRs are authoritative where they disagree.
@@ -54,7 +54,7 @@ not. The vehicle is "in development with declared missing physical behaviour" (`
 
 | milestone | packages | state |
 |---|---|---|
-| M1 shared executive and clock | WP01 (#1), WP08 (#8, children #19–#30) | WP01 closed; WP08 children 1, 2, 4, 6 closed; 3 (#21) in flight; 5, 7–12 open |
+| M1 shared executive and clock | WP01 (#1), WP08 (#8, children #19–#30) | WP01 closed; WP08 children 1, 2, 3, 4, 6 closed; 5, 7–12 open |
 | M2 evidenced physical inputs | WP02 (#2), WP03 (#3) | not started |
 | M3 complete executable vehicle | WP04–WP07, WP09–WP11 (#4–#7, #9–#11) | not started |
 | M4 accepted mission and performance | WP12 (#12) | not started |
@@ -64,6 +64,7 @@ not. The vehicle is "in development with declared missing physical behaviour" (`
 
 | PR | merge | what |
 |---|---|---|
+| #41 | `f443996` | WP08.3 (#21) resume from checkpoint and durable record; five review rounds; residuals #40 |
 | #38 | `64fc58c` | WP08.4 (#22) the durable per-cycle record (`vehicle.record.v2`), published-tick marks, replay-from-record |
 | #37 | `2b66af0` | the window README states the protocol, not the designers' diagnosis |
 | #36 | `f81fe2c` | no scenario or seed in any window; linter reads the root record |
