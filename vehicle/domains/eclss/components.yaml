@@ -441,7 +441,27 @@ state:
         the supply (the two tanks, the 900 psig working pressure, the surge tank's 3.7 lb, the inlet
         restrictors' 8.2 lb/hr at 900 psig) — and `mission_e_consumables.txt`. What would close it: a
         tank or heater analysis for the S/M cryogenic tanks, or a pressure-versus-contents curve, and
-        the *driver* is owed with it, because no edge can reach the sentinel
+        the *driver* is owed with it, because no edge can reach the sentinel.
+
+        **Searched, round WP02 (2026-10-15), and what it found is a different law rather than a
+        time constant.** MSC Cryogenics Symposium Papers, MSC-04312, May 1971
+        (https://ntrs.nasa.gov/api/citations/19720016135/downloads/19720016135.pdf): C. P. Bouman,
+        "Redesign of the Apollo Cryogenic Storage System", p. 2 — the O2 tank "pressure control
+        switch operates between a range of 865 to 935 psig", energising the heaters at the low
+        setting and removing them at the high; relief cracks at 973 psig; the pressure transducer
+        reads 50-1,050 psig "accurate within plus or minus 2.5 percent of full scale" (+-25 psi).
+        C. K. Forester (same volume, p. 65) models Apollo 12 and 14 pressurisation strokes "about
+        four minutes long", and pp. 68-69 give the switch points as about 860 and 900 psia. The J
+        mission EPS document
+        (https://www.ibiblio.org/apollo/Documents/J%20Mission%20Electrical%20Power%20System%20Oct%201971.pdf)
+        p. 2.6-14 gives O2 design pressure 900 +35 psia, and pp. 2.6-15/16 the heater ratings and the
+        caution limits (above 950, below 800 psia). So the supply pressure is a **relay-controlled
+        cycle between two switch points**, its period set by heater power, heat leak, draw and the
+        fluid's density (Forester's own independent variable), and a first-order lag toward 900 has
+        no source: choosing a `tau_s` would be a modelling approximation, which is John's call
+        (`docs/vehicle-completion/08-risks.md`). Effectivity: Bouman p. 2 describes the basic
+        two-tank system before the post-Apollo 13 redesign, which is the Apollo 11 CSM's
+        configuration, but does not name CSM-107; Forester's strokes are Apollo 12 and 14 flight data
   - id: suit_loop_flow_cfm
     node: internal
     method: lag
