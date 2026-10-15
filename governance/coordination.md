@@ -262,7 +262,7 @@ requires a separate allocation. Implementation approval stands. Option B externa
 remains a later John decision after the concrete qualified package is ready; tier-1 publication
 approval is not transferred. No new grant, commit, publication or direct owner message here.
 
-**CURRENT SLOT: FREE / RELEASED — 00:55 AEDT October 12 (master §37).** Corrected final Option B
+**Previous slot: FREE / RELEASED — 00:55 AEDT October 12 (master §37).** Corrected final Option B
 preparation verified: candidate-5 tree `ccc2782e…`, manifest `bbfd222b…` (14 matching entries),
 wording confirmation r4 approved. Literal committed-head qualification retained. Coordinator
 records a one-candidate exception to pre-commit test sequencing: the existing owner may make the
@@ -273,6 +273,29 @@ seven steps and whole-suite invocations. Deadlines remain 300/3000/300/2300 seco
 2 CPUs/6 GiB/no swap/no GPU. Next: owner returns commit identity and repinned/reviewed G-2 package
 through Emmy's existing relay; only then consider a fresh G312s allocation. No new user decision
 is needed for this preparation. No launch or direct owner message; historical R2c grant stays closed.
+
+**Previous reservation: REVOKED UNUSED by §39 — `SPACE-20261011-B-G312S-01` (master §38).**
+Existing Vehicle owner only: reviewed clean detached setup, then one **G312s / Python 3.12 static**
+invocation, six steps, no pytest. Literal commit `7a87eb82…`, manifest `4956e7ae…` (13 matching
+entries), r6 approval independently verified; proposal's stale pending status explicitly reconciled.
+Launch before **14:35 UTC October 11 / 01:35 AEDT October 12**, after fresh admission within
+60 seconds. Payload 2 CPUs/6 GiB/no swap/no GPU, nice 19, GO deadline 300 s, payload 365 s, outer
+900+30 s. Independent 14:15:07 UTC checks: 38.02 GiB available, CPU 26.2%, load1 6.90625; no Space
+workload/unit/cgroup/container or unclassified process; target paths/unit unused. Exact commands,
+hashes, expected exits and acceptance/release requirements are in §38. One launch, no retry;
+explicit owner release plus coordinator cleanup verification required. Retain the detached worktree.
+No later phase, collection, publication or automatic next allocation. Nothing launched or directly
+sent to the owner by this coordinator; Emmy retains the existing browser relay.
+
+**CURRENT SLOT: FREE / RELEASED — 01:24 AEDT October 12 (master §39). G312s AUTHORIZATION HOLD.**
+§38's grant is revoked unused and must not be relayed, executed or reused. Parent reports browser
+Send denied twice by authorization review, draft UNSENT, NO LAUNCH; explicit John approval is
+pending. Independent 14:22:47–14:23:27 UTC checks: setup worktree absent/unregistered, evidence
+and outer log absent, outer unit not-found/inactive with no PID/cgroup, no Space units/cgroups/
+workloads/helpers/containers or unclassified processes, and no matching journal entries since
+14:10 UTC. These checks plus the parent's no-launch report support unused reservation release.
+Package and existing worktrees preserved; G312s NOT RUN, candidate unqualified/unpublished.
+No alternate route or direct owner message. Later approval requires fresh checks and a NEW grant.
 
 | channel | for |
 |---|---|

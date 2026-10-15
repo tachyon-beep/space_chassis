@@ -2454,3 +2454,217 @@ publication remains John's later decision once a concrete qualified package is r
 corrected package is now verified as preparation; committed-head/spec refresh and allocation remain
 the immediate prerequisites. Only coordinator records changed; the main index remains SHA256
 `86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.
+
+## 38. First committed-head G312s allocation granted — 2026-10-12 01:17 AEDT
+
+**CURRENT SLOT: RESERVED — `SPACE-20261011-B-G312S-01`.** Under the existing shared-slot
+authority (§29) and the sequencing decision (§37), the existing Vehicle owner
+`session_01GRfs7dVMu4v5airK6q3w9C` / `[610587]` may prepare the reviewed detached gate worktree
+and launch **one G312s invocation only**. Emmy retains the single existing browser relay. This
+coordinator has launched nothing and sent no direct owner message.
+
+**Launch before 14:35:00 UTC October 11 / 01:35:00 AEDT October 12**, after fresh identity and
+admission checks within 60 seconds of launch. This expiry is a latest launch time, not permission
+to release launched or uncertain work. If unused, return an explicit no-launch receipt for
+coordinator closure; if launched, the slot stays held until explicit owner release and independent
+cleanup verification. Refusal, failure or abort permits no retry under this grant.
+
+### Independent verification and review reconciliation
+
+The local candidate is a literal commit, `7a87eb82cfef55dcc74248df41720883587ca7af`, with parent
+`f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f` and tree
+`ccc2782e350a6b9abe33d19db6884ac3fb82ec95`. It changes exactly the four files authorised in §37.
+The topic worktree is clean on `codex/39-take-by-rename`, with no upstream configured; the commit
+message matches the prepared file byte-for-byte. Both committed and working base-relative diffs
+hash to `0d4da11e9cbe56fcad7e09c48e027340d41f1bae438adfe8cce9dcc889a951d0`.
+The owner reports it unpublished; no remote publication action is authorised here.
+
+All **13 gate-manifest entries** and **26 v7-manifest entries** match. The four G-2 specs retain
+the phase split and full coverage, now pinning the committed SHA and new worktree. The selected
+G312s spec has phase `static` and no JUnit field: its driver executes exactly six steps, no pytest
+or collection. The unchanged driver preserves the future whole-suite invocations and worker-crash
+checks; those future invocations are not allocated here.
+
+Round 5's sole P3 was ignored temporary-file removal failure in `gate_worktree.sh`. The actual
+round-6 approval confirms the fix; independent coordinator and governance review agree that Git,
+checksum and temporary-file cleanup failures prevent success. The helper also checks exact HEAD,
+parent/tree, detached state, clean index/worktree and no untracked non-ignored files. The earlier
+patch-and-throwaway-index block remains withdrawn.
+
+**Status reconciliation:** `PROPOSAL-G.md` §§2/6 still say r6 pending. Actual
+`reviews/B-final-package-r6.md` approves this exact manifest; checkpoint 30 and the current relay
+record that approval. This is a disclosed stale status line, not a missing review or an allocation.
+The owner reports updating the relay after review to record approval, so its current hash differs
+from the review-time hash; the current launch/setup semantics were independently checked against
+the helper and specs. No owner
+artifact is rewritten or silently re-frozen by this decision.
+
+At **14:15:07 UTC / 01:15:07 AEDT**, successful independent read-only checks on Nyx found
+**38.02 GiB available RAM**, **26.2% sampled CPU busy**, load1 **6.90625**. No matching Space
+workloads, unclassified unreadable own processes, Space user units, Space app.slice cgroups or
+Space-named containers were found. Nine unreadable host processes meet v7's narrow existing
+classification rule; that heuristic does not replace coordinator slot ownership. The outer unit
+is not-found/inactive with empty ControlGroup and InvocationID. The target gate worktree is absent
+and unregistered; evidence directory and outer output file are absent. §36's prior release remains
+the preceding slot state. This capacity sample must be refreshed by the owner before launch.
+
+Both interpreter metadata reads match `interpreters.txt`: Python 3.12.3 / 3.13.15 and identical
+pip-freeze SHA256 `4535babcc5a2e230b30d864b4af05d1838aafd5f4b5c885710b30fcd0709b4cb`.
+The candidate lock matches `6d1271054b0f9af2690b6b6427da5db04008912cb32ff7607cb31c45f611eac1`.
+These are metadata checks, not repository validation. Only the 3.12 interpreter is used by this grant.
+
+### Frozen allocation identities
+
+Let `G=/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/gate` and
+`V7=/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7`.
+The existing immutable spec label `SPACE-VEHICLE-B-G312s` maps to this one grant
+`SPACE-20261011-B-G312S-01`; retain the spec bytes and record the grant ID in owner receipts.
+
+| artifact | SHA256 |
+|---|---|
+| `G/SHA256SUMS` (13 entries) | `4956e7aec8001a75df7d704fba24fe8816809e4f6f94277241c79cf3deee4b6d` |
+| `G/spec-G312s.json` | `eed72a9206e09a9b99e2eca3708c80671956bb388b3fe84662ec9f2f1b94a994` |
+| `G/gate_worktree.sh` | `f73c046cdf62061ecc23da75aa31aa09a985e36734f8e324c838e79b3b1e8422` |
+| `G/gate_lane.py` | `041db2859507f1df0b04ec2b9841489720056dba4b0a8bd1282afc4d02af5cb8` |
+| `G/PROPOSAL-G.md` | `d779b632189ca7849b93dc2ced95ce7f7f9915d4011e160d4ff97d05b88c8bac` |
+| `B-sel1/G-RELAY-FINAL.md` | `a0669a93a4b6f4694383ec64cc3a36a4b9eab71504469bccfa93057fea22153c` |
+| `reviews/B-final-package-r6.md` | `3d494e08c90635ab809c808be00ff3adaf583e6a35ff05f0e259a15a7cb91847` |
+| `V7/SHA256SUMS` (26 entries) | `422ff9aa4ed7573fc9e79117f57e7135ac10c7f8cdfde2d44fcee53b78f55b32` |
+| `V7/supervise.py` | `a702a4e1381f39a40385a4dcc4d159b342e13e3ee7c917cc46cc7f6b3314372b` |
+| `V7/launch.py` | `be38cdb6bd73ea24aff1ad9338cba1d38732dfc316b5b4f68469a5874a250aae` |
+| `V7/record.py` | `1ab08ff4818ceb78ef3e0261e9415fcf9982ab28c0ca99c851ba0ded47df2c33` |
+
+### Exact preparation and one launch for the existing owner
+
+Before executing a helper, verify manifest hashes against the table as well as their contents.
+Run each command separately and require exit 0 before the next; never paste all allocation commands
+from the broader relay. Any observation or setup failure stops and returns evidence, without launch.
+
+```sh
+cd /home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/gate && sha256sum -c --strict SHA256SUMS
+cd /home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7 && sha256sum -c --strict SHA256SUMS
+bash /home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/gate/gate_worktree.sh create
+```
+
+`create` must return `OK create` and exit 0 for the exact clean detached checkout
+`/tmp/claude-1000/-home-john-space-chassis/a728e992-9471-46ab-9efe-ce550d7ece5f/scratchpad/gate-C-7a87eb8`.
+No patch application, tree write, force, reset, implementation edit or submodule update. Preserve the
+setup transcript. If identity checks are older than 60 seconds at launch, run the reviewed `verify`
+mode again. Refresh admission after setup: **MemAvailable >=16 GiB, sampled CPU <=50%, load1 <=12**;
+unknown CPU or unclassified ownership refuses. Require no competing Space selection/unit/container.
+Require unused `G/evidence-G312s`, `G/g312s-supervisor.out` and the outer unit name. Do not create
+`evidence-G312s` beforehand; the supervisor creates it.
+
+Only then, before the expiry, launch exactly once on Nyx through the existing user systemd bus:
+
+```sh
+systemd-run --user --no-block --collect --unit=space-vehicle-b-supervisor-g312s-1 -p RuntimeMaxSec=900 -p KillMode=control-group -p TimeoutStopSec=30 -p Nice=19 -p Environment=CUDA_VISIBLE_DEVICES= -p "WorkingDirectory=/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/gate" -p "StandardOutput=file:/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/gate/g312s-supervisor.out" -p "StandardError=file:/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/gate/g312s-supervisor.out" /usr/bin/python3 "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/supervise.py" "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/gate/spec-G312s.json"
+```
+
+The supervisor launches this payload, in the detached gate worktree; do not run it separately:
+
+```sh
+/tmp/claude-1000/-home-john-space-chassis/a728e992-9471-46ab-9efe-ce550d7ece5f/scratchpad/venv3.12/bin/python /home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/gate/gate_lane.py 3.12 /home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/gate/evidence-G312s 551 static
+```
+
+It executes exactly `python -m ruff check . --no-cache`, `python tools/check_vehicle.py`,
+`python tools/check_vehicle.py --strict`, `python tools/plant.py --readiness`,
+`python tools/plant.py --build-order`, and `python tools/measure_clock.py --samples 10`, in that
+order, using that same 3.12 interpreter. The six expected exits are **0,0,2,0,0,0**; normal lint
+must contain `COMPOSES, with 273 declared debt(s)`. Strict exit 2 records incompleteness and is not
+a finished-vehicle pass. The numeric argument 551 is unused in static mode and proves no test count.
+
+### Bounds, acceptance and release
+
+Payload caps: **CPUQuota=200%, MemoryMax=6G, MemorySwapMax=0, OOMPolicy=stop, Nice=19**, empty
+CUDA visibility/no GPU. Require readback `cpu.max=200000 100000`, `memory.max=6442450944`,
+`memory.swap.max=0` and a healthy sample before GO. These are payload caps; the outer supervisor
+is separately niced and time-bounded. One active Space selection; ELSPETH priority and Sultai's GPU
+reservation remain intact.
+
+GO deadline **300 seconds**; payload RuntimeMaxSec **365 seconds**; outer RuntimeMaxSec
+**900 seconds plus 30-second stop**. Setup/admission/termination/cleanup retain the reviewed v7
+deadlines. Monitor every five seconds; abort owned work on attributable OOM/oom_kill, available RAM
+below 10 GiB, CPU above 85% or load1 above 20 for three samples, failed observation/supervision, or
+deadline. Do not stop unrelated work. Any failure or abort ends this selection, with no retry.
+
+Require actual payload `SERVICE_RESULT=success`, exited status 0; all six raw step exits and expected
+lint text; `3.12-static-gate.json` containing precisely those six steps with every expectation met
+and `passed=true`; no OOM/abort; supervisor exit 0; and unchanged source/package identity. Static
+mode has no JUnit or pytest result. Supervisor exit alone and its RELEASE.txt are insufficient.
+
+After completion, run the following reviewed verification once and preserve its output/exit:
+
+```sh
+bash /home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/gate/gate_worktree.sh verify
+```
+
+Return prelaunch admission/identity/setup records, complete `G/evidence-G312s/` (all six raw step
+outputs, gate JSON, supervisor log, samples, READY/TERMINAL/summary/RELEASE), outer output and
+terminal unit information, post-run identity/checksums, and an explicit owner release receipt
+identifying this grant. Independently prove both outer and payload units/cgroups gone, no remaining
+token holder or owned PID/helper/monitor, no unknown newer unreadable process, and no remaining
+Space workload/container. A failed or uncertain cleanup, missing receipt or supervisor exit 4 keeps
+the slot reserved until resolved and independently verified by this coordinator.
+
+**Retain the clean detached worktree** for the next separately considered phase; `remove` is not
+part of this first allocation. A passing G312s advances only **3.12 static passed / 3.12 pytest and
+3.13 pending**. No G312p (or G312t), G313 phase, pytest/collection, automatic next allocation,
+publication, adoption or further commit is authorised. Only coordinator records changed here;
+the main index remains SHA256 `86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.
+
+## 39. G312s authorization hold; unused grant revoked and slot released — 2026-10-12 01:24 AEDT
+
+**CURRENT SLOT: FREE / RELEASED; `SPACE-20261011-B-G312S-01` is REVOKED UNUSED.** This section
+supersedes §38's launch authorization and reservation immediately, before its original expiry.
+**G312s remains on authorization hold. Do not relay or execute §38.** Its allocation must never
+be reused, including if approval arrives before 01:35 AEDT.
+
+Emmy's parent relay (`01a12334-35ad-748b-99eb-2d3a16598084`) reports that browser Send was denied
+twice by authorization review, including the one permitted retry with verbatim user project-
+delegation evidence. The draft remains **UNSENT** and the parent explicitly reports **NO LAUNCH**.
+The parent has asked John for explicit approval of the one-time six-step Python 3.12 static run
+(2 CPUs / 6 GiB / no GPU / five-minute payload deadline); no approval has arrived. This task has
+the parent's specific authority only for read-only verification and coordinator hold/release
+records. §38 cannot override the denial; no alternate relay or execution route is permitted.
+The detailed rejection text was not supplied to this coordinator and is not reconstructed here.
+
+### Independent non-launch and ownership checks
+
+At **14:22:47–14:23:27 UTC October 11 / 01:22:47–01:23:27 AEDT October 12**, read-only
+filesystem, Git, user-systemd, journal, process and container queries succeeded:
+
+- Gate worktree `gate-C-7a87eb8` does not exist (including no dangling symlink) and is not
+  registered in the vehicle worktree list. No worktree was created or deleted by this check.
+- `G/evidence-G312s` and `G/g312s-supervisor.out` do not exist, including as dangling symlinks.
+  No G gate evidence directories or supervisor output files were found in the gate directory.
+- `space-vehicle-b-supervisor-g312s-1.service` is **not-found / inactive**, MainPID 0,
+  empty ControlGroup and InvocationID. No Space user units or Space app.slice cgroups exist.
+- Successful user-journal query from **14:10 UTC** for the exact outer unit and
+  `space-vehicle-b-g312s-*.service` returned **no entries**.
+- No matching Space workload, G312s helper/monitor, or Space-named running container was found.
+  No unclassified unreadable own process was found; nine host processes meet the previously
+  reviewed narrow admission classification. There is no recorded run token or PID because no
+  launch/evidence exists; no token-specific cleanup claim is invented.
+- The owner topic worktree remains clean at `7a87eb82cfef55dcc74248df41720883587ca7af`.
+  Gate manifest remains `4956e7aec8001a75df7d704fba24fe8816809e4f6f94277241c79cf3deee4b6d`,
+  selected spec `eed72a9206e09a9b99e2eca3708c80671956bb388b3fe84662ec9f2f1b94a994`, and relay
+  `a0669a93a4b6f4694383ec64cc3a36a4b9eab71504469bccfa93057fea22153c`.
+
+The parent's explicit unsent/no-launch report together with absent setup, evidence, journal and
+runtime state supports **unused reservation closure**, not completion of a launched gate. No
+owner release is invented and no blocked owner-contact route is used to request one. There is no
+current owned-runtime evidence gap requiring retention of this unused slot.
+
+### Disposition
+
+The package and all existing worktrees are preserved. No helper, workload, test, collection,
+supervisor or systemd launch was executed; no process was stopped; no owner message or alternate
+route was attempted. G312s remains **NOT RUN**, and the candidate remains **UNQUALIFIED /
+UNPUBLISHED**. The prior review/readiness findings are preserved and convey no execution authority.
+
+Later explicit approval, if received, requires fresh identity, capacity, admission and shared-slot
+ownership checks followed by a **new allocation and new grant ID**. It does not revive §38 or
+automatically authorise any subsequent phase. ELSPETH priority, Sultai's GPU reservation and the
+separate publication decision remain unchanged. Only coordinator records changed; main index
+SHA256 remains `86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.
