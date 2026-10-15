@@ -47,9 +47,10 @@ HEADER = """\
 # bound to that agent alone (scripts/volume_images.py), with `create_host_path: false`, so a
 # service whose image is not mounted refuses to start rather than writing to the host disk.
 #
-# The file always declares ten agents. `--profile fleet` therefore needs a roster of ten
-# (FLEET_COUNT=10 in .env): a smaller roster has no images for the agents past it, and their binds
-# refuse. Run scripts/prepare_host.sh, and mount what it prints, before the first `compose up`.
+# The file declares ten agents, and every `compose up` -- a bare one too, since the monitor and the
+# review panel bind every agent's record -- needs a roster of exactly ten (FLEET_COUNT=10 in .env):
+# a smaller roster has no images for the agents past it, and their binds refuse. prepare_host.sh
+# refuses a roster that does not match. Run it, and mount what it prints, before the first `up`.
 
 name: space-chassis
 

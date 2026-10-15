@@ -39,6 +39,8 @@ set -u
 : "${UNBOUNDED_REFERENCE:=/vendor/registry}"
 : "${PUMP_RESTART_SECONDS:=5}"
 : "${PG_READY_TRIES:=20}"
+: "${LLM_CONSOLE_DIR:=/llm/console}"
+: "${CONSOLE_SEED:=/usr/local/share/space/llm_console_seed.json}"
 if [ -z "${PG_BIN:-}" ]; then
     for candidate in /usr/lib/postgresql/*/bin; do
         PG_BIN=$candidate
@@ -105,7 +107,11 @@ redis-server --bind 127.0.0.1 --port 6379 --dir "$STATE_DIR/redis" --save '' --a
 # --- 4. the pump ------------------------------------------------------------
 ( while true; do "$PYTHON" "$PUMP_BIN" || true; sleep "$PUMP_RESTART_SECONDS"; done ) &
 
-# --- 5. the harness, and the hand-off ---------------------------------------
+# --- 5. the console, the harness, and the hand-off ---------------------------
+# The llm console is the agent's own file once it exists: seeded only when absent, so a restart
+# never reverts what the agent tuned or removed. Best-effort: a damaged console volume must not
+# stop the container from starting.
+[ -e "$LLM_CONSOLE_DIR/console.json" ] || cp "$CONSOLE_SEED" "$LLM_CONSOLE_DIR/console.json" || echo "warning: could not seed the llm console" >&2
 find "$WORK_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
 cp -r "$SEED_DIR/." "$WORK_DIR/"
 cd "$WORK_DIR" || exit 1

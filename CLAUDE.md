@@ -18,7 +18,9 @@ uvx ruff check . --no-cache                            # ruff is not installed h
 uvx ruff format --check . --no-cache
 
 docker compose --profile fleet config -q               # the topology parses
-sh scripts/prepare_host.sh                             # directories, ownership, roster, .env
+sh scripts/prepare_host.sh                             # roster into operator/ and .env; plan, create and check the volume images
+python3 scripts/volume_images.py check                 # are the bounded volume images mounted and ready (no root needed)
+python3 scripts/build_compose.py                       # regenerate docker-compose.yml from the volume manifest; commit both
 python3 scripts/status.py --verbose                    # one line per agent, from the record
 sh scripts/verify_containment.sh --all                 # safety claims vs. a running stack
 
