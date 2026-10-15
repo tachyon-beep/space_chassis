@@ -46,7 +46,7 @@ already landed; `wip/local-state` holds the latest completeness report, filigree
 | Phase B's merge | its PR's `required` check |
 | Phase B's full and live gates; tier-1 adoption; Option B's qualification; `#23`'s first test | Phase B: its merge above; all: CI (D6) and an environment that can build the image |
 | branch protection | nothing: John's ruleset `main` (2026-10-15) requires a pull request and the `required` check, blocks force-push and deletion, exempts no one, and asks **0 approvals** and no resolved conversations: a narrower rule than D20 states, chosen so agent PRs opened under his account can merge |
-| any paid run | the bounded episode's acceptance; then the three stages in D22 |
+| any paid run | the bounded episode's acceptance; then the three stages in D22. No container-only pilot against the fixture (D23) |
 | nothing else | — |
 
 ## Known gaps in CI

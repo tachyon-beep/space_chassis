@@ -55,3 +55,13 @@ mission under way, then a final full test".
 
 No residual decisions are open. Decision points that will arise later are listed in
 `docs/vehicle-completion/08-risks.md`.
+
+## 2026-10-15 — no container-only pilot
+
+John, in the Space Aurora project (2026-10-15 08:30 UTC): "ok the container is a copy of one from
+another project so we know it works, lets power on t" (cut off; read with the coordinator's question
+before it, which offered an earlier paid run of the agent container against the fixture alone).
+
+| # | decision | who | why | where |
+|---|---|---|---|---|
+| D23 | **No container-only paid pilot.** No model-backed run against `aurora/contract/fake_diode.py` alone. The first paid run stays D22's 10-minute smoke test on the accepted bounded quiet-coast episode, and the work goes to the vehicle: the rest of tranche 1 and tranche 2 (`docs/vehicle-completion/07-sequencing.md`) up to that episode's acceptance. D22 and the block in `status.md` ("any paid run") are unchanged. | John | The container is a copy of an Aurora container already proven in another project, so a fixture-only run would test what is already known and not the vehicle, which is the untested half | `status.md`; `docs/vehicle-completion/07-sequencing.md` |
