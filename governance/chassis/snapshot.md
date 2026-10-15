@@ -1,8 +1,8 @@
 # Chassis — snapshot
 
-As of **2026-10-10**, `tachyon-beep/space_chassis` **`aurora-port` @ `6e5370d`** (plan 8; pushed), with
-`vehicle-adoption` @ `044b5c5` (pushed, parked) and the local dry-run branch `phase-b-dryrun` @
-`397d032`. `main` is @ `fa43b25`, 100 commits behind `aurora-port`. Maintained by the Space Chassis
+As of **2026-10-10**, `tachyon-beep/space_chassis` **`aurora-port` @ `e3eff27`** (plan 8, complete and
+pushed; the commits after it are governance only), with `vehicle-adoption` @ `be63f93` (pushed,
+parked, rebased onto plan 8) and the local dry-run branch `phase-b-dryrun` @ `39ba76d`. `main` is @ `fa43b25`, 100 commits behind `aurora-port`. Maintained by the Space Chassis
 session. **Verify against the code before trusting any line here.** This file summarises; the
 repository, its tests and its filigree issues are authoritative where they disagree.
 
@@ -40,12 +40,12 @@ world ten self-modifying agents live in, and the record of what they do there. S
 | | |
 |---|---|
 | Plans done | Ports 1–6 (`docs/superpowers/plans/2026-10-09-aurora-port-{1..6}*.md`). The ledgers with the rulings and deferred minors are in `docs/superpowers/ledgers/plan-{4b,5,6}-ledger.md`. |
-| Plan 8 | The image split (2026-10-10): the agents' image carries nothing of the vehicle, which runs `space-chassis-vehicle` (`d7a1172`, `4cb4ede`, `6e5370d`). Root suite 566, live 14/14 with the per-agent "no vehicle in its image" sweep. Reviews and the rebase of `vehicle-adoption` follow. |
+| Plan 8 | The image split (2026-10-10): the agents' image carries nothing of the vehicle, which runs `space-chassis-vehicle` (`d7a1172` .. `e3eff27`). Reviewed by Opus and Astra, one fix pass each: each agent's image is swept host-side, as root, to completion. Root suite 569, live 14/14. `vehicle-adoption` rebased onto it, with a host-side check that no agent mounts the vehicle's source (`be63f93`). Ledger `plan-8-ledger.md`. |
 | Plan in flight | Port 7, vehicle adoption (`…-7-vehicle-adoption.md`, ledger `plan-7-ledger.md` on `vehicle-adoption`). Phase A is done, reviewed and pushed on `vehicle-adoption`. Phase B waits for the vehicle's #21 merge SHA, posted on filigree `space_chassis-93010ff54e`. |
 | Vehicle pinned | `docs/deep_research/vehicle` @ `dd79e76` on `aurora-port` and `vehicle-adoption` alike. No pointer bump before the adoption commit. |
-| Base image | `python:3.13-slim@sha256:70729b46…` (Python 3.13.16), pinned on `vehicle-adoption` (`044b5c5`). `aurora-port` still builds from the unpinned tag. |
-| Last full runs | `aurora-port` at `ce4f5e4`: merged suite 1711 passed, live 14/14 (`plan-6-ledger.md`). Root suite 558 at `42b24f7`. `vehicle-adoption` at `b94ef44`: merged 1811 passed plus the two Phase-B pins failing as expected; live 14/14 on the pinned base (`plan-7-ledger.md`). |
-| Dry run of Phase B | Against vehicle `06f08a3` (2026-10-10), on `phase-b-dryrun`: live vehicle checks 4/4 (one world, SIGKILL → resume replaying 13 ticks, containment, `docker stop`), and root suite 579/579 with the dry-run pins. Recorded in filigree `space_chassis-93010ff54e` comment 40. |
+| Base image | `python:3.13-slim@sha256:70729b46…` (Python 3.13.16), pinned on `vehicle-adoption`'s base stage (`e055e73`; `044b5c5` before the rebase), so the vehicle stage inherits it. `aurora-port` still builds from the unpinned tag. |
+| Last full runs | `aurora-port` at `ce4f5e4`: merged suite 1711 passed, live 14/14 (`plan-6-ledger.md`). Root suite 558 at `42b24f7`. `vehicle-adoption` at `b94ef44` (before the rebase): merged 1811 passed plus the two Phase-B pins failing as expected; live 14/14 on the pinned base (`plan-7-ledger.md`). At `be63f93`: root suite 586, no failures, with the vehicle at `dd79e76`. |
+| Dry run of Phase B | Against vehicle `06f08a3` (2026-10-10), on `phase-b-dryrun`: live vehicle checks 4/4 (one world, SIGKILL → resume replaying 13 ticks, containment, `docker stop`), and root suite 579/579 with the dry-run pins. Recorded in filigree `space_chassis-93010ff54e` comment 40. Rerun after the rebase onto plan 8 (`39ba76d`, the vehicle on its own smoke image): root 592 passed, live 18/18. |
 | Quality gates | Every commit runs the root suite after `git add`, plus `uvx ruff check` and `ruff format --check`. A change to the image or compose also runs `pytest live`. Each plan gets an Opus plan review, an Opus code review and one Astra (high) final review (`practice.md`). |
 
 ## Branches and checkouts

@@ -9,7 +9,10 @@ are not written there. **Verify against those files before trusting this one.**
 
 - **The vehicle never edits the chassis.** Compose, mounts, the serve script, chassis tests and the
   submodule pointer are the chassis line's; the vehicle states needs (`interface.md`) and the chassis
-  decides. The frozen `docs/diode-contract.md` changes only with both lines adopting it.
+  decides. The vehicle team owns and leads `docs/diode-contract.md`: it sets the rule and writes a
+  change, and the change takes effect when the chassis adopts it. **No shared tasks** (John,
+  2026-10-10): every task has one lead team; where the chassis leads, the vehicle follows the
+  chassis's rule on its side rather than setting its own.
 - **Never work in the chassis's submodule checkout** (`/home/john/space_chassis/docs/deep_research/vehicle`,
   left on `codex/vehicle-delivery-scaffold` @ `8c6f71d`, pointer showing `M`) and never run
   `git submodule update` there. Vehicle work happens in **git worktrees** of that module's object store
