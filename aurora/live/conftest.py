@@ -43,8 +43,9 @@ TRANSCRIPT_HEAD_BYTES = 2 << 20
 def pytest_collection_modifyitems(items):
     """Containment first: it describes the stack as it started, before any test breaks an agent.
     The vehicle's last: its stack replaces the fixture's (one stack at a time), so every test of
-    the fixture's stack runs before it goes."""
-    order = {"test_containment.py": 0, "test_vehicle.py": 2}
+    the fixture's stack runs before it goes. The quiet-coast episode runs on the vehicle's stack
+    after test_vehicle.py, because it replaces the stack's world with a fresh one."""
+    order = {"test_containment.py": 0, "test_vehicle.py": 2, "test_quiet_coast.py": 3}
     items.sort(key=lambda item: order.get(item.path.name, 1))
 
 
