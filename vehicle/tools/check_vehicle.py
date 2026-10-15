@@ -2127,12 +2127,17 @@ def states_by_node(root: Path) -> dict[str, list[str]]:
 def ruled_states(root: Path) -> set[str]:
     """Every state an admissible `domains/<name>/rules.py` advances (`plant.registered_rule_states`).
 
-    Imported here and not at the top because `plant` imports this module.
+    Imported here and not at the top because `plant` imports this module. A domain file that does not
+    parse leaves no registry to read: it is refused where it is read (`load`), and the undriven-node
+    check then sees no rules rather than stopping the linter before that refusal is reported.
     """
     sys.modules.setdefault("check_vehicle", sys.modules[__name__])
     import plant
 
-    return plant.registered_rule_states(root)
+    try:
+        return plant.registered_rule_states(root)
+    except (yaml.YAMLError, plant.Unconfigured, OSError, ValueError, TypeError):
+        return set()
 
 
 def state_methods(root: Path) -> dict[str, str]:
@@ -18640,7 +18645,13 @@ def check_domain_rules(root: Path, report: Report) -> None:
     sys.modules.setdefault("check_vehicle", sys.modules[__name__])
     import plant
 
-    for where, why in plant.rule_refusals(root):
+    try:
+        refusals = plant.rule_refusals(root)
+    except yaml.YAMLError:
+        # A `components.yaml` that does not parse is refused where it is read (`load`, by file), and
+        # a rule cannot be judged against declarations that do not exist.
+        return
+    for where, why in refusals:
         report.refuse(where, why)
 
 
