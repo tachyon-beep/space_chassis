@@ -337,7 +337,7 @@ def test_the_loop_s_steady_state_is_the_hand_energy_balance(world):
     assert values["evaporator_duty_w"] == pytest.approx(q_evap, abs=0.5)
     assert values["radiator_rejection_w"] + values["evaporator_duty_w"] == pytest.approx(q, abs=0.5)
     # The plate and the amplifier at their own equilibria over the chosen conductances.
-    plate = SUPPLY_K + 360 / 133
+    plate = SUPPLY_K + 360 / 120
     assert values["zone_csm_avionics_t"] == pytest.approx(plate, abs=1e-3)
     assert values["comm_amp_t"] == pytest.approx(plate, abs=1e-3)
     assert STATES["zone_csm_avionics_t"]["initial"] == pytest.approx(plate, abs=1e-4)

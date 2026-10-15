@@ -1,8 +1,8 @@
 """D5, the domain-rule seam: a rule lives in `domains/<name>/rules.py` and the plant calls it.
 
-`governance/decisions.md` D5 and `plant.md` §2. No vehicle state has a rule yet — none of the
-algebraic states the plant still refuses has inputs evidenced to `docs/evidence.md`'s standard — so
-every rule here is a **fixture**: a writable copy of the definition with a `rules.py` planted in it,
+`governance/decisions.md` D5 and `plant.md` §2. Power has no rule yet (thermal and comms do, for
+the quiet coast, and these tests measure the fixture against the vehicle as it stands), so every
+rule here is a **fixture**: a writable copy of the definition with a `rules.py` planted in it,
 the way the referee's broken-copy tests plant a broken field. Nothing in a fixture is a claim about
 the vehicle; the values are arbitrary and are chosen only to be recognisable.
 """
@@ -84,9 +84,9 @@ BUS_B_PARAMS = "    fixture_open_v: 31.0\n    fixture_drop_v_per_w: 0.001\n"
 
 def test_the_vehicle_has_no_rule_yet_and_the_class_refusal_stands():
     """Adding the seam changes no count: with no `rules.py` the refusals are the ones they were."""
-    assert not list((VEHICLE / "domains").glob(f"*/{plant.RULES_FILE}"))
+    assert not (VEHICLE / "domains" / "power" / plant.RULES_FILE).exists()
     world = plant.load_world(VEHICLE)
-    assert world.rules == {}
+    assert STATE not in world.rules
     _, gaps = tick(world)
     assert "its rule is not in the configuration" in gaps[STATE].owed
 
@@ -100,7 +100,7 @@ def test_an_empty_rules_file_moves_no_bucket(tmp_path):
 def test_a_registered_rule_advances_its_state_from_its_snapshot_and_its_declaration(tmp_path):
     root = definition(tmp_path, BUS_B_RULE, BUS_B_PARAMS)
     world = plant.load_world(root)
-    assert set(world.rules) == {STATE}
+    assert set(world.rules) - set(plant.load_world(VEHICLE).rules) == {STATE}
     assert world.rules[STATE].source == "domains/power/rules.py"
 
     after, gaps = tick(world)
@@ -144,7 +144,9 @@ def test_rules_are_called_in_the_derived_tick_order(tmp_path):
 
         world.rules[state_id] = plant.DomainRule(state_id, rule.domain, recording, rule.source)
     tick(world, plant.initial_values(world))
-    walk = [s.id for s in world.states if s.id in world.rules]
+    fixture = ("bus_b_v", "lcl_tripped")
+    walk = [s.id for s in world.states if s.id in fixture]
+    called = [state_id for state_id in called if state_id in fixture]
     # `initial_values` resolves `algebraic` rules at t=0 (bus_b_v), then the tick walks both.
     assert called[-2:] == walk == ["bus_b_v", "lcl_tripped"], called
 

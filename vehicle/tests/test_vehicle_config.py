@@ -744,7 +744,8 @@ def test_the_build_order_is_the_ticks_own_gap_list():
     assert {state.id for state in buckets["ready"]} == advanced, sorted(
         {state.id for state in buckets["ready"]} ^ advanced
     )
-    assert sum(len(rows) for rows in buckets.values()) == 140
+    # 140 -> 150: ADR 0003 quiet coast: the thermal, power and comms rules together (thermal 24 -> 28, comms 10 -> 16).
+    assert sum(len(rows) for rows in buckets.values()) == 150
 
     # Every blocked state is filed under what its *root* owes, and the root is the state an
     # implementer should open. The sentinel's sequencing is deliberately not part of the chain: it
@@ -817,7 +818,8 @@ def test_the_build_order_is_the_ticks_own_gap_list():
     # thresholds do not carry, rather than the domain code the rule bucket was asking it for.
         # 52 -> 53 ready and 45 -> 44 rule: `orbital_state` coasts under `cislunar_point_masses`.
         # 53 -> 54 ready: power's `load_enabled`, the switch map `set_load` writes, is held.
-        ) == (54, 27, 15, 44), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
+        # (54, 27, 15, 44) -> (70, 24, 14, 42): ADR 0003 quiet coast: the thermal, power and comms rules together.
+        ) == (70, 24, 14, 42), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
 
 
 def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
@@ -855,7 +857,7 @@ def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
         if len(world.states_on(node)) > 1
     }
     # 11 -> 10 in round 70, with the source regulator off the fuel cell's node.
-    assert len(crowded) == 10, sorted(crowded)
+    assert len(crowded) == 12, sorted(crowded)
 
     # No blocked state is filed under a state that lives on a node with no value key.
     offenders = [
@@ -1472,7 +1474,7 @@ def test_the_linter_reaches_every_node_a_command_moves(tmp_path):
     # silently dropping out of it is the same defect as one silently joining.
     assert commanded == {
         "bus_tie", "cabin_regulator", "engine_main", "rcs_valves", "link",
-        "nav_state", "guidance", "coolant_flow", "instrumentation", "structure_config",
+        "nav_state", "guidance", "coolant_flow", "instrumentation", "structure_config", "load_shed_state",
     }, sorted(commanded)
     # Every state that says a command moves it lives on one of those nodes.
     for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
@@ -2866,7 +2868,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert "declares 148 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
     assert "derived here as 20 unperturbed, 15 of them `service`" in result.stdout
     # One block deleted is one debt added: the corpus stands at 268, so the ablation is 269.
-    assert "COMPOSES, with 269 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 266 declared debt(s)." in result.stdout
 
     # The failure chains, which are owed *and* refused: the README's front table names fifteen.
     definition = copy_definition(fixture_dir(tmp_path, "no-chains"))
@@ -2888,7 +2890,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "declares no coverage block. The domain publishes 15 channel(s)" in result.stdout
     assert "no fault perturbs 1 of them" in result.stdout
-    assert "COMPOSES, with 269 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 266 declared debt(s)." in result.stdout
 
     # The filter's rates. The block is nested rather than top level, and the obligation is C-07's
     # rather than this check's — which is why the first reading of it in this round was wrong.
@@ -2902,7 +2904,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "domains/gnc/components.yaml:estimator.sub_stepping: is not declared" in result.stdout
     assert "C-07's resolution requires the interface" in result.stdout
-    assert "COMPOSES, with 269 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 266 declared debt(s)." in result.stdout
 
 
 def test_the_readme_s_chain_count_is_held_against_the_file(tmp_path):
@@ -4976,7 +4978,7 @@ def test_the_linter_refuses_a_multi_state_node_with_no_declared_order(tmp_path):
     definition = copy_definition(tmp_path / "vehicle")
     path = definition / "coupling.yaml"
     text = path.read_text()
-    anchor = "    state_order: [tx_power, link_snr]\n"
+    anchor = "    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_snr]\n"
     assert anchor in text, "the fixture no longer matches the `link` node"
     path.write_text(text.replace(anchor, "", 1))
 
@@ -6688,7 +6690,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # Removing this file's own prose obligations takes the headline down by the number of entries
     # that file carries, which is one here — so the figure is the base minus one, and it moves with
     # the base rather than with the runs of fixtures that inject a debt.
-    assert "with 267 declared debt(s)" in result.stdout
+    assert "with 264 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -7099,7 +7101,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 269 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 266 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -7205,7 +7207,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 269 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 266 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -8490,7 +8492,9 @@ def test_a_crowded_node_is_read_through_the_state_the_edge_names():
     # declarations were removed: a discharge's driver is its *target*, and `co2_removal_csm` carries
     # one state and publishes its key.)
     edge = next(e for e in world.edges if e.id == "E-WATER-RAD")
-    assert edge.reads == "radiator_rejection_w"
+    # ADR 0003 item 5: the water goes to the evaporator's duty, not to the panel's rejection, so the
+    # edge names `evaporator_duty_w`, the third state on the same node.
+    assert edge.reads == "evaporator_duty_w"
     driver = plant.edge_driver(world, edge, values, edge.target)
     assert isinstance(driver, (int, float)) and driver > 0, driver
     assert "radiator_reject" not in values
@@ -8505,9 +8509,13 @@ def test_a_crowded_node_is_read_through_the_state_the_edge_names():
             drives_from = e.target if e.source in stock_nodes else e.source
             assert owner[e.reads] == drives_from, (e.id, e.reads, drives_from)
     assert sorted(e.reads for e in world.edges if e.reads) == [
+        "amp_dissipation_w",
         "attitude",
+        "coolant_flow_kg_s",
+        "evaporator_duty_w",
         "link_snr",
         "orbital_state",
+        "playback_rate",
         "radiator_rejection_w",
         "tx_power",
     ], sorted(e.reads for e in world.edges if e.reads)
@@ -10069,7 +10077,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 135 -> 136 in round 40, with the avionics bay's heat rate: the one heated zone whose 360 W no
     # state carried, and the ingredient the loop's collected load was missing.
     # 136 -> 138 in round 41, with the two loops' collected loads: the sums that ingredient fed.
-    assert sum(len(rows) for rows in buckets.values()) == 140
+    # 140 -> 150: ADR 0003 quiet coast: the thermal, power and comms rules together (thermal 24 -> 28, comms 10 -> 16).
+    assert sum(len(rows) for rows in buckets.values()) == 150
 
     # `ready` means what it says: only the classes the reference plant can actually advance.
     # It is no longer only the plant's two integrators — round 20 taught it to evaluate an
@@ -10143,7 +10152,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # reads, and naming it (`radiator_rejection_w`) made the coolant's discharge computable.
     # Post-ejection P00 and active CMC DAP give two more commanded modes a sourced initial.
     # 53 -> 54: power's `load_enabled`, the switch map `set_load` writes, is held.
-    assert len(buckets["ready"]) == 54
+    # 54 -> 70: ADR 0003 quiet coast: the thermal, power and comms rules together (62 with power and comms alone).
+    assert len(buckets["ready"]) == 70
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -10187,7 +10197,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # blocks it is the ladder's rung-to-class map — a declaration the thresholds do not carry —
     # rather than the domain code this bucket was asking it for.
     # 45 -> 44 with `orbital_state`, the first `dynamics` state with a rule the plant carries.
-    assert len(buckets["rule"]) == 44, "just under a third of the vehicle is domain code"
+    # 44 -> 42: ADR 0003 quiet coast: the thermal, power and comms rules together.
+    assert len(buckets["rule"]) == 42, "just under a third of the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -10224,7 +10235,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # `none`, so what it owes is the rung-to-class map rather than the comparator that reads it.
     # The RCS per-thruster pulse floor became an honest owed value when the LM command time
     # stopped being applied globally, moving one state here from the rule bucket.
-    assert len(buckets["value"]) == 27
+    # 27 -> 24: ADR 0003 quiet coast: the thermal, power and comms rules together.
+    assert len(buckets["value"]) == 24
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
@@ -10246,7 +10258,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # and the root's verdict is what files them now.
     # 16 -> 15 in round 72, the other half of the ready move: the coolant's drain stopped owing the
     # declaration that names which state on `radiator_reject` it reads.
-    assert len(buckets["edge"]) == 15
+    # 15 -> 14: ADR 0003 quiet coast: the thermal, power and comms rules together.
+    assert len(buckets["edge"]) == 14
 
 
 def test_the_plant_advances_a_node_s_states_in_the_order_the_node_declares(tmp_path):
@@ -10283,7 +10296,7 @@ def test_the_plant_advances_a_node_s_states_in_the_order_the_node_declares(tmp_p
         )
     # And the two independent nodes still get a frozen order, which is the tiebreak rather than a
     # declaration — the plant must not read "independent" as "whatever the file said".
-    assert [s.id for s in world.states_on("link")] == ["tx_power", "link_snr"]
+    assert [s.id for s in world.states_on("link")] == ["transmitter_on", "tx_power", "amp_dissipation_w", "link_snr"]
     assert [s.id for s in world.states_on("engine_main")] == sorted(
         ["aps_state", "dps_state", "sps_state"]
     )
@@ -11365,7 +11378,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "140 states, by what blocks them" in result.stdout
+    assert "150 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -11393,8 +11406,9 @@ def test_a_declared_rule_is_ready_even_on_the_internal_sentinel(tmp_path):
     state = next(s for s in world.states if s.id == "avionics_bay_heat_w")
     assert state.node == "internal", state.node
     assert state.method == "algebraic"
-    derivation = (state.spec.get("provenance") or {}).get("derivation")
-    assert isinstance(derivation, dict) and derivation.get("expression"), derivation
+    # ADR 0003: the rule is `domains/thermal/rules.py` now (a sum over the loads `load_enabled` has
+    # on) rather than a `derivation`; the bucket's question is the same one, asked of code that exists.
+    assert state.id in world.rules, sorted(world.rules)
     buckets = plant.build_order(world)
     assert state.id in {s.id for s in buckets["ready"]}, [s.id for s in buckets["rule"]][:5]
     # And the claim the bucket makes: the plant really does compute it, in one tick, from those
@@ -11402,19 +11416,13 @@ def test_a_declared_rule_is_ready_even_on_the_internal_sentinel(tmp_path):
     values = plant.step(world, plant.initial_values(world), 0.02, [])
     assert values["avionics_bay_heat_w"] == 360.0, values.get("avionics_bay_heat_w")
 
-    # The negative, in a broken copy: no derivation, no ready — the state owes the code after all.
+    # The negative, in a broken copy: no rule, no ready — the state owes the code after all.
     definition = copy_definition(fixture_dir(tmp_path, "no-derivation"))
-    path = definition / "domains" / "thermal" / "components.yaml"
+    path = definition / "domains" / "thermal" / "rules.py"
     text = path.read_text()
-    start = text.index("  - id: avionics_bay_heat_w\n")
-    end = text.index("  - id: zone_csm_cabin_t\n")
-    block = text[start:end]
-    lines = block.split("\n")
-    first = next(i for i, line in enumerate(lines) if line == "      derivation:")
-    after = next(i for i in range(first + 1, len(lines)) if lines[i].strip() and not lines[i].startswith("        "))
-    stripped = "\n".join(lines[:first] + lines[after:])
-    assert stripped != block, "the fixture no longer matches the heat rate's derivation"
-    path.write_text(text[:start] + stripped + text[end:])
+    registered = '    "avionics_bay_heat_w": _zone_heat,\n'
+    assert text.count(registered) == 1, "the fixture no longer matches the heat rate's rule"
+    path.write_text(text.replace(registered, ""))
     broken = plant.build_order(plant.load_world(definition))
     assert "avionics_bay_heat_w" in {s.id for s in broken["rule"]}, "a state with no rule was called ready"
 
@@ -11611,7 +11619,8 @@ def test_every_heated_zone_declares_the_state_that_carries_its_heat(tmp_path):
     # The debt is closed, and the check still reports an absent link when one comes back.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 268 declared debt(s)." in intact.stdout
+    # 268 -> 265: the thermal rules (ADR 0003) and the power and comms rules they merged with.
+    assert "COMPOSES, with 265 declared debt(s)." in intact.stdout
     assert "names no heat-rate state" not in intact.stdout
 
     def fixture(name: str, old: str, new: str) -> subprocess.CompletedProcess[str]:
@@ -11707,7 +11716,7 @@ def test_a_loop_s_collected_load_is_the_sum_over_the_zones_that_name_it(tmp_path
     # The note rather than a debt, in the linter's own words, and the count unmoved by it.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 268 declared debt(s)." in intact.stdout
+    assert "COMPOSES, with 265 declared debt(s)." in intact.stdout
     assert (
         "vehicle.yaml#thermal.loops.loop_secondary.load_state: is not declared, and no zone names "
         "this loop" in intact.stdout
@@ -11825,8 +11834,10 @@ def test_the_coolants_specific_heat_is_arithmetic_from_the_loops_own_figures(tmp
         state_revision=1,
     )
     inlet = frame["values"]["thermal.radiator_inlet_c"]
-    assert inlet == pytest.approx(7.2 + 1723.0 / (0.025199576111111112 * cp), rel=1e-6)
-    assert inlet == pytest.approx(26.06, abs=0.01)
+    # 1,651 W since ADR 0003: the loop's load is summed over the loads `load_enabled` has on, and
+    # the 72 W amplifier starts off (its 60.8 W dissipation arrives with the transmitter).
+    assert inlet == pytest.approx(7.2 + 1651.0 / (0.025199576111111112 * cp), rel=1e-6)
+    assert inlet == pytest.approx(25.27, abs=0.01)
     # Inside the channel's own range and below its event, which is what makes it a reading.
     channels = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
     row = next(r for rows in channels.values() if isinstance(rows, list)
@@ -13933,7 +13944,9 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
     assert len(declared) == 10, f"{len(declared)} domains declare one: {[d for d, _ in declared]}"
     # 54 -> 56: the oxygen supply tank's pressure joined the sentinel, and — the same round — the
     # count it is part of is what this assertion exists to notice.
-    assert sum(len(states) for _, states in declared) == 59, "the sentinel's state count moved"
+    # 59 -> 62 with ADR 0003: thermal's three keyed commands (`evaporator_feed`, `coolant_pump`,
+    # `radiator_bypass`) are on the sentinel and declared in its order.
+    assert sum(len(states) for _, states in declared) == 62, "the sentinel's state count moved"
 
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
@@ -14496,7 +14509,7 @@ def test_a_zone_temperature_is_on_a_node_or_declared(tmp_path):
     assert states["zone_radiator_t"]["node"] == "radiator_reject"
     assert thermal.get("zones_not_on_nodes") in (None, {})
     node = coupling["nodes"]["radiator_reject"]
-    assert node["state_order"] == ["zone_radiator_t", "radiator_rejection_w"]
+    assert node["state_order"] == ["zone_radiator_t", "radiator_rejection_w", "evaporator_duty_w"]
     assert next(e for e in coupling["edges"] if e["id"] == "E-ENV-RAD")["kind"] == "algebraic"
 
     # A zone back on the sentinel with no explanation is refused.
@@ -14646,7 +14659,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 268 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 265 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -14823,7 +14836,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     # prose obligation in `coupling.yaml#open_debts` for the three bands whose vocabulary is wider
     # than their comparator. The round adds a field to four states; nothing was answered, so nothing
     # fell.
-    assert owed == "270", "the view must agree with the headline count"
+    assert owed == "265", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -15155,7 +15168,8 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     scalar = [e for e in edges if e.sensitivity.get("value") not in (None, "UNCONFIGURED")]
     tables = [e for e in edges if e.sensitivity.get("regimes")]
     assert len(tables) == 8, f"the regime edges changed: {[e.id for e in tables]}"
-    assert len(scalar) + len(tables) == 69
+    # 69 -> 74: ADR 0003 quiet coast: the thermal, power and comms rules together (E-PUMP-COOL, E-RAD-THERM and E-AMP-HEAT among them).
+    assert len(scalar) + len(tables) == 74
     ready = subprocess.run(
         [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--readiness"],
         capture_output=True,
@@ -15164,7 +15178,7 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     )
     assert ready.returncode == 0, ready.stderr
     found = re.search(r"edges with a sensitivity\s+(\d+) / (\d+)", ready.stdout)
-    assert (int(found.group(1)), int(found.group(2))) == (69, len(edges)), found.group(0)
+    assert (int(found.group(1)), int(found.group(2))) == (74, len(edges)), found.group(0)
 
 
 def test_a_verb_that_starts_a_state_is_declared_rather_than_described(tmp_path):
@@ -15272,7 +15286,7 @@ def test_interlocks_is_a_list_or_the_sentinel_and_nothing_else(tmp_path):
         for verb in (yaml.safe_load(path.read_text()) or {}).get("commands") or []:
             verbs[str(verb["verb"])] = verb
 
-    assert len(verbs) == 58, len(verbs)
+    assert len(verbs) == 59, len(verbs)
     sentinel = sorted(v for v, s in verbs.items() if s.get("interlocks") == "none")
     guarded = sorted(v for v, s in verbs.items() if isinstance(s.get("interlocks"), list))
     assert len(sentinel) == 23, sentinel
@@ -15810,7 +15824,7 @@ def test_no_vocabulary_is_written_in_a_word_yaml_reads_as_a_boolean(tmp_path):
                     values = [str(v) for v in spec.get("values") or []]
                     if set(values) == {"on", "off"} or set(values) == {"on", "off", "standby"}:
                         two_valued.append(f"{verb['verb']}.{name}")
-    assert len(two_valued) == 9, two_valued
+    assert len(two_valued) == 10, two_valued
     # And what HELP.md renders is those words rather than Python's repr of a boolean.
     generated = subprocess.run(
         [sys.executable, str(VEHICLE / "tools" / "generate_help.py"), "--dir", str(VEHICLE)],
@@ -16654,7 +16668,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 270 declared debt(s)",
+        "COMPOSES, with 265 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -16662,7 +16676,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 270 declared debt(s)",
+        "COMPOSES, with 265 declared debt(s)",
         composes=True,
     )
 
@@ -16677,7 +16691,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 271 declared debt(s)" in out, out[-300:]
+    assert "with 266 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -16836,7 +16850,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 271 declared debt(s)" in out, out[-400:]
+    assert "with 266 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -16983,7 +16997,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 271 declared debt(s)" in out, out[-400:]
+    assert "with 266 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -16993,7 +17007,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 270 declared debt(s)",
+        "COMPOSES, with 265 declared debt(s)",
         composes=True,
     )
 
@@ -17135,7 +17149,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 270 declared debt(s)",
+        "COMPOSES, with 265 declared debt(s)",
         composes=True,
     )
 
@@ -17552,12 +17566,13 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     anchor = '"""'
     assert anchor in text
     path.write_text(
-        text.replace(anchor, anchor + "\nA fixture's claim: twelve nodes carry more than one state.\n", 1)
+        text.replace(anchor, anchor + "\nA fixture's claim: fourteen nodes carry more than one state.\n", 1)
     )
     result = run_linter(definition)
     assert result.returncode == 1, result.stdout[-900:]
-    assert "states 'twelve nodes carry more than one state'" in result.stdout, result.stdout[-900:]
-    assert "this vehicle has 10 multi-state nodes" in result.stdout, result.stdout[-900:]
+    # The fixture's figure moved twelve -> fourteen when the vehicle reached 12 (ADR 0003's merges).
+    assert "states 'fourteen nodes carry more than one state'" in result.stdout, result.stdout[-900:]
+    assert "this vehicle has 12 multi-state nodes" in result.stdout, result.stdout[-900:]
 
     # And the sentinel form, which is the other noun and the other claim.
     other = copy_definition(fixture_dir(tmp_path, "stale-sentinel"))
@@ -17571,7 +17586,7 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     result = run_linter(other)
     assert result.returncode == 1, result.stdout[-900:]
     assert "states 'forty-eight states live on it'" in result.stdout, result.stdout[-900:]
-    assert "this vehicle has 59 states on the sentinel" in result.stdout, result.stdout[-900:]
+    assert "this vehicle has 62 states on the sentinel" in result.stdout, result.stdout[-900:]
 
     # A *digits* figure is read too, so the reader is not tied to the spelling the corpus happens
     # to use today.
@@ -17579,11 +17594,11 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     path = digits / "tools" / "faults.py"
     text = path.read_text()
     path.write_text(
-        text.replace(anchor, anchor + "\nA fixture's claim: 12 nodes carry more than one state.\n", 1)
+        text.replace(anchor, anchor + "\nA fixture's claim: 14 nodes carry more than one state.\n", 1)
     )
     result = run_linter(digits)
     assert result.returncode == 1, result.stdout[-900:]
-    assert "states '12 nodes carry more than one state'" in result.stdout, result.stdout[-900:]
+    assert "states '14 nodes carry more than one state'" in result.stdout, result.stdout[-900:]
 
     # And the check's own explanatory prose must not trip it. The first version of the comment above
     # `MULTI_STATE_NODE_FIGURES` wrote both stale figures out in the form the patterns read, and
@@ -17657,13 +17672,13 @@ def test_the_linter_refuses_a_node_count_three_files_state_differently(tmp_path)
     definition = copy_definition(fixture_dir(tmp_path, "stale-nodes-in-contract"))
     path = definition / "plant.md"
     text = path.read_text()
-    old = "The derived order is 59 nodes"
+    old = "The derived order is 61 nodes"
     assert old in text, "the fixture no longer matches plant.md's tick-order sentence"
     path.write_text(text.replace(old, "The derived order is 40 nodes", 1))
     result = run_linter(definition)
     assert result.returncode == 1
     assert "states '40 nodes'" in result.stdout, result.stdout[-900:]
-    assert "the schedule the linter derives for this vehicle is 59 nodes" in result.stdout
+    assert "the schedule the linter derives for this vehicle is 61 nodes" in result.stdout
 
     # A tool that is not the one the reader was written for, and the other spelling of the claim.
     other = copy_definition(fixture_dir(tmp_path, "stale-nodes-in-tool"))
@@ -17686,7 +17701,7 @@ def test_the_linter_refuses_a_node_count_three_files_state_differently(tmp_path)
     order = copy_definition(fixture_dir(tmp_path, "stale-node-tick-order"))
     path = order / "plant.md"
     text = path.read_text()
-    anchor = "The derived order is 59 nodes and `check_vehicle.py` reports its tail on every"
+    anchor = "The derived order is 61 nodes and `check_vehicle.py` reports its tail on every"
     assert anchor in text, "the fixture no longer matches plant.md's tick-order sentence"
     path.write_text(
         text.replace(anchor, "The derived order is a 40-node tick order and `check_vehicle.py`", 1)
@@ -19703,12 +19718,16 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # 45 -> 48 in round 80, and this is the largest single move a *value* round has made: three
     # commanded modes the launch checklist publishes a position for, which the hold then carries.
     # 53 -> 54: power's `load_enabled`, the switch map `set_load` writes, is held.
-    assert len(advanced) == 54, sorted(advanced)
+    # 54 -> 70: ADR 0003 quiet coast: the thermal, power and comms rules together.
+    assert len(advanced) == 70, sorted(advanced)
 
-    # The arithmetic is the corpus's, at the values the corpus declares.
-    assert values["cabin_heat_csm"] == 733.0
-    assert values["cabin_heat_lm"] == 827.0
-    assert values["cabin_eq_csm"] == pytest.approx(286.214, abs=5e-4)
+    # The arithmetic is the corpus's, at the values the corpus declares: 733 W less the 72 W
+    # amplifier, which starts off (ADR 0003: heat is summed over the loads `load_enabled` has on).
+    assert values["cabin_heat_csm"] == 661.0
+    # The LM's loads are off in the coast (`load_enabled`), so the LM cabin collects no heat.
+    assert values["cabin_heat_lm"] == 0.0
+    # 280.35 K supply plus 661 W over 125 W/K: the cabin's rule reads `coolant_loop_t` (ADR 0003).
+    assert values["cabin_eq_csm"] == pytest.approx(285.638, abs=5e-4)
     assert values["environment_heat"] == pytest.approx(2477.02, abs=5e-3)
     # And the two cabin lags relaxed toward those equilibria in the same tick, which is the point of
     # evaluating the relation rather than refusing it.
@@ -19730,7 +19749,7 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     assert 4.9999 < values["csm_cabin_pressure_pa"] / 6894.757293168361 < 5.0
     # A node carrying one state keeps its node key, because every reader asks for it that way; a node
     # carrying five has no node key at all, because there is no single value it could mean.
-    assert values["cabin_heat_csm"] == 733.0
+    assert values["cabin_heat_csm"] == 661.0
     assert "cabin_atm" not in values
     # And the sentinel's sub-map is merged rather than replaced, so its six accumulators all survive
     # a tick — the same defect as the node collision, one level down. **9 -> 6 -> 9**: the round that
@@ -19805,7 +19824,7 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
     assert published == 142, published
     # 33 -> 31 in round 70: two published channels read states that shared the fuel cell's node, and
     # the node publishes its key now, so they are nameable.
-    assert unnameable == 31, unnameable
+    assert unnameable == 32, unnameable
 
     # The plant's half of the debt is closed: a frame's `values` keys are channel ids the registry
     # declares, and a channel that is *derived* from its source (a different unit) is omitted rather
@@ -19895,8 +19914,9 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
         _cv.load(VEHICLE / "channels.yaml", _cv.Report()),
     ), report)
     counts = _cv.CHANNEL_DERIVATION_COUNTS
-    assert counts["same"] == 64, counts
-    assert counts["derived"] == 71, counts
+    # 64/71 -> 63/72 with the comms quiet-coast model (7b22cd7), which moved the docstring too.
+    assert counts["same"] == 63, counts
+    assert counts["derived"] == 72, counts
     assert counts["total"] == 135, counts
     assert not [r for r in report.refusals if "channels read from a state" in r], report.refusals
     doc = _cv.CHANNEL_DERIVATION_FIGURES.search(_cv.inspect.getdoc(_cv.check_channel_derivations) or "")
@@ -19953,9 +19973,9 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     # 63 -> 64 in round 32: `eclss.o2_supply_pressure_psi` moved from the node-sourced set to the
     # state-sourced one, where its unit is its source's. 134 -> 135 in round 61, when the total was
     # given a reader and the sentence it was read from turned out to be the stale copy.
-    assert "only 64 have the state's own unit" in entry
+    assert "only 63 have the state's own unit" in entry
     assert "of the 135 channels read from a state" in entry
-    assert "The other 71 are *derived*" in entry
+    assert "The other 72 are *derived*" in entry
     assert "15 of the 71 now carry an evaluable `derivation`" in entry
 
 
@@ -21841,7 +21861,10 @@ def test_the_tick_can_read_what_the_build_order_promises():
     # `prop_rcs_kg` behind `thruster_thrust`'s — are filed under what their roots owe, and the
     # difference is empty rather than pinned by name.
     assert ready == advanced, sorted(ready ^ advanced)
-    for state_id, producer in (("coolant_flow_kg_s", "bus_a_v"), ("prop_rcs_kg", "thruster_thrust")):
+    # `coolant_flow_kg_s` left this list with ADR 0003: its rule reads the pump command and
+    # `load_enabled`, not `bus_a_v`, so a tick advances it and it is in `ready`.
+    assert "coolant_flow_kg_s" in advanced
+    for state_id, producer in (("prop_rcs_kg", "thruster_thrust"),):
         gap = next(gap for gap in gaps if gap.state.id == state_id)
         assert producer in gap.owed or gap.needs in {"bus_a", "rcs_thrust"}, gap.owed
         assert state_id in {s.id for s in order["rule"]}, state_id
@@ -21857,12 +21880,13 @@ def test_the_tick_can_read_what_the_build_order_promises():
     assert set(resolved) <= advanced, sorted(set(resolved) - advanced)
 
     # The figures this rests on, so a round that moves them has to say so here.
-    assert len(world.states) == 140
+    assert len(world.states) == 150
     # 139 -> 140: power's `load_enabled`, the switch map `set_load` writes.
     # 38 -> 41 in round 75: the three event-moved states, held by the tick and moved by the effect.
     # 41 -> 45 in round 76 and 45 -> 48 in round 80: the seven positions `mission.yaml#launch_state`
     # now declares, the last three of them read out of the launch checklist.
-    assert len(ready) == 54 and len(advanced) == 54
+    # 54 -> 70: ADR 0003 quiet coast: the thermal, power and comms rules together.
+    assert len(ready) == 70 and len(advanced) == 70
 
 
 # ---------------------------------------------------------------------------------------------
