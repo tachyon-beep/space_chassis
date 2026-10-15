@@ -660,6 +660,13 @@ def _no_duplicates(pairs):
     keys = [key for key, _ in pairs]
     if len(set(keys)) != len(keys):
         raise _Ambiguous("a key appears twice in one object")
+    # A parser that matches fields ignoring case, with Unicode folding (Go's encoding/json
+    # merges "messages", "Messages" and "meſſages"), would read two of these keys as one.
+    if not all(key.isascii() for key in keys):
+        raise _Ambiguous("a key is not ascii")
+    folded = [key.lower() for key in keys]
+    if len(set(folded)) != len(folded):
+        raise _Ambiguous("two keys differ only in case")
     return dict(pairs)
 
 
