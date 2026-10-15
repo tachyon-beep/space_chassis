@@ -1,6 +1,6 @@
 # Coordination between the streams
 
-As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `{{MAIN}}`. Owned by the governance
+As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `0036b88`. Owned by the governance
 stream. **Verify against the code before trusting any line here.**
 
 The test-slot log that filled this file from 2026-10-11 to 2026-10-12 (grants `SPACE-20261011-*`,

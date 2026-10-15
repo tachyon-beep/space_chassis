@@ -1,6 +1,6 @@
 # Sequencing: the critical path and what runs beside it
 
-As of **2026-10-15**, `main` @ `{{MAIN}}`. Decisions D3 (harden M1 and build physics in parallel),
+As of **2026-10-15**, `main` @ `0036b88`. Decisions D3 (harden M1 and build physics in parallel),
 D5 (rules in `domains/<name>/`), D6 (root CI) and D14 (the bounded episode as a milestone) shape this.
 Sizes are the bands from [02-remaining-work.md](02-remaining-work.md) and are not dates.
 
@@ -32,7 +32,7 @@ day one.
 | strand | packages | notes |
 |---|---|---|
 | **vehicle A: `#39` Option B, then `#23`** | the two local candidates | CI qualifies them (D8); `#23` is built on `#39`'s commit, so in that order; `#23`'s `measure_clock` run with ten windows is the first live timing |
-| **aurora: Phase B and tier 1** | plan 7 Phase B rebased onto `vehicle/` at `{{VMAIN}}`; D7 | the chassis finally runs the stepping vehicle; the live vehicle checks run in an environment that can build the image |
+| **aurora: Phase B and tier 1** | plan 7 Phase B rebased onto `vehicle/` at `f75420c`; D7 | the chassis finally runs the stepping vehicle; the live vehicle checks run in an environment that can build the image |
 | **vehicle B: WP02 and WP03 evidence questions** | the tables in 02 §M2 | research, in its own worktree, writing provenance into YAML and decision records; no plant code |
 
 Exit: `main` runs the WP08-era vehicle through the chassis; `#23` merged; the first evidenced values

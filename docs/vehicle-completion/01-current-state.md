@@ -1,6 +1,6 @@
 # Current state, measured
 
-As of **2026-10-15**, `main` @ `{{MAIN}}`, vehicle at `vehicle/` = `space_vehicle` `{{VMAIN}}`. Every
+As of **2026-10-15**, `main` @ `0036b88`, vehicle at `vehicle/` = `space_vehicle` `f75420c`. Every
 number below was produced on that commit by the commands shown, in a cloud container on 2026-10-15.
 The configuration corpus (`*.yaml`, `domains/`, `plant.md`) has not changed since vehicle `64fc58c`
 (AUR-GOV-07 §1 checked that on 2026-10-10), so these figures hold for every vehicle commit since.
@@ -10,8 +10,8 @@ The configuration corpus (`*.yaml`, `domains/`, `plant.md`) has not changed sinc
 | part | what it is | evidence |
 |---|---|---|
 | The configuration | Eleven domains (`domains/*/`), 139 states over 59 nodes, 81 coupling edges, 148 channels in 5 cadence classes, 38 withheld truths, 128 declared faults, 15 failure chains, 8 mission phases | `python3 tools/check_vehicle.py`: "COMPOSES"; `plant.py --readiness` |
-| The referee | `tests/test_vehicle_config.py`, {{REFEREE}} test functions, one file; CI on two Python lanes with zero skips (`vehicle/.github/workflows/development.yml`, not yet running at this repository's root) | `grep -c "^def test_" vehicle/tests/test_vehicle_config.py` |
-| The linter | `tools/check_vehicle.py` ({{LINTER_LINES}} lines): vocabulary, channel resolution, unset values, budget, the schedule, the `plant.md` §11 refusals | its own output |
+| The referee | `tests/test_vehicle_config.py`, 528 test functions, one file; CI on two Python lanes with zero skips (`vehicle/.github/workflows/development.yml`, not yet running at this repository's root) | `grep -c "^def test_" vehicle/tests/test_vehicle_config.py` |
+| The linter | `tools/check_vehicle.py` (18,768 lines): vocabulary, channel resolution, unset values, budget, the schedule, the `plant.md` §11 refusals | its own output |
 | The plant | `tools/plant.py`: the scheduler (total order over nodes, Gauss-Seidel on the DAG), the lag, stock and scalar integrator classes, the residual accumulator, the sub-tick event queue, canonical compare-point hashes, `step()` | `plant.py --determinism` prints two identical hash sequences |
 | The executive and the window | `tools/console.py`: one process for every window, claim and arbitration across windows, receipts, the mirror, the ring, generated `HELP.md`/`README.md`; it steps the plant every cycle since WP01 | `console.py` `advance()` → `plant.step` (vehicle main); the contract probe passes against it (`aurora/tests/test_vehicle_reconciliation.py`) |
 | Persistence | Checkpoint format (#19), private `--state-dir` with lock, `serves.json` and journal segments (#20), the durable per-cycle record v2 and replay-from-record (#22), resume from checkpoint after any restart (#21), the compare-point encoder (#24) | vehicle PRs #32, #33, #38, #41, #31 |
@@ -91,13 +91,13 @@ same package.
 
 ```
 $ python3 tools/plant.py --mission --ticks 500
-500 tick(s) x 1 run(s) in 1.539 s per run = 3,077 µs/tick
-the declared mission is 34,560,000 ticks, which at this rate is 29.54 h of wall clock
-  — 354x the 8.7 µs/tick budget plant.md §10 sets
+500 tick(s) x 1 run(s) in 1.781 s per run = 3,562 µs/tick
+the declared mission is 34,560,000 ticks, which at this rate is 34.19 h of wall clock
+  — 409x the 8.7 µs/tick budget plant.md §10 sets
 ```
 
 That is with 52 states advancing and no instruments sampled. Against the binding live target (20 ms
-per tick at `m = 1`, `vehicle/docs/completion.md`) the plant has about 6× headroom today;
+per tick at `m = 1`, `vehicle/docs/completion.md`) the plant has about 5× headroom today;
 against the deferred replay target it is two and a half orders of magnitude out
 ([05-performance.md](05-performance.md)).
 

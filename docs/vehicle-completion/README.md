@@ -1,7 +1,7 @@
 # Landing the vehicle — what is left
 
-As of **2026-10-15**, `main` @ `{{MAIN}}`, vehicle at `vehicle/` (absorbed from
-`tachyon-beep/space_vehicle` `{{VMAIN}}`). Written by the governance stream. Every figure here comes from
+As of **2026-10-15**, `main` @ `0036b88`, vehicle at `vehicle/` (absorbed from
+`tachyon-beep/space_vehicle` `f75420c`). Written by the governance stream. Every figure here comes from
 the vehicle's own tools on that commit unless it says otherwise; re-run them before relying on one.
 
 This suite answers one question: **what has to happen, in what order, for the vehicle to be complete,
@@ -23,7 +23,7 @@ it says why.
 | `UNCONFIGURED` scalars | 195 | each one evidenced or scoped out by John |
 | faults that reach a running vehicle | 0 of 128 | all applicable |
 | accepted physics (gate V) | none | every domain |
-| plant speed | ~3,077 µs/tick at 52 states | ≤ 20 ms/tick at `m = 1` with ten windows (binding); 8.7 µs/tick replay (deferred, `governance/decisions.md` D4) |
+| plant speed | ~3,562 µs/tick at 52 states | ≤ 20 ms/tick at `m = 1` with ten windows (binding); 8.7 µs/tick replay (deferred, `governance/decisions.md` D4) |
 | milestones | M1 partway; M2–M5 not started | M1–M5 |
 | the chassis runs | vehicle `dd79e76` through its pins (pre-WP01) | the accepted vehicle, by exact SHA |
 

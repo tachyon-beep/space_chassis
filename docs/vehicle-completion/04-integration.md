@@ -1,6 +1,6 @@
 # Integration: what the chassis must do to fly the vehicle
 
-As of **2026-10-15**, `main` @ `{{MAIN}}`. The chassis (`aurora/`) owns the vehicle's deployment and
+As of **2026-10-15**, `main` @ `0036b88`. The chassis (`aurora/`) owns the vehicle's deployment and
 adopts the vehicle by exact SHA; the vehicle states its needs (`governance/vehicle/interface.md`).
 This file lists the integration work between today's chassis, which runs a pre-WP01 vehicle, and
 gate E, the accepted experiment apparatus.
@@ -9,7 +9,7 @@ gate E, the accepted experiment apparatus.
 
 | | chassis runs | vehicle is |
 |---|---|---|
-| vehicle commit | `dd79e76` in the reconciliation pins (`aurora/tests/test_vehicle_reconciliation.py`); the image bakes whatever `vehicle/` holds at build time | `{{VMAIN}}` at `vehicle/` (tier 1 of `#39` included) |
+| vehicle commit | `dd79e76` in the reconciliation pins (`aurora/tests/test_vehicle_reconciliation.py`); the image bakes whatever `vehicle/` holds at build time | `f75420c` at `vehicle/` (tier 1 of `#39` included) |
 | serve script | one `console.py` per slug, no `/state` | one executive for every window, `--state-dir /state` (WP01, WP08) |
 | contract §2.2 | "runs on the next one" | tier 1's quiet-cycle qualifier (vehicle `#39`), not yet adopted |
 | fixture | `aurora/contract/fake_diode.py` without the quiet rule | — |
@@ -26,13 +26,13 @@ From John's machine: Phase B's P (`refs/preserve/phase-b-P-af671d04`) and R2c
 ### 2. Phase B: adopt the stepping vehicle (chassis; plan 7)
 
 What the adoption commit carries, from `chassis/interface.md` and the Phase B records, rebased from
-`f44399`/`vehicle-adoption` onto `vehicle/` at `{{VMAIN}}`:
+`f44399`/`vehicle-adoption` onto `vehicle/` at `f75420c`:
 
 - `containers/serve_vehicle.sh` `exec`s one `tools/console.py` with every `--slug`, `--state-dir
   /state`, `--ring-slots`, `--poll`, `--cycles 0`, no `--phase`, under `init: true`;
 - the `/state` 40G image, mounted by the vehicle service alone; `network_mode: none`; `read_only`,
   `cap_drop ALL`, `mem_limit 512m`, `restart: unless-stopped` (exit 3 is a refusal that writes nothing);
-- the reconciliation pins retaken from `{{VMAIN}}` (test count, `report.refuse` sites, the fixture
+- the reconciliation pins retaken from `f75420c` (test count, `report.refuse` sites, the fixture
   copying `tools/checkpoint.py`);
 - the base image pinned by digest (`python:3.13-slim@sha256:70729b46…`, John 2026-10-10);
 - `verify_containment.sh`: no agent writes the window root, mounts `vehicle_state` or the vehicle's

@@ -1,6 +1,6 @@
 # Remaining work, M1 to M5
 
-As of **2026-10-15**, `main` @ `{{MAIN}}`. The work packages are the vehicle's own (WP01–WP13,
+As of **2026-10-15**, `main` @ `0036b88`. The work packages are the vehicle's own (WP01–WP13,
 `vehicle/ROADMAP.md`); their issues are on `tachyon-beep/space_vehicle` (#1–#13, WP08's children
 #19–#30) until they are recreated here (`governance/decisions.md` D10). This file states, for each
 package that is not closed: what is left, what accepts it, what it needs first, and a size.

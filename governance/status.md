@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `{{MAIN}}`. Reconciled against the code
+As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `0036b88`. Reconciled against the code
 by the governance stream; refreshed after any merge that moves a milestone. **Verify against the code
 before trusting any line here.** The stream files (`chassis/snapshot.md`, `vehicle/snapshot.md`,
 `*/open.md`) hold the detail; this page is the picture.
@@ -10,7 +10,7 @@ before trusting any line here.** The stream files (`chassis/snapshot.md`, `vehic
 | | where | checked |
 |---|---|---|
 | the repository | one, three streams: `vehicle/`, `aurora/`, `governance/`; `docs/` for how it works | PR #2 merged to `main` on 2026-10-15 |
-| vehicle | `vehicle/` = `space_vehicle` `{{VMAIN}}` with its history; tier 1 of `#39` included | `git log vehicle/` |
+| vehicle | `vehicle/` = `space_vehicle` `f75420c` with its history; tier 1 of `#39` included | `git log vehicle/` |
 | chassis | `aurora/`; the Aurora port (plans 1–6, 8) complete; plan 7 Phase A on `vehicle-adoption`, Phase B staged on John's machine | `chassis/snapshot.md` |
 | what the chassis runs | vehicle `dd79e76` through its pins; the image bakes `vehicle/` at build time | `aurora/tests/test_vehicle_reconciliation.py` |
 | CI | none at the root yet (D6 decided) | `.github/` absent |
@@ -25,7 +25,7 @@ before trusting any line here.** The stream files (`chassis/snapshot.md`, `vehic
 | declared debts | **273**; `--strict` exit 2 | `check_vehicle.py` |
 | `UNCONFIGURED` scalars | 195 | `plant.py --readiness` |
 | faults reaching a running vehicle | 0 of 128 | WP09 not started |
-| µs per tick | 3,077 (52 states, no instruments) | `plant.py --mission --ticks 500` |
+| µs per tick | 3,562 (52 states, no instruments) | `plant.py --mission --ticks 500` |
 | M1 | WP01 closed; WP08 5 of 12 children merged; `#23` written, untested | `vehicle/open.md` |
 | M2, M3, M4, M5 | not started | `vehicle/ROADMAP.md` |
 

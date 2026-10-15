@@ -1,6 +1,6 @@
 # Risks, assumptions, dependencies and the decisions that will come back
 
-As of **2026-10-15**, `main` @ `{{MAIN}}`. Ordered by what it does to the outcome, not by
+As of **2026-10-15**, `main` @ `0036b88`. Ordered by what it does to the outcome, not by
 likelihood. Each row names an owner and what would show it has happened.
 
 ## Risks

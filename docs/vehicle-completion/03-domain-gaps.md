@@ -1,6 +1,6 @@
 # Domain gaps: every state a tick cannot advance
 
-As of **2026-10-15**, `main` @ `{{MAIN}}`. Generated from `python3 tools/plant.py --build-order` and
+As of **2026-10-15**, `main` @ `0036b88`. Generated from `python3 tools/plant.py --build-order` and
 `--readiness` on that commit (the script is in the governance stream's notes; the tool is the source).
 87 of 139 states cannot advance: 27 owe a value, 15 owe an edge, 45 owe a rule. Each row names the
 state, its integrator class, which bucket the tick put it in, the **root** state whose gap blocks it

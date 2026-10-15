@@ -1,14 +1,14 @@
 # Performance: where the time goes, and the route if it is missed
 
-As of **2026-10-15**, `main` @ `{{MAIN}}`. Decision D4 (`governance/decisions.md`): stay in Python;
+As of **2026-10-15**, `main` @ `0036b88`. Decision D4 (`governance/decisions.md`): stay in Python;
 live real time is the binding target; the 300-second replay is deferred to WP12.
 
 ## The two targets
 
 | target | figure | source | status |
 |---|---|---|---|
-| **Live, binding.** One executive, ten windows, `m = 1`: every tick plus amortised window I/O inside `20 ms / m` | 20 ms per tick | `vehicle/docs/completion.md`, "Performance"; ADR 0002 A (m = 1) | **met with headroom at 52 states**: 3.08 ms/tick measured, plant only |
-| **Replay, deferred.** The full mission (34,560,000 ticks) replayed in about 300 s | 8.7 µs per tick | `plant.md` §10 | **354× out**; deferred to WP12 (D4) |
+| **Live, binding.** One executive, ten windows, `m = 1`: every tick plus amortised window I/O inside `20 ms / m` | 20 ms per tick | `vehicle/docs/completion.md`, "Performance"; ADR 0002 A (m = 1) | **met with headroom at 52 states**: 3.56 ms/tick measured, plant only |
+| **Replay, deferred.** The full mission (34,560,000 ticks) replayed in about 300 s | 8.7 µs per tick | `plant.md` §10 | **409× out**; deferred to WP12 (D4) |
 
 The live target is what a fleet experiences: with `m = 1` and k = 5 ticks per cycle (ADR 0002 B),
 the executive has 100 ms per cycle to step five ticks, claim and publish every window. The replay
@@ -20,7 +20,7 @@ structured comparison inside it, `plant.md` §6).
 
 ```
 $ python3 tools/plant.py --mission --ticks 500
-500 tick(s) x 1 run(s) in 1.539 s per run = 3,077 µs/tick
+500 tick(s) x 1 run(s) in 1.781 s per run = 3,562 µs/tick
 ```
 
 Conditions: 52 of 139 states advancing; no instruments sampled; no window I/O; Python 3.12; a 4-vCPU
@@ -32,7 +32,7 @@ windows (#21's measurements).
 
 | growth | effect on the per-tick cost | basis |
 |---|---|---|
-| 87 more states advancing (M3) | roughly 2–3× if cost scales with states advanced; the 6-DOF integrator (RK4 in burns, four evaluations) and the nodal electrical solve are the expensive ones | proportionality from 52 states at 3.1 ms; WP07's RK4 is four right-hand-side evaluations per tick in burns |
+| 87 more states advancing (M3) | roughly 2–3× if cost scales with states advanced; the 6-DOF integrator (RK4 in burns, four evaluations) and the nodal electrical solve are the expensive ones | proportionality from 52 states at 3.6 ms; WP07's RK4 is four right-hand-side evaluations per tick in burns |
 | the instrument layer sampling 148 channels (WP09) | the big unknown: naive per-tick sampling of every channel could dominate; sampling at each sensor's declared 0.2–10 Hz keeps it near free | `plant.md` §10: instrument-rate multi-rate "nearly free", 10–25× saving over naive |
 | conservation assertions on every transfer (WP10) | small: integer arithmetic | `plant.md` §4 |
 | ten windows' claim and publish per cycle | the measured 68 MB and sub-millisecond claims at #21 suggest small; `#23`'s `measure_clock` feasibility run is the test | `vehicle/records/2026-10-12-23-clock-seam-slot-request.md` §8 |

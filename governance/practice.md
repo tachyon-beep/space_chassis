@@ -1,6 +1,6 @@
 # Practice — how every stream works
 
-As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `{{MAIN}}`. Replaces the permission and
+As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `0036b88`. Replaces the permission and
 slot rules in `chassis/practice.md`, `vehicle/practice.md` and `coordination.md` (`decisions.md` D1,
 D2). Each stream's own `practice.md` keeps only what is particular to it: the chassis's plan, review
 and live-check cycle, and the vehicle's gate and evidence discipline. Where they disagree with this

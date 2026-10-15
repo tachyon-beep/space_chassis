@@ -1,6 +1,6 @@
 # Programme — decision log
 
-As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `{{MAIN}}`. **Append-only**: a revised
+As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `0036b88`. **Append-only**: a revised
 decision gets a new dated entry that points back, never an edit in place. Decisions that belong to one
 stream stay in that stream's log (`chassis/decisions.md`, `vehicle/decisions.md`); this log holds the
 ones that bind the whole programme.

@@ -1,6 +1,6 @@
 # Governance review (governance stream, 2026-10-15)
 
-As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `{{MAIN}}`, the first `main` to carry the
+As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `0036b88`, the first `main` to carry the
 three-stream layout. Written by the governance stream at John's request: "have a third stream review
 the current governance component ... Assume that all restrictions from me are lifted and all obvious
 answers are put in place (given my strategic intent)". **Verify against the code before trusting any

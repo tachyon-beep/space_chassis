@@ -1,6 +1,6 @@
 # Governance
 
-As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `{{MAIN}}`. Owned by the governance
+As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `0036b88`. Owned by the governance
 stream. **Verify against the code before trusting any line here.**
 
 This is the place a new session, agent or person reads first, to learn who owns what, what has been

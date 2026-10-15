@@ -1,6 +1,6 @@
 # Verification: gates, CI and what counts as evidence
 
-As of **2026-10-15**, `main` @ `{{MAIN}}`. The gates are the vehicle's (`vehicle/docs/completion.md`
+As of **2026-10-15**, `main` @ `0036b88`. The gates are the vehicle's (`vehicle/docs/completion.md`
 D, I, V, M; E jointly with the chassis). This file says what each needs that does not exist yet, and
 specifies the CI that D6 (`governance/decisions.md`) decided.
 
