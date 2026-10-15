@@ -198,8 +198,15 @@ def test_the_vehicle_passes_the_contract_probe(tmp_path):
         str(diode),
         "--slug",
         "probe_target",
-        "--poll",
-        "0.05",
+        # The clock a serving start must name (vehicle ADR 0002 A, B, J; #23 replaced `--poll`): the
+        # stack's own defaults from `containers/serve_vehicle.sh`, so the probe judges the window the
+        # stack would serve.
+        "--multiplier",
+        "1",
+        "--cycle-ticks",
+        "5",
+        "--checkpoint-ticks",
+        "50",
     ]
     console_env = dict(os.environ)
     if tracing:
@@ -633,7 +640,11 @@ def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
     assert argv[argv.index("--scenario") + 1] == "crisis", argv
     assert argv[argv.index("--seed") + 1] == "7", argv
     assert argv[argv.index("--ring-slots") + 1] == "12", argv
-    assert argv[argv.index("--poll") + 1] == "0.05", argv
+    # The clock replaced `--poll` (vehicle ADR 0002 A, B, J; #23): a serving start names m, k and N.
+    assert "--poll" not in argv, argv
+    assert argv[argv.index("--multiplier") + 1] == "1", argv
+    assert argv[argv.index("--cycle-ticks") + 1] == "5", argv
+    assert argv[argv.index("--checkpoint-ticks") + 1] == "50", argv
     assert argv[argv.index("--cycles") + 1] == "0", "the service must not stop after a fixed count"
     for slug in ("mackerel", "cinnabar", "scabious"):
         assert (diode / slug).is_dir(), slug

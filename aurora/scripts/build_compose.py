@@ -327,7 +327,7 @@ def _vehicle(count: int) -> str:
             ("VEHICLE_SCENARIO", "${VEHICLE_SCENARIO:-nominal}"),
             ("VEHICLE_SEED", "${VEHICLE_SEED:-0}"),
             ("DIODE_POLL_SECONDS", "${DIODE_POLL_SECONDS:-5}"),
-            ("VEHICLE_RING_SLOTS", "${VEHICLE_RING_SLOTS:-300}"),
+            ("VEHICLE_RING_SLOTS", "${VEHICLE_RING_SLOTS:-3000}"),
         )
     )
     text += f"    volumes:\n      - {WINDOW_BIND}\n" + _binds("vehicle", None, count)
