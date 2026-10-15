@@ -1,0 +1,27 @@
+{
+  "supervisor_exit": 4,
+  "abort": [
+    "cleanup stop failed: LookupFailed: the cleanup budget is spent",
+    "cleanup not verified: ['stop failed: LookupFailed: the cleanup budget is spent', \"the unit's state is unknown: the cleanup budget is spent\", \"processes carrying the token, or that cannot be read: ['1594: unknown, cannot be read and does not predate the run (PermissionError: injected: process read denied)', '1623: unknown, cannot be read and does not predate the run (PermissionError: injected: process read denied)', '1715: unknown, cannot be read and does not predate the run (PermissionError: injected: process read denied)', '1717: unknown, cannot be read and does not predate the run (PermissionError: injected: process read denied)', '1718: unknown, cannot be read and does not predate the run (PermissionError: injected: process read denied)']\"]"
+  ],
+  "unit": "space-vehicle-b-k03-cleanup-proof-unknown-823249964711.service",
+  "owned": true,
+  "go": true,
+  "samples": 1,
+  "terminal": {
+    "token": "8232499647114746952a4c1270414bf4",
+    "service_result": "success",
+    "exit_code": "exited",
+    "exit_status": "0",
+    "memory_peak": 5648384,
+    "oom": 0,
+    "oom_kill": 0,
+    "cgroup_read_problem": null
+  },
+  "post_identity": {
+    "head": "f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f",
+    "diff_sha256": "0a00336feb10dcd5c8839893cabafbdc5cbea20474f918d76dc1e0eca3f2d01d"
+  },
+  "counts": null,
+  "released": false
+}

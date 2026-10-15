@@ -1,0 +1,26 @@
+{
+  "supervisor_exit": 3,
+  "abort": [
+    "Abort: injected: GO withheld; the launcher's bounded wait ended the run"
+  ],
+  "unit": "space-vehicle-b-k07-go-never-05f5c0da3225.service",
+  "owned": true,
+  "go": false,
+  "samples": 0,
+  "terminal": {
+    "token": "05f5c0da3225491a8062f1c4014584b8",
+    "service_result": "exit-code",
+    "exit_code": "exited",
+    "exit_status": "98",
+    "memory_peak": 5648384,
+    "oom": 0,
+    "oom_kill": 0,
+    "cgroup_read_problem": null
+  },
+  "post_identity": {
+    "head": "f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f",
+    "diff_sha256": "0a00336feb10dcd5c8839893cabafbdc5cbea20474f918d76dc1e0eca3f2d01d"
+  },
+  "counts": null,
+  "released": true
+}

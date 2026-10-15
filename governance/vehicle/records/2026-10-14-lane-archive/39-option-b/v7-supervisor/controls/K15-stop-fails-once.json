@@ -1,0 +1,47 @@
+{
+  "workdir": "/tmp/claude-1000/-home-john-space-chassis/a728e992-9471-46ab-9efe-ce550d7ece5f/scratchpad/b-39-ca87a9",
+  "interpreter": "/tmp/claude-1000/-home-john-space-chassis/a728e992-9471-46ab-9efe-ce550d7ece5f/scratchpad/venv3.12/bin/python",
+  "base": "f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f",
+  "expect": {
+    "head": "f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f",
+    "diff_sha256": "0a00336feb10dcd5c8839893cabafbdc5cbea20474f918d76dc1e0eca3f2d01d"
+  },
+  "admission": {
+    "mem_available_min_mib": 16384,
+    "load1_max": 12.0,
+    "cpu_busy_max_pct": 50.0
+  },
+  "caps": {
+    "cpu_quota": "200%",
+    "memory_max": "6G",
+    "memory_swap_max": "0",
+    "read_back": {
+      "cpu.max": "200000 100000",
+      "memory.max": "6442450944",
+      "memory.swap.max": "0"
+    }
+  },
+  "monitor": {
+    "sample_s": 5,
+    "mem_available_floor_mib": 10240,
+    "load1_ceiling": 20.0,
+    "cpu_busy_ceiling_pct": 85.0,
+    "strikes": 3
+  },
+  "admission_deadline_s": 60,
+  "setup_deadline_s": 30,
+  "runtime_margin_s": 30,
+  "stop_timeout_s": 15,
+  "cleanup_deadline_s": 60,
+  "terminal_wait_s": 20,
+  "oom_settle_s": 15,
+  "inject": "stop_fails_once",
+  "id": "SPACE-VEHICLE-B-K15-stop-fails-once",
+  "unit_prefix": "space-vehicle-b-k15-stop-fails-once",
+  "evidence_dir": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls-evidence/K15-stop-fails-once",
+  "deadline_s": 30,
+  "payload": [
+    "-c",
+    "import time; time.sleep(60)"
+  ]
+}

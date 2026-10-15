@@ -1,0 +1,14 @@
+{
+  "supervisor_exit": 2,
+  "abort": [
+    "Space workload running: 289290 exe=python3.12 cwd=/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7 argv=/usr/bin/python3 -c import time; time.sleep(120) pytest-decoy "
+  ],
+  "unit": "space-vehicle-b-k13a-admission-process-decoy-1cd131d9f8d6.service",
+  "owned": false,
+  "go": false,
+  "samples": 0,
+  "terminal": null,
+  "post_identity": null,
+  "counts": null,
+  "released": true
+}

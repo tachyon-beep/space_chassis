@@ -1,0 +1,302 @@
+{
+  "summary": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls-evidence/controls-summary.json",
+  "suite_deadline_s": 1800,
+  "recovery_deadline_s": 180,
+  "min_control_s": 90,
+  "post_control_reserve_s": 120,
+  "controls": [
+    {
+      "name": "K00-success",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K00-success.json",
+      "expect": {
+        "exit": 0,
+        "release": true,
+        "summary": {
+          "owned": true,
+          "go": true
+        },
+        "terminal": {
+          "service_result": "success",
+          "exit_status": "0",
+          "oom_kill": 0
+        },
+        "json": {
+          "READY.json:sigint_ignored_after_restore": false
+        }
+      }
+    },
+    {
+      "name": "K01-interrupt-after-launch",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K01-interrupt-after-launch.json",
+      "expect": {
+        "exit": 3,
+        "release": true,
+        "abort_contains": [
+          "KeyboardInterrupt",
+          "injected: interrupted right after launch"
+        ],
+        "summary": {
+          "go": false
+        }
+      }
+    },
+    {
+      "name": "K02-report-raises",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K02-report-raises.json",
+      "expect": {
+        "exit": 3,
+        "release": true,
+        "absent": [
+          "summary.json"
+        ]
+      }
+    },
+    {
+      "name": "K04-ownership-never-established",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K04-ownership-never-established.json",
+      "expect": {
+        "exit": 3,
+        "release": true,
+        "abort_contains": [
+          "setup deadline 30 s passed before ownership"
+        ],
+        "summary": {
+          "owned": false,
+          "go": false
+        }
+      }
+    },
+    {
+      "name": "K05-caps-mismatch",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K05-caps-mismatch.json",
+      "expect": {
+        "exit": 3,
+        "release": true,
+        "abort_contains": [
+          "caps did not read back"
+        ],
+        "summary": {
+          "owned": true,
+          "go": false
+        },
+        "absent": [
+          "samples.jsonl"
+        ]
+      }
+    },
+    {
+      "name": "K06-pre-go-unhealthy",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K06-pre-go-unhealthy.json",
+      "expect": {
+        "exit": 3,
+        "release": true,
+        "abort_contains": [
+          "pre-GO health",
+          "MemAvailable 0 MiB"
+        ],
+        "summary": {
+          "go": false
+        }
+      }
+    },
+    {
+      "name": "K07-go-never",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K07-go-never.json",
+      "expect": {
+        "exit": 3,
+        "release": true,
+        "abort_contains": [
+          "GO withheld"
+        ],
+        "terminal": {
+          "exit_status": "98"
+        },
+        "present": [
+          "NO-GO.json"
+        ],
+        "summary": {
+          "go": false
+        }
+      }
+    },
+    {
+      "name": "K08-deadline",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K08-deadline.json",
+      "expect": {
+        "exit": 3,
+        "release": true,
+        "abort_contains": [
+          "deadline 6 s passed"
+        ],
+        "summary": {
+          "go": true
+        }
+      }
+    },
+    {
+      "name": "K08b-runtime-backstop",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K08b-runtime-backstop.json",
+      "expect": {
+        "exit": 3,
+        "release": true,
+        "abort_contains": [
+          "SERVICE_RESULT=timeout"
+        ],
+        "terminal": {
+          "service_result": "timeout"
+        }
+      }
+    },
+    {
+      "name": "K09-oom",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K09-oom.json",
+      "expect": {
+        "exit": 3,
+        "release": true,
+        "abort_contains": [
+          "oom"
+        ],
+        "terminal": {
+          "service_result": "oom-kill"
+        }
+      }
+    },
+    {
+      "name": "K10-terminal-missing",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K10-terminal-missing.json",
+      "expect": {
+        "exit": 3,
+        "release": true,
+        "abort_contains": [
+          "no terminal record from the unit's ExecStopPost"
+        ]
+      }
+    },
+    {
+      "name": "K11-identity-changes-post",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K11-identity-changes-post.json",
+      "expect": {
+        "exit": 3,
+        "release": true,
+        "abort_contains": [
+          "the candidate changed during the run"
+        ]
+      }
+    },
+    {
+      "name": "K12-sigint-ignored-inherited",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K12-sigint-ignored-inherited.json",
+      "expect": {
+        "exit": 0,
+        "release": true,
+        "terminal": {
+          "service_result": "success",
+          "exit_status": "0"
+        },
+        "json": {
+          "READY.json:sigint_ignored_inherited": true,
+          "READY.json:sigint_ignored_after_restore": false
+        }
+      }
+    },
+    {
+      "name": "K13a-admission-process-decoy",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K13a-admission-process-decoy.json",
+      "expect": {
+        "exit": 2,
+        "release": true,
+        "abort_contains": [
+          "Space workload running",
+          "pytest-decoy"
+        ],
+        "absent": [
+          "payload.out",
+          "READY.json"
+        ]
+      },
+      "decoy": "process"
+    },
+    {
+      "name": "K13b-admission-unit-decoy",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K13b-admission-unit-decoy.json",
+      "expect": {
+        "exit": 2,
+        "release": true,
+        "abort_contains": [
+          "Space unit present",
+          "space-decoy-"
+        ],
+        "absent": [
+          "payload.out",
+          "READY.json"
+        ]
+      },
+      "decoy": "unit"
+    },
+    {
+      "name": "K14-admission-identity-mismatch",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K14-admission-identity-mismatch.json",
+      "expect": {
+        "exit": 2,
+        "release": true,
+        "abort_contains": [
+          "diff_sha256"
+        ],
+        "absent": [
+          "payload.out"
+        ]
+      }
+    },
+    {
+      "name": "K15-stop-fails-once",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K15-stop-fails-once.json",
+      "expect": {
+        "exit": 3,
+        "release": true,
+        "abort_contains": [
+          "injected: systemctl stop failed"
+        ]
+      }
+    },
+    {
+      "name": "K16-descendant-outlives-main",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K16-descendant-outlives-main.json",
+      "expect": {
+        "exit": 3,
+        "release": true,
+        "abort_contains": [
+          "SERVICE_RESULT=timeout"
+        ],
+        "terminal": {
+          "service_result": "timeout",
+          "exit_code": "exited",
+          "exit_status": "0"
+        }
+      }
+    },
+    {
+      "name": "K17-interrupt-during-cleanup",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K17-interrupt-during-cleanup.json",
+      "expect": {
+        "exit": 3,
+        "release": true,
+        "abort_contains": [
+          "deadline 4 s passed",
+          "cleanup attempt raised KeyboardInterrupt"
+        ]
+      }
+    },
+    {
+      "name": "K03-cleanup-proof-unknown",
+      "spec": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7/controls/K03-cleanup-proof-unknown.json",
+      "expect": {
+        "exit": 4,
+        "release": false,
+        "abort_contains": [
+          "the unit's state is unknown",
+          "cannot be read"
+        ]
+      }
+    }
+  ]
+}

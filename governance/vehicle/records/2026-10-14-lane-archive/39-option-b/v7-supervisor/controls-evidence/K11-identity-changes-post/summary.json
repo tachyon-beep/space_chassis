@@ -1,0 +1,26 @@
+{
+  "supervisor_exit": 3,
+  "abort": [
+    "the candidate changed during the run: {'head': 'f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f', 'diff_sha256': 'injected'}"
+  ],
+  "unit": "space-vehicle-b-k11-identity-changes-post-c1dd87edc03b.service",
+  "owned": true,
+  "go": true,
+  "samples": 1,
+  "terminal": {
+    "token": "c1dd87edc03b4b78a3eba3f21e834e98",
+    "service_result": "success",
+    "exit_code": "exited",
+    "exit_status": "0",
+    "memory_peak": 5885952,
+    "oom": 0,
+    "oom_kill": 0,
+    "cgroup_read_problem": null
+  },
+  "post_identity": {
+    "head": "f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f",
+    "diff_sha256": "injected"
+  },
+  "counts": null,
+  "released": true
+}

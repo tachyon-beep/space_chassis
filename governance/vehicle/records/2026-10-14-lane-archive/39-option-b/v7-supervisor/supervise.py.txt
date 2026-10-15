@@ -1,0 +1,743 @@
+"""Supervisor for one Space Vehicle bounded selection, v4 (standard library only; run with /usr/bin/python3).
+
+Usage: python3 supervise.py SPEC.json
+
+**systemd owns the run's lifecycle; this supervisor admits it, gates it, watches it, and proves it is
+gone.** The payload runs as a transient user *service* with a unique name per run,
+`<unit_prefix>-<token[:12]>.service`, so no name is ever reused. systemd enforces:
+- **`ExitType=cgroup`:** the unit stays active, its runtime limit still counting, until **every**
+  process in its cgroup has exited, not merely the main one. A descendant that outlives the payload
+  is still bounded;
+- **`RuntimeMaxSec`:** the hard deadline. It holds even if this supervisor dies;
+- **`TimeoutStopSec` and `KillMode=control-group`:** every descendant is killed, with SIGKILL after
+  the stop timeout;
+- **`OOMPolicy=stop`:** a kernel OOM kill becomes `SERVICE_RESULT=oom-kill`;
+- **`ExecStopPost=record.py`:** after every stop, for any cause, writes `TERMINAL.json` with systemd's
+  `SERVICE_RESULT`, `EXIT_CODE` and `EXIT_STATUS`, plus the cgroup's `memory.peak` and `oom_kill`;
+- **the run's settings:** CPUQuota, MemoryMax, MemorySwapMax, `Nice=19`, the working directory, and
+  `CUDA_VISIBLE_DEVICES` empty.
+
+**Every failure closes.** A lookup that fails is never read as success. Every exception after the
+launch begins goes through cleanup, whose every step, sleep included, catches `BaseException` and
+goes on. A release receipt exists only when cleanup is positively proven.
+
+Phases:
+1. **Admission**, with its deadline checked before every step, failing closed; any refusal is exit 2
+   and nothing launched. It checks:
+   - the payload interpreter answers;
+   - the worktree's HEAD and diff hash equal the spec;
+   - host MemAvailable, load1 and CPU busy are within bounds (unknown CPU busy counts as busy);
+   - no other Space workload, Space unit (any state but inactive), Space container, or unit with
+     this prefix exists.
+
+   Admission is best-effort discovery. **"One Space selection" is enforced by Governance's
+   allocation; admission is a second check, not the guarantee** (see `other_space_workloads`).
+2. **Launch.** `state["started"]` is set before `systemd-run --no-block`.
+3. **Setup**, with the deadline checked before every step and again before GO:
+   - **ownership:** `show` succeeds, the unit is active, and MainPID is in its cgroup; the
+     InvocationID is recorded, and any later different one aborts;
+   - **caps:** they must read back exactly;
+   - **launcher:** `READY.json` carries the token, with SIGINT restored;
+   - **health:** a pre-GO sample passes the admission bounds, with `oom_kill` 0.
+4. **Run.** The deadline is checked before and after every query, so an overdue completion is
+   still an abort. The run ends when the unit is inactive, failed or unloaded; `deactivating` is not
+   an end. It aborts on:
+   - `oom_kill`, after first waiting, bounded, for systemd's own OOM handling, so that
+     `SERVICE_RESULT` records it;
+   - MemAvailable below the floor;
+   - load1 or CPU busy above the ceilings for `strikes` consecutive samples, unknown counting as
+     busy;
+   - a failed lookup.
+5. **Terminal.** `TERMINAL.json` carrying the token, within `terminal_wait_s`. `oom-kill` or
+   `timeout` aborts; any result other than `success` or `exit-code` aborts. The payload's exit is
+   reported.
+6. **Cleanup**, until verified or `cleanup_deadline_s`, with every command's timeout capped at the
+   remaining budget:
+   - remove GO;
+   - **stop, only after `show` confirms the unit is still this run's** (an unchanged InvocationID,
+     or none, or not-found). A different InvocationID is never stopped, and leaves cleanup
+     unverified;
+   - `reset-failed`;
+   - verify all of: `show` succeeds and reports not-found; the recorded cgroup **and the cgroup
+     derived from the unit name** are both absent; and no own-user process carries the token,
+     where an unreadable one is unknown and fails.
+7. **Post-run identity**, on every launched path.
+8. **Outcome:** decided once. If cleanup was verified, `RELEASE.txt` is written first (it says only
+   that the slot is free); then `summary.json`, carrying the final exit code. A failure writing
+   either is counted in that same code. Logging never raises.
+
+Exit codes:
+- **0:** passed.
+- **2:** refused before launch.
+- **3:** aborted or invalid, with cleanup verified and released.
+- **4:** cleanup not verified, or the receipt could not be written. There is no receipt, and the
+  slot stays held for the operator.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+import uuid
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+CMD_TIMEOUT_S = 10
+INJECT_POINTS = {
+    "none", "interrupt_after_launch", "report_raises", "cleanup_proof_unknown", "ownership_never_established",
+    "caps_mismatch", "pre_go_unhealthy", "go_never", "identity_changes_post", "sigint_ignored_inherited",
+    "terminal_missing", "stop_fails_once", "supervisor_deadline_disabled", "interrupt_during_cleanup",
+}
+SPACE_MARKERS = ("space_chassis", "space_vehicle", "b-39-ca87a9", "diag-contract-probe", "space-vehicle")
+WORKLOAD_EXES = ("python", "pytest", "docker", "sh", "bash", "dash", "systemd-run")
+# Same-user processes this host keeps unreadable (non-dumpable: cwd, exe and environ return EACCES), by
+# `comm`: the user's systemd manager and its PAM helper, SSH sessions, and the Codex CLI. This is an
+# **operational classification for admission, not an exclusivity proof**:
+# - **What it rests on:** these processes are not themselves Space workloads, and a workload one of them
+#   has already started is a separate exec'd process, ordinarily readable, which the scan examines
+#   under its documented matching limits.
+# - **What it does not establish:** that any of them, or any other process, will not launch competing
+#   work after admission. A Codex CLI can. Exclusivity rests on Governance's one-selection allocation
+#   and on coordination with the existing owners. The supervisor's continuing memory, CPU and load
+#   monitoring only mitigates later pressure: it neither reserves capacity nor detects every competing
+#   selection.
+UNREADABLE_HOST_COMMS = ("systemd", "(sd-pam)", "sshd", "sshd-session", "sshd-auth", "codex")
+WORKLOAD_ARGS = ("pytest", "supervise.py", "run_controls.py", "docker", "compose", "console.py", "live.stack", "live/stack.py",
+                 "serve_vehicle", "check_vehicle", "plant.py")
+
+
+class LookupFailed(Exception):
+    """A query whose answer is unknown; never read as success."""
+
+
+class Abort(Exception):
+    pass
+
+
+def sh(argv: list[str], timeout: float = CMD_TIMEOUT_S) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise LookupFailed(f"{argv[0]}: {type(exc).__name__}: {exc}") from exc
+
+
+def identity(spec: dict) -> dict:
+    head = sh(["git", "-C", spec["workdir"], "rev-parse", "HEAD"])
+    try:
+        diff = subprocess.run(["git", "-C", spec["workdir"], "diff", spec["base"]], capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise LookupFailed(f"git diff: {exc}") from exc
+    if head.returncode != 0 or diff.returncode != 0:
+        raise LookupFailed(f"git exited {head.returncode}/{diff.returncode}")
+    return {"head": head.stdout.strip(), "diff_sha256": hashlib.sha256(diff.stdout).hexdigest()}
+
+
+def cpu_times() -> tuple[int, int]:
+    fields = [int(x) for x in Path("/proc/stat").read_text().splitlines()[0].split()[1:]]
+    return sum(fields), fields[3] + fields[4]
+
+
+def host_sample(previous: tuple[int, int] | None) -> tuple[dict, tuple[int, int]]:
+    mem = next(int(line.split()[1]) // 1024 for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemAvailable:"))
+    load1 = float(Path("/proc/loadavg").read_text().split()[0])
+    now = cpu_times()
+    busy = None
+    if previous is not None and now[0] > previous[0]:
+        busy = round(100.0 * (1 - (now[1] - previous[1]) / (now[0] - previous[0])), 1)
+    return {"mem_available_mib": mem, "load1": load1, "cpu_busy_pct": busy}, now
+
+
+def healthy(sample: dict, bounds: dict) -> list[str]:
+    bad = []
+    if sample["mem_available_mib"] < bounds["mem_available_min_mib"]:
+        bad.append(f"MemAvailable {sample['mem_available_mib']} MiB < {bounds['mem_available_min_mib']}")
+    if sample["load1"] > bounds["load1_max"]:
+        bad.append(f"load1 {sample['load1']} > {bounds['load1_max']}")
+    if sample["cpu_busy_pct"] is None or sample["cpu_busy_pct"] > bounds["cpu_busy_max_pct"]:
+        bad.append(f"CPU busy {sample['cpu_busy_pct']}% > {bounds['cpu_busy_max_pct']}% (unknown counts as busy)")
+    return bad
+
+
+def lineage(pid: int) -> set[int]:
+    seen = set()
+    while pid > 1 and pid not in seen:
+        seen.add(pid)
+        try:
+            pid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+    return seen
+
+
+def own_processes() -> list[Path]:
+    uid, procs = os.getuid(), []
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            if proc.stat().st_uid == uid:
+                procs.append(proc)
+        except FileNotFoundError:
+            continue
+    return procs
+
+
+def ticks_now() -> int:
+    """Clock ticks since boot, the unit of `/proc/<pid>/stat`'s start time."""
+    return int(float(Path("/proc/uptime").read_text().split()[0]) * os.sysconf("SC_CLK_TCK"))
+
+
+def start_ticks(proc: Path) -> int:
+    """A process's start time in clock ticks since boot. Readable even where its environment is not."""
+    return int((proc / "stat").read_text().rsplit(")", 1)[1].split()[19])
+
+
+def own_unit() -> str | None:
+    """The systemd unit this supervisor runs in (the K suite's outer unit, when there is one)."""
+    try:
+        for line in Path("/proc/self/cgroup").read_text().splitlines():
+            if line.startswith("0::"):
+                last = line[3:].rstrip("/").rsplit("/", 1)[-1]
+                return last if last.endswith(".service") else None
+    except OSError:
+        return None
+    return None
+
+
+def other_space_workloads() -> list[str]:
+    """Own-user processes that look like a Space workload. An unreadable own process refuses (fails closed).
+
+    **Detected:** a process whose executable basename starts with one of `WORKLOAD_EXES`, whose argv
+    contains one of `WORKLOAD_ARGS`, and whose argv or working directory names a Space tree
+    (`SPACE_MARKERS`). That covers `pytest` and `python -m pytest`, the supervisors and the
+    harness, docker and compose, the vehicle console, `python -m live.stack`, and check and plant
+    runs.
+
+    **Not detected:**
+    - a workload whose argv contains no `WORKLOAD_ARGS` marker, for example `python worker.py`
+      inside a Space tree;
+    - one whose argv and cwd name no Space tree;
+    - one run by an executable outside `WORKLOAD_EXES`.
+
+    **Unreadable same-user processes** (the host keeps some non-dumpable: cwd, exe and environ return
+    EACCES). One is set aside only when **both** hold: its readable `comm` is in
+    `UNREADABLE_HOST_COMMS`, and its argv, read where readable, names no workload and no Space path.
+    Any other unreadable process refuses admission. That is a classification, not a suppression: the
+    error is recorded, and the rule is as narrow as the host's own list.
+
+    **Bias:** an interactive process (a Claude session, an editor) is not matched by its cwd alone.
+    A shell whose argv mentions "pytest" and a Space path is matched, and refuses admission: the safe
+    direction. Because detection is a heuristic, the one-selection rule rests on Governance's
+    allocation; this is a second check.
+    """
+    mine = lineage(os.getpid())
+    found = []
+    for proc in own_processes():
+        if int(proc.name) in mine:
+            continue
+        try:
+            text = b" ".join((proc / "cmdline").read_bytes().split(b"\0")).decode("utf-8", "replace")
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise LookupFailed(f"own process {proc.name}'s argv cannot be read: {exc}") from exc
+        try:
+            cwd = os.readlink(proc / "cwd")
+            exe = os.path.basename(os.readlink(proc / "exe"))
+        except FileNotFoundError:
+            continue
+        except PermissionError as exc:
+            try:
+                comm = (proc / "comm").read_text().strip()
+            except FileNotFoundError:
+                continue
+            except OSError as again:
+                raise LookupFailed(f"own process {proc.name} cannot be inspected at all: {exc}; {again}") from again
+            named = any(m in text for m in WORKLOAD_ARGS) or any(m in text for m in SPACE_MARKERS)
+            if comm in UNREADABLE_HOST_COMMS and not named:
+                continue  # a known non-dumpable host process whose argv names nothing of Space
+            raise LookupFailed(f"own process {proc.name} ({comm}) cannot be inspected and is not a known host process: {exc}") from exc
+        except OSError as exc:
+            raise LookupFailed(f"own process {proc.name} cannot be inspected: {exc}") from exc
+        if exe.startswith(WORKLOAD_EXES) and any(m in text for m in WORKLOAD_ARGS) and (
+            any(m in text for m in SPACE_MARKERS) or any(m in cwd for m in SPACE_MARKERS)
+        ):
+            found.append(f"{proc.name} exe={exe} cwd={cwd} argv={text[:160]}")
+    return found
+
+
+def space_units(prefix: str) -> list[str]:
+    listed = sh(["systemctl", "--user", "list-units", "--all", "--plain", "--no-legend", "--no-pager"])
+    if listed.returncode != 0:
+        raise LookupFailed(f"systemctl list-units exited {listed.returncode}")
+    found = []
+    enclosing = own_unit()
+    for line in listed.stdout.splitlines():
+        parts = line.split()
+        if parts and parts[0] == enclosing:
+            continue  # the K suite's own outer unit, inside which this supervisor runs
+        if parts and (parts[0].startswith(prefix) or ("space" in parts[0].lower() and (parts[2] if len(parts) > 2 else "?") != "inactive")):
+            found.append(line.strip())
+    return found
+
+
+def space_containers() -> list[str]:
+    listed = sh(["docker", "ps", "--format", "{{.Names}}"])
+    if listed.returncode != 0:
+        raise LookupFailed(f"docker ps exited {listed.returncode}: {listed.stderr.strip()[:200]}")
+    return [name for name in listed.stdout.split() if "space" in name.lower()]
+
+
+def show(unit: str, *, fail: bool = False, timeout: float = CMD_TIMEOUT_S) -> dict:
+    """`systemctl --user show` of the unit, which must succeed."""
+    if fail:
+        raise LookupFailed("injected: the status lookup fails")
+    shown = sh(["systemctl", "--user", "show", unit, "-p", "LoadState", "-p", "ActiveState", "-p", "SubState", "-p", "ControlGroup",
+                "-p", "InvocationID", "-p", "MainPID", "-p", "Result"], timeout=timeout)
+    if shown.returncode != 0:
+        raise LookupFailed(f"systemctl show {unit} exited {shown.returncode}")
+    return dict(line.split("=", 1) for line in shown.stdout.splitlines() if "=" in line)
+
+
+def derived_cgroup(unit: str) -> Path:
+    uid = os.getuid()
+    return Path(f"/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/{unit}")
+
+
+def token_holders(token: str, before_ticks: int, *, deny: bool = False) -> list[str]:
+    """Own-user processes carrying the token, or that cannot be cleared of it.
+
+    **This classifies cleanup ownership only; it says nothing about admission.** A process whose argv
+    or environment cannot be read is cleared **only** by proof that it predates the run: its start
+    time (readable in `/proc/<pid>/stat`) is before `before_ticks`, recorded just before the unit was
+    launched. Every process this run owns is created after that tick, as a descendant of the unit, so
+    a process that demonstrably predates it cannot be one of them. Any of these stays unknown, which
+    fails:
+    - an unreadable process that started later;
+    - a process whose start time cannot be read.
+    """
+    held = []
+    for proc in own_processes():
+        for name in ("cmdline", "environ"):
+            try:
+                if deny:
+                    raise PermissionError("injected: process read denied")
+                data = (proc / name).read_bytes()
+            except FileNotFoundError:
+                break
+            except OSError as exc:
+                try:
+                    if not deny and start_ticks(proc) < before_ticks:
+                        break  # predates the run: it cannot hold the token
+                except FileNotFoundError:
+                    break
+                except (OSError, ValueError, IndexError):
+                    pass
+                held.append(f"{proc.name}: unknown, cannot be read and does not predate the run ({type(exc).__name__}: {exc})")
+                break
+            if token.encode() in data:
+                held.append(proc.name)
+                break
+    return held
+
+
+def memory_events(cgroup: Path) -> dict[str, int]:
+    return {k: int(v) for k, v in (line.split() for line in (cgroup / "memory.events").read_text().splitlines())}
+
+
+def main() -> int:
+    spec_path = Path(sys.argv[1]).resolve()
+    spec = json.loads(spec_path.read_text())
+    here = Path(__file__).resolve().parent
+    inject = spec.get("inject", "none")
+    if inject not in INJECT_POINTS:
+        print(f"refused: unknown inject point {inject!r}", file=sys.stderr)
+        return 2
+    evidence = Path(spec["evidence_dir"])
+    if evidence.exists():
+        print(f"refused: evidence directory {evidence} already exists", file=sys.stderr)
+        return 2
+    evidence.mkdir(parents=True)
+    log = (evidence / "supervisor.log").open("a", encoding="utf-8")
+    try:
+        return run(spec, spec_path, here, inject, evidence, log)
+    finally:
+        try:
+            log.close()
+        except BaseException:  # noqa: BLE001 - closing the log never changes the outcome
+            pass
+
+
+def run(spec, spec_path, here, inject, evidence, log) -> int:
+    def note(event: str, **data) -> None:
+        try:
+            log.write(json.dumps({"t": time.time(), "event": event, **data}, default=str) + "\n")
+            log.flush()
+        except BaseException:  # noqa: BLE001 - logging never raises; the outcome files carry the result
+            pass
+
+    token = uuid.uuid4().hex
+    unit = f"{spec['unit_prefix']}-{token[:12]}.service"
+    state = {"started": False, "owned": False, "invocation": None, "cgroup": None, "go": False, "abort": [], "terminal": None,
+             "post_identity": None, "samples": 0, "completed": False, "unit": unit}
+    note("start", token=token, unit=unit, inject=inject, spec_sha256=hashlib.sha256(spec_path.read_bytes()).hexdigest(),
+         supervisor_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+         launcher_sha256=hashlib.sha256((here / "launch.py").read_bytes()).hexdigest(),
+         recorder_sha256=hashlib.sha256((here / "record.py").read_bytes()).hexdigest())
+
+    # 1. Admission, the deadline checked before every step.
+    admit_by = time.monotonic() + spec["admission_deadline_s"]
+
+    def admit_left(step: str) -> None:
+        if time.monotonic() > admit_by:
+            raise LookupFailed(f"admission deadline {spec['admission_deadline_s']} s passed before {step}")
+
+    try:
+        admit_left("the interpreter")
+        version = sh([spec["interpreter"], "-V"])
+        if version.returncode != 0:
+            raise LookupFailed(f"the interpreter {spec['interpreter']} did not answer")
+        admit_left("identity")
+        ident = identity(spec)
+        refusals = [f"{k} {ident[k]} != expected {spec['expect'][k]}" for k in ("head", "diff_sha256") if ident[k] != spec["expect"][k]]
+        admit_left("the host sample")
+        _, first = host_sample(None)
+        time.sleep(2)
+        sample, _ = host_sample(first)
+        admit_left("process discovery")
+        others = other_space_workloads()
+        admit_left("unit discovery")
+        units = space_units(spec["unit_prefix"])
+        admit_left("container discovery")
+        containers = space_containers()
+        note("admission", interpreter=version.stdout.strip(), identity=ident, host=sample, others=others, units=units, containers=containers)
+        refusals += healthy(sample, spec["admission"])
+        refusals += [f"Space workload running: {o}" for o in others]
+        refusals += [f"Space unit present: {u}" for u in units]
+        refusals += [f"Space container running: {c}" for c in containers]
+        admit_left("launch")  # an overdue admission never launches
+    except LookupFailed as exc:
+        refusals = [f"admission lookup failed: {exc}"]
+    if refusals:
+        note("refused", reasons=refusals)
+        return outcome(evidence, note, refusals, state, verified=True, spec=spec, inject=inject, refused=True)
+
+    # 2-6. Launch, under cleanup.
+    caps, go_timeout = spec["caps"], spec["setup_deadline_s"] + 5
+    runtime_max = spec["setup_deadline_s"] + 5 + spec["deadline_s"] + spec["runtime_margin_s"]
+    argv = [
+        "systemd-run", "--user", f"--unit={unit}", "--service-type=exec", "--no-block",
+        "-p", f"CPUQuota={caps['cpu_quota']}", "-p", f"MemoryMax={caps['memory_max']}", "-p", f"MemorySwapMax={caps['memory_swap_max']}",
+        "-p", "OOMPolicy=stop", "-p", "KillMode=control-group", "-p", "ExitType=cgroup", "-p", f"RuntimeMaxSec={runtime_max}",
+        "-p", f"TimeoutStopSec={spec['stop_timeout_s']}", "-p", "Nice=19", "-p", f"WorkingDirectory={spec['workdir']}",
+        "-p", "Environment=CUDA_VISIBLE_DEVICES=", "-p", f"Environment=SPACE_RUN_TOKEN={token}",
+        "-p", f"ExecStopPost=/usr/bin/python3 {here / 'record.py'} {evidence} {token}",
+        "-p", f"StandardOutput=file:{evidence / 'payload.out'}", "-p", f"StandardError=file:{evidence / 'payload.out'}",
+        "/usr/bin/python3", str(here / "launch.py"), str(evidence), token, str(go_timeout), inject, "--", spec["interpreter"], *spec["payload"],
+    ]
+    verified = False
+    try:
+        state["launch_ticks"] = ticks_now()
+        state["started"] = True
+        note("launch", argv=argv, runtime_max_s=runtime_max, launch_ticks=state["launch_ticks"])
+        launched = sh(argv)
+        if launched.returncode != 0:
+            raise Abort(f"systemd-run exited {launched.returncode}: {launched.stderr.strip()[:300]}")
+        if inject == "interrupt_after_launch":
+            raise KeyboardInterrupt("injected: interrupted right after launch")
+        setup_by = time.monotonic() + spec["setup_deadline_s"]
+
+        def setup_left(step: str) -> None:
+            if time.monotonic() > setup_by:
+                raise Abort(f"setup deadline {spec['setup_deadline_s']} s passed before {step}")
+
+        def ours(shown: dict) -> dict:
+            if state["invocation"] and shown.get("InvocationID") and shown["InvocationID"] != state["invocation"]:
+                raise Abort(f"the unit's InvocationID changed: {shown['InvocationID']} != {state['invocation']}")
+            return shown
+
+        while not state["owned"]:
+            setup_left("ownership")
+            shown = show(unit)
+            if inject == "ownership_never_established":
+                shown = dict(shown, ControlGroup="")
+            if shown.get("ActiveState") == "active" and shown.get("ControlGroup") and shown.get("MainPID", "0") != "0":
+                cgroup = Path("/sys/fs/cgroup" + shown["ControlGroup"])
+                if shown["MainPID"] in (cgroup / "cgroup.procs").read_text().split():
+                    state.update(owned=True, invocation=shown["InvocationID"], cgroup=cgroup)
+                    note("owned", cgroup=str(cgroup), invocation=shown["InvocationID"], main_pid=shown["MainPID"])
+                    break
+            elif shown.get("ActiveState") in ("failed", "inactive"):
+                raise Abort(f"the unit ended during setup: {shown}")
+            time.sleep(0.1)
+        cgroup = state["cgroup"]
+        setup_left("caps")
+        read = {name: (cgroup / name).read_text().strip() for name in ("cpu.max", "memory.max", "memory.swap.max")}
+        expected = dict(caps["read_back"], **({"memory.max": "1"} if inject == "caps_mismatch" else {}))
+        note("caps", read=read, expected=expected)
+        if read != expected:
+            raise Abort(f"caps did not read back: {read} != {expected}")
+        ready = evidence / "READY.json"
+        while not ready.exists():
+            setup_left("the launcher's READY")
+            time.sleep(0.1)
+        launcher = json.loads(ready.read_text())
+        note("ready", **launcher)
+        if launcher.get("token") != token or launcher.get("sigint_ignored_after_restore") is not False:
+            raise Abort(f"the launcher's signal restoration is not evidenced: {launcher}")
+        setup_left("the pre-GO sample")
+        _, first = host_sample(None)
+        time.sleep(1)
+        pre, cpu = host_sample(first)
+        if inject == "pre_go_unhealthy":
+            pre["mem_available_mib"] = 0
+        pre["oom_kill"] = memory_events(cgroup).get("oom_kill", 0)
+        note("pre_go", **pre)
+        unwell = healthy(pre, spec["admission"]) + ([f"oom_kill {pre['oom_kill']} before GO"] if pre["oom_kill"] else [])
+        if unwell:
+            raise Abort(f"pre-GO health: {unwell}")
+        if inject == "go_never":
+            waited_by = time.monotonic() + go_timeout + 5
+            while time.monotonic() < waited_by and ours(show(unit)).get("ActiveState") in ("active", "activating", "deactivating"):
+                time.sleep(0.5)
+            raise Abort("injected: GO withheld; the launcher's bounded wait ended the run")
+        setup_left("the final show")
+        ours(show(unit))
+        setup_left("GO")
+        (evidence / "GO").write_text("go\n")
+        state["go"] = True
+        started = time.monotonic()
+        note("go")
+
+        mon, strikes = spec["monitor"], {"load1": 0, "cpu": 0}
+        deadline_on = inject != "supervisor_deadline_disabled"
+
+        def overdue() -> bool:
+            return deadline_on and time.monotonic() - started > spec["deadline_s"]
+
+        with (evidence / "samples.jsonl").open("a", encoding="utf-8") as samples:
+            while True:
+                if overdue():
+                    raise Abort(f"deadline {spec['deadline_s']} s passed")
+                shown = ours(show(unit))
+                if overdue():
+                    raise Abort(f"deadline {spec['deadline_s']} s passed")
+                if shown.get("LoadState") == "not-found" or shown.get("ActiveState") in ("inactive", "failed"):
+                    break
+                sample, cpu = host_sample(cpu)
+                try:
+                    events = memory_events(cgroup)
+                    sample.update(elapsed_s=round(time.monotonic() - started, 1), memory_current=int((cgroup / "memory.current").read_text()),
+                                  procs=len((cgroup / "cgroup.procs").read_text().split()), oom_kill=events.get("oom_kill", 0))
+                except FileNotFoundError:
+                    time.sleep(0.2)
+                    continue  # the cgroup is going with the unit; the next show says so
+                samples.write(json.dumps(sample) + "\n")
+                samples.flush()
+                state["samples"] += 1
+                if sample["oom_kill"]:
+                    # Let systemd's own OOM handling end the unit first, so SERVICE_RESULT records the OOM.
+                    settle_by = time.monotonic() + spec["oom_settle_s"]
+                    while time.monotonic() < settle_by and ours(show(unit)).get("ActiveState") in ("active", "deactivating"):
+                        time.sleep(0.5)
+                    raise Abort(f"oom_kill {sample['oom_kill']} in the unit's cgroup")
+                strikes["load1"] = strikes["load1"] + 1 if sample["load1"] > mon["load1_ceiling"] else 0
+                busy = sample["cpu_busy_pct"]
+                strikes["cpu"] = strikes["cpu"] + 1 if busy is None or busy > mon["cpu_busy_ceiling_pct"] else 0
+                if sample["mem_available_mib"] < mon["mem_available_floor_mib"]:
+                    raise Abort(f"MemAvailable {sample['mem_available_mib']} MiB < {mon['mem_available_floor_mib']}")
+                for key, ceiling in (("load1", "load1_ceiling"), ("cpu", "cpu_busy_ceiling_pct")):
+                    if strikes[key] >= mon["strikes"]:
+                        raise Abort(f"{key} over {mon[ceiling]} for {strikes[key]} samples")
+                remaining = spec["deadline_s"] - (time.monotonic() - started) if deadline_on else mon["sample_s"]
+                time.sleep(max(0.2, min(mon["sample_s"], remaining)))
+        terminal_by = time.monotonic() + spec["terminal_wait_s"]
+        terminal_file = evidence / "TERMINAL.json"
+        while True:
+            if inject == "terminal_missing":
+                raise Abort("no terminal record from the unit's ExecStopPost (injected)")
+            report_ = json.loads(terminal_file.read_text()) if terminal_file.exists() else None
+            if report_ is not None and report_.get("token") == token:
+                break
+            if time.monotonic() > terminal_by:
+                raise Abort("no terminal record from the unit's ExecStopPost")
+            time.sleep(0.2)
+        # The record is published before the recorder itself exits, and the recorder can still fail after
+        # it (an OOM kill of the recorder): accept the record only once the unit's final state agrees.
+        # A successful unit is collected (not-found); a failed one stays loaded with its Result.
+        while True:
+            final = ours(show(unit))
+            if final.get("LoadState") == "not-found":
+                # Only an inactive (not failed) unit is collected: the run ended in success.
+                final_result = "success"
+                break
+            if final.get("ActiveState") == "failed":
+                final_result = final.get("Result")
+                break
+            if time.monotonic() > terminal_by:
+                raise Abort(f"the unit's final state was not reached within the terminal wait: {final}")
+            time.sleep(0.2)
+        if final_result != report_.get("service_result"):
+            raise Abort(f"the terminal record says SERVICE_RESULT={report_.get('service_result')} but the unit ended {final_result} "
+                        "(the recorder, or something after it, failed)")
+        state["terminal"] = report_
+        note("terminal", **report_)
+        result = report_.get("service_result")
+        if result == "oom-kill":
+            raise Abort("the payload was OOM-killed (SERVICE_RESULT=oom-kill)")
+        if result == "timeout":
+            raise Abort("systemd's RuntimeMaxSec ended the run (SERVICE_RESULT=timeout)")
+        if result not in ("success", "exit-code"):
+            raise Abort(f"the unit ended with SERVICE_RESULT={result}")
+        state["completed"] = True
+    except BaseException as exc:  # noqa: BLE001 - every exception, interrupts included, goes to cleanup
+        state["abort"].append(f"{type(exc).__name__}: {exc}")
+    finally:
+        try:
+            verified = cleanup(spec, state, note, token, unit, inject)
+        except BaseException as exc:  # noqa: BLE001 - an unverified cleanup is never released
+            state["abort"].append(f"cleanup raised {type(exc).__name__}: {exc}")
+            verified = False
+        try:
+            post = identity(spec)
+            if inject == "identity_changes_post":
+                post["diff_sha256"] = "injected"
+            state["post_identity"] = post
+            if post != {k: spec["expect"][k] for k in ("head", "diff_sha256")}:
+                state["abort"].append(f"the candidate changed during the run: {post}")
+        except BaseException as exc:  # noqa: BLE001 - an unknown identity makes the run invalid
+            state["abort"].append(f"post-run identity unknown: {type(exc).__name__}: {exc}")
+        if state["terminal"] is None:
+            try:
+                terminal_file = evidence / "TERMINAL.json"
+                if terminal_file.exists() and inject != "terminal_missing":
+                    record = json.loads(terminal_file.read_text())
+                    if record.get("token") == token:
+                        state["terminal"] = record
+            except BaseException:  # noqa: BLE001 - the terminal record is evidence, not a gate, on an abort path
+                pass
+    return outcome(evidence, note, state["abort"], state, verified=verified, spec=spec, inject=inject, refused=False)
+
+
+def cleanup(spec, state, note, token, unit, inject) -> bool:
+    """Stop (only if still ours), reset, and prove the unit gone. Everything is caught, and the loop goes on until its deadline."""
+    by = time.monotonic() + spec["cleanup_deadline_s"]
+
+    def left(cap: float) -> float:
+        remaining = by - time.monotonic()
+        if remaining <= 0:
+            raise LookupFailed("the cleanup budget is spent")
+        return min(cap, remaining)
+
+    stop_failures = 1 if inject == "stop_fails_once" else 0
+    interrupt_once = inject == "interrupt_during_cleanup"
+    attempts = 0
+    while True:
+        attempts += 1
+        reasons: list[str] = []
+        try:
+            if interrupt_once:
+                interrupt_once = False
+                raise KeyboardInterrupt("injected: interrupted during cleanup")
+            try:
+                (Path(spec["evidence_dir"]) / "GO").unlink(missing_ok=True)
+            except BaseException as exc:  # noqa: BLE001
+                reasons.append(f"GO could not be removed: {exc}")
+            if state["started"]:
+                try:
+                    shown = show(unit, timeout=left(CMD_TIMEOUT_S))
+                    if shown.get("ControlGroup"):
+                        state.setdefault("cgroups_seen", set()).add(Path("/sys/fs/cgroup" + shown["ControlGroup"]))
+                    foreign = state["invocation"] and shown.get("InvocationID") and shown["InvocationID"] != state["invocation"]
+                    if foreign:
+                        reasons.append(f"the unit's InvocationID is {shown['InvocationID']}, not this run's; it is not stopped")
+                    elif shown.get("LoadState") != "not-found":
+                        if stop_failures:
+                            stop_failures -= 1
+                            raise LookupFailed("injected: systemctl stop failed")
+                        sh(["systemctl", "--user", "stop", unit], timeout=left(spec["stop_timeout_s"] + 10))
+                        sh(["systemctl", "--user", "reset-failed", unit], timeout=left(CMD_TIMEOUT_S))
+                except BaseException as exc:  # noqa: BLE001 - recorded; verification still runs
+                    reasons.append(f"stop failed: {type(exc).__name__}: {exc}")
+                    state["abort"].append(f"cleanup stop failed: {type(exc).__name__}: {exc}")
+                try:
+                    shown = show(unit, fail=inject == "cleanup_proof_unknown", timeout=left(CMD_TIMEOUT_S))
+                    if shown.get("LoadState") != "not-found":
+                        reasons.append(f"the unit is still loaded: {shown.get('LoadState')}/{shown.get('ActiveState')}")
+                except BaseException as exc:  # noqa: BLE001 - unknown is not gone
+                    reasons.append(f"the unit's state is unknown: {exc}")
+                for path in {p for p in (state["cgroup"], derived_cgroup(unit), *state.get("cgroups_seen", ())) if p is not None}:
+                    try:
+                        if path.exists():
+                            reasons.append(f"the cgroup {path} still exists")
+                    except BaseException as exc:  # noqa: BLE001
+                        reasons.append(f"the cgroup {path} cannot be checked: {exc}")
+                try:
+                    held = token_holders(token, state.get("launch_ticks", 0), deny=inject == "cleanup_proof_unknown")
+                except BaseException as exc:  # noqa: BLE001
+                    held = [f"unknown: {exc}"]
+                if held:
+                    reasons.append(f"processes carrying the token, or that cannot be read: {held[:5]}")
+        except BaseException as exc:  # noqa: BLE001 - nothing in an attempt ends the loop
+            reasons.append(f"cleanup attempt raised {type(exc).__name__}: {exc}")
+            state["abort"].append(f"cleanup attempt raised {type(exc).__name__}: {exc}; cleanup continued")
+        if not reasons and time.monotonic() <= by:
+            note("cleanup_verified", attempts=attempts)
+            return True
+        if time.monotonic() > by:
+            note("cleanup_unverified", reasons=reasons, attempts=attempts)
+            state["abort"].append(f"cleanup not verified: {reasons}")
+            return False
+        try:
+            time.sleep(0.5)
+        except BaseException as exc:  # noqa: BLE001 - an interrupt between attempts does not end cleanup
+            state["abort"].append(f"cleanup interrupted between attempts ({type(exc).__name__}: {exc}); it continued")
+
+
+def outcome(evidence, note, abort, state, *, verified, spec, inject, refused) -> int:
+    """Decide the exit once: the receipt first (only if verified), then the summary carrying the final code."""
+    if not verified:
+        code = 4
+    elif refused:
+        code = 2
+    elif abort or not state["completed"]:
+        code = 3
+    else:
+        code = 0
+    if verified:
+        try:
+            (evidence / "RELEASE.txt").write_text(f"released {time.strftime('%Y-%m-%dT%H:%M:%S%z')} unit={state['unit']}: cleanup verified\n")
+        except BaseException as exc:  # noqa: BLE001 - no receipt means the slot is still held
+            abort.append(f"the release receipt could not be written: {exc}")
+            try:
+                (evidence / "RELEASE.txt").unlink(missing_ok=True)
+            except BaseException:  # noqa: BLE001
+                pass
+            code = 4
+    try:
+        if inject == "report_raises":
+            raise RuntimeError("injected: reporting fails")
+        counts = None
+        junit = spec.get("junit")
+        if junit and Path(junit).exists():
+            root = ET.parse(junit).getroot()
+            suite = root.find("testsuite") if root.tag == "testsuites" else root
+            counts = {k: int(suite.get(k, 0)) for k in ("tests", "failures", "errors", "skipped")}
+        summary = {"supervisor_exit": code, "abort": abort, "unit": state["unit"], "owned": state["owned"], "go": state["go"],
+                   "samples": state["samples"], "terminal": state["terminal"], "post_identity": state["post_identity"], "counts": counts,
+                   "released": code != 4 and verified}
+        (evidence / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    except BaseException as exc:  # noqa: BLE001 - a missing summary makes the run invalid; it never touches the receipt
+        abort.append(f"reporting failed: {type(exc).__name__}: {exc}")
+        if code in (0, 2):
+            code = 3
+    note("outcome", exit=code, abort=abort)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

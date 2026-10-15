@@ -1,0 +1,68 @@
+# Vehicle — decision log
+
+As of **2026-10-10**, `tachyon-beep/space_vehicle` main @ `64fc58c`. Append-only: a decision that is
+revised gets a new dated entry pointing back, never an edit in place. **Who** is either *John* (the
+owner/operator) or *coordinator* (a Space Vehicle session deciding under John's standing delegation,
+open to his revision). **Where** is the authoritative record; this log only indexes it.
+
+## Standing delegations and rules from John
+
+| date | decision | where |
+|---|---|---|
+| 2026-10-08 | Work autonomously until a hard blocker; lean towards closing blockers by picking the best answer rather than stopping | session instruction |
+| 2026-10-08 | Ask before external publication, merges, settings changes, release, deployment or paid-model campaigns; respect platform denials | session instruction |
+| 2026-10-09 | PR merges authorised once CI is green; pushes allowed | session instruction |
+| 2026-10-09 | Reviewers: Fable while available, plus a Codex CLI agent at `gpt-6-astra` high effort and a Claude Opus reviewer | session instruction |
+| 2026-10-09 | **Information and action management are the agents' to manage — we do not solve it for them.** Windows carry no scenario, seed, fault plan or designers' diagnostic commentary | session instruction → #36, #37, #35 |
+| 2026-10-09 | Clean agent-facing text as we go; a full sweep at the end (HELP.md verb texts first) | session instruction → #35 |
+
+## ADR 0001 — the shared executive (`docs/decisions/0001-shared-executive.md`)
+
+| date | decision | who |
+|---|---|---|
+| 2026-10-08 | A: rotating cross-window arbitration order | John |
+| 2026-10-08 | B: a batch above `--max-batch` (32) is refused whole with one result | John |
+| 2026-10-08 | C: an interlock that cannot be evaluated refuses (`INTERLOCK UNEVALUATED`) | John |
+| 2026-10-08 | D: a window or directory bound to another world refuses (until WP08) | John |
+| 2026-10-08 | Post-review clarifications: root record authoritative (later amended by ADR 0002 H), settle-first deferrals, preserved vs honoured variables, window-local receipts, `--init` union, `--plan` on bound directories | coordinator |
+| 2026-10-09 → 10 | Dated amendments for per-slug agent mounts (chassis `adf38d6`) and for choice D under resume (#21) | coordinator |
+
+## ADR 0002 — mission clock and continuity (`docs/decisions/0002-mission-clock-and-continuity.md`)
+
+| decision | value | who |
+|---|---|---|
+| A — wall time to ticks | multiplier **m = 1**, fixed-rate scheduler (A2) | John |
+| B — claim/publication cadence | **k = 5** ticks per cycle; burst bound k (catch up by whole cycles) | John |
+| C — overload | **shed → dilate → hold**, lag ceiling 30 wall seconds | John |
+| D — pause | **D1** operator pause the fleet cannot trigger | John |
+| E — command budget time base | **E2** mission time | John |
+| F — downtime | **F1** freeze: mission time does not advance while down | John |
+| G — checkpoint contents; H — where it lives | H1: a private writable mount (`--state-dir`), never under the diode volume | coordinator |
+| I — atomicity, integrity, compatibility | engine hash + Python (full version) + platform (system, machine, libc) + tick_hz | coordinator |
+| J — cadence and record | **J2**: full checkpoint every **N = tick_hz = 50** ticks + durable per-cycle record + published-tick marks | coordinator; N accepted by John |
+| K — corrupt checkpoint | **K2** fall back to the previous verified generation; `--new-world` the only recorded escape | John |
+| L(a) — `seq` after restart | **L1** continues | coordinator |
+| L(b) — result filename clock | **MET rendered as UTC** | John |
+| M — phase | a function of the tick | coordinator |
+
+## Delivery decisions
+
+| date | decision | who | where |
+|---|---|---|---|
+| 2026-10-09 | The chassis owns the vehicle service's deployment topology (compose, networks, mounts, serve script); the vehicle states its needs. The vehicle runs with **no network** (`network_mode: none`) | coordinator after a systems analysis; John set the goal | chassis spec §8; `interface.md` |
+| 2026-10-09 | Vehicle `/state` volume sized **40 GB** (record ≈ 13–22 GB per 192 h mission, nothing pruned) | coordinator | filigree `space_chassis-93010ff54e` c.29 |
+| 2026-10-09 | The `vehicle` window is served only when no roster is given — never beside a fleet (it would be an unowned command authority over the shared world); never run `diode_probe` against a live mission | coordinator | `records/2026-10-09-chassis-adoption-package.md` §2.2 |
+| 2026-10-09 | CI job timeout 45 → 90 min | coordinator | #34 |
+| 2026-10-09 | #21 design addenda A1–A8, B1–B13: restart cost bounded by the checkpoint anchor; exactly-once qualified as the contract allows (a batch lost before its row has no result); K2 fallback tested in #21; `--closed-interlock` across a restart is a union (a restart never clears a trip); a world's slug set is fixed; cadence checkpoint failures continue, journaled and on stderr; the budget's wall-clock reset is a residual until #25 | coordinator | `records/2026-10-09-wp08-3-resume-design.md`; ADR 0002 J (xxi)–(xxix) on the #21 branch |
+| 2026-10-10 | Pin the agent image's Python base by digest (`python:3.13-slim@sha256:70729b46…`, Python 3.13.16); a digest change is a new-world event | **John** | chassis `vehicle-adoption` `e055e73`, on the base stage the vehicle stage inherits (`044b5c5` before the plan-8 rebase) |
+| 2026-10-10 | #21 review fix round rulings R1–R5: one rule for an unparseable record line (torn only as a file's last line or before a new boot's header; elsewhere corruption); a result counts as delivered only after its file and the output directory are fsync'd; the interrupt test uses a subprocess and a real SIGINT; fixes on top of `06f08a3`, no history rewrite | coordinator | `records/2026-10-10-wp08-3-review-fixes.md` |
+| 2026-10-10 | **One program, two project teams, one product**: Space Aurora is one product built in parallel by two teams of equal importance (chassis, vehicle), coordinated by Emmy; **no shared tasks** — every task has one lead team that sets the rule, and the other team follows it on its side | **John** | `../README.md` "One program, two project teams, one product"; `../coordination.md` Rules |
+| 2026-10-10 | Scope exchange with the chassis (leads agreed): **#27 pause** — the vehicle leads the semantics and the interface (flag, signal or file), the chassis leads how the operator invokes it; **space_chassis-93010ff54e** — the vehicle leads the merge SHA, the chassis leads the issue and the adoption (labels untouched until Emmy's AUR-GOV-01); **#23** — the vehicle writes the spec, the chassis implements `serve_vehicle.sh` to it; **#28** — the vehicle states the shutdown bound and what `/state` retains, the chassis sets `stop_grace_period`, the volume size and the archive procedure; **#39** — if the contract changes, the vehicle writes the sentence and the chassis adopts it (fixture and brief included). Voices: Space Vehicle [610587], Space Chassis [8a7d49] | coordinator ↔ chassis | messages 2026-10-10; `../chassis/` |
+| 2026-10-10 | Vehicle position on `restart: unless-stopped` with exit 3 (the chassis decides in Phase B): keep it — a refused start writes nothing (no segment; the fall-back's set-aside rename happens once, on success), so a loop on a persistent refusal is idempotent and says why on every pass, and transient I/O refusals heal on restart | coordinator | message to the chassis 2026-10-10 |
+| 2026-10-10 | The agents' image carries nothing of the vehicle; the vehicle runs its own image `space-chassis-vehicle` (closes the vehicle line's P1 on `/opt/vehicle` exposure, image half) | **John** (chassis's decision log) | chassis plan 8, `d7a1172`..`e3eff27`; `../chassis/decisions.md` |
+| 2026-10-10 | #21 confirmation round 2 (G1–G8): `--diode-dir` is resolved once and every confinement check uses that; the record line at a checkpoint's anchor must verify as a record line (schema and chain), not merely match metadata; a checkpoint field consumers branch on is type-checked | coordinator | `records/2026-10-10-wp08-3-review-fixes-2.md` |
+| 2026-10-10 | #21 round 3 (H1–H3): **the terminator rule supersedes R1's position rule and G5's adjacency rule** — an unparseable line is torn iff it is the file's final unterminated line or ends with the `#\n` marker a later writer added; a marked fragment may be followed only by a new boot's unchained startup event, a header, another marked fragment or EOF; one predicate for every reader; the start path is one boundary that refuses by name and closes every handle; **stopping rule**: after round 3, only P1/P2 get another round, the rest is filed as one residual issue | coordinator (stopping rule on the advisor's recommendation) | `records/2026-10-10-wp08-3-review-fixes-3.md` |
+| 2026-10-10 | #21 round 4 (J1, J2 binding; J3, J4 if small): the engine identity is computed from an explicit enumeration that raises on any read error, never a shortened list, and is never cached wrong; every append to the record notes its offset and truncates back on any failure, else the run stops (`RecordUnwritable`); crafted startup objects (markers give syntax, not authenticity) are a residual inside the trust model | coordinator | `records/2026-10-10-wp08-3-review-fixes-4.md` |
+| 2026-10-10 | #21 round 5 (K1, K2): a close in cleanup never replaces an exception already propagating, on every record and checkpoint write path; **termination**: round 5's confirmation scoped to its own diff, a sixth round only for a P1 anywhere or a P2 in that diff (it approved); residuals filed as #40; the claim race found while probing is a separate defect (#39), not folded into #21 | coordinator (termination on the advisor's recommendation) | `records/2026-10-10-wp08-3-review-fixes-5.md` |
+| 2026-10-11 | #39 claim race: **tier 1 approved** (quiet cycles write nothing; non-quiet claims as today), with the panel's conditions: the quiet test never raises (any exception = not quiet) and runs before the map is adopted; the fixture uses the identical test; the §2.2 qualifier **replaces** "runs on the next one" (and `brief/PROTOCOL.md:51-53`, `docs/brief-claims.md` follow, the chassis's to adopt); landed as dated debt; acceptance includes ≥ 30 gate runs with instrumented early returns. **No tier 2.** Next design round: **option B** (rename-take, then republish only if absent via `link`), in place of tiers 2 and 3. **A brief absence of `console.json` during a claim is accepted**: agents must detect and handle tearing. Threat model (adversarial vs erratic agents): open | **John** | `records/2026-10-11-39-claim-race-decision-memo.md`; panel opinions `.scratch/wp01-handoff/diag-contract-probe/reviews/panel-*.md` (sha256 in `CHECKPOINT.md`, checkpoint 10) |
+| 2026-10-11 | **Threat model for the window contract: not adversarial.** The container is secured adversarially; the simulation is not. A design must survive erratic agents (any write rate, torn writes, odd shapes) and must never silently lose or revert what an honest agent wrote; it need not defend against an agent deliberately forging vehicle-private evidence in its own window. An agent that finds a way to cheat the simulation is interesting data, not a defect to design out. Cheats are fixed as agents find them: designs are tested and checked, not reviewed as a hostile red team. (Answers the open item in the previous row; #42 filed the same day for the gates-reopen-on-resume defect.) | **John** | this log; `records/2026-10-11-39-claim-race-decision-memo.md` |

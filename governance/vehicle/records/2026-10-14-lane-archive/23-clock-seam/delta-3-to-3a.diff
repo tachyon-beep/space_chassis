@@ -1,0 +1,12 @@
+2955c2955
+< index c2acee5..9de2a04 100644
+---
+> index c2acee5..0cbf1e7 100644
+3463,3465c3463,3465
+< +        than an operator will wait, so one who asks twice means it (candidate 1, systems P3). A handler
+< +        runs only between bytecodes, so no signal but `SIGKILL` ends a syscall blocked in the kernel;
+< +        this one ends what is merely slow. A second `SIGINT` is the `KeyboardInterrupt` it always was. A second
+---
+> +        than an operator will wait, so one who asks twice means it (candidate 1, systems P3). Python runs
+> +        a handler only when the interpreter can process signals, so it may be delayed; this is not a
+> +        guarantee of termination during blocked kernel I/O. A second `SIGINT` is the `KeyboardInterrupt` it always was. A second

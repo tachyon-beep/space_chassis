@@ -1,0 +1,3 @@
+venv3.12: Python 3.12.3 freeze-sha256 4535babcc5a2e230b30d864b4af05d1838aafd5f4b5c885710b30fcd0709b4cb ruff ruff 0.16.8 pytest 9.0.1 3.8.0
+venv3.13: Python 3.13.15 freeze-sha256 4535babcc5a2e230b30d864b4af05d1838aafd5f4b5c885710b30fcd0709b4cb ruff ruff 0.16.8 pytest 9.0.1 3.8.0
+requirements-dev.lock sha256 6d1271054b0f9af2690b6b6427da5db04008912cb32ff7607cb31c45f611eac1

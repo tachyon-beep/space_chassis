@@ -1,0 +1,17 @@
+{
+  "supervisor_exit": 3,
+  "abort": [
+    "Abort: no terminal record from the unit's ExecStopPost (injected)"
+  ],
+  "unit": "space-vehicle-b-k10-terminal-missing-73293a1995d8.service",
+  "owned": true,
+  "go": true,
+  "samples": 1,
+  "terminal": null,
+  "post_identity": {
+    "head": "f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f",
+    "diff_sha256": "0a00336feb10dcd5c8839893cabafbdc5cbea20474f918d76dc1e0eca3f2d01d"
+  },
+  "counts": null,
+  "released": true
+}

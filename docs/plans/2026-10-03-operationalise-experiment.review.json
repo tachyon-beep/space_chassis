@@ -1,0 +1,74 @@
+{
+  "verdict": "APPROVED_WITH_WARNINGS",
+  "scope": "Proposed operationalisation programme only; no implementation, deployment or experimental readiness certified",
+  "plan_file": "docs/plans/2026-10-03-operationalise-experiment.md",
+  "reviewed_at": "2026-10-03",
+  "blocking_issues": [],
+  "warnings": [
+    {
+      "id": "W2",
+      "issue": "Required physical parameters still lack applicable evidence; some packages depend on research/measurement or an explicit model decision",
+      "resolution": "P2 evidence classification and named package blockers; no guessed fills or silent scope reduction"
+    },
+    {
+      "id": "W3",
+      "issue": "Conversation archival policy, campaign cost custody and clock/performance policies need package-level decisions before implementation",
+      "resolution": "Follow section4 entry conditions and reviewed acceptance gates; preserve historic runtime state"
+    }
+  ],
+  "resolved_findings": [
+    "P0 reproductions kept in scratch; production regressions land green with owning implementations",
+    "Private durable vehicle-only state and coherent committed-tick recovery specified",
+    "Vehicle referee-file count distinguished from expanded suite collection",
+    "Containment and stub deployment precede paid-model smoke",
+    "Strict operator dependency boundary and actual pump/recorder restart-accounting tests specified",
+    "Multiplier-aware tick deadlines, recorded clock discontinuity policy and uncertainty invalidation specified",
+    "Aggregate/per-principal ingress queues/publication work bounded against physical-clock starvation"
+  ],
+  "reviewer_summaries": {
+    "reality": {
+      "status": "APPROVED",
+      "blocking": 0,
+      "report": ".scratch/orientation-2026-10-03/temp/review-reality.md"
+    },
+    "architecture": {
+      "status": "APPROVED",
+      "blocking": 0,
+      "report": ".scratch/orientation-2026-10-03/temp/review-architecture.md"
+    },
+    "quality": {
+      "status": "APPROVED",
+      "blocking": 0,
+      "report": ".scratch/orientation-2026-10-03/temp/quality-review.md"
+    },
+    "systems": {
+      "status": "APPROVED",
+      "blocking": 0,
+      "report": ".scratch/orientation-2026-10-03/temp/review-systems.md"
+    }
+  },
+  "validation": {
+    "pytest": {
+      "command": "python3 -m pytest -n 4 -q -o addopts='' --junitxml=.scratch/orientation-2026-10-03/temp/pytest-full.xml",
+      "passed": 445,
+      "chassis_root": 101,
+      "vehicle": 344,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "elapsed_seconds": 638.36,
+      "exit_code": 0,
+      "python": "3.12.3",
+      "local_socket_permission": true
+    },
+    "ruff": "passed offline",
+    "compose_parse": "passed fleet and vehicle profiles",
+    "vehicle_strict": {
+      "exit_code": 2,
+      "debts": 273,
+      "executable_states": 52,
+      "declared_states": 139
+    }
+  },
+  "plan_sha256": "6bd0971ab1414723e295ae2e050f757c5546dc849c6d9bde51f2107bcd6821a4"
+}

@@ -1,0 +1,14 @@
+{
+  "supervisor_exit": 2,
+  "abort": [
+    "diff_sha256 0a00336feb10dcd5c8839893cabafbdc5cbea20474f918d76dc1e0eca3f2d01d != expected 0000000000000000000000000000000000000000000000000000000000000000"
+  ],
+  "unit": "space-vehicle-b-k14-admission-identity-mismatch-473a332af32f.service",
+  "owned": false,
+  "go": false,
+  "samples": 0,
+  "terminal": null,
+  "post_identity": null,
+  "counts": null,
+  "released": true
+}

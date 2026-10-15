@@ -1,0 +1,29 @@
+{
+  "supervisor_exit": 0,
+  "abort": [],
+  "unit": "space-vehicle-b-s1-0a704983bae8.service",
+  "owned": true,
+  "go": true,
+  "samples": 6,
+  "terminal": {
+    "token": "0a704983bae84e3083b2528c474c9b54",
+    "service_result": "success",
+    "exit_code": "exited",
+    "exit_status": "0",
+    "memory_peak": 586248192,
+    "oom": 0,
+    "oom_kill": 0,
+    "cgroup_read_problem": null
+  },
+  "post_identity": {
+    "head": "f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f",
+    "diff_sha256": "0a00336feb10dcd5c8839893cabafbdc5cbea20474f918d76dc1e0eca3f2d01d"
+  },
+  "counts": {
+    "tests": 25,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "released": true
+}

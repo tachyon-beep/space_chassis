@@ -1,0 +1,26 @@
+{
+  "supervisor_exit": 3,
+  "abort": [
+    "KeyboardInterrupt: injected: interrupted right after launch"
+  ],
+  "unit": "space-vehicle-b-k01-interrupt-after-launch-30221f3c49a1.service",
+  "owned": false,
+  "go": false,
+  "samples": 0,
+  "terminal": {
+    "token": "30221f3c49a143b29d5d2d1c2d74279a",
+    "service_result": "success",
+    "exit_code": "killed",
+    "exit_status": "TERM",
+    "memory_peak": 5373952,
+    "oom": 0,
+    "oom_kill": 0,
+    "cgroup_read_problem": null
+  },
+  "post_identity": {
+    "head": "f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f",
+    "diff_sha256": "0a00336feb10dcd5c8839893cabafbdc5cbea20474f918d76dc1e0eca3f2d01d"
+  },
+  "counts": null,
+  "released": true
+}

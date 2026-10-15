@@ -1,0 +1,50 @@
+{
+  "base": "f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f",
+  "admission": {
+    "mem_available_min_mib": 16384,
+    "load1_max": 12.0,
+    "cpu_busy_max_pct": 50.0
+  },
+  "caps": {
+    "cpu_quota": "200%",
+    "memory_max": "6G",
+    "memory_swap_max": "0",
+    "read_back": {
+      "cpu.max": "200000 100000",
+      "memory.max": "6442450944",
+      "memory.swap.max": "0"
+    }
+  },
+  "monitor": {
+    "sample_s": 5,
+    "mem_available_floor_mib": 10240,
+    "load1_ceiling": 20.0,
+    "cpu_busy_ceiling_pct": 85.0,
+    "strikes": 3
+  },
+  "admission_deadline_s": 60,
+  "setup_deadline_s": 30,
+  "runtime_margin_s": 30,
+  "stop_timeout_s": 15,
+  "cleanup_deadline_s": 60,
+  "terminal_wait_s": 20,
+  "oom_settle_s": 15,
+  "inject": "none",
+  "id": "SPACE-VEHICLE-B-G312s",
+  "unit_prefix": "space-vehicle-b-g312s",
+  "workdir": "/tmp/claude-1000/-home-john-space-chassis/a728e992-9471-46ab-9efe-ce550d7ece5f/scratchpad/gate-C-7a87eb8",
+  "interpreter": "/tmp/claude-1000/-home-john-space-chassis/a728e992-9471-46ab-9efe-ce550d7ece5f/scratchpad/venv3.12/bin/python",
+  "expect": {
+    "head": "7a87eb82cfef55dcc74248df41720883587ca7af",
+    "diff_sha256": "0d4da11e9cbe56fcad7e09c48e027340d41f1bae438adfe8cce9dcc889a951d0"
+  },
+  "deadline_s": 300,
+  "evidence_dir": "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/gate/evidence-G312s",
+  "payload": [
+    "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/gate/gate_lane.py",
+    "3.12",
+    "/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/gate/evidence-G312s",
+    "551",
+    "static"
+  ]
+}

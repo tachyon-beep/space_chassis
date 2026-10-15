@@ -1,0 +1,16 @@
+vehicle: the claim takes the console by rename and never writes over a file (#39, option B)
+
+Tier 1 stopped rewriting quiet consoles, but a console that held a batch was still read and then
+replaced by os.replace, so a batch put in place between the two was renamed over unread. The claim
+now renames the console to a private take name and answers what it took; the take is durable before
+anything is answered; the emptied console is put back by link, which leaves a console the agent wrote
+meanwhile for the next claim; the take is then removed (or moved aside), durably, before the window
+claims or adopts anything more. A resume takes a window's map from the console, else from the take of
+the boot that just ended (named by the new state-directory marker .boot.json), else leaves it unknown;
+an older take is never evidence. prepare and repair put a console back only where none is. The README
+round entry and ADR 0002 (xlv) record it. John's decision (2026-10-11); design reviewed in five Codex
+rounds and the implementation in four (candidate 3 approved); a bounded 25-test selection and the
+supervisor's 20 failure-injection controls passed; the full gate is recorded in the PR.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GRfs7dVMu4v5airK6q3w9C

@@ -1,0 +1,15 @@
+post-run independent read-only cleanup check 2026-10-11T12:55:00Z
+summary mtime: 2026-10-11T12:54:31Z; harness.out mtime: 2026-10-11T12:54:31Z
+--- suite unit:
+LoadState=not-found
+ActiveState=inactive
+InvocationID=
+--- user units with 'space' (any state):
+none
+--- cgroups under app.slice named space*:
+none
+--- containers named space*:
+none
+run tokens checked: 21; processes carrying any: none; unreadable own processes (cleared only if they predate the suite): ['1594', '1623', '1760183', '2477129', '3001964', '4042767', '744282', '749391', '782247', '941889', '948227']
+unreadable own processes: all 11 predate the suite launch (12:48:39.46Z) by 24.2 h to 186.9 h (systemd 1594, (sd-pam) 1623,
+sshd x7, codex 3001964/4042767) -> none can hold a run token.

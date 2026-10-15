@@ -1,0 +1,28 @@
+S1 post-run checks 2026-10-11T13:16:56Z
+junit suite attrs: tests=25 failures=0 errors=0 skipped=0 time=25.752
+testcases: 25; unique: 25; equal to the 25 selected IDs: True; with failure/error/skip: []
+classnames: ['tests.test_vehicle_config']
+--- supervisor log events:
+start {'unit': 'space-vehicle-b-s1-0a704983bae8.service'}
+admission {}
+launch {}
+owned {'invocation': '5d2bbdd7b7154a9b967f85fa7e22343a'}
+caps {'read': {'cpu.max': '200000 100000', 'memory.max': '6442450944', 'memory.swap.max': '0'}}
+ready {}
+pre_go {}
+go {}
+terminal {}
+cleanup_verified {'attempts': 1}
+outcome {'exit': 0}
+--- outer unit:
+LoadState=not-found
+ActiveState=inactive
+--- user units with 'space':
+none
+--- Space cgroups under app.slice:
+none
+--- containers named space:
+none
+token holders: none; unreadable own processes started after launch: none
+--- my S1 helpers/monitors: background waiter finished (task bo0y3v9to exit 0); none left:
+none
