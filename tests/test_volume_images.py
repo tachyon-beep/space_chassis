@@ -171,9 +171,9 @@ def _slug(n: int) -> str:
 # names and the table
 
 
-def test_seven_images_per_agent_and_four_shared_make_74_at_ten_and_25_at_three() -> None:
-    assert len(volume_images.names(SLUGS)) == 74
-    assert len(volume_images.names(SLUGS[:3])) == 25
+def test_seven_images_per_agent_and_five_shared_make_75_at_ten_and_26_at_three() -> None:
+    assert len(volume_images.names(SLUGS)) == 75
+    assert len(volume_images.names(SLUGS[:3])) == 26
 
 
 def test_each_agent_s_images_are_named_by_its_slug() -> None:
@@ -196,6 +196,7 @@ def test_each_agent_s_images_are_named_by_its_slug() -> None:
         "diode",
         "fleet_ledger",
         "operator_telemetry",
+        "vehicle_state",
     ]
 
 
@@ -217,6 +218,7 @@ def test_the_table_holds_the_bounded_volume_figures() -> None:
         "diode": ("2G", "SPACE_DIODE_SIZE", SHARED),
         "fleet_ledger": ("64M", "SPACE_FLEET_LEDGER_SIZE", SHARED),
         "operator_telemetry": ("1G", "SPACE_OPERATOR_TELEMETRY_SIZE", SHARED),
+        "vehicle_state": ("40G", "SPACE_VEHICLE_STATE_SIZE", SHARED),
     }
 
 
@@ -233,10 +235,11 @@ def _total(scope: str) -> int:
     )
 
 
-def test_the_default_plan_for_ten_agents_totals_137_gibibytes() -> None:
+def test_the_default_plan_for_ten_agents_totals_177_gibibytes() -> None:
+    # The vehicle's private state (40G) is allocated with or without the vehicle profile.
     assert _total(PER_AGENT) == math.floor(12.625 * GIB)
-    assert _total(SHARED) == math.floor(11.0625 * GIB)
-    assert 10 * _total(PER_AGENT) + _total(SHARED) == math.floor(137.3125 * GIB)
+    assert _total(SHARED) == math.floor(51.0625 * GIB)
+    assert 10 * _total(PER_AGENT) + _total(SHARED) == math.floor(177.3125 * GIB)
 
 
 def test_the_documented_image_totals_match_the_manifest() -> None:
@@ -387,6 +390,7 @@ def test_mounts_for_emits_placeholders_not_resolved_paths(monkeypatch: pytest.Mo
             ("monitor", (None,)),
             ("review", (None,)),
             ("window", (None,)),
+            ("vehicle", (None,)),
         )
         for index in indices
         for entry in volume_images.mounts_for(role, index, 10)
@@ -627,7 +631,7 @@ def test_list_prints_name_size_image_and_mount_point(tmp_path: Path, capsys) -> 
     assert volume_images.main(["list"], source=source, environ={}) == 0
 
     lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 11
+    assert len(lines) == 12
     assert lines[0] == "state_ibex 2G /srv/i/state_ibex.img /srv/v/state_ibex"
     assert "build_ibex 4G /srv/i/build_ibex.img /srv/v/build_ibex" in lines
 
@@ -637,7 +641,7 @@ def test_list_reads_the_fleet_from_the_env_file(tmp_path: Path, capsys) -> None:
 
     assert volume_images.main(["list"], source=source, environ={}) == 0
 
-    assert len(capsys.readouterr().out.splitlines()) == 18
+    assert len(capsys.readouterr().out.splitlines()) == 19
 
 
 def test_names_prints_the_fleet_s_image_names(tmp_path: Path, capsys) -> None:
@@ -662,7 +666,7 @@ def test_fstab_lines_carry_absolute_paths_and_the_mount_options(tmp_path: Path, 
     assert volume_images.main(["fstab"], source=source, environ={}) == 0
 
     lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 18
+    assert len(lines) == 19
     assert (
         lines[0] == f"/srv/i/state_ibex.img {ROOT}/v/state_ibex ext4 "
         "loop,nofail,nosuid,nodev,X-fstrim.notrim 0 2"
@@ -1058,7 +1062,7 @@ def test_a_kind_added_to_the_table_reaches_every_subcommand(tmp_path, monkeypatc
     )
     assert f"poll_lupin 16M new, 16.0 MiB to allocate: {poll}.img" in outputs["plan"]
     assert "poll_lupin: not ready" in outputs["check"]
-    assert len(volume_images.plan(SLUGS[:2], source, environ)) == 20
+    assert len(volume_images.plan(SLUGS[:2], source, environ)) == 21
 
 
 # ignore files and image allow-list
@@ -1079,7 +1083,7 @@ def test_no_image_copies_the_host_volume_tooling() -> None:
         assert "scripts/" not in text, dockerfile.name
 
 
-@pytest.mark.parametrize("role", ["agent", "recorder", "monitor", "review", "window"])
+@pytest.mark.parametrize("role", ["agent", "recorder", "monitor", "review", "window", "vehicle"])
 def test_no_service_binds_a_target_inside_another_of_its_binds(role: str) -> None:
     """Docker makes a nested bind's mountpoint inside the outer volume: in a read-only one it
     cannot, and the service never starts; in a writable one it litters the volume."""
