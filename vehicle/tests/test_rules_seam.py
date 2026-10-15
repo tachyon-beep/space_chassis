@@ -84,9 +84,9 @@ BUS_B_PARAMS = "    fixture_open_v: 31.0\n    fixture_drop_v_per_w: 0.001\n"
 
 def test_the_vehicle_has_no_rule_yet_and_the_class_refusal_stands():
     """Adding the seam changes no count: with no `rules.py` the refusals are the ones they were."""
-    assert not list((VEHICLE / "domains").glob(f"*/{plant.RULES_FILE}"))
+    # `domains/comms/rules.py` is the first real rule file; none of its rules is power's.
     world = plant.load_world(VEHICLE)
-    assert world.rules == {}
+    assert STATE not in world.rules
     _, gaps = tick(world)
     assert "its rule is not in the configuration" in gaps[STATE].owed
 
@@ -100,7 +100,7 @@ def test_an_empty_rules_file_moves_no_bucket(tmp_path):
 def test_a_registered_rule_advances_its_state_from_its_snapshot_and_its_declaration(tmp_path):
     root = definition(tmp_path, BUS_B_RULE, BUS_B_PARAMS)
     world = plant.load_world(root)
-    assert set(world.rules) == {STATE}
+    assert {sid for sid, rule in world.rules.items() if rule.domain == "power"} == {STATE}
     assert world.rules[STATE].source == "domains/power/rules.py"
 
     after, gaps = tick(world)
@@ -144,7 +144,9 @@ def test_rules_are_called_in_the_derived_tick_order(tmp_path):
 
         world.rules[state_id] = plant.DomainRule(state_id, rule.domain, recording, rule.source)
     tick(world, plant.initial_values(world))
-    walk = [s.id for s in world.states if s.id in world.rules]
+    fixture = ("bus_b_v", "lcl_tripped")
+    walk = [s.id for s in world.states if s.id in fixture]
+    called = [state_id for state_id in called if state_id in fixture]
     # `initial_values` resolves `algebraic` rules at t=0 (bus_b_v), then the tick walks both.
     assert called[-2:] == walk == ["bus_b_v", "lcl_tripped"], called
 

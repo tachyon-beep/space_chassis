@@ -2256,7 +2256,10 @@ def check_coupling(
         # `absorber_capacity` did for the life of the file, in the one place where the consequence
         # is a crew who cannot run out of LiOH, and the ratings that would have exposed it sat in
         # two other files read by nothing. Until round 42 nothing checked that the field was there.
-        if node.get("accumulates") and not isinstance(node.get("exhausted_at"), (int, float)):
+        if node.get("accumulates") and node.get("exhausted_at") == "UNCONFIGURED":
+            # A rating declared owed is a debt, not an absence: the field is there and says so.
+            report.debt(where, "declares `accumulates` and its `exhausted_at` rating is owed")
+        elif node.get("accumulates") and not isinstance(node.get("exhausted_at"), (int, float)):
             report.refuse(
                 where,
                 "declares `accumulates` and no numeric `exhausted_at`. A counter with no rating is "
@@ -2473,7 +2476,7 @@ def check_coupling(
     # An edge that drives a state has to say *which* state, whenever the node carries more than one
     # it could drive.
     #
-    # Ten of the vehicle's 59 nodes hold more than one state, and the plant resolves a state's
+    # Eleven of the vehicle's 61 nodes hold more than one state, and the plant resolves a state's
     # drivers by node — so on `cabin_atm`, which holds four gas masses, `csm_cabin_o2_kg`,
     # `csm_cabin_n2_kg`, `csm_cabin_co2_kg` and `csm_cabin_h2o_kg` were all handed the same three
     # edges: the oxygen supply, the crew's CO2 production and a pressure/temperature relation. Every
@@ -13805,8 +13808,8 @@ def check_channel_derivations(
     """The window's channels: how many are their source state, and how many are a sentence.
 
     Round 23 built the frame's `values` from the points registry and found, by refusing to publish a
-    channel whose unit is not its source state's, that **only 64 of the 135 channels read from a state
-    are the state itself**. The other 71 are *derived* — a partial pressure from a mass and a volume,
+    channel whose unit is not its source state's, that **only 63 of the 135 channels read from a state
+    are the state itself**. The other 72 are *derived* — a partial pressure from a mass and a volume,
     a flow in litres per minute from a mass flow and a density — and their `derivation` is prose,
     which nothing can evaluate. The frame omits them, the debt says so, and the two figures lived in
     a sentence: exactly the shape this folder spends its rounds removing.
@@ -13973,7 +13976,7 @@ def check_channel_derivations(
     # The debt's own sentence, which is the only place these figures live outside the registry.
     stated_same = re.search(r"only (\d+) have the state's own unit", stated, re.I)
     stated_derived = re.search(r"the other (\d+) are", stated, re.I)
-    stated_evaluable = re.search(r"(\d+) of the 71 now carry an evaluable", stated, re.I)
+    stated_evaluable = re.search(r"(\d+) of the \d+ now carry an evaluable", stated, re.I)
     stated_nodes = re.search(r"(\d+) more published channels read a coupling node", stated, re.I)
     stated_node_evaluable = re.search(r"(\d+) of those carry an evaluable", stated, re.I)
     stated_owed = re.search(r"(\d+) of the prose rows declare", stated, re.I)

@@ -145,6 +145,15 @@ points:
 
 not_published:
 
+  - channel: comm.delivered_bits
+    why: >-
+      the quiet-coast episode's completion oracle (`state delivered_bits`), and private truth for
+      that reason: the evaluator reads it from the vehicle's own state and trace, and a fleet that
+      could read it would be reading its own score rather than inferring progress from what it can
+      observe — the recorder's fill and the link it commanded. The same holds for the predicate
+      and the rate that gate it (`link_ok`, `playback_rate`), which are the episode's boundary
+      rather than an instrument.
+
   - channel: comm.degraded
     why: >-
       `apollo_diode.md:901` forbids it in terms: "do not merely set `comm.degraded=true` while

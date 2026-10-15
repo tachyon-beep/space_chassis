@@ -446,6 +446,38 @@ nodes:
   nav_state:         {domain: gnc,  kind: state, unit: "m, m/s", apollo: "119-122"}
   imu:               {domain: gnc,  kind: state, unit: "quat", apollo: "123"}
   antenna_geometry:  {domain: comms, kind: state, unit: "deg", apollo: "163"}
+  # The quiet-coast task model (`docs/vehicle-completion/09-quiet-coast-episode.md` §1, ADR 0003):
+  # the on-board record as a stock of bits, and what the ground has received of it as a second
+  # stock, so playback is one integer transfer between the two and `recorder + delivered` is
+  # conserved exactly (WP10).
+  data_recorder:
+    domain: comms
+    kind: stock
+    unit: bit
+    apollo: "903"
+    preloaded: >-
+      the data on tape at MET 0 is the episode's task volume (D1 + D2), a scenario initial rather
+      than a figure about the vehicle, and nothing aboard is modelled as recording into it during
+      the episode: playback is its only flow
+  ground_received:
+    domain: comms
+    kind: stock
+    unit: "bit, bit/s, bool"
+    apollo: "903"
+    accumulates: >-
+      a *delivery counter*, not a tank: `delivered_bits` counts what the ground has received of the
+      record, the quiet-coast episode's completion oracle. Nothing draws from it because nothing
+      aboard can — the data has left the vehicle — so it only rises, and the conservation it closes
+      is `recorder + delivered_bits` = the task volume
+    # The most the ground can receive is what the tape can hold, so the counter's rating is the
+    # recorder's capacity — owed (`domains/comms/components.yaml:components[recorder].capacity_bit`).
+    exhausted_at: UNCONFIGURED
+    state_order: [link_ok, playback_rate, delivered_bits]
+    state_order_note: >-
+      the predicate, then the rate it gates, then the stock the rate fills. The rate is read by
+      `E-REC-GND`'s drain at `data_recorder`, which the schedule advances before this node, so the
+      drain multiplies the rate of the tick before: playback starts and stops one tick (20 ms)
+      after the command, and the transfer is still one integer at both ends
   link:
     domain: comms
     kind: flow
@@ -456,14 +488,17 @@ nodes:
     # every thermal edge on the vehicle.
     unit: dB
     apollo: "164"
-    state_order: [tx_power, link_snr]
+    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_snr]
     state_order_note: >-
       **the case that made this check worth writing.** Transmit power is a term in the link
       budget, so the signal-to-noise ratio has to be computed from the power of this tick — and
       the lexicographic tiebreak sorts `link_snr` before `tx_power`, which would have made every
       SNR a function of one-tick-old transmit power. On a nominal link that is a 20 ms error;
       across `set_power_amplifier` it is a 6 dB step reported a tick late, which is exactly the
-      transient a fleet is watching for
+      transient a fleet is watching for. `transmitter_on` is first because the draw and the
+      amplifier's dissipation are both functions of the switch: it is on this node rather than the
+      sentinel so that `power` and `thermal`, which both declare `link` in `reads:`, can gate the
+      amplifier's load and heat on it
 
   # --- propulsion and RCS -------------------------------------------------------------
   engine_main:
@@ -1766,6 +1801,13 @@ edges:
         latent problem, never the root fault". That is what makes `set_power_amplifier` the most
         consequential non-actuator verb on the vehicle — a command that can start a cascade with
         nothing wrong anywhere.
+        **Not a second home for the amplifier's watts** (ADR 0003 item 5). The amplifier's 72 W is
+        `domains/power/components.yaml#loads.csm_sband_power_amplifier`, counted by power's bus
+        rule while `comms.transmitter_on` is `on`; `tx_power` is the published measurement of the
+        transmit chain's DC input (`comm.tx_power_w`) and is not a load. So this edge is the
+        dependency that schedules `link` before `bus_a` and states the A-per-W conversion of that
+        measurement; a bus rule that added its flux to the inventory would count the amplifier
+        twice.
 
   # --- dynamics, guidance, and the geometry that comms depends on ---------------------
   - id: E-ENG-DYN
@@ -2244,6 +2286,18 @@ edges:
     kind: rate
     one_way: true
     sensitivity: {value: 1.0, unit: "-", basis: derived, relation: "published evidence is the instrument state restated at the publication rate; one unit in, one unit out", at: nominal}
+  - id: E-REC-GND
+    # The playback: bits leave the tape and arrive at the ground, one integer count of bits booked
+    # at both ends (WP10). The flux is driven by the consumer end, `ground_received`, whose
+    # `playback_rate` is the published high bit rate while playing over an ok link and zero
+    # otherwise — so the gate is a rule and this edge is a unity transfer.
+    reads: playback_rate
+    advances: delivered_bits
+    from: data_recorder
+    to: ground_received
+    kind: rate
+    sensitivity: {value: 1.0, unit: "bit/s per bit/s", basis: derived, relation: "a bit played off the tape is a bit received: the episode's `link_ok` boundary stands in for the link budget, so no frame loss is modelled on the playback and the transfer is the identity", at: "playing over the high-gain S-band link at 51.2 kbit/s",
+    note: "the quiet-coast task's completion path (09-quiet-coast-episode.md §1); the receiving stock is private truth and is published nowhere"}
   - id: E-LINK-TEL
     # The other role on the same node: what a link delivers is set by how good it is, and the
     # quantity that says so is the ratio — `tx_power` is the input the amplifier's load already reads.
