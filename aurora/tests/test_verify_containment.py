@@ -30,6 +30,8 @@ case "$*" in
         exit 0 ;;
     *" ps --format"*)
         printf '%b' "${SERVICES-agent_1\nagent_2\nrecorder_1\nrecorder_2\n}"; exit 0 ;;
+    *"ps -q --filter label=space_chassis.sweep"*)
+        printf '%b' "${RUNNING_SWEEPS:-}"; exit "${RUNNING_SWEEPS_RC:-0}" ;;
     *" ps -q "*)
         for last in "$@"; do :; done
         case " ${ABSENT:-} " in *" $last "*) exit 0 ;; esac
@@ -43,8 +45,17 @@ case "$*" in
     *inspect*.Image*)
         [ -n "${IMAGE_ID:-}" ] || exit 1
         echo "$IMAGE_ID"; exit 0 ;;
-    *"--entrypoint find"*)
-        printf '%b' "${IMAGE_SWEEP:-}"; exit "${IMAGE_SWEEP_RC:-1}" ;;
+    *"space_chassis.sweep="*)
+        printf '%b' "${SWEEP_LIMITS-LIMIT 20000 100000|268435456|0\n}${IMAGE_SWEEP:-}"; exit "${IMAGE_SWEEP_RC:-1}" ;;
+    *inspect*.Source*)
+        [ -n "${MOUNT_SOURCES:-}" ] || exit 1
+        printf '%s' "$MOUNT_SOURCES"; exit 0 ;;
+    *inspect*.Destination*)
+        [ -n "${VEHICLE_BINDS:-}" ] || exit 1
+        printf '%s' "$VEHICLE_BINDS"; exit 0 ;;
+    *" exec "*"/diode/.probe"*)
+        [ -n "${DIODE_ROOT_VERDICT:-}" ] || exit 1
+        echo "$DIODE_ROOT_VERDICT"; exit 0 ;;
     *" exec "*getent*)
         [ -n "${GETENT_RC:-}" ] || exit 1
         echo "rc=$GETENT_RC"; exit 0 ;;
@@ -74,6 +85,7 @@ class Run:
             "CALLS": str(self.calls),
             "STDIN_LOG": str(self.stdin_log),
             "SENTINEL": SENTINEL,
+            "SWEEP_LOCK": str(self.root / "sweep.lock"),
             **extra,
         }
         return subprocess.run(
@@ -214,14 +226,85 @@ def test_a_partial_or_unrun_sweep_is_a_failure_never_an_absence(run):
     assert unprobed in _swept(run, SENTINEL_PATH + "\\n", image="")  # no image to sweep
 
 
+def test_the_image_sweep_is_capped_and_reads_its_caps_back_before_it_searches(run):
+    _swept(run, SENTINEL_PATH + "\\n")
+    line = next(x for x in run.argv_lines() if "space_chassis.sweep=" in x)
+    assert "--cpus 0.2 --memory 256m --memory-swap 256m" in line, line
+    assert "--label space_chassis.sweep=operator" in line, line
+    for path in ("cpu.max", "memory.max", "memory.swap.max"):
+        assert f"/sys/fs/cgroup/{path}" in line, line
+
+
+def test_a_sweep_whose_caps_read_back_wrong_is_a_failure(run):
+    for limits in ("LIMIT max 100000|268435456|0\\n", "LIMIT 20000 100000|max|max\\n", ""):
+        out = run(
+            COMPOSE="docker compose -p probe",
+            AGENTS="agent_1",
+            IMAGE_ID="sha256:img",
+            IMAGE_SWEEP=SENTINEL_PATH + "\\n",
+            IMAGE_SWEEP_RC="0",
+            SWEEP_LIMITS=limits,
+        ).stdout
+        assert "FAIL  agent_1's image sweep did not run under its caps" in out, limits
+        assert "PASS  agent_1 has no vehicle in its image" not in out
+
+
+def test_no_sweep_starts_while_another_sweep_is_running(run):
+    out = run(
+        COMPOSE="docker compose -p probe",
+        AGENTS="agent_1",
+        IMAGE_ID="sha256:img",
+        IMAGE_SWEEP=SENTINEL_PATH + "\\n",
+        IMAGE_SWEEP_RC="0",
+        RUNNING_SWEEPS="cid-orphan\\n",
+    ).stdout
+    assert "FAIL  agent_1 could not be probed for the vehicle" in out
+    assert not any("space_chassis.sweep=" in line for line in run.argv_lines())
+
+
+def test_no_sweep_starts_when_the_running_sweeps_cannot_be_listed(run):
+    out = run(
+        COMPOSE="docker compose -p probe",
+        AGENTS="agent_1",
+        IMAGE_ID="sha256:img",
+        IMAGE_SWEEP=SENTINEL_PATH + "\\n",
+        IMAGE_SWEEP_RC="0",
+        RUNNING_SWEEPS_RC="1",
+    ).stdout
+    assert (
+        "FAIL  agent_1 could not be probed for the vehicle (the running sweeps could not be listed)"
+        in out
+    )
+    assert not any("space_chassis.sweep=" in line for line in run.argv_lines())
+
+
+def test_no_sweep_starts_while_another_run_holds_the_sweep_lock(run):
+    import fcntl
+
+    with open(run.root / "sweep.lock", "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        out = run(
+            COMPOSE="docker compose -p probe",
+            AGENTS="agent_1",
+            IMAGE_ID="sha256:img",
+            IMAGE_SWEEP=SENTINEL_PATH + "\\n",
+            IMAGE_SWEEP_RC="0",
+            SWEEP_LOCK_WAIT="1",
+        ).stdout
+    assert "FAIL  agent_1 could not be probed for the vehicle" in out
+    assert not any("space_chassis.sweep=" in line for line in run.argv_lines())
+
+
 def _sweep_args(run) -> list[str]:
     """The find arguments the script passes, read from the docker call it made."""
     _swept(run, SENTINEL_PATH + "\\n")
     line = next(
-        line for line in run.argv_lines() if " run " in f" {line} " and "--entrypoint find" in line
+        line
+        for line in run.argv_lines()
+        if " run " in f" {line} " and "space_chassis.sweep=" in line
     )
     words = line.split()
-    return words[words.index("sha256:img") + 1 :]
+    return words[words.index("sweep") + 1 :]  # the find arguments follow the sh script's $0
 
 
 def _find_under(args: list[str], root) -> list[str]:
@@ -258,3 +341,87 @@ def test_the_sweep_finds_its_sentinel_and_every_vehicle_file_it_names(run, tmp_p
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("vehicle")
     assert sorted(_find_under(args, root)) == sorted([SENTINEL_PATH, *planted])
+
+
+def test_an_agent_that_mounts_the_vehicle_s_state_is_a_failure(run):
+    """Read host-side: an agent's own /state makes the target useless from inside."""
+    clean = run(
+        COMPOSE="docker compose -p probe",
+        AGENTS="agent_1",
+        MOUNT_SOURCES="/v/state_x/data /v/diode/data/x ",
+    )
+    assert "PASS  agent_1 mounts nothing of the vehicle's private state" in clean.stdout
+    leaked = run(
+        COMPOSE="docker compose -p probe",
+        AGENTS="agent_1",
+        MOUNT_SOURCES="/v/state_x/data /v/vehicle_state/data ",
+    )
+    assert "FAIL  agent_1 mounts the vehicle's private state" in leaked.stdout
+    blind = run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
+    assert "FAIL  agent_1's mounts could not be inspected" in blind.stdout
+
+
+def test_an_agent_that_mounts_the_vehicle_s_source_is_a_failure(run):
+    """John, 2026-10-10: no risk of information sharing. The image carries none of the vehicle, so
+    a bind from a vehicle checkout, or of a directory holding this one's, is the way back."""
+    probe = {"COMPOSE": "docker compose -p probe", "AGENTS": "agent_1"}
+    clean = run(**probe, MOUNT_SOURCES="/v/state_x/data /v/diode/data/x /srv/build_x ")
+    assert "PASS  agent_1 mounts nothing of the vehicle's source" in clean.stdout
+    for leak in (
+        "/home/someone/space_chassis/docs/deep_research/vehicle",
+        "/elsewhere/docs/deep_research/vehicle/tools",
+        str(REPO.parent / "vehicle"),
+        str(REPO.parent / "vehicle" / "tools"),
+        str(REPO.parent),
+        "/",
+    ):
+        leaked = run(**probe, MOUNT_SOURCES=f"/v/state_x/data {leak} ")
+        assert "FAIL  agent_1 mounts the vehicle's source" in leaked.stdout, leak
+    blind = run(**probe)
+    assert "FAIL  agent_1's mounts could not be inspected for the vehicle's source" in blind.stdout
+
+
+def test_the_window_root_write_probe_fails_closed(run):
+    refused = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", DIODE_ROOT_VERDICT="refused")
+    assert "PASS  agent_1 cannot write the window root" in refused.stdout
+    wrote = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", DIODE_ROOT_VERDICT="wrote")
+    assert "FAIL  agent_1 can write the window root" in wrote.stdout
+    silent = run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
+    assert "FAIL  agent_1 could not be probed for writing the window root" in silent.stdout
+
+
+def test_the_vehicle_binds_its_window_and_its_state_and_nothing_else(run):
+    exact = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", VEHICLE_BINDS="/state /diode ")
+    assert "PASS  the vehicle binds /diode and /state and nothing else" in exact.stdout
+    wider = run(
+        COMPOSE="docker compose -p probe", AGENTS="agent_1", VEHICLE_BINDS="/diode /state /shared "
+    )
+    assert "FAIL  the vehicle binds '/diode /shared /state'" in wider.stdout
+    absent = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", ABSENT="vehicle")
+    assert "SKIP  the vehicle is not running" in absent.stdout
+
+
+def test_an_agent_bound_to_the_vehicle_state_image_root_is_a_failure(run):
+    result = run(
+        COMPOSE="docker compose -p probe",
+        AGENTS="agent_1",
+        MOUNT_SOURCES="/v/state_x/data /v/vehicle_state ",
+    )
+    assert "FAIL  agent_1 mounts the vehicle's private state" in result.stdout
+
+
+def test_the_window_root_probe_says_nothing_when_it_cannot_run(run, tmp_path):
+    """The probe's own text, run where none of its tools exist, must not read as a refusal."""
+    run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
+    probe = next(line for line in run.argv_lines() if "/diode/.probe" in line)
+    script = probe.split(" -c ", 1)[1]
+    empty = tmp_path / "empty-path"
+    empty.mkdir()
+    out = subprocess.run(
+        ["/bin/sh", "-c", script],
+        env={"PATH": str(empty)},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    ).stdout.strip()
+    assert out.splitlines()[-1:] != ["refused"], out

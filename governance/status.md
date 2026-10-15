@@ -11,7 +11,7 @@ before trusting any line here.** The stream files (`chassis/snapshot.md`, `vehic
 |---|---|---|
 | the repository | one, three streams: `vehicle/`, `aurora/`, `governance/`; `docs/` for how it works | PR #2 merged to `main` on 2026-10-15 |
 | vehicle | `vehicle/` = `space_vehicle` `f75420c` with its history; tier 1 of `#39` included | `git log vehicle/` |
-| chassis | `aurora/`; the Aurora port (plans 1–6, 8) complete; plan 7 Phase A on `vehicle-adoption`, Phase B staged on John's machine | `chassis/snapshot.md` |
+| chassis | `aurora/`; the Aurora port (plans 1–6, 8) complete; plan 7 Phases A and B rebased onto `aurora/` (branch `aurora/phase-b-adoption-lqkn7e`) | `chassis/snapshot.md` |
 | what the chassis runs | vehicle `dd79e76` through its pins; the image bakes `vehicle/` at build time | `aurora/tests/test_vehicle_reconciliation.py` |
 | CI | root CI (D6): `.github/workflows/ci.yml` runs lint, the aurora suite and the vehicle referee on 3.12 and 3.13 on every pull request and push to `main`; `live.yml` builds and runs the smoke stack on demand | `.github/workflows/` |
 | `aurora-port`, `vehicle-adoption`, `wip/sv-recorder-opus-20261008` | `aurora-port` is merged into `main`; the other two are parked | `git branch -r` |
@@ -43,8 +43,8 @@ already landed; `wip/local-state` holds the latest completeness report, filigree
 
 | item | blocked on |
 |---|---|
-| Phase B's rebase onto `aurora/` | the chassis line (inventory record above) |
-| Phase B's full and live gates; tier-1 adoption; Option B's qualification; `#23`'s first test | Phase B: its rebase above; all: CI (D6) and an environment that can build the image |
+| Phase B's merge | its PR's `required` check |
+| Phase B's full and live gates; tier-1 adoption; Option B's qualification; `#23`'s first test | Phase B: its merge above; all: CI (D6) and an environment that can build the image |
 | branch protection | nothing: John's ruleset `main` (2026-10-15) requires a pull request and the `required` check, blocks force-push and deletion, exempts no one, and asks **0 approvals** and no resolved conversations: a narrower rule than D20 states, chosen so agent PRs opened under his account can merge |
 | any paid run | the bounded episode's acceptance; then the three stages in D22 |
 | nothing else | — |

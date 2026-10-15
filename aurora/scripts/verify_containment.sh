@@ -25,6 +25,8 @@
 set -u
 
 PROJECT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# The repository root, whose `vehicle/` stream is the vehicle's source.
+ROOT=$(CDPATH= cd -- "$PROJECT/.." && pwd)
 cd "$PROJECT"
 
 : "${COMPOSE:=docker compose}"
@@ -194,6 +196,41 @@ else:
     else
         bad "$agent's /diode holds '$entries', not ${slug:-<no slug>} alone"
     fi
+    # The window root is the vehicle's: an agent writes only inside its own window.
+    # A missing `touch` says nothing, which fails: only a write that was tried and refused passes.
+    case $(verdict "$agent" sh -c 'command -v touch >/dev/null 2>&1 || exit 0; if touch /diode/.probe 2>/dev/null; then rm -f /diode/.probe; echo wrote; else echo refused; fi') in
+        refused) ok "$agent cannot write the window root" ;;
+        wrote) bad "$agent can write the window root" ;;
+        *) bad "$agent could not be probed for writing the window root" ;;
+    esac
+    # The vehicle's private state (checkpoints, lock, durable record: hidden truth) is bound into
+    # no agent. Read host-side: the agent's own /state makes a target check from inside useless.
+    sources=$(docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' "$($COMPOSE ps -q "$agent" 2>/dev/null)" 2>/dev/null)
+    if [ -z "$sources" ]; then
+        bad "$agent's mounts could not be inspected"
+    elif printf '%s ' "$sources" | grep -qE '/vehicle_state(/| )'; then
+        bad "$agent mounts the vehicle's private state"
+    else
+        ok "$agent mounts nothing of the vehicle's private state"
+    fi
+    # Nor its source (John, 2026-10-10: no risk of information sharing). The image carries none of
+    # it (6b), so a bind is the one way back: any mount from inside a vehicle checkout (this
+    # repository's `vehicle/`, or an older checkout's `docs/deep_research/vehicle/`), or of a
+    # directory that holds this one's (the repository root, ...). Read from the same sources.
+    if [ -z "$sources" ]; then
+        bad "$agent's mounts could not be inspected for the vehicle's source"
+    else
+        exposed=""
+        for source in $sources; do
+            case "$source/" in */deep_research/vehicle/* | "$ROOT/vehicle/"*) exposed=$source ;; esac
+            case "$ROOT/vehicle/" in "${source%/}"/*) exposed=$source ;; esac
+        done
+        if [ -n "$exposed" ]; then
+            bad "$agent mounts the vehicle's source ($exposed)"
+        else
+            ok "$agent mounts nothing of the vehicle's source"
+        fi
+    fi
     for private in /transcripts /ledger; do
         if ! printf '%s\n' "$mounts" | grep -qx /; then
             bad "$agent's mount table could not be read, so $private is unchecked"
@@ -219,15 +256,35 @@ else:
     #     directory the agent cannot list can hide a file it could still open. The search must
     #     complete (find exits 0) and find a sentinel every image has, the entrypoint: the sentinel
     #     alone is absent, the sentinel and anything else present, and anything else fails.
+    #     The sweep is capped (0.2 CPU, 256 MiB, no swap) and reads its own limits back from its
+    #     cgroup before it searches. Sweeps run one at a time across every run of this script by
+    #     this user (a lock in its runtime directory), and none starts while another sweep's
+    #     container is still running -- one a timed-out client left behind included.
     image=$(docker inspect -f '{{.Image}}' "$($COMPOSE ps -q "$agent" 2>/dev/null)" 2>/dev/null)
     sweep=""
     swept=1
     if [ -n "$image" ]; then
-        sweep=$(docker run --rm --network none --user 0 --entrypoint find "$image" / -xdev \( -path /usr/local/bin/entrypoint.sh -o -path /opt/vehicle -o -name serve_vehicle.sh -o -name mission.yaml -o -name vehicle.yaml -o -name coupling.yaml -o -name plant.md -o -name fault_policy.yaml \) -print 2>/dev/null)
+        sweep=$(
+            exec 9>"${SWEEP_LOCK:-/run/user/$(id -u)/space_chassis_sweep.lock}" || exit 74
+            flock -w "${SWEEP_LOCK_WAIT:-120}" 9 || exit 75
+            running=$(docker ps -q --filter label=space_chassis.sweep) || exit 77
+            [ -z "$running" ] || exit 76
+            docker run --rm --network none --cpus 0.2 --memory 256m --memory-swap 256m --label "space_chassis.sweep=${SWEEP_LABEL:-operator}" --user 0 --entrypoint sh "$image" -c 'printf "LIMIT %s|%s|%s\n" "$(cat /sys/fs/cgroup/cpu.max)" "$(cat /sys/fs/cgroup/memory.max)" "$(cat /sys/fs/cgroup/memory.swap.max)" && exec find "$@"' sweep / -xdev \( -path /usr/local/bin/entrypoint.sh -o -path /opt/vehicle -o -name serve_vehicle.sh -o -name mission.yaml -o -name vehicle.yaml -o -name coupling.yaml -o -name plant.md -o -name fault_policy.yaml \) -print 2>/dev/null
+        )
         swept=$?
     fi
+    limits=$(printf '%s\n' "$sweep" | sed -n 's/^LIMIT //p')
+    sweep=$(printf '%s\n' "$sweep" | grep -v '^LIMIT ')
     if [ "$swept" -ne 0 ]; then
-        bad "$agent could not be probed for the vehicle"
+        case "$swept" in
+            75) why=" (another run held the sweep lock)" ;;
+            76) why=" (another sweep is still running)" ;;
+            77) why=" (the running sweeps could not be listed)" ;;
+            *) why="" ;;
+        esac
+        bad "$agent could not be probed for the vehicle$why"
+    elif [ "$limits" != "20000 100000|268435456|0" ]; then
+        bad "$agent's image sweep did not run under its caps (read back: ${limits:-nothing})"
     elif [ "$sweep" = /usr/local/bin/entrypoint.sh ]; then
         ok "$agent has no vehicle in its image"
     else
@@ -270,6 +327,22 @@ if [ $# -ge 2 ]; then
         in_agent "$listener" pkill -f "nc -lk $PEER_PORT" >/dev/null 2>&1
     else
         bad "could not start a listener on $listener"
+    fi
+fi
+
+echo "== the vehicle binds its window and its state"
+vehicle=$($COMPOSE ps -q vehicle 2>/dev/null)
+if [ -z "$vehicle" ]; then
+    skip "the vehicle is not running"
+else
+    binds=$(docker inspect -f '{{range .Mounts}}{{if eq .Type "bind"}}{{.Destination}} {{end}}{{end}}' "$vehicle" 2>/dev/null \
+        | tr ' ' '\n' | sed '/^$/d' | sort | tr '\n' ' ' | sed 's/ $//')
+    if [ "$binds" = "/diode /state" ]; then
+        ok "the vehicle binds /diode and /state and nothing else"
+    elif [ -z "$binds" ]; then
+        bad "the vehicle's binds could not be inspected"
+    else
+        bad "the vehicle binds '$binds', not /diode and /state alone"
     fi
 fi
 
