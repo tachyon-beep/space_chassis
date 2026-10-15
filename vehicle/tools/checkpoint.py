@@ -10,6 +10,10 @@ as sections and flags rather than as formats. **Format v2** (child 3, no v1 ever
 deployed vehicle): every `segments` entry carries `offset`, the byte offset just after the last line
 of the record the checkpoint covers in that segment's file — the anchor a resume reads on from — and
 the body carries `obligations`, the results durable in the record and not confirmed written.
+**Format v3** (#23, WP08 child 5, the clock seam): the `clock` section is filled and validated — `m` as
+its exact fraction `"p/q"`, `k`, `N`, `burst_bound = k`, `lag_ceiling_s` — and every `segments` entry
+mirrors its boot's `m`, `k` and `N`, so an anchored read of the record knows the anchor segment's cycle
+boundaries. A v2 checkpoint is refused as *incompatible* by its `format`, not misread as corrupt.
 
 **The file.** One header line, then the body. The header is a small JSON object — `format`,
 `engine`, `git_commit`, `python`, `platform`, `tick_hz`, `world_id`, `tick`, `segments`, and the
@@ -26,10 +30,10 @@ the rest — so a wrong `format` is held to the body too (the refusal rule under
 
 **What the body carries** is ADR 0002 G's list, section by section: `identity`; `run` (scenario,
 seed, phase, `phase_entry_seq`, the tripped interlocks, `--max-batch`, the allowance ceiling);
-`clock` (`m`, `k`, `N`, the burst bound, the lag ceiling — the keys exist from this version, and
-hold `null` until child 5 gives the executive the inputs, `N` excepted since child 3, because a checkpoint missing a field the
-engine needs is refused rather than defaulted, and a field that exists can be required later
-without a format change); `executive` (the tick, every key of the truth — `__delay` rings,
+`clock` (`m`, `k`, `N`, the burst bound, the lag ceiling: the run inputs ADR 0002 A, B and J name,
+required with no default, which a resume inherits unless the operator names another — `clock_problem`
+is the one statement of their bounds, for the console's flags and for this reader alike); `executive`
+(the tick, every key of the truth — `__delay` rings,
 `__residual` accumulators and `__shortfall` records included — the dwell, the lineage head, the
 receipt counter); `rng` (reserved: today the lineage is the seed alone, and WP09 adds fields to
 this section rather than a section); `segments` (one entry per boot, child 4's to write); and
@@ -103,6 +107,7 @@ import contextlib
 import errno
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -112,13 +117,14 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plant import corpus_files, load_world  # noqa: E402
 
-FORMAT = "vehicle.checkpoint.v2"
+FORMAT = "vehicle.checkpoint.v3"
 CURRENT = "checkpoint.json"
 PREVIOUS = "checkpoint.prev.json"
 # The tools whose bytes are part of the engine identity, beside the corpus (ADR 0002 I).
@@ -132,6 +138,15 @@ TEMPORARY_PREFIX = ".checkpoint."
 TEMPORARY_SUFFIX = ".tmp"
 # The clock inputs ADR 0002 A–C and J name, as the keys the `clock` section always has.
 CLOCK_INPUTS = ("m", "k", "N", "burst_bound", "lag_ceiling_s")
+# The interim lag backstop's ceiling, in wall seconds (ADR 0002 A's answer; #23, John). #26 replaces the
+# constant with the checkpointed `lag_ceiling_s` and adds shedding and dilation.
+LAG_CEILING_S = 30
+# The bounds on one cycle's wall time, `k·dt/m` (#23, design §1): neither a vanishing nor an unbounded
+# sleep can be configured.
+MIN_CYCLE_NS = 1_000_000
+MAX_CYCLE_NS = 60_000_000_000
+# `m` as the checkpoint, the record's segment header and the journal write it: its exact fraction.
+MULTIPLIER_TEXT = re.compile(r"[1-9][0-9]*/[1-9][0-9]*")
 RNG_VERSION = 1
 SPEND_PLACEHOLDER_VERSION = 0
 
@@ -241,6 +256,108 @@ class Compatibility:
             platform=platform_identity(),
             tick_hz=tick_hz,
         )
+
+
+# -- the clock (#23, WP08 child 5) -------------------------------------------------------------
+def parse_multiplier(text: str) -> Fraction:
+    """`m` from the operator's decimal string, as an exact fraction — never through a float (#23, design §1).
+
+    `Fraction("0.1")` is one tenth and `float("0.1")` is not, and every due time is computed from `m`:
+    integer nanoseconds from an exact fraction are rounded once, a float's error is rounded in. A value
+    that is not a finite positive number — a word, `nan`, `inf`, zero, a negative — is a `ValueError`
+    whose sentence says so; the caller names its flag.
+    """
+    try:
+        value = Fraction(str(text).strip())
+    except (ValueError, ZeroDivisionError):
+        raise ValueError(f"{text!r} is not a number written as a decimal or a fraction") from None
+    if value <= 0:
+        raise ValueError(f"{text!r} is not a positive multiplier")
+    return value
+
+
+def multiplier_text(m: Fraction | int | str) -> str:
+    """`m` as the checkpoint, the record's segment header and the journal carry it: `"p/q"`, in lowest terms."""
+    value = Fraction(m)
+    return f"{value.numerator}/{value.denominator}"
+
+
+def clock_section(m: Fraction | int | str, k: int, n: int) -> dict[str, Any]:
+    """The checkpoint's `clock` section for `m`, `k`, `N`: the burst bound is `k` (ADR 0002 A), the ceiling the backstop's."""
+    return {"m": multiplier_text(m), "k": int(k), "N": int(n), "burst_bound": int(k), "lag_ceiling_s": LAG_CEILING_S}
+
+
+def cycle_ns(m: Fraction | int | str, k: int, tick_hz: int | float) -> Fraction:
+    """One cycle's wall time, `k·dt/m`, in nanoseconds, exactly."""
+    return Fraction(int(k) * 1_000_000_000) / (Fraction(str(tick_hz)) * Fraction(m))
+
+
+def _duration(ns: Fraction) -> str:
+    return f"{float(ns) / 1e6:g} ms" if ns < 1_000_000_000 else f"{float(ns) / 1e9:g} s"
+
+
+def clock_problem(
+    m: Fraction | int | str, k: Any, n: Any, *, tick_hz: int | float, max_rate: Fraction | None = None
+) -> tuple[str, str] | None:
+    """Why `m`, `k` and `N` together are not a clock this vehicle runs, as `(input, sentence)`, or `None`.
+
+    The one statement of the bounds (#23, design §1 and §3), for a start's flags, a resume's resolved
+    values and a checkpoint's `clock` alike: `N` a multiple of `k` (which supersedes ADR 0002 J's "`k`
+    and `N` are independent": the checkpoint and the static files keep to the cycle's crossing of a
+    multiple of `N`); `k ≤ tick_hz / max_rate`, so that a cycle's frame rate, `tick_hz / k` frames per
+    mission second, reaches the highest declared channel rate (ADR 0002 B: a reader of a checkpoint
+    cannot know the channels, and passes none); and one cycle's wall time, `k·dt/m`, at least
+    `MIN_CYCLE_NS` and at most `MAX_CYCLE_NS`, so neither a vanishing nor an unbounded sleep can be
+    configured. The input named is the one to change: `m` for the wall-time bounds.
+    """
+    m = Fraction(m)
+    if m <= 0:
+        return "m", f"m = {m} is not a positive multiplier"
+    if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+        return "k", f"k = {k!r} is not a positive number of ticks"
+    if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+        return "N", f"N = {n!r} is not a positive number of ticks"
+    if n % k:
+        return "N", (
+            f"N = {n} is not a multiple of k = {k}: the checkpoint and the static files are taken by the cycle that crosses a "
+            "multiple of N, and N mod k = 0 is required (ADR 0002 J, as #23 amends it)"
+        )
+    hz = Fraction(str(tick_hz))
+    if max_rate is not None and k * Fraction(max_rate) > hz:
+        return "k", (
+            f"k = {k} publishes {float(hz / k):g} frames per mission second, below the highest declared channel rate of "
+            f"{float(max_rate):g} Hz: k may be at most {math.floor(hz / Fraction(max_rate))} (ADR 0002 B)"
+        )
+    period = cycle_ns(m, k, tick_hz)
+    if period < MIN_CYCLE_NS or period > MAX_CYCLE_NS:
+        return "m", (
+            f"m = {multiplier_text(m)} and k = {k} make one cycle {_duration(period)} of wall time (k·dt/m), and a cycle "
+            "must be at least 1 ms and at most 60 s"
+        )
+    return None
+
+
+def _clock_section_problem(clock: dict[str, Any], tick_hz: Any) -> tuple[str, str] | None:
+    """`(check, sentence)` for the first thing about a checkpoint's `clock` a resume cannot run on, or `None`."""
+    m = clock.get("m")
+    if not isinstance(m, str) or MULTIPLIER_TEXT.fullmatch(m) is None or multiplier_text(m) != m:
+        return "clock.m", f"`clock.m` is {m!r}, not a multiplier written as its exact fraction in lowest terms (`p/q`)"
+    for key, what in (("k", "cycle"), ("N", "cadence")):
+        value = clock.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            return f"clock.{key}", f"`clock.{key}` is {value!r}, not the positive tick count the {what} is"
+    bound = clock.get("burst_bound")
+    if isinstance(bound, bool) or bound != clock["k"]:
+        return "clock.burst_bound", f"`clock.burst_bound` is {bound!r}, not k ({clock['k']}): a scheduler behind runs whole cycles (ADR 0002 A)"
+    ceiling = clock.get("lag_ceiling_s")
+    if isinstance(ceiling, bool) or not isinstance(ceiling, (int, float)) or not math.isfinite(ceiling) or ceiling <= 0:
+        return "clock.lag_ceiling_s", f"`clock.lag_ceiling_s` is {ceiling!r}, not a positive number of wall seconds"
+    if isinstance(tick_hz, bool) or not isinstance(tick_hz, (int, float)) or not math.isfinite(tick_hz) or tick_hz <= 0:
+        return "identity.tick_hz", f"`identity.tick_hz` is {tick_hz!r}, so no cycle's wall time can be said"
+    problem = clock_problem(m, clock["k"], clock["N"], tick_hz=tick_hz)
+    if problem is not None:
+        return f"clock.{problem[0]}", f"`clock`: {problem[1]}"
+    return None
 
 
 # -- capture and restore -----------------------------------------------------------------------
@@ -437,6 +554,10 @@ _SEGMENT_KEYS: dict[str, Any] = {
     "wall_epoch": str,
     "chain": str,
     "offset": int,
+    # The boot's clock, as its record header names it (#23, format v3): its cycles are `first_tick + i·k`.
+    "m": str,
+    "k": int,
+    "N": int,
 }
 # A result owed to a window (format v2, child 3's addendum B4): the record's receipt entry for the
 # verdict — its text, cut or fingerprinted as the record holds it — with the tick it was decided at,
@@ -514,9 +635,12 @@ def _structure_problem(body: Any) -> tuple[str, str] | None:
                 return f"{where}.{key}", f"`{key}` is a JSON {type(entry[key]).__name__}, not {_kind_name(kind)}"
     if body["identity"]["segments"] != [entry["segment"] for entry in body["segments"]]:
         return "identity.segments", "the identity's segment list is not the body's"
-    count = body["clock"].get("N")
-    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
-        return "clock.N", f"`clock.N` is {count!r}, not the positive tick count the cadence is"
+    problem = _clock_section_problem(body["clock"], body["identity"]["tick_hz"])
+    if problem is not None:
+        return problem
+    for index, entry in enumerate(body["segments"]):
+        if MULTIPLIER_TEXT.fullmatch(entry["m"]) is None or entry["k"] < 1 or entry["N"] < 1:
+            return f"segments[{index}]", "the segment entry's clock is not an exact multiplier and two positive tick counts"
     for index, entry in enumerate(body["obligations"]):
         where = f"obligations[{index}]"
         if not isinstance(entry, dict):

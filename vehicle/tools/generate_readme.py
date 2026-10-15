@@ -277,8 +277,8 @@ def generate(root: Path) -> str:
     write("---")
     write("")
     write(
-        "The vehicle writes this file from its own configuration. Editing it by hand changes "
-        "nothing that survives the next cycle."
+        "The vehicle writes this file from its own configuration and rewrites it on a slow cadence, "
+        "about once a mission second, so an edit made to it by hand lasts about that long."
     )
     return "\n".join(out) + "\n"
 
