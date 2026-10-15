@@ -1,7 +1,7 @@
 # AGENTS.md — the vehicle
 
 > **Since 2026-10-15 this folder is the `vehicle/` stream of the one Space Aurora repository**
-> (`tachyon-beep/space_chassis`), absorbed from `tachyon-beep/space_vehicle` @ `8c6f71d` with its
+> (`tachyon-beep/space_chassis`), absorbed from `tachyon-beep/space_vehicle` (at `8c6f71d`, then its `main` `f75420c`) with its
 > history; see `../docs/plans/2026-10-15-three-stream-restructure.md`. Where the text below
 > says "this repository", read "this folder"; where it says `space_chassis`, read the repository
 > root (`../docs/`, `../aurora/`). Work here on a `vehicle/…` branch in its own worktree. The

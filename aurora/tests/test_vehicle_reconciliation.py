@@ -98,7 +98,8 @@ def copy_definition(destination: Path) -> Path:
 
     **The console joined that list the round it gained a reader, and this fixture is where the
     omission showed.** A linter that reads a file the fixture did not copy refuses for absence in
-    every test in this file, which is exactly how `tools/faults.py` got here.
+    every test in this file, which is exactly how `tools/faults.py` got here, and how
+    `tools/checkpoint.py` followed it when the vehicle's resume (#21) gave the linter a reader of it.
     """
     destination.mkdir(parents=True, exist_ok=True)
     for name in FILES:
@@ -106,7 +107,7 @@ def copy_definition(destination: Path) -> Path:
     for name in ("README.md", "plant.md"):
         shutil.copy(VEHICLE / name, destination / name)
     (destination / "tools").mkdir(exist_ok=True)
-    for name in ("faults.py", "console.py"):
+    for name in ("faults.py", "console.py", "checkpoint.py"):
         shutil.copy(VEHICLE / "tools" / name, destination / "tools" / name)
     domains = VEHICLE / "domains"
     if domains.is_dir():

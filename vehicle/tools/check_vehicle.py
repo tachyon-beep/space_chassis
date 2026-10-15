@@ -11174,7 +11174,7 @@ CONFORMANCE_STATUSES = {
 # cross-repository change, and it moves this table in the vehicle commit that adopts it.
 EXTERNAL_CITATIONS: dict[str, str] = {
     "presentation.yaml:contract": "docs/diode-contract.md",
-    "presentation.yaml:contract_probe": "contract/diode_probe.py",
+    "presentation.yaml:contract_probe": "aurora/contract/diode_probe.py",
     "coupling.yaml:generated_from": "docs/deep_research/apollo_diode.md",
     "coupling.yaml:provenance_rules": "docs/deep_research/integration/simulator-design.md#31",
 }

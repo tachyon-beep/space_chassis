@@ -13674,8 +13674,8 @@ def test_an_external_citation_is_held_to_its_canonical_identity_and_no_ambient_f
         ),
         (
             "presentation.yaml",
-            "contract_probe: contract/diode_probe.py",
-            "contract_probe: contract/fake_diode.py",
+            "contract_probe: aurora/contract/diode_probe.py",
+            "contract_probe: aurora/contract/fake_diode.py",
             "presentation.yaml:contract_probe",
             "the path differs from the canonical",
         ),
@@ -13688,8 +13688,8 @@ def test_an_external_citation_is_held_to_its_canonical_identity_and_no_ambient_f
         ),
         (
             "presentation.yaml",
-            "contract_probe: contract/diode_probe.py",
-            "contract_probe: [contract/diode_probe.py]",
+            "contract_probe: aurora/contract/diode_probe.py",
+            "contract_probe: [aurora/contract/diode_probe.py]",
             "presentation.yaml:contract_probe",
             "is a list",
         ),

@@ -41,7 +41,7 @@ piece of work, on a branch named for its stream: `vehicle/<topic>`, `aurora/<top
 is the one cross-stream change and says so. Never work in another session's worktree.
 
 The vehicle was a submodule of `tachyon-beep/space_vehicle` until 2026-10-15; it is now ordinary
-files under `vehicle/`, absorbed with its history at `8c6f71d`. Later commits from that repository
+files under `vehicle/`, absorbed with its history through its `main` (`f75420c`). Later commits from that repository
 come in with `git subtree pull --prefix=vehicle <url> <ref>`. Plan and rationale:
 `docs/plans/2026-10-15-three-stream-restructure.md`.
 

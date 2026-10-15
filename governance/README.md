@@ -32,7 +32,7 @@ own (John, 2026-10-10).
 | project team (line) | what it builds | where it lives | governance |
 |---|---|---|---|
 | **space_chassis** | The AI chassis: the world the fleet of agents lives in. Aurora's harness per agent, the recorder, the pump, the operator services, the containers, the brief, and the vehicle's deployment. | `aurora/` | `chassis/` |
-| **space_vehicle** | The mission simulator: one spacecraft behind per-agent windows. | `vehicle/` (absorbed from `tachyon-beep/space_vehicle` @ `8c6f71d` on 2026-10-15) | `vehicle/` |
+| **space_vehicle** | The mission simulator: one spacecraft behind per-agent windows. | `vehicle/` (absorbed from `tachyon-beep/space_vehicle` on 2026-10-15, through its `main` `f75420c`) | `vehicle/` |
 
 **Since 2026-10-15 the program is one repository with three streams** (John, 2026-10-15):
 `vehicle/` (the vehicle sim), `aurora/` (the Aurora container), `governance/` (this folder). Agents
