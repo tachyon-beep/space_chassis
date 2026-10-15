@@ -1,0 +1,83 @@
+# The Python half of the floor: what is present in the image, not what has been
+# set up for them. Deliberately broad and close to the baseline this project
+# replaces, plus the drivers for the database and the bus.
+#
+# Installing a package here is a decision about capability. Installing a
+# schema, a subject name, a role, or a running service would be a decision
+# about design, and none is made: the servers are present, started, and empty,
+# and every question about what they are for belongs to the mission.
+
+# model client and HTTP, for the recorder protocol and anything built on it
+openai<3
+httpx<1
+
+# numerics, simulation, symbolics -- the maths an orbital problem needs
+numpy
+scipy
+sympy
+sortedcontainers
+more-itertools
+python-dateutil
+networkx
+z3-solver
+
+# reference data and ephemerides: real numbers for a real sky
+skyfield
+jplephem
+sgp4
+
+# data handling and persistence
+pandas
+pyarrow
+duckdb
+aiosqlite
+msgpack
+orjson
+pydantic
+jsonschema
+sqlalchemy
+psycopg[binary,pool]
+asyncpg
+redis
+valkey
+nats-py
+aio-pika
+
+# process, concurrency and IPC -- the substrate of any control layer
+pyzmq
+psutil
+watchfiles
+tenacity
+uvloop
+anyio
+
+# services and interfaces
+fastapi
+uvicorn
+websockets
+jinja2
+prompt_toolkit
+typer
+rich
+pyyaml
+tomli-w
+
+# text, parsing and documents
+beautifulsoup4
+markdownify
+lxml
+pypdf
+pygments
+lark
+
+# test and dev tooling, so they can hold themselves to a standard
+pytest
+pytest-asyncio
+pytest-timeout
+hypothesis
+ruff
+mypy
+
+# analysis and plotting, for looking at what happened
+pillow
+matplotlib

@@ -1,0 +1,126 @@
+FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS base
+
+# The base is pinned by digest (python:3.13-slim's index on 2026-10-10). The vehicle's checkpoint
+# records the Python patch version and libc, and the vehicle stage is this base, so a base that moved
+# under its tag would make every vehicle restart after a rebuild refuse. Changing this digest is a
+# new-world event (README, "The vehicle").
+
+# The floor of the world. Everything here is either a thing you cannot
+# bootstrap from nothing (a compiler, an interpreter, the Python they are made
+# of) or a piece of software this project is expected to hand over working but
+# unintegrated (a database, a message bus). Nothing here is an application:
+# no schema, no subjects, no roles, no client of ours. Deciding what any of it
+# is FOR is the mission.
+#
+# There is deliberately no network at runtime. The one path outward is the
+# diode volume; see README.md.
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       git ca-certificates curl \
+       rustc cargo gcc g++ libc6-dev make pkg-config \
+       postgresql postgresql-contrib nats-server redis-server \
+       sqlite3 jq ripgrep miller datamash bc time procps lsof strace \
+       netcat-openbsd socat \
+    && rm -rf /var/lib/apt/lists/*
+
+# The Python half of the floor. Broad on purpose: a scientific and systems
+# toolkit, including the drivers for the database and the bus, and nothing
+# that presumes a design.
+COPY requirements-agent.txt /opt/requirements-agent.txt
+RUN pip install --no-cache-dir -r /opt/requirements-agent.txt
+
+# The Rust half, resolving offline against the registry mounted at
+# /vendor/registry. A crate the registry does not carry is a crate that has to
+# come through the diode.
+RUN mkdir -p /.cargo \
+    && printf '[source.crates-io]\nreplace-with = "local"\n\n[source.local]\nlocal-registry = "/vendor/registry"\n' \
+       > /.cargo/config.toml
+
+# One user for the agent and its recorder, uid and gid 1000: the vehicle and the existing volumes
+# are owned by it, and the recorder's socket is 0660, so the two must share both.
+RUN groupadd --gid 1000 agent \
+    && useradd --create-home --uid 1000 --gid 1000 --shell /bin/bash agent
+
+# Runtime mountpoints, pre-created under the uid that will mount them: a volume
+# created against a missing mountpoint would come up root-owned, and the
+# container drops every capability. /vendor stays root's, mounted read-only.
+RUN mkdir -p /work /state /shared /diode /pump /build /telemetry /llm/sock /llm/console \
+             /run/agent /home/agent /vendor /opt/agent \
+    && chown agent:agent /work /state /shared /diode /pump /build /telemetry /llm/sock /llm/console \
+             /run/agent /home/agent /opt/agent
+
+# The seed. /opt/agent becomes a git repository below, and the entrypoint copies it into /work at
+# every start: it is the harness the agent runs and rewrites, and the floor below its rescue tag.
+# Only the six runtime files, by name -- the harness's tests and anything they leave behind are
+# not facts about the agent's world.
+COPY --chown=agent:agent harness/agent.py harness/chassis.py harness/command_runtime.py harness/watchdog.py harness/system_prompt.txt harness/user_prompt.txt /opt/agent/
+# The process scheduler and the recorder live outside the seed, so they are never copied into the
+# agent's workspace: the pump runs from the image, and the recorder reuses this image as its own.
+COPY --chown=agent:agent pump/pump.py /usr/local/bin/pump.py
+COPY --chown=agent:agent recorder/proxy.py recorder/recorder_streams.py recorder/core_caps.py /usr/local/lib/recorder/
+# The llm console seed, generated from the operator's allow lists on the host by prepare_host.sh
+# The entrypoint copies it into /llm/console only when none exists.
+COPY --chown=agent:agent llm_console_seed.json /usr/local/share/space/llm_console_seed.json
+# The briefing, read-only.
+COPY --chown=agent:agent brief/ /opt/brief/
+# The operator's own services, which reuse this image: the fleet monitor and the review panel, and
+# the two modules they import. Nothing the fleet runs is here.
+COPY --chown=agent:agent services/common.py services/health.py services/fleet_monitor.py services/review.py /opt/services/
+
+# The entrypoint. Its mode is stated rather than inherited: COPY preserves whatever the host file
+# happened to be.
+COPY containers/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 0755 /usr/local/bin/entrypoint.sh \
+    && find /opt /usr/local/lib/recorder -name __pycache__ -type d -prune -exec rm -rf {} +
+
+# Nothing an agent can write is on an image-owned process's import or config path: no user
+# site-packages, no global git config (the ladder's git calls and the pump run as this user), and
+# HOME is a tmpfs in compose. Cargo builds land on the build volume, never in the seed repository.
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONNOUSERSITE=1 \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    HOME=/home/agent \
+    CARGO_HOME=/build/.cargo \
+    CARGO_TARGET_DIR=/build/target \
+    XDG_CACHE_HOME=/build/.cache \
+    LANG=C.UTF-8
+
+USER agent
+WORKDIR /opt/agent
+# The seed repository: one commit, tagged baseline and rescue, with a repo-local identity because
+# there is no global config. experimental starts absent; every tag is the agent's to move.
+RUN git init -q \
+    && git config user.email "agent@localhost" \
+    && git config user.name "agent" \
+    && printf 'tombstones/\nsession_context.json\n' > .gitignore \
+    && git add -A \
+    && git -c commit.gpgsign=false commit -q -m "baseline" \
+    && git tag baseline \
+    && git tag rescue
+
+WORKDIR /work
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+
+# ---------------------------------------------------------------------------------------------------
+# **The vehicle's image, and only the vehicle's** (`docker compose --profile vehicle build`).
+#
+# `docs/deep_research/vehicle/` is the configuration the reference console serves, baked rather than
+# mounted so the thing serving the window cannot be edited by anything reading it. It is in this
+# stage alone because an agent that could read it could read every fault policy and failure chain
+# and run `console.py --plan` to print the mission's fault schedule: John, 2026-10-10, "we don't want
+# any risk of information sharing". The stage is the base plus the vehicle and its service script,
+# so the vehicle runs on the same Python and libc as the base it was built with.
+FROM base AS vehicle
+COPY --chown=agent:agent docs/deep_research/vehicle/ /opt/vehicle/
+# The console loop, as a service: a script rather than a compose `command:` because the container is
+# read-only and the loop needs no shell features (see its own header).
+COPY --chmod=0755 containers/serve_vehicle.sh /usr/local/bin/serve_vehicle.sh
+RUN find /opt/vehicle -name __pycache__ -type d -prune -exec rm -rf {} +
+ENTRYPOINT ["/usr/local/bin/serve_vehicle.sh"]
+
+# **The agents' image: the base, and nothing of the vehicle.** It is the last stage, so a bare
+# `docker build` of this file is this image; the vehicle's is only ever built by name.
+FROM base AS agent
