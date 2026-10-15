@@ -1249,9 +1249,13 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         elif settled == "unknown":
             close_fields["late_adjustment"] = "unknown"
 
-        record = self.log_transcript(
-            req_data, res_data, stream=stream, after_relay=relayed is not None
-        )
+        try:
+            record = self.log_transcript(
+                req_data, res_data, stream=stream, after_relay=relayed is not None
+            )
+        except Exception as e:  # noqa: BLE001 -- a record that cannot be written is "failed"
+            print(f"Error writing transcript: {type(e).__name__}: {e}", file=sys.stderr)
+            record = "failed"
         close_fields["record"] = record
         if relayed is None and record not in READABLE:
             # John's rule: every reply an agent acts on is on record. This one is not, so the
@@ -1331,7 +1335,11 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         """Answer a request locally with a factual error and record the exchange."""
         res_data = {"error": {"message": message}}
         body = json.dumps(res_data).encode("utf-8")
-        self.log_transcript(req_data, res_data, stream=stream)
+        try:
+            # Nothing was spent on a local answer, so it is relayed whether or not it is recorded.
+            self.log_transcript(req_data, res_data, stream=stream)
+        except Exception as e:  # noqa: BLE001
+            print(f"Error writing transcript: {type(e).__name__}: {e}", file=sys.stderr)
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -1375,58 +1383,6 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         if after_relay:
             entry["recorded_after_relay"] = True
 
-        print("\n" + "=" * 80)
-        print(f"PROXY INTERCEPTED REQUEST | Model: {request_data.get('model')}")
-        print("=" * 80)
-        for msg in request_data.get("messages", []):
-            role = msg.get("role", "unknown").upper()
-            content = self._display_text(msg.get("content", ""))
-            tool_calls = msg.get("tool_calls")
-            name = msg.get("name")
-            name_suffix = f" (Name: {name})" if name else ""
-
-            if content:
-                display_content = (
-                    content
-                    if len(content) < 1500
-                    else content[:1500] + "\n... [TRUNCATED FOR CONSOLE DISPLAY] ..."
-                )
-                print(f"[{role}{name_suffix}]: {display_content}")
-            if tool_calls:
-                print(f"[{role} TOOL CALLS]:")
-                for tc in tool_calls:
-                    print(
-                        f"  - ID: {tc.get('id')} | Function: {tc.get('function', {}).get('name')} | Args: {tc.get('function', {}).get('arguments')}"
-                    )
-        print("-" * 80)
-
-        print("PROXY INTERCEPTED RESPONSE")
-        print("=" * 80)
-        choices = response_data.get("choices", [])
-        if choices:
-            choice = choices[0]
-            message = choice.get("message", {})
-            reasoning = message.get("reasoning_content") or message.get("reasoning")
-            content = message.get("content")
-            tool_calls = message.get("tool_calls")
-
-            if reasoning:
-                print(f"[REASONING]: {reasoning}")
-            if content:
-                print(f"[ASSISTANT]: {content}")
-            if tool_calls:
-                print("[ASSISTANT TOOL CALLS]:")
-                for tc in tool_calls:
-                    print(
-                        f"  - ID: {tc.get('id')} | Function: {tc.get('function', {}).get('name')} | Args: {tc.get('function', {}).get('arguments')}"
-                    )
-        elif "error" in response_data:
-            print(f"ERROR: {json.dumps(response_data.get('error'))}")
-        else:
-            print(f"[RAW RESPONSE]: {json.dumps(response_data)[:500]}")
-        print("=" * 80 + "\n")
-        sys.stdout.flush()
-
         with _transcript_lock:
             try:
                 line = json.dumps(entry, ensure_ascii=True, allow_nan=False).encode("ascii")
@@ -1449,68 +1405,128 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 )
             rotate_if_needed(TRANSCRIPT_FILE)
 
-        plain_log_lines = []
-        timestamp = entry["timestamp"]
-        plain_log_lines.append("=" * 80)
-        plain_log_lines.append(f"TRANSACTION | {timestamp} | Model: {request_data.get('model')}")
-        plain_log_lines.append("=" * 80)
 
-        plain_log_lines.append("--- REQUEST MESSAGES ---")
-        for msg in request_data.get("messages", []):
-            role = msg.get("role", "unknown").upper()
-            content = self._display_text(msg.get("content", ""))
-            tool_calls = msg.get("tool_calls")
-            name = msg.get("name")
-            name_suffix = f" (Name: {name})" if name else ""
+        # Everything below is display, best-effort: the record above is written whatever shape the
+        # agent's messages or the upstream's reply take, and a display that cannot render them
+        # must not cost the exchange its record, its close event or its reply.
+        try:
+            print("\n" + "=" * 80)
+            print(f"PROXY INTERCEPTED REQUEST | Model: {request_data.get('model')}")
+            print("=" * 80)
+            for msg in request_data.get("messages", []):
+                role = msg.get("role", "unknown").upper()
+                content = self._display_text(msg.get("content", ""))
+                tool_calls = msg.get("tool_calls")
+                name = msg.get("name")
+                name_suffix = f" (Name: {name})" if name else ""
 
-            if role == "TOOL":
-                plain_log_lines.append(f"[{role}{name_suffix}]: [Tool call output omitted]")
-            else:
                 if content:
-                    plain_log_lines.append(f"[{role}{name_suffix}]: {content}")
+                    display_content = (
+                        content
+                        if len(content) < 1500
+                        else content[:1500] + "\n... [TRUNCATED FOR CONSOLE DISPLAY] ..."
+                    )
+                    print(f"[{role}{name_suffix}]: {display_content}")
+                if tool_calls:
+                    print(f"[{role} TOOL CALLS]:")
+                    for tc in tool_calls:
+                        print(
+                            f"  - ID: {tc.get('id')} | Function: {tc.get('function', {}).get('name')} | Args: {tc.get('function', {}).get('arguments')}"
+                        )
+            print("-" * 80)
+
+            print("PROXY INTERCEPTED RESPONSE")
+            print("=" * 80)
+            choices = response_data.get("choices", [])
+            if choices:
+                choice = choices[0]
+                message = choice.get("message", {})
+                reasoning = message.get("reasoning_content") or message.get("reasoning")
+                content = message.get("content")
+                tool_calls = message.get("tool_calls")
+
+                if reasoning:
+                    print(f"[REASONING]: {reasoning}")
+                if content:
+                    print(f"[ASSISTANT]: {content}")
+                if tool_calls:
+                    print("[ASSISTANT TOOL CALLS]:")
+                    for tc in tool_calls:
+                        print(
+                            f"  - ID: {tc.get('id')} | Function: {tc.get('function', {}).get('name')} | Args: {tc.get('function', {}).get('arguments')}"
+                        )
+            elif "error" in response_data:
+                print(f"ERROR: {json.dumps(response_data.get('error'))}")
+            else:
+                print(f"[RAW RESPONSE]: {json.dumps(response_data)[:500]}")
+            print("=" * 80 + "\n")
+            sys.stdout.flush()
+
+
+            plain_log_lines = []
+            timestamp = entry["timestamp"]
+            plain_log_lines.append("=" * 80)
+            plain_log_lines.append(f"TRANSACTION | {timestamp} | Model: {request_data.get('model')}")
+            plain_log_lines.append("=" * 80)
+
+            plain_log_lines.append("--- REQUEST MESSAGES ---")
+            for msg in request_data.get("messages", []):
+                role = msg.get("role", "unknown").upper()
+                content = self._display_text(msg.get("content", ""))
+                tool_calls = msg.get("tool_calls")
+                name = msg.get("name")
+                name_suffix = f" (Name: {name})" if name else ""
+
+                if role == "TOOL":
+                    plain_log_lines.append(f"[{role}{name_suffix}]: [Tool call output omitted]")
                 else:
-                    plain_log_lines.append(f"[{role}{name_suffix}]: [No text content]")
+                    if content:
+                        plain_log_lines.append(f"[{role}{name_suffix}]: {content}")
+                    else:
+                        plain_log_lines.append(f"[{role}{name_suffix}]: [No text content]")
 
-            if tool_calls:
-                tc_names = [tc.get("function", {}).get("name", "unknown") for tc in tool_calls]
-                plain_log_lines.append(f"[{role} TOOL CALLS]: {', '.join(tc_names)}")
+                if tool_calls:
+                    tc_names = [tc.get("function", {}).get("name", "unknown") for tc in tool_calls]
+                    plain_log_lines.append(f"[{role} TOOL CALLS]: {', '.join(tc_names)}")
 
-        plain_log_lines.append("-" * 40)
-        plain_log_lines.append("--- RESPONSE ---")
+            plain_log_lines.append("-" * 40)
+            plain_log_lines.append("--- RESPONSE ---")
 
-        choices = response_data.get("choices", [])
-        if choices:
-            choice = choices[0]
-            message = choice.get("message", {})
-            reasoning = message.get("reasoning_content") or message.get("reasoning")
-            content = message.get("content")
-            tool_calls = message.get("tool_calls")
+            choices = response_data.get("choices", [])
+            if choices:
+                choice = choices[0]
+                message = choice.get("message", {})
+                reasoning = message.get("reasoning_content") or message.get("reasoning")
+                content = message.get("content")
+                tool_calls = message.get("tool_calls")
 
-            if reasoning:
-                plain_log_lines.append(f"[THINKING/REASONING]: {reasoning}")
-            if content:
-                plain_log_lines.append(f"[ASSISTANT RESPONSE]: {content}")
-            if tool_calls:
-                tc_names = [tc.get("function", {}).get("name", "unknown") for tc in tool_calls]
-                plain_log_lines.append(f"[TOOL CALLS INITIATED]: {', '.join(tc_names)}")
-        elif "error" in response_data:
-            plain_log_lines.append(f"ERROR: {json.dumps(response_data.get('error'))}")
-        else:
-            plain_log_lines.append("[NO RESPONSE CHOICES]")
+                if reasoning:
+                    plain_log_lines.append(f"[THINKING/REASONING]: {reasoning}")
+                if content:
+                    plain_log_lines.append(f"[ASSISTANT RESPONSE]: {content}")
+                if tool_calls:
+                    tc_names = [tc.get("function", {}).get("name", "unknown") for tc in tool_calls]
+                    plain_log_lines.append(f"[TOOL CALLS INITIATED]: {', '.join(tc_names)}")
+            elif "error" in response_data:
+                plain_log_lines.append(f"ERROR: {json.dumps(response_data.get('error'))}")
+            else:
+                plain_log_lines.append("[NO RESPONSE CHOICES]")
 
-        plain_log_lines.append("=" * 80 + "\n\n")
-        plain_log_content = "\n".join(plain_log_lines)
+            plain_log_lines.append("=" * 80 + "\n\n")
+            plain_log_content = "\n".join(plain_log_lines)
 
-        with _transcript_lock:
-            try:
-                with open(PLAIN_TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
-                    f.write(plain_log_content)
-                print(
-                    f"Recorded plain text transaction in: {os.path.basename(PLAIN_TRANSCRIPT_FILE)}"
-                )
-            except Exception as e:
-                print(f"Error writing plain transcript: {e}", file=sys.stderr)
-            rotate_if_needed(PLAIN_TRANSCRIPT_FILE)
+            with _transcript_lock:
+                try:
+                    with open(PLAIN_TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
+                        f.write(plain_log_content)
+                    print(
+                        f"Recorded plain text transaction in: {os.path.basename(PLAIN_TRANSCRIPT_FILE)}"
+                    )
+                except Exception as e:
+                    print(f"Error writing plain transcript: {e}", file=sys.stderr)
+                rotate_if_needed(PLAIN_TRANSCRIPT_FILE)
+        except Exception as e:  # noqa: BLE001 -- display only
+            print(f"Error displaying transcript: {type(e).__name__}: {e}", file=sys.stderr)
         return result
 
 
