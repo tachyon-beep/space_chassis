@@ -219,7 +219,7 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 140 states over 59 scheduled nodes, 142
+**All eleven domains have landed** — 148 channels, 142 states over 59 scheduled nodes, 142
 thresholds, 58 verbs and 128 classified events across the eleven directories, with 270 declared debts
 and every one of them named. **108 of the 139 states are fully configured and 31 carry a debt**, and
 a real tick advances **53** of the 139 states, and the build order's **53** ready are that same set
@@ -252,7 +252,7 @@ took them from being read by nobody to being refusals under `--strict`, which is
 is only displayed stops being a debt.
 
 `domains/power/` carries a 25-load inventory with inrush currents and shed classes, and it
-declares 14 states, 17 thresholds, 5 verbs, 12 faults. Two
+declares 16 states, 17 thresholds, 5 verbs, 12 faults. Two
 things in it are worth reading rather than skimming:
 
 - **The load-shed ladder is re-anchored.** `review-findings.md` recommends generalising

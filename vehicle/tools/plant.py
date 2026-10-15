@@ -2948,8 +2948,9 @@ def _refuse_shared_node(world: World, state: State, where: str) -> None:
 
     The map is keyed by node, so two states on one node overwrite each other and whichever advanced
     first reads the other's number on the next tick. Twelve nodes carry more than one state — ten
-    after round 70 took the source regulator off the fuel cell's node, eleven once `load_enabled`
-    joined `load_shed_state`, and twelve with the quiet-coast task model's `ground_received`;
+    after round 70 took the source regulator off the fuel cell's node, then `load_enabled` joined
+    `load_shed_state`, the bus loads and module current joined `fuel_cell`, and the quiet-coast
+    task model's `ground_received` joined its node;
     `cabin_atm` and `lm_cabin_atm` carry five each. The fix is a key-space change and the reason this
     is a refusal rather than a repair: a value of the wrong quantity is indistinguishable from a
     right one on a panel.
@@ -3008,7 +3009,7 @@ def initial_values(world: World, scenario: Scenario | None = None) -> dict[str, 
     A state the configuration has not given a value is left out rather than guessed, and the plant
     refuses by name when a tick reaches it — which is the behaviour the check beside this wants.
 
-    **`internal` is a key space rather than a key.** The sentinel is not a node, and fifty-nine
+    **`internal` is a key space rather than a key.** The sentinel is not a node, and fifty-eight
     states live on it — so `values["internal"]` as a single slot would let every one of them
     overwrite the next, which is why this function and `step()` both used to drop it. Dropping it
     was the workaround, and it cost the command surface a third of its effects: eight of the
