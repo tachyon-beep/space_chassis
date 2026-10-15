@@ -146,7 +146,7 @@ Its briefing, read-only at `/opt/brief`:
 | `WORLD.md` | What is in the container, what is not, and what that means. |
 | `PROTOCOL.md` | The rules the world enforces, and the window's protocol. |
 
-`docs/brief-claims.md` lists every claim the brief and the prompts make about
+`../docs/brief-claims.md` lists every claim the brief and the prompts make about
 the world, and the code or test that makes it true.
 
 Its harness, at `/work`: a git repository holding `agent.py`, `chassis.py`,
@@ -192,8 +192,8 @@ agent can read or change any transcript, its own included.
 | `../docs/diode-contract.md` | The interface the vehicle's builder implements. Read this one. |
 | `../docs/deep_research/` | The vehicle study (`apollo_diode.md`) and the eleven subsystem studies — power, ECLSS, thermal, GNC, propulsion, RCS, comms, consumables, avionics, structural/sequential events, crew C&W — that specify the far side of that window. `integration/corpus-review.md` says what is in them. |
 | `../vehicle/` | **The vehicle itself**, the repository's vehicle stream (absorbed from [`tachyon-beep/space_vehicle`](https://github.com/tachyon-beep/space_vehicle) with its history): its configuration, its reference plant, its linter and its referee. A second vehicle would be a second stream folder beside it. |
-| `docs/design.md` | Why the world is shaped this way. |
-| `docs/superpowers/specs/2026-10-09-aurora-port-design.md` | The design of the port: what came from Aurora, what was kept, what was retired. |
+| `../docs/design.md` | Why the world is shaped this way. `../docs/` holds the project's documents for both streams. |
+| `../docs/superpowers/specs/2026-10-09-aurora-port-design.md` | The design of the port: what came from Aurora, what was kept, what was retired. |
 | `contract/diode_probe.py` | Walks an implementation through the contract and reports. |
 | `contract/fake_diode.py` | A fixture that satisfies the contract. Models nothing. |
 | `tests/` | The operator-side tests and the assertions about this repository's own files. One `pytest` also runs the harness, recorder and pump suites and the vehicle's referee. No Docker required. |

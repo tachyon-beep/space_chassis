@@ -12,6 +12,11 @@ This is the single place a new session, agent or person reads first, to learn:
 It is meant to become the single source of truth in time. Until it is, **the code, the issue
 trackers and the decision records it points to are authoritative wherever they disagree with it.**
 
+**Scope (John, 2026-10-15): governance is purely for the agents to deconflict and report**: who owns
+what, coordination between the lines, each line's status, open items and decision records. How the
+project works (design, specs, plans, ledgers, the contract, the corpus) lives in `../docs/`
+(`../docs/README.md` is its index); new plans go there, not here.
+
 ## One program, two project teams, one product
 
 **Space Aurora is one program building one product**: a fleet of self-modifying agents and the
@@ -32,7 +37,7 @@ own (John, 2026-10-10).
 **Since 2026-10-15 the program is one repository with three streams** (John, 2026-10-15):
 `vehicle/` (the vehicle sim), `aurora/` (the Aurora container), `governance/` (this folder). Agents
 work in git worktrees of this one repository, on branches named for their stream. The plan, what
-moved and what it broke: [`plans/2026-10-15-three-stream-restructure.md`](plans/2026-10-15-three-stream-restructure.md).
+moved and what it broke: [`docs/plans/2026-10-15-three-stream-restructure.md`](../docs/plans/2026-10-15-three-stream-restructure.md).
 Paths in older records below and in `chassis/`, `vehicle/` and `MASTER_GOVERNANCE_PLAN.md` are as
 they were written: `harness/` is now `aurora/harness/`, `docs/deep_research/vehicle/` is `vehicle/`.
 
@@ -57,7 +62,7 @@ line is the chassis line's.
 | | `aurora/Dockerfile.agent`, `aurora/docker-compose.yml` and its generator, `aurora/live/` |
 | | `aurora/tests/`, including `test_vehicle_reconciliation.py`, the chassis's referee of what it deploys |
 | | `aurora/contract/` (the probe and the fixture) and `aurora/brief/` |
-| | `aurora/docs/` (`design.md`, `brief-claims.md`, `superpowers/`, `plans/`) |
+| | `docs/design.md`, `docs/brief-claims.md`, `docs/superpowers/`, `docs/README.md` |
 | | the root and `aurora/` documents (`CLAUDE.md`, `AGENTS.md`, `README.md`, `Makefile`, `aurora/.env.example`) and `aurora/vendor/` |
 | | this repository's CI, and the filigree tracker itself with every issue not labelled `side:vehicle` |
 | | the reconciliation pins and every adoption (subtree) merge into `vehicle/` |

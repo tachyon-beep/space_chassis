@@ -9,11 +9,12 @@ the map; each stream has its own guidance, which Claude Code loads when you work
 |---|---|---|
 | `vehicle/` | the vehicle sim: configuration, reference plant, console, linter, referee | `vehicle/AGENTS.md` |
 | `aurora/` | the Aurora container world: harness, recorder, pump, operator services, image, compose | `aurora/CLAUDE.md` |
-| `governance/` | plans, decisions, status, records; the source of truth for what is decided and where each line stands | `governance/README.md` |
+| `governance/` | the agents' deconfliction and reporting: ownership, coordination, status, open items, decision records | `governance/README.md` |
 
-`docs/diode-contract.md` and the frozen corpus `docs/deep_research/` are the border both build
-streams cite by repository-relative path. Read `docs/deep_research/integration/corpus-review.md`
-before any of the corpus; never edit the corpus.
+`docs/` is how the project works, for both streams (index: `docs/README.md`): the design, the
+window's contract `docs/diode-contract.md`, specs, plans and ledgers, and the frozen corpus
+`docs/deep_research/`. New plans and design documents go in `docs/`, not `governance/`. Read
+`docs/deep_research/integration/corpus-review.md` before any of the corpus; never edit the corpus.
 
 Start at `governance/README.md`. Every path and task has one owning line: the chassis line owns
 `aurora/` and governance outside `governance/vehicle/`; the vehicle line owns `vehicle/`,
@@ -42,7 +43,7 @@ is the one cross-stream change and says so. Never work in another session's work
 The vehicle was a submodule of `tachyon-beep/space_vehicle` until 2026-10-15; it is now ordinary
 files under `vehicle/`, absorbed with its history at `8c6f71d`. Later commits from that repository
 come in with `git subtree pull --prefix=vehicle <url> <ref>`. Plan and rationale:
-`governance/plans/2026-10-15-three-stream-restructure.md`.
+`docs/plans/2026-10-15-three-stream-restructure.md`.
 
 ## Filigree
 

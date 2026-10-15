@@ -6,10 +6,11 @@ One repository, three streams. Read the stream's own `AGENTS.md` before touching
 |---|---|---|
 | `vehicle/` | the vehicle sim | `vehicle/AGENTS.md` |
 | `aurora/` | the Aurora container world | `aurora/AGENTS.md` |
-| `governance/` | plans, decisions, status, records | `governance/README.md` |
+| `governance/` | deconfliction and reporting between agents: ownership, coordination, status, decisions | `governance/README.md` |
 
-`docs/diode-contract.md` (the window's contract) and `docs/deep_research/` (the frozen corpus) are
-the border the two build streams share. Cite them; never edit the corpus.
+`docs/` is how the project works (index: `docs/README.md`): the design, the window's contract, specs,
+plans, ledgers and the frozen corpus `docs/deep_research/` (cite it; never edit it). Write plans and
+design documents there; report status and coordinate in `governance/`.
 
 ## How to work
 
@@ -20,4 +21,4 @@ the border the two build streams share. Cite them; never edit the corpus.
   cross-stream change and is named as such.
 - **Run the one suite before you commit**: `make test` (both streams) and `make lint`.
 - **Governance first.** `governance/README.md` says who owns what, what is decided and what is open.
-  Nothing in `governance/` may reach an image.
+  Report your status and coordinate there. Nothing in `governance/` may reach an image.

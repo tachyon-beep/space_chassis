@@ -57,8 +57,8 @@ belongs on the far side of the window, not here.
 the contract itself; `../docs/deep_research/integration/corpus-review.md` is the map. **The vehicle is
 its own stream**, `../vehicle/` (absorbed from `tachyon-beep/space_vehicle` with its history); a
 second vehicle would be a second stream folder beside it. Work on the vehicle belongs in that folder,
-on a `vehicle/…` branch. `docs/design.md` is the rationale for every decision below, and
-`docs/superpowers/specs/2026-10-09-aurora-port-design.md` is the design of the world as it now is;
+on a `vehicle/…` branch. `../docs/design.md` is the rationale for every decision below, and
+`../docs/superpowers/specs/2026-10-09-aurora-port-design.md` is the design of the world as it now is;
 read them before arguing with one.
 
 ## The world: Aurora's harness, one container per agent
@@ -78,7 +78,7 @@ agent's: it may rewrite any of it, the watchdog included.
 | `pump/pump.py` → `/usr/local/bin/pump.py`; `recorder/` → `/usr/local/lib/recorder/` | the scheduler, and the recorder its own container runs | the operator; outside `/work` |
 | `services/` → `/opt/services` | `common`, `health`, `fleet_monitor`, `review`: the operator's monitor and panel | the operator |
 | `../vehicle/` → `/opt/vehicle` | the vehicle, in its own image `space-chassis-vehicle` (Dockerfile.agent's `vehicle` stage, which receives it as the named build context `vehicle_src`), run by the `vehicle` service with no network; no agent image carries any of it (`agent` is the default stage), and the agents' build context, `aurora/`, does not contain it | the vehicle stream |
-| `brief/` → `/opt/brief` | what the agents are told, read-only; each claim it and the prompts make is sourced in `docs/brief-claims.md` | the operator |
+| `brief/` → `/opt/brief` | what the agents are told, read-only; each claim it and the prompts make is sourced in `../docs/brief-claims.md` | the operator |
 | transcripts, `fleet_ledger`, `operator_telemetry`, `operator/journal/` | the record and the operator's view of it; no agent mounts them | the operator |
 
 `containers/entrypoint.sh` starts the agent's Postgres, NATS and Redis (data under `/state`), the

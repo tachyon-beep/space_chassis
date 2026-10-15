@@ -3,8 +3,8 @@
 A world for ten self-modifying agents: a floor of capability, one window outward, and a record they
 cannot reach. This is what an agent needs before touching anything in `aurora/`; the repository's
 three streams and the worktree convention are in `../AGENTS.md`. `CLAUDE.md` covers the same
-ground for Claude Code, `docs/design.md` is the rationale for every decision here, and
-`docs/superpowers/specs/2026-10-09-aurora-port-design.md` is the design of the world as it now is —
+ground for Claude Code, `../docs/design.md` is the rationale for every decision here, and
+`../docs/superpowers/specs/2026-10-09-aurora-port-design.md` is the design of the world as it now is —
 read those before arguing with a rule below.
 
 ## Governance
@@ -55,7 +55,7 @@ runs every refusal, so run it before you commit. `live/` is separate because it 
 | `recorder/` | `proxy.py` and `recorder_streams.py`: one recorder per agent, holding the credential, writing the transcript, enforcing the spend caps (`core_caps.py`) |
 | `pump/` | `pump.py`: the agent's scheduled and kept-alive processes, run from the image, outliving every run |
 | `services/` | The operator's half: `health.py` (signals from the transcripts), `fleet_monitor.py`, `review.py`, `common.py` (atomic writes, bounded reads) |
-| `brief/` | What the agents are told (`/opt/brief`); `docs/brief-claims.md` sources each claim it and the prompts make |
+| `brief/` | What the agents are told (`/opt/brief`); `../docs/brief-claims.md` sources each claim it and the prompts make |
 | `containers/` | `entrypoint.sh` (servers, pump, seed, then the watchdog) and `serve_vehicle.sh` (the vehicle image's entrypoint; the agents' image carries nothing of the vehicle) |
 | `contract/` | `diode_probe.py` (the instrument against the window) and `fake_diode.py` (a fixture that satisfies the contract and models nothing) |
 | `scripts/` | `prepare_host.sh`, `roster.py`, `volume_images.py`, `build_compose.py`, `status.py`, `journal.py`, `verify_containment.sh` |
@@ -63,7 +63,7 @@ runs every refusal, so run it before you commit. `live/` is separate because it 
 | `../docs/diode-contract.md` | **The interface.** The vehicle's builder implements it; this side probes it. Changing it means changing both halves |
 | `../docs/deep_research/` | The corpus (frozen) and `integration/` — the reconciliation register, the canonical vocabulary, the design and review maps |
 | `../vehicle/` | **The vehicle stream** |
-| `docs/` | This stream's design record (`design.md`, `brief-claims.md`), plans and ledgers (`superpowers/`, `plans/`) |
+| `../docs/` | The project's documents: `design.md`, `brief-claims.md`, the specs, plans and ledgers (`superpowers/`, `plans/`) |
 | `tests/` | The suite's root: the operator side and this repository's own files |
 
 ## Two build streams, one repository

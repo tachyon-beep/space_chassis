@@ -7,11 +7,11 @@ One repository, two build streams plus governance.
 |---|---|---|---|
 | **vehicle sim** | `vehicle/` | The mission simulator: one spacecraft behind per-agent windows. Configuration, reference plant, console, linter and referee. | `vehicle/AGENTS.md`, `vehicle/README.md` |
 | **Aurora container** | `aurora/` | The world the fleet lives in: each agent's harness, the recorder, the pump, the operator services, the image, the compose topology and the vehicle's deployment. | `aurora/README.md`, `aurora/AGENTS.md` |
-| **governance** | `governance/` | Plans, decisions, status and records for both lines. Never reaches an image. | `governance/README.md` |
+| **governance** | `governance/` | Where the agents deconflict and report: ownership, coordination, each line's status, open items, decision records. Never reaches an image. | `governance/README.md` |
 
-`docs/` is the border the two build streams share, not a stream: `docs/diode-contract.md` (the
-window's contract: the vehicle implements it, the container probes it) and `docs/deep_research/`
-(the frozen corpus the vehicle was built from, cited by path, never edited).
+`docs/` is how the project works, for both streams: the design (`docs/design.md`), the window's
+contract (`docs/diode-contract.md`), the specs, plans and ledgers, and the frozen corpus the vehicle
+was built from (`docs/deep_research/`, cited by path, never edited). Index: `docs/README.md`.
 
 ## Running it
 
@@ -40,4 +40,4 @@ cd .claude/worktrees/vehicle-clock-seam
   says so in its title.
 - Worktrees share one object store; `.claude/worktrees/` is gitignored. There is no submodule and no
   second clone: adopting a vehicle change is merging its branch.
-- The plan behind this layout: `governance/plans/2026-10-15-three-stream-restructure.md`.
+- The plan behind this layout: `docs/plans/2026-10-15-three-stream-restructure.md`.

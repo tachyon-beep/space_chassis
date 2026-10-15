@@ -78,7 +78,7 @@ def test_every_acceptance_name_resolves_to_real_tests(name):
 
 
 def test_the_map_names_exactly_the_tests_spec_section_9_lists():
-    spec = (ROOT / "docs/superpowers/specs/2026-10-09-aurora-port-design.md").read_text(
+    spec = (ROOT.parent / "docs/superpowers/specs/2026-10-09-aurora-port-design.md").read_text(
         encoding="utf-8"
     )
     section = spec[spec.index("## 9. Acceptance") : spec.index("**New end-to-end checks")]

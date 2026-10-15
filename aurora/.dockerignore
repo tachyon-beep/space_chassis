@@ -11,8 +11,8 @@ site/
 
 # The context is `aurora/`: the vehicle (`../vehicle`), the corpus and contract (`../docs`) and the
 # governance (`../governance`) are outside it, so no COPY here can reach them. The vehicle stage
-# receives the vehicle as a separate named context (`Dockerfile.agent`). `docs/` above is this stream's
-# design record and plans: prose no container needs.
+# receives the vehicle as a separate named context (`Dockerfile.agent`). The project's documents are
+# in `../docs`, outside the context too.
 
 .git/
 .github/

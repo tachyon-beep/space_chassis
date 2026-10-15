@@ -39,8 +39,8 @@ NEGATIVE = re.compile(r"\bassert\b.*\bnot in\b")
 # Permanent: history and text that is not ours to rewrite yet. Paths are repository-relative.
 PERMANENT = (
     "aurora/tests/test_retired.py",  # this file names what it bans
-    "aurora/docs/superpowers/",  # the specs and plans: the record of how the port was made
-    "aurora/docs/plans/",  # the pre-port programme plans: history, as superpowers/ is
+    "docs/superpowers/",  # the specs and plans: the record of how the port was made
+    "docs/plans/",  # the programme plans: history, as superpowers/ is
     "docs/deep_research/",  # the frozen corpus (CLAUDE.md: its map is integration/)
     "governance/",  # the two lines' decision logs and records: history, kept as it was written
     "vehicle/",  # the vehicle stream: its own history and law, never the chassis's runtime
@@ -76,7 +76,7 @@ def test_nothing_still_refers_to_the_old_runtime():
     assert found == [], "\n".join(found)
 
 
-DOCS = ("CLAUDE.md", "AGENTS.md", "README.md", "docs/design.md", ".env.example")
+DOCS = ("CLAUDE.md", "AGENTS.md", "README.md", "../docs/design.md", ".env.example")
 # What the agents are told: the brief at /opt/brief and the prompts in their harness (spec §6).
 AGENT_FACING = (
     "brief/MISSION.md",

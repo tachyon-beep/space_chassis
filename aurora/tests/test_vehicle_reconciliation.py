@@ -25,7 +25,6 @@ Run it from the repository root: `python3 -m pytest -q`.
 from __future__ import annotations
 
 import contextlib
-import fnmatch
 import itertools
 import json
 import re
@@ -157,35 +156,6 @@ def _in_words(n: int) -> str:
     if n % 100 == 0:
         return head
     return f"{head} {_in_words(n % 100)}"
-
-
-def _docker_ignores(relative: str) -> str | None:
-    """The last `.dockerignore` line that decides `relative`, or None for "nothing does".
-
-    Docker's rule is last-match-wins over ordered patterns, with a leading `!` re-including. This
-    reads the file the way the builder does rather than searching it for a substring, which is the
-    difference between testing the exclusion and testing that someone typed the path.
-    """
-    verdict = None
-    parts = Path(relative).parts
-    for raw in (AURORA / ".dockerignore").read_text().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        negated = line.startswith("!")
-        pattern = line.lstrip("!").rstrip("/")
-        if not pattern:
-            continue
-        # A pattern matches the path itself or any directory above it: `docs/` excludes everything
-        # under `docs`.
-        candidates = ["/".join(parts[: i + 1]) for i in range(len(parts))]
-        if any(
-            fnmatch.fnmatchcase(candidate, pattern)
-            or fnmatch.fnmatchcase(candidate, pattern + "/**")
-            for candidate in candidates
-        ):
-            verdict = "excluded" if not negated else "included"
-    return verdict
 
 
 def test_the_vehicle_passes_the_contract_probe(tmp_path):
@@ -494,9 +464,6 @@ def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
     )
     assert not (AURORA / "vehicle").exists() and not (AURORA / "docs" / "deep_research").exists(), (
         "the corpus and the vehicle are outside the agents' build context"
-    )
-    assert _docker_ignores("docs/design.md") == "excluded", (
-        "this stream's design record is prose, not runtime, and does not belong in an image"
     )
     dockerfile = (AURORA / "Dockerfile.agent").read_text()
     assert "COPY --from=vehicle_src --chown=agent:agent . /opt/vehicle/" in dockerfile

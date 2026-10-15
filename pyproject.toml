@@ -28,7 +28,7 @@ exclude = [
 [tool.ruff.format]
 # ruff 0.16 formats Python inside Markdown too. The corpus is frozen evidence, the vehicle is its own
 # repository with its own rules, and the plans are history: none of them is reformatted here.
-exclude = ["docs/deep_research/**", "aurora/docs/superpowers/**", "vehicle/**"]
+exclude = ["docs/deep_research/**", "docs/superpowers/**", "vehicle/**"]
 
 [tool.ruff.lint]
 # The services here are deliberately standard-library-first. E501 is off

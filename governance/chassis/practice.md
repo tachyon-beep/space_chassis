@@ -52,7 +52,7 @@ These are John's (`decisions.md`):
 
 ## Working beside the vehicle line
 
-> **Superseded in part on 2026-10-15** (`decisions.md`; `../plans/2026-10-15-three-stream-restructure.md`):
+> **Superseded in part on 2026-10-15** (`decisions.md`; `../../docs/plans/2026-10-15-three-stream-restructure.md`):
 > the vehicle is now `vehicle/` in this repository, not a submodule, and the chassis is `aurora/`.
 > There is no gitlink to stage and no second vehicle clone to make: chassis work runs in a worktree
 > on an `aurora/…` branch, and a different vehicle is a `git subtree pull --prefix=vehicle` on that

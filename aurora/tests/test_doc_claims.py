@@ -12,9 +12,10 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-DOCS = ("CLAUDE.md", "AGENTS.md", "README.md", "docs/design.md", ".env.example")
+# `docs/` is the repository root's (the project's documents); the rest are this stream's.
+DOCS = ("CLAUDE.md", "AGENTS.md", "README.md", "../docs/design.md", ".env.example")
 # What the agents are told, and the table of its claims with their sources (spec §6).
-AGENT_FACING = ("harness/system_prompt.txt", "brief/WORLD.md", "docs/brief-claims.md")
+AGENT_FACING = ("harness/system_prompt.txt", "brief/WORLD.md", "../docs/brief-claims.md")
 
 FALSE = {
     # watchdog.Recovery.elective restores a checkpoint and cleans the tree; uncommitted work goes.

@@ -1,7 +1,7 @@
 """Every test a document cites by name exists.
 
-docs/brief-claims.md sources each claim the brief and the prompts make in a test, and
-tests/test_startup.py maps each Aurora property to the test that holds it here. A test renamed
+docs/brief-claims.md (at the repository root) sources each claim the brief and the prompts make in
+a test, and aurora/tests/test_startup.py maps each Aurora property to the test that holds it here. A test renamed
 away from its citation leaves a claim with no source, which reads exactly like one with a source.
 """
 
@@ -10,8 +10,10 @@ from pathlib import Path
 
 import pytest
 
+# This stream's root: cited tests are named relative to it (`tests/…`, `live/…`). The citing documents
+# under `docs/` live at the repository root, the project's documents for both streams.
 ROOT = Path(__file__).resolve().parent.parent
-CITING = ("docs/brief-claims.md", "tests/test_startup.py", "docs/design.md")
+CITING = ("../docs/brief-claims.md", "tests/test_startup.py", "../docs/design.md")
 NODE = re.compile(r"((?:[\w./-]+/)?tests/[\w./-]+\.py)::(test_\w+)")
 BARE_LIVE = re.compile(r"live `(test_\w+)`")
 DEF = re.compile(r"^(?:async\s+)?def (test_\w+)\(", re.M)
