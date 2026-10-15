@@ -2,6 +2,7 @@ import hashlib
 import json
 import signal
 import os
+import random
 import re
 import shutil
 import stat
@@ -36,6 +37,7 @@ ZERO_EXIT_FLAP_WINDOW_SECONDS = 120
 TERMINATED_FLAP_COUNT = 3
 TERMINATED_FLAP_WINDOW_SECONDS = 600
 ENVIRONMENT_PAUSE_SECONDS = 60
+ENVIRONMENT_PAUSE_JITTER_SECONDS = 30
 
 TELEMETRY_DIR = os.environ.get("TELEMETRY_DIR", "/telemetry")
 TELEMETRY_KEEP = ("work", "work.tmp", "work.old")
@@ -51,6 +53,11 @@ AGENT_LOG_MAX_BYTES = 2_000_000
 # always zero; the captured agent log is written by this process inside the
 # working tree and grows with every line the agent prints.
 ACTIVITY_FILE = os.path.join(WORK_DIR, AGENT_LOG_NAME)
+
+
+def environment_pause_seconds(random_fraction):
+    """The exit-44 pause: a fixed wait plus a share of the jitter, so agents sharing an upstream do not retry together."""
+    return ENVIRONMENT_PAUSE_SECONDS + random_fraction * ENVIRONMENT_PAUSE_JITTER_SECONDS
 
 
 def activity_size(path=None):
@@ -372,6 +379,7 @@ class Recovery:
         self.path = os.path.join(git_dir, "aurora-recovery.json")
         self.progress_path = os.path.join(git_dir, "aurora-progress.json")
         self.state = {"phase": None, "selected": None, "failed": {}, "note": ""}
+        self.seeded = False
         try:
             with open(self.path, encoding="utf-8") as f:
                 saved = json.load(f)
@@ -379,7 +387,7 @@ class Recovery:
                 raise ValueError("invalid recovery state")
             self.state.update(saved)
         except FileNotFoundError:
-            pass
+            self.seeded = True
         except (OSError, ValueError) as exc:
             raise RestoreError(f"cannot read recovery state: {exc}") from exc
         self.started = time.monotonic()
@@ -395,6 +403,21 @@ class Recovery:
             f"Recovery event {time.time_ns()}: {reason}. Restored {ref} at {commit}; "
             f"{'fresh' if fresh else 'preserved'} incarnation."
         )
+        self._publish(note)
+
+    def note_seed_boot(self):
+        """Note a start from the image seed, once: nothing was restored, so note() does not fit."""
+        if not self.seeded:
+            return False
+        commit = git_command(self.work_dir, "rev-parse", "--verify", "HEAD").decode().strip()
+        self._publish(
+            f"Recovery event {time.time_ns()}: started from the image seed at {commit}; "
+            "fresh incarnation."
+        )
+        self.seeded = False
+        return True
+
+    def _publish(self, note):
         self.state["note"] = note
         self.save()
         print(note, flush=True)
@@ -643,7 +666,7 @@ def reap_children(agent):
 def apply_recovery(action, ret, own_hash, recovery=None):
     """Apply a checked reset or advance the persistent recovery ladder."""
     if action == "pause":
-        time.sleep(ENVIRONMENT_PAUSE_SECONDS)
+        time.sleep(environment_pause_seconds(random.random()))
         return own_hash
     if action == "restart":
         return own_hash
@@ -662,6 +685,7 @@ def apply_recovery(action, ret, own_hash, recovery=None):
 def run_watchdog():
     """Supervise code recovery and preserve the finite ladder across self-reexec."""
     recovery = Recovery()
+    recovery.note_seed_boot()
     own_hash = file_hash(WATCHDOG_FILE)
     failures = []
     zero_exits = []

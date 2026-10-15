@@ -416,30 +416,52 @@ def compact(discard: bool = False) -> str:
 MISSION_KIT_OUTPUT_LIMIT = 65536
 
 
+def _bounded(text: str, trailer: str, truncated: bool = False) -> str:
+    encoded = text.encode("utf-8")
+    if len(encoded) > MISSION_KIT_OUTPUT_LIMIT:
+        text = encoded[:MISSION_KIT_OUTPUT_LIMIT].decode("utf-8", errors="ignore")
+        truncated = True
+    return f"{text}\n{trailer}" if truncated else text
+
+
 @tools.register
 def read_path(path: str, line_number: int = 0) -> str:
-    """Read any file, with line numbers, up to MISSION_KIT_OUTPUT_LIMIT bytes.
+    """Read any file, with line numbers. The output stops at 65536 bytes.
 
     Args:
         path: The file to read. Relative paths resolve against the agent's directory.
-        line_number: The 1-indexed line number to read. Pass 0 to read the whole file.
+        line_number: The 1-indexed line number to read, from anywhere in the file. Pass 0 to read the file from its start.
     """
     actual_path = _resolve_path(path)
     try:
+        if line_number:
+            with open(actual_path, "r", encoding="utf-8", errors="replace") as f:
+                count = 0
+                continuing = False
+                while True:
+                    chunk = f.readline(MISSION_KIT_OUTPUT_LIMIT)
+                    if not chunk:
+                        break
+                    if not continuing:
+                        count += 1
+                        if count == line_number:
+                            longer = not chunk.endswith("\n") and f.read(1) != ""
+                            return _bounded(
+                                f"{line_number}: {chunk}",
+                                f"[line is longer; output stops at {MISSION_KIT_OUTPUT_LIMIT}]",
+                                longer,
+                            )
+                    continuing = not chunk.endswith("\n")
+            return f"error: line {line_number} is out of range; the file has {count} lines"
         size = os.path.getsize(actual_path)
         with open(actual_path, "rb") as f:
             data = f.read(MISSION_KIT_OUTPUT_LIMIT)
         lines = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", errors="replace").readlines()
-        if line_number:
-            idx = line_number - 1
-            if idx < 0 or idx >= len(lines):
-                return f"error: line {line_number} is out of range; the file has {len(lines)} lines"
-            text = f"{line_number}: {lines[idx]}"
-        else:
-            text = "".join(f"{i + 1}: {line}" for i, line in enumerate(lines))
-        if size > MISSION_KIT_OUTPUT_LIMIT:
-            text += f"\n[file is {size} bytes; output stops at {MISSION_KIT_OUTPUT_LIMIT}]"
-        return text
+        return _bounded(
+            "".join(f"{i + 1}: {line}" for i, line in enumerate(lines)),
+            f"[file is {size} bytes; output stops at {MISSION_KIT_OUTPUT_LIMIT}]",
+            size > MISSION_KIT_OUTPUT_LIMIT,
+        )
     except Exception as e:
         return f"error reading {path}: {e}"
 
@@ -453,6 +475,8 @@ def write_path(path: str, text: str, mode: Literal["overwrite", "append"] = "ove
         text: The text to write.
         mode: overwrite replaces the file's contents, append adds the text after them.
     """
+    if mode not in ("overwrite", "append"):
+        return f"error: unknown mode {mode!r}; use overwrite or append"
     actual_path = _resolve_path(path)
     try:
         with open(actual_path, "a" if mode == "append" else "w", encoding="utf-8") as f:

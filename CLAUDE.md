@@ -9,6 +9,7 @@ git submodule update --init --recursive                # the vehicle is a submod
 python3 -m pytest -q                                   # whole suite, no Docker needed
 python3 -m pytest tests/test_chassis.py -q             # one file
 python3 -m pytest harness/tests -q                     # the Aurora harness: its own process until plan 5 retires services/chassis.py
+python3 -m pytest recorder/tests -q                    # Aurora's recorder and the spend caps: its own process, like harness/tests
 python3 -m pytest tests/test_chassis.py::test_a_conversation_round_trips -q
 python3 -m pytest docs/deep_research/vehicle/tests/test_vehicle_config.py -q   # the vehicle's referee
 

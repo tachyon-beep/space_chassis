@@ -10,13 +10,28 @@ target-version = "py312"
 # The vendored crate registry carries whatever Python its crates happen to
 # ship, which is not this project's code and not this project's business.
 # `harness/` is vendored from Aurora at 42faf41 and kept close to upstream so it can be re-synced.
-exclude = ["vendor", ".scratch", "endurance/runs", "harness"]
+# `recorder/` is vendored from Aurora at 42faf41 the same way: its two modules and its seven
+# vendored test files, but not its conftest or the tests this repository adds.
+exclude = [
+    "vendor", ".scratch", "endurance/runs", "harness",
+    "recorder/proxy.py", "recorder/recorder_streams.py",
+    "recorder/tests/test_proxy.py", "recorder/tests/test_recorder_streams.py",
+    "recorder/tests/test_recorder_console_hostile.py", "recorder/tests/test_unix_listener.py",
+    "recorder/tests/test_upstream_selection.py", "recorder/tests/test_recorder_events.py",
+    "recorder/tests/hostile_inputs.py",
+]
 
 [tool.ruff.lint]
 # The services here are deliberately standard-library-first. E501 is off
 # because the docstrings carry the reasoning and the prose reads worse wrapped.
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 ignore = ["E501", "B008"]
+
+[tool.ruff.lint.isort]
+# Bare `import recorder` in tests/ means services/recorder.py; the top-level recorder/ is
+# Aurora's, tested as its own process. Without this, ruff files the old one as first-party.
+# Plan 5 of the Aurora port retires services/recorder.py, and this with it.
+known-third-party = ["recorder"]
 
 [tool.pytest.ini_options]
 # The vehicle's referee lives in its own repository, mounted here as a git submodule. The suite is

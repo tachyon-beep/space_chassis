@@ -57,7 +57,7 @@ def test_every_registered_tool_has_a_nonempty_description():
         assert schema["function"]["description"].strip()
 
 
-def test_genesis_surface_is_exactly_eight_tools_in_order():
+def test_genesis_surface_is_aurora_s_eight_tools_then_the_mission_kit():
     assert list(agent.tools.tools) == [
         "read_file",
         "write_file",
@@ -67,5 +67,8 @@ def test_genesis_surface_is_exactly_eight_tools_in_order():
         "reset",
         "list_dir",
         "compact",
+        "read_path",
+        "write_path",
+        "run",
     ]
     assert [s["function"]["name"] for s in agent.tools.schemas] == list(agent.tools.tools)
