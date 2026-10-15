@@ -2016,3 +2016,212 @@ tests, grant S1, advance chassis adoption, approve final brief text or close iss
 control, test, collection, commit or owner source edit was performed by this coordinator; only
 coordinator records changed. Main index SHA256 remains
 `86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.
+
+## 34. K1 accepted and released; separate S1 allocation review prepared — 2026-10-12 00:01 AEDT
+
+**CURRENT SLOT: FREE / RELEASED — `SPACE-20261011-B-V7-K1` complete.** Accepted the owner's
+explicit release after independently reconciling raw control evidence and current owned cleanup.
+**All 20 controls passed their expected outcomes, once, serially, with K03 last.** This qualifies
+the submitted K supervision controls only; no pytest or S1 ran and no next allocation follows.
+
+### Evidence reconciliation
+
+The owner prelaunch record shows fresh identity/admission checks from 12:48:37 to 12:48:39 UTC,
+then one suite launch at **2026-10-11 12:48:39.461 UTC**, before the grant's launch expiry.
+Outer InvocationID `0eb412ca87ef44aaad5fc21f4c8e8885`, MainPID 268508; owner transcript readback
+confirms RuntimeMaxUSec=34min, TimeoutStopUSec=30s, KillMode=control-group, Nice=19 and the expected
+cgroup. Raw control events span **12:48:39.535–12:54:31.499 UTC**, about 352 seconds.
+The owner terminal observation at **12:54:38 UTC** reports unit not-found/inactive, Result=success.
+Owner explicit release was written **12:55:24 UTC**; it remained held until this verification.
+
+Independently verified all **122 evidence-file hashes**, all 26 source/spec manifest entries,
+and unchanged final proposal/candidate HEAD/diff/92 tree blobs. Raw harness rows exactly equal
+the summary's 20 control rows and match the plan order. Each has one start/outcome, matching
+script/spec hashes, expected return code, receipt presence/absence, cause text, terminal fields,
+JSON assertions and required files. Consecutive control event ranges do not overlap. Result
+distribution: two exit 0, fourteen exit 3, three exit 2, one exit 4, exactly as planned.
+K03 has **no RELEASE.txt** and its exit 4 is expected; its `checks.release=true` means the expected
+absence assertion passed, not that its supervisor released the slot.
+
+Fifteen payload cap readbacks match the actual specs (including K05's deliberately mismatched
+comparison target), all 15 recorded launcher SIGINT restorations hold, and all available post-run
+identity records match except K11's explicit injected digest. Current candidate identity is exact.
+Across 34 monitoring samples, minimum available RAM is **34,714 MiB**, maximum CPU busy **33.3%**,
+maximum load1 **5.38**. Maximum recorded control memory peak is **64 MiB**, from the intentional
+OOM control; this is not a pytest memory measurement. Expected timeout/OOM/interrupt controls
+have the required cause evidence. Suite final proof has empty control/decoy unit lists,
+decoy processes ended, recovery within deadline, and `proven_clean=true`.
+
+Evidence identities under `B-sel1/`:
+
+| Evidence | SHA256 |
+|---|---|
+| `v7/v7-K1-evidence.SHA256SUMS` (122 entries) | `98cc13330c66346bb58baaf41f796de2a7560c6dcecb664b792c6b0810c504e9` |
+| `v7/controls-evidence/controls-summary.json` | `a13af7abe9586f087d1c374d08145fc238af9c8d7d724eeb37ddeaab0c9618d3` |
+| `v7/controls-evidence/harness.out` | `99c60b0ac5494e469332ec681dbdcea1b85931c0a2f1c06d952bfda476883aed` |
+| `v7-K1-prelaunch.txt` | `4de53749bbd132f80e50dc7ea13c8605a4952d14d9df374ec20147b8691059f9` |
+| `v7-K1-postrun.txt` | `c2edea86b56e8a5ec5a43e0075a268568d531a4883e1b68a19dbffc74a104829` |
+| `v7-K1-OWNER-RELEASE.md` | `06c4483f6c506eb72470bb0521ca3d090b98a72e6c68c0a3387f141bc5a8ba59` |
+
+### Independent release proof
+
+At **12:59:39 UTC October 11 / 23:59:39 AEDT**, successful independent systemctl queries
+confirmed all **22 known unit names** (outer, 20 control names including admission refusals, and
+owned decoy) not-found/inactive with empty ControlGroup. All 22 known/derived cgroup paths are
+absent; no Space cgroup remains under app.slice, and successful listings find no Space user unit
+or Space-named container. No own-user process carries any of the **21 suite/control tokens**.
+All 11 unreadable process environments have readable start times older than a conservative
+pre-suite lower bound; no unknown newer process remains. No recorded payload/MainPID survives.
+A further scan finds no remaining unit-referencing polling monitor, harness or supervisor.
+Explicit owner release plus this positive cleanup proof releases the slot; neither K03's expected
+status nor process absence alone was used as release authority.
+
+### Prepared S1 review — not a grant
+
+The existing independent reviewer inspected actual S1 spec and supervisor acceptance handling.
+Spec SHA256 `6bcb9af009b52c880a03c9d4cb788da1c49c9753e58935648d64f546d221d3a1` selects one
+Python 3.12 pytest invocation, two workers and 25 exact node IDs. Static inspection finds all 25
+functions in candidate3 without parametrization decorators; no collection was performed.
+`v7/evidence-S1` remains absent. No new scoped source blocker was found.
+
+The separate grant must bind an outer supervisor lifecycle as well as the existing payload bounds.
+Prepared envelope: unique `space-vehicle-b-supervisor-s1-1.service`, RuntimeMaxSec=900,
+TimeoutStopSec=30, KillMode=control-group, Nice=19, empty CUDA visibility, launching only
+`/usr/bin/python3 V7/supervise.py V7/spec-S1.json`. Keep outer output outside `evidence-S1`
+(for example `V7/s1-supervisor.out`) because the supervisor requires its evidence directory absent.
+This provides a 930-second operational outer envelope; the separately launched payload retains
+its own 420-second run deadline, RuntimeMaxSec=485, 15-second stop, 60-second cleanup and
+2-CPU/6-GiB/no-swap caps. Outer exit never proves the payload unit gone.
+
+**S1 acceptance must independently check actual pytest success.** The supervisor treats both
+`success` and `exit-code` terminal results as completed and merely records JUnit counts; therefore
+`supervisor_exit=0` or a cleanup receipt alone is insufficient. Require SERVICE_RESULT=success,
+EXIT_CODE=exited, EXIT_STATUS=0, exactly the intended 25 JUnit testcases, zero failures/errors/skips,
+consistent raw output/JUnit, unchanged identities, and independently verified cleanup plus explicit
+owner release. Missing JUnit, count mismatch, nonzero payload status or unknown evidence fails S1.
+
+Remaining allocation work: set the exact outer command/log identity, fresh unused unit/output/
+evidence paths, a finite launch expiry, and fresh capacity/one-selection admission immediately
+before a separate grant and launch. Current capacity (39.15 GiB available, CPU 13.4%, load1 3.75)
+is only a release-time snapshot, not that grant. No new product decision or repeated implementation
+review is needed if identities remain unchanged. ELSPETH priority and Sultai's GPU reservation
+remain; no S1/retry/full/build/live run, chassis adoption or brief-text approval is granted here.
+No direct owner message, execution, tests or source changes occurred in this coordinator turn;
+only coordinator records changed and the main index hash remains unchanged.
+
+## 35. Separate S1 allocation granted; shared slot reserved — 2026-10-12 00:11 AEDT
+
+**CURRENT SLOT: RESERVED — `SPACE-20261011-B-V7-S1-01`.** Under the parent's explicit delegated
+instruction to decide this separate allocation, grant the existing Vehicle owner
+`session_01GRfs7dVMu4v5airK6q3w9C` / local session `a728e992-9471-46ab-9efe-ce550d7ece5f`
+**one invocation of the exact v7 S1 spec: 25 named tests, Python 3.12, two pytest workers**.
+This is a new allocation decision following the prepared §34 review and fresh checks, not an
+automatic consequence of K success. No material decision beyond existing authority is required.
+No retry, additional selection, full suite, build/live gate, source repair, commit or merge follows.
+Emmy retains the single browser relay; nothing launched or directly messaged by this coordinator.
+
+**Launch before 2026-10-11 13:25:00 UTC / 2026-10-12 00:25:00 AEDT.** Launch permission expires
+if unused; report NOT STARTED for refreshed allocation. Expiry never frees a launched or uncertain
+run. Hold the slot until the explicit owner release and independent cleanup verification below.
+
+### Fresh checks and exact identities
+
+At **13:09:37 UTC October 11 / 00:09:37 AEDT October 12**, independent read-only Nyx inspection
+found **38.56 GiB MemAvailable**, **27.1% CPU busy** over two seconds, load1 **7.00**, no matching
+Space workload or unclassified unreadable process, no Space user unit/cgroup, and no Space-named
+container. `space-vehicle-b-supervisor-s1-1.service` is not-found/inactive with empty ControlGroup.
+Three container inspections identify ELSPETH CI workdirs/mounts; a generic Postgres container has
+no Space-identifying workdir/mount. All remain untouched. K1 is explicitly released under §34 and
+there is no concurrent Space allocation. The unrelated old output watcher remains outside scope.
+The slot reservation, coordinated through Emmy, enforces exclusivity; process discovery remains
+a documented secondary heuristic.
+
+Independently reverified all 26 manifest entries and these exact identities:
+
+| Artifact | Identity |
+|---|---|
+| `v7/PROPOSAL.md` SHA256 | `4fe7c40ca3e094fa64a807605feee7d02c882cc324f3256420f40a082495fdb8` |
+| `v7/SHA256SUMS` SHA256 | `422ff9aa4ed7573fc9e79117f57e7135ac10c7f8cdfde2d44fcee53b78f55b32` |
+| `v7/supervise.py` SHA256 | `a702a4e1381f39a40385a4dcc4d159b342e13e3ee7c917cc46cc7f6b3314372b` |
+| `v7/launch.py` SHA256 | `be38cdb6bd73ea24aff1ad9338cba1d38732dfc316b5b4f68469a5874a250aae` |
+| `v7/record.py` SHA256 | `1ab08ff4818ceb78ef3e0261e9415fcf9982ab28c0ca99c851ba0ded47df2c33` |
+| `v7/spec-S1.json` SHA256 | `6bcb9af009b52c880a03c9d4cb788da1c49c9753e58935648d64f546d221d3a1` |
+| Candidate HEAD/base | `f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f` |
+| Candidate diff SHA256 | `0a00336feb10dcd5c8839893cabafbdc5cbea20474f918d76dc1e0eca3f2d01d` |
+| Candidate tree | `b447955f60c528e78d05c324ecc4c4317128d1a1` |
+
+Candidate worktree:
+`/tmp/claude-1000/-home-john-space-chassis/a728e992-9471-46ab-9efe-ce550d7ece5f/scratchpad/b-39-ca87a9`.
+All 92 tracked blobs match, with no untracked non-ignored paths. All 25 unique node IDs match
+one function each, without decorators, by static AST inspection; no collection was performed.
+The specified venv interpreter exists. Both `v7/evidence-S1` and `v7/s1-supervisor.out` are absent.
+Retain the accepted §32 terminal-timing residual and §34 independent pytest-result acceptance rule.
+
+### Owner admission and exact one-shot launch
+
+Within **60 seconds before launch**, refresh hashes/candidate, unused outer unit/log/evidence paths,
+exclusive allocation and host admission: MemAvailable >=16 GiB, CPU busy <=50% over two seconds,
+load1 <=12; unknown measurements, unreadable unclassified processes, or another Space workload/
+unit/container refuse. Both owners must keep other Space selections stopped throughout this grant.
+ELSPETH retains priority; no GPU is used and Sultai's reservation remains untouched. Do not bypass
+the predicates, enlarge a bound or rename/reuse evidence to retry. Refuse on any identity drift.
+
+Run the following exactly once as the existing unprivileged owner on Nyx with its working user
+systemd bus. **Do not create `evidence-S1` beforehand**; the supervisor creates it. Outer output
+is deliberately outside that directory. No source/spec edits are needed:
+
+```sh
+S1_V7=/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7
+systemd-run --user --no-block --collect --unit=space-vehicle-b-supervisor-s1-1 -p RuntimeMaxSec=900 -p KillMode=control-group -p TimeoutStopSec=30 -p Nice=19 -p Environment=CUDA_VISIBLE_DEVICES= -p "WorkingDirectory=$S1_V7" -p "StandardOutput=file:$S1_V7/s1-supervisor.out" -p "StandardError=file:$S1_V7/s1-supervisor.out" /usr/bin/python3 "$S1_V7/supervise.py" "$S1_V7/spec-S1.json"
+```
+
+This launches the reviewed payload through the spec's exact interpreter and arguments, including
+`-m pytest -p no:cacheprovider -n 2 -q -rfEs -o addopts=` and the 25 listed node IDs/JUnit path.
+No extra collection or preliminary pytest invocation is authorised. Capture UTC launch time,
+outer InvocationID/MainPID/ControlGroup and read back RuntimeMaxUSec=15min, TimeoutStopUSec=30s,
+KillMode=control-group, Nice=19 and intended command. A mismatch invalidates the run and requires
+owned cleanup, not adjustment and continuation. A failed launch is possibly created until proved absent.
+
+### Resource, time and abort limits
+
+One Space selection; **two pytest workers total**. The payload cgroup, including its workers,
+has CPUQuota=200%, MemoryMax=6G, MemorySwapMax=0, OOMPolicy=stop, Nice=19 and no GPU. The reviewed
+supervisor verifies cap readback and healthy pre-GO state before releasing tests. The outer
+supervisor is separately niced and bounded; the 6-GiB cap is a payload ceiling, not an aggregate
+outer-plus-payload cgroup cap or a measured S1 requirement.
+
+Admission deadline 60 seconds; setup 30; launcher GO wait 35; payload run deadline **420 seconds**;
+payload systemd RuntimeMaxSec **485**, stop timeout 15; terminal wait 20 (retained small late-query
+residual); cleanup 60. The outer supervisor's independent limit is **900 seconds plus 30 seconds
+shutdown**, operational deadline **launch + 930 seconds**. Its termination does not certify that
+the separately launched payload unit has ended; explicitly reconcile both on any abnormal exit.
+
+Sample every five seconds. Abort owned work for available RAM below 10 GiB, any attributable OOM,
+lost supervision/ownership, cap/identity failure, deadline or operator priority withdrawal. CPU
+busy >85% (unknown counts high), or load1 >20, for three consecutive samples also aborts. If
+ELSPETH needs the capacity, stop only this allocation's owned outer/payload/helper processes.
+No host/security-setting change or unrelated process/container stop is authorised. An abort or
+uncertain cleanup retains the slot; no rerun to green.
+
+### Acceptance and explicit release
+
+Require **actual payload SERVICE_RESULT=success, EXIT_CODE=exited, EXIT_STATUS=0**, plus exactly
+the intended **25 JUnit testcases**, no duplicates/unexpected cases, and **zero failures, errors
+or skips**, reconciled against raw pytest output. Require unchanged before/after candidate/script/
+spec identities, valid cap/signal/monitor/terminal evidence, and no abort reasons. Neither
+`supervisor_exit=0`, an outer success state, nor RELEASE.txt alone establishes a passing test gate.
+Missing JUnit, wrong count, missing selected case, nonzero payload status or unknown evidence fails.
+
+Return raw `evidence-S1/payload.out`, JUnit, supervisor.log, samples, READY/TERMINAL/summary/receipt,
+outer `s1-supervisor.out`, unit property/timing evidence, memory peak and evidence hashes. Separate
+the pytest result from supervision and cleanup verdicts. Preserve every failure artifact unchanged.
+The owner must explicitly release `SPACE-20261011-B-V7-S1-01` after the run ends, even after a pass.
+This coordinator must independently verify outer and logged payload units not-found/inactive with
+absent cgroups, no owned token/worker/helper process or remaining monitor, and reconcile the receipt.
+Unknown proof keeps the slot HELD and returns through Emmy; no automatic release or next selection.
+
+If S1 passes, only candidate3's bounded 25-test selection advances. Full two-lane qualification,
+PR/merge, chassis adoption, build/live and final brief text remain separate. No product decision
+is reopened and issue 42 remains separate. No execution, collection, test, owner message or source
+change occurred here; only coordinator records changed. Main index SHA256 remains
+`86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.

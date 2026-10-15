@@ -220,7 +220,7 @@ retire that specific obsolete watcher and return fresh admission evidence; no pa
 or admission bypass is requested. No controls or tests launched, no reservation, no direct owner
 message. Emmy retains the browser relay; K03 still requires explicit independently verified release.
 
-**CURRENT SLOT: RESERVED — `SPACE-20261011-B-V7-K1`, 23:44 AEDT (master §33).** The exact v7
+**Previous slot: RESERVED — `SPACE-20261011-B-V7-K1`, 23:44 AEDT (master §33).** The exact v7
 package is granted to the existing Vehicle owner for one harness invocation, at most 20 serial
 failure-injection controls, K03 last, no pytest. Obsolete watcher cleanup and unchanged identities
 are independently verified. Fresh 12:43:41 UTC admission: 37.76 GiB available, CPU 21.8%, load1
@@ -231,6 +231,26 @@ requirements are in §33. Expiry never releases launched/uncertain work. Explici
 plus coordinator-verified cleanup is mandatory, including after expected K03 exit 4/no receipt.
 No S1, retry, full/build/live, adoption or brief-text approval follows. Emmy retains the existing
 browser relay; nothing launched and no direct owner message sent by this coordinator.
+
+**Previous slot: FREE / RELEASED — 00:01 AEDT October 12 (master §34).** K1 accepted: 20/20
+serial controls met their expected cause-specific outcomes; raw evidence and all 122 file hashes
+verified. Launched 12:48:39 UTC October 11; final control 12:54:31; outer unit ended by 12:54:38;
+owner explicitly released at 12:55:24. Independent 12:59:39 checks prove all 22 unit names/cgroups
+absent, no holders of 21 tokens, no unknown newer processes or remaining owned helper/monitor.
+K03's expected exit 4/no receipt did not itself release the slot. Exact candidate3/v7 unchanged.
+S1's separate allocation review is prepared in §34: bound the supervisor externally and require
+actual payload/JUnit success, not supervisor exit alone. **No S1 grant or execution.**
+
+**CURRENT SLOT: RESERVED — `SPACE-20261011-B-V7-S1-01`, 00:11 AEDT October 12 (master §35).**
+Separate allocation: existing Vehicle owner, one exact 25-test S1 invocation, two workers,
+payload 2 CPUs/6 GiB/no swap/no GPU, outer 900+30-second limit. Launch before **13:25 UTC
+October 11 / 00:25 AEDT October 12**, after fresh admission within 60 seconds. Exact identities,
+command, limits and acceptance/release evidence are in §35. Current independent checks: 38.56 GiB
+available, CPU 27.1%, load1 7.00, no admission matches/unclassified processes or Space unit/cgroup;
+outer name, evidence directory and log unused. Actual pytest exit 0 plus exactly 25 JUnit cases,
+zero failures/errors/skips required; supervisor success alone is insufficient. Explicit owner
+release and independent cleanup verification required. No retry/full/build/live or direct owner
+message; nothing launched by this coordinator. Emmy retains the single browser relay.
 
 | channel | for |
 |---|---|
