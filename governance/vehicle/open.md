@@ -1,5 +1,11 @@
 # Vehicle — open items, risks and next steps
 
+> **2026-10-15, governance stream.** The blockers below (slots, G312s, John's approvals) are lifted
+> (`../decisions.md` D1, D2, D8). `#39` Option B and `#23` are qualified by CI once pushed (D11,
+> residual 1). D3 supersedes "M1 first": M2 evidence and M3 rules start in parallel. The four
+> questions in the 2026-10-14 lane status are answered by D11 (1), D8 (2, 3) and D17 (4). The
+> current plan: `../../docs/vehicle-completion/`.
+
 As of **2026-10-14**, `tachyon-beep/space_vehicle` main @ `f75420c` (local remote-tracking ref, not re-fetched). GitHub issues are the delivery
 status of record; this is the line's working view. **Verify against the issues before trusting it.**
 

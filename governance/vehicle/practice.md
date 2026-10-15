@@ -1,5 +1,11 @@
 # Vehicle — practice: how the line is worked
 
+> **2026-10-15.** The shared rules are now `../practice.md`, which supersedes the permission lines
+> below: pushes, PRs and merges need no approval, the gate runs in CI at the repository root, and
+> there is no submodule checkout to avoid (`../decisions.md` D1, D2, D6). The package discipline
+> below (issue with observable acceptance, design before code, independent review, tests first, the
+> gate at the exact SHA, evidence kept) remains this stream's and is what CI enforces.
+
 As of **2026-10-10**, `tachyon-beep/space_vehicle` main @ `64fc58c`. The repository's own
 `CONTRIBUTING.md`, `ROADMAP.md` ("Keep the programme honest") and `docs/{completion,evidence,release}.md`
 are authoritative; this file records how they are applied in practice, and the hard-won rules that
