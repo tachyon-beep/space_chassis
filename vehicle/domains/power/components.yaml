@@ -553,6 +553,31 @@ components:
     provenance:
       basis: historical
       source: "NR and PSR: 3 x 40 Ah entry batteries, 20 cells, 37.2 V open circuit, 27 V minimum loaded"
+    # WP02 electrical evidence (docs/evidence/wp02-electrical.md, E-4). The published electrical
+    # points, kept as the two handbooks print them because they disagree on the loaded point.
+    cells: 20
+    open_circuit_v: 37.2
+    loaded_points:
+      - {source: "AOH SM2A-03-Block II-(1) p. 2.6-17 (CSM 106 and subs)", v: 29, a: 35, v_min: 27}
+      - {source: "J-mission EPS handout, 1 Oct 1971, p. 2.6-19 (CSM 112-114)", v: 28, a: 25, v_min: 27, open_circuit_v: 37.1}
+    qualified_ambient_f: [50, 110]
+    capacity_planning_ah: {in_flight: 40, postlanding: 45}
+    electrical_provenance:
+      basis: historical
+      source: >-
+        AOH SM2A-03-Block II-(1) pp. 2.6-16/17: "rated at 40-ampere hours (AH) minimum", open circuit
+        37.2 V, 29 V at 35 A, 27 V minimum, ambient 50-110 F, 45 AH after a full recharge for
+        postlanding; J-mission EPS handout (https://www.ibiblio.org/apollo/Documents/J%20Mission%20Electrical%20Power%20System%20Oct%201971.pdf)
+        pp. 2.6-18/19: 20 silver oxide-zinc cells, 40 Ah minimum (25 A for 60 min), 37.1 V open
+        circuit, 28 V nominal / 27 V minimum at 25 A, 50-110 F; Apollo 10 consumables analysis
+        (MSC, 9 May 1969) Table 8-I p. 40: 40 Ah each until splashdown, then 45 Ah
+      note: >-
+        TN D-6976 (Apollo Experience Report: Battery Subsystem, Sep 1972) Table I lists the entry
+        battery at **29 V nominal** and p. 3 states "40 A-h (1160 W-h each)"; this component's
+        `v_nominal` is 28, so `load_budget.csm_battery_energy_wh` (3 x 40 x 28 = 3,360 Wh) is 3.4 %
+        below the 3,480 Wh the experience report's own figure gives. Recorded, not changed: the
+        28 is the J-mission handout's loaded figure and the choice between them is the energy
+        basis WP04 owes with the derate curve
   - id: battery_csm_2
     kind: stock
     class: storage
