@@ -29,9 +29,24 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r requirements-dev.txt
+      - name: Let the image's uid 1000 write the smoke stack's scratch directories
+        # The stack's scratch root is aurora/.smoke-<pid>/, plain host directories the containers
+        # write as uid 1000 (live/stack.py). A hosted runner's user is uid 1001, and on such a host
+        # Postgres cannot initialise under /state. Default ACLs on aurora/ give uid 1000, and the
+        # runner, write access to everything the stack creates there.
+        run: |
+          command -v setfacl || sudo apt-get install -y acl
+          setfacl -m "u:1000:rwX" aurora
+          setfacl -d -m "u:1000:rwX,u:$(id -u):rwX" aurora
       - name: Build, start and check the smoke stack
         working-directory: aurora
         run: python -m pytest live -q -rs
+      - name: Show the services' logs
+        if: ${{ failure() }}
+        run: |
+          for log in aurora/.scratch/live-evidence/*; do
+            echo "::group::$log"; tail -n 80 "$log"; echo "::endgroup::"
+          done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ !cancelled() }}
         with:

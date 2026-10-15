@@ -45,7 +45,7 @@ already landed; `wip/local-state` holds the latest completeness report, filigree
 |---|---|
 | Phase B's rebase onto `aurora/` | the chassis line (inventory record above) |
 | Phase B's full and live gates; tier-1 adoption; Option B's qualification; `#23`'s first test | Phase B: its rebase above; all: CI (D6) and an environment that can build the image |
-| branch protection | root CI green first (D20) |
+| branch protection | nothing: applied on `main` by John on 2026-10-15 (D20), requiring the `required` check |
 | any paid run | the bounded episode's acceptance; then the three stages in D22 |
 | nothing else | — |
 
