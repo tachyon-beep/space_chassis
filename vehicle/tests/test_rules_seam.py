@@ -166,14 +166,13 @@ def test_a_read_the_domain_does_not_declare_is_a_named_gap(tmp_path):
 
 
 def test_an_input_with_no_value_is_a_gap_that_names_it(tmp_path):
-    # `source_converter_v` is power's own and has no value this tick: its lag owes `tau_s` (ADR 0003
-    # item 1 takes it off the episode's path). `bus_a_v` was the example until the comms rules gave
-    # bus A its `transmitter_on` and the bus solve a value.
-    rules = "def bus_b_v(inputs, params, dt):\n    return inputs['source_converter_v']\n\nRULES = {'bus_b_v': bus_b_v}\n"
+    # `battery_usable_j_j` is power's own and has no value this tick: it owes its `derate_curve`.
+    # `bus_a_v` was the example until the comms rules gave bus A its `transmitter_on` and the bus
+    # solve a value (and `source_converter_v`, off the episode's path, is seeded at its `initial`).
+    rules = "def bus_b_v(inputs, params, dt):\n    return inputs['battery_usable_j_j']\n\nRULES = {'bus_b_v': bus_b_v}\n"
     _, gaps = tick(plant.load_world(definition(tmp_path, rules)))
-    assert (
-        gaps[STATE].needs == "source_converter_v" and "has no value this tick" in gaps[STATE].owed
-    )
+    assert gaps[STATE].needs == "battery_usable_j_j"
+    assert "has no value this tick" in gaps[STATE].owed
 
 
 def test_an_unconfigured_parameter_is_refused_rather_than_handed_to_the_rule(tmp_path):
