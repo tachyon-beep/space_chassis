@@ -1551,3 +1551,67 @@ DIAG-02 release hash remain unchanged as separate evidence; P/R and staging were
 Vehicle issue 39 product decisions remain pending. No ELSPETH admission work was done; its
 admission still waits for John's requested root-command output. Only coordinator-owned
 reservation records were updated, with no owner/browser message or extra execution.
+
+## 27. R2c root supervisor accepted; one root slot reserved — 2026-10-11 13:58 AEDT
+
+**Current slot: RESERVED — `SPACE-20261011-R2C-ROOT-01`.** John directly authorised this
+coordination task to review the R2c supervisor, reserve the shared slot, and have the existing
+chassis owner run the root-only tests once on Nyx, capped at two CPUs and 8 GiB for ten minutes.
+This is a grant to owner `session_019mkPNN5J3Atit9tUA6zrNY` / `[8a7d49]`; parent Emmy retains
+the browser relay. No test has been launched by this coordinator. Delivery is still pending:
+this session has no available browser surface or cross-task send tool.
+
+### Reviewed identity and controls
+
+- Candidate R2c tree: `148a31c4951e43c1cdafdf30c15b029dc7e104a8` in the existing adoption worktree.
+- Clean vehicle: `f44399645fb2633e695a5d758cb5a41f43fb848c`.
+- Supervisor `.scratch/phase-b-R2c-root-019mkP/root.py`, SHA256
+  `6eac172448026b6f4fe604ba5aa205439d5099c533cf33a1976e08f0a4dfc6b9`.
+- Unchanged launcher SHA256
+  `91a813dc8563ce50489e5619e32a23f9f8dfc468571bc1bedfbc0ef66b2c0ccd`.
+- Reviewed 76-line `root.vs-full-2557d326.diff`, SHA256
+  `2de2204370c362b3c30899a65b9e7193c465cba07afb58f035938053ace8a933`, matches the actual GNU diff
+  against accepted full supervisor `2557d326492e27e766dc13850aef68165eaad89119a475208a266de0c721a13f`.
+- Vehicle test-file SHA256 remains
+  `3b917de30861c432c467d92d6a75b1faf7b31cd0e62626dfde095997110c4a53`.
+
+The adaptation changes the candidate, root selection, evidence/unit names and outer deadline to
+600 seconds. Cleanup and failure-reporting controls are retained. Both Python files compile in
+memory; the coordinator reran all 20 isolated fake-based controls, with zero failures and no
+scope/test execution. Current index and tracked files match R2c exactly, with no untracked
+non-ignored files, and the new `root/` evidence directory does not yet exist. The retained
+identity-failure message still says P; the actual identity predicate correctly binds R2c.
+
+At **13:57:45 AEDT / 02:57:45 UTC**, successful independent host queries found no Space scopes,
+Compose projects or matching Space test/build/launcher processes. Available RAM **40.56 GiB**,
+sampled CPU busy **13.4%**, load1 **2.80**. The main repository index remains unchanged at SHA256
+`86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.
+
+### One authorised root selection
+
+After parent browser delivery and fresh admission, the existing owner runs once from
+`/home/john/space_chassis`:
+
+`nice -n 19 python3 .scratch/phase-b-R2c-root-019mkP/root.py SPACE-20261011-R2C-ROOT-01`
+
+The reviewed driver runs exactly `python3 -m pytest tests -q -p no:cacheprovider -n 2` in
+`.claude/worktrees/vehicle-adoption`. Require the exact identities above, no competing Space
+selection, available RAM >=20 GiB, load1 <12 and sampled CPU busy <75% immediately before launch.
+At most two pytest workers total across Space, nice 19, verified per-run scope CPUQuota=200%
+and MemoryMax=8G, and restored SIGINT. Cap readback and a healthy monitoring sample precede test
+release. The outer deadline is **600 seconds from test release**; bounded termination and cleanup
+follow any abort. It changes no individual test timeout.
+
+Sample every five seconds. Abort only owned work for available RAM <12 GiB, CPU busy >85% or
+load1 >20 for three consecutive samples, attributable OOM, supervision failure or the deadline.
+Protect unrelated work. Keep raw pytest exit/counts and supervision verdict separate; supervisor
+exit zero alone is not a passing gate. Record identities before/after, cap/signal readback,
+monitoring, raw output, actual timing and verified scope/process/monitor cleanup in fresh
+`.scratch/phase-b-R2c-root-019mkP/root/` evidence. No retry on failure or abort.
+
+Return an explicit result/cleanup/**release** receipt through parent browser. The slot remains
+reserved until this coordinator verifies that receipt. A root pass advances only R2c root
+qualification; full-suite qualification remains pending. There is no full/build/live grant,
+automatic next selection, new writer, host/security-setting change, commit or merge authority.
+P's accepted root/full evidence and all failed artifacts remain preserved. Vehicle issue 39
+remains a separate pending product decision.

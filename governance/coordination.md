@@ -171,13 +171,25 @@ R/build/live selection or automatic retry. Full evidence path is fresh; preserve
 artifacts. No actual test/scope or owner message launched here. Reservation persists until
 explicit owner release is independently verified.
 
-**CURRENT SLOT: FREE / RELEASED — 13:01 AEDT (master §26).** P FULL-01 completed
+**Previous slot: FREE / RELEASED — 13:01 AEDT (master §26).** P FULL-01 completed
 12:57:30 AEDT: **1,941 passed, pytest exit 0; supervision held with no abort reasons**.
 The owner explicitly released at 12:57:58; current scope/process cleanup was independently
 verified at 13:01:14. Exact P/vehicle/driver unchanged; caps and monitoring held. P has passing
 root (592) and full (1,941) evidence only; no R/build/live qualification or next grant follows.
 Original failed full and paired diagnostics remain separate preserved evidence. Vehicle issue
 39 decisions remain pending; ELSPETH admission still waits for John's root-command output.
+
+**CURRENT SLOT: RESERVED — `SPACE-20261011-R2C-ROOT-01`, 13:58 AEDT (master §27).** John's
+direct instruction authorises the existing chassis owner to run R2c root once. Supervisor
+`6eac1724…` reviewed against accepted `2557d326…`; both files compile and all 20 isolated controls
+pass. Exact tree `148a31c4…` and clean vehicle `f4439964…` verified. Fresh host check at 13:57:45
+finds the slot clear (40.56 GiB available, CPU 13.4%, load1 2.80). Command from repository root:
+`nice -n 19 python3 .scratch/phase-b-R2c-root-019mkP/root.py SPACE-20261011-R2C-ROOT-01`.
+Root-only `pytest tests`, two workers maximum, verified 2 CPU/8 GiB scope, nice 19, restored
+SIGINT, five-second monitoring and 600-second test deadline. Owner must refresh admission,
+then return explicit result/cleanup/release; reservation persists until verified release.
+**Parent browser relay pending; nothing launched here.** This coordinator has no available
+browser surface or cross-task send tool. No full/build/live run or automatic retry is granted.
 
 | channel | for |
 |---|---|
