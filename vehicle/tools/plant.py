@@ -2974,7 +2974,7 @@ def _refuse_shared_node(world: World, state: State, where: str) -> None:
 
 
 
-def initial_values(world: World) -> dict[str, Any]:
+def initial_values(world: World, scenario: Scenario | None = None) -> dict[str, Any]:
     """The value map at t=0, from the states' own declared initial conditions.
 
     Until this existed the plant had no answer to "what is the vehicle holding at the start", and
@@ -3077,6 +3077,14 @@ def initial_values(world: World) -> dict[str, Any]:
     # empty rather than absent — the same distinction `state.json`'s gate map draws for a closed
     # gate and an unnamed one.
     values.setdefault("internal", {})
+    # A scenario's initial conditions replace the declared ones *before* the declared arithmetic is
+    # resolved, so a derivation over an overridden state reads the scenario's value at t=0.
+    for state_id, value in sorted((scenario.initial if scenario is not None else {}).items()):
+        state = next(s for s in world.states if s.id == state_id)
+        entries = state_values(world, state, value)
+        if state.node == "internal":
+            entries["internal"] = {**values["internal"], **entries["internal"]}
+        values.update(entries)
     resolve_declared_states(world, values)
     return values
 
@@ -3341,6 +3349,137 @@ def step(
     #    one per boundary: the queue splits the *integration*, and §6's compare-point is a per-tick
     #    statement about where the vehicle ended up.
     return committed
+
+
+# ------------------------------------------------------------------------------------------------
+# **The scenario overlay** (`docs/vehicle-completion/09-quiet-coast-episode.md` §7, step 1).
+#
+# An episode starts the declared vehicle from somewhere else and lets it be commanded by fewer verbs.
+# Neither is a change to the vehicle, so neither is written into it: a scenario file names the states
+# whose MET-0 value it replaces, the verbs the episode admits, and — for batch mode — the effects a
+# scripted policy applies at given ticks. The file is data and the plant refuses it by name where it
+# names a state, a verb or a stamp the vehicle does not have.
+#
+#     scenario: quiet_coast
+#     initial:                          # state id -> its value at MET 0 in this scenario
+#       recorder: 1.6e8
+#       load_enabled: {csm_lighting: "on"}
+#     verbs: [set_comm_mode, play_recorder]   # the allow-list; absent means every registered verb
+#     script:                           # batch mode: effects applied at a tick, in stamp order
+#       - {tick: 0, offset_us: 0, verb: set_comm_mode, arguments: {mode: sband_high}}
+# ------------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Scenario:
+    """An episode's overlay on the declared vehicle: initial conditions, admitted verbs, a script."""
+
+    name: str
+    initial: dict[str, Any] = field(default_factory=dict)
+    # `None` admits every registered verb; a set admits those and refuses the rest.
+    verbs: frozenset[str] | None = None
+    # tick -> the effects a scripted policy applies in that tick, already validated.
+    script: dict[int, list[Effect]] = field(default_factory=dict)
+
+    def admit(self, verb: str) -> None:
+        """Refuse a verb the episode does not admit — the check the executive makes at effect time."""
+        if self.verbs is not None and verb not in self.verbs:
+            raise EffectRefused(
+                f"scenario {self.name}: {verb!r} is not one of the episode's verbs "
+                f"({', '.join(sorted(self.verbs))}), so it is refused rather than applied"
+            )
+
+    def effects_at(self, tick: int) -> list[Effect]:
+        return list(self.script.get(tick, []))
+
+
+def load_scenario(world: World, path: Path) -> Scenario:
+    """Read a scenario file against the world, or refuse it by name — never by dropping a line."""
+    doc = load_yaml(path)
+    where = path.name
+    by_id = {state.id: state for state in world.states}
+    name = str(doc.get("scenario") or path.stem)
+
+    initial: dict[str, Any] = {}
+    for state_id, value in (doc.get("initial") or {}).items():
+        state = by_id.get(str(state_id))
+        if state is None:
+            raise Unconfigured(f"{where}:initial.{state_id}", "names a state no domain declares")
+        if value is None or unset_paths(value) or value == "UNCONFIGURED":
+            raise Unconfigured(
+                f"{where}:initial.{state_id}",
+                "is unset; a scenario replaces a starting value with a value, never with a debt",
+            )
+        if state.method == "stock" and not (
+            isinstance(value, int | float) and not isinstance(value, bool) and value >= 0
+        ):
+            raise Unconfigured(
+                f"{where}:initial.{state_id}",
+                f"is {value!r}; a stock starts at a non-negative amount",
+            )
+        initial[state.id] = (
+            float(value) if isinstance(value, int) and state.method == "stock" else value
+        )
+
+    verbs: frozenset[str] | None = None
+    if doc.get("verbs") is not None:
+        verbs = frozenset(str(v) for v in doc["verbs"])
+        unknown = sorted(verbs - set(world.verbs))
+        if unknown:
+            raise Unconfigured(f"{where}:verbs", f"names {unknown}, which no domain registers")
+
+    dt = tick_seconds(world)
+    script: dict[int, list[Effect]] = {}
+    for index, row in enumerate(doc.get("script") or []):
+        at = f"{where}:script[{index}]"
+        tick = row.get("tick") if isinstance(row, dict) else None
+        if not isinstance(tick, int) or isinstance(tick, bool) or tick < 0:
+            raise Unconfigured(at, f"has tick {tick!r}; a script is keyed by a non-negative tick")
+        effect = Effect(
+            offset_us=row.get("offset_us", 0),
+            verb=str(row.get("verb")),
+            arguments=dict(row.get("arguments") or {}),
+        )
+        if verbs is not None and effect.verb not in verbs:
+            raise Unconfigured(
+                at, f"applies {effect.verb!r}, which the scenario's own `verbs` refuses"
+            )
+        try:
+            _stamped(world, dt, [effect])
+        except EffectRefused as exc:
+            raise Unconfigured(at, str(exc)) from None
+        script.setdefault(tick, []).append(effect)
+    return Scenario(name=name, initial=initial, verbs=verbs, script=script)
+
+
+def run_scenario(
+    world: World,
+    scenario: Scenario,
+    ticks: int,
+    *,
+    values: dict[str, Any] | None = None,
+    start_tick: int = 0,
+    on_tick: Callable[[int, dict[str, Any], Ledger, list[Gap]], None] | None = None,
+) -> dict[str, Any]:
+    """Batch mode: `ticks` ticks from `start_tick`, applying the script's effects at their ticks.
+
+    Starts from the scenario's initial values unless `values` is given (a restored checkpoint), so
+    a run stopped at tick N and resumed with the values it had reaches the same state as one that
+    never stopped. `on_tick(tick, values, ledger, gaps)` is called after every tick — the per-tick
+    truth trace an evaluator reads.
+    """
+    dt = tick_seconds(world)
+    current = values if values is not None else initial_values(world, scenario)
+    for tick in range(start_tick, start_tick + ticks):
+        effects = scenario.effects_at(tick)
+        for effect in effects:
+            scenario.admit(effect.verb)
+        ledger = Ledger()
+        gaps: list[Gap] = []
+        current = step(world, current, dt, gaps, effects or None, ledger=ledger)
+        if on_tick is not None:
+            on_tick(tick, current, ledger, gaps)
+    return current
 
 
 def _tick_us(dt: float) -> int:
