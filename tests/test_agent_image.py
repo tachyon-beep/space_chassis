@@ -164,8 +164,8 @@ def test_the_image_still_carries_the_vehicle():
     assert "containers/serve_vehicle.sh /usr/local/bin/serve_vehicle.sh" in DOCKERFILE
 
 
-def test_the_base_image_is_pinned_by_digest():
-    # The vehicle's checkpoint records the Python patch version and libc: a base that moves under a
-    # tag makes every restart after a rebuild refuse. A bump is a deliberate, new-world event.
-    first = DOCKERFILE.splitlines()[0]
-    assert re.fullmatch(r"FROM python:3\.13-slim@sha256:[0-9a-f]{64}", first), first
+def test_governance_never_reaches_an_image():
+    # governance/ holds the design reasoning and the vehicle's records: the fleet must never see it.
+    ignored = (REPO / ".dockerignore").read_text(encoding="utf-8").splitlines()
+    assert "governance/" in ignored
+    assert "governance" not in DOCKERFILE

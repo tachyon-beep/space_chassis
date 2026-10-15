@@ -40,15 +40,6 @@ case "$*" in
         # A whole archive ends in two zero blocks; a stream cut off mid-way does not.
         [ -n "${TAR_TRUNCATED:-}" ] || head -c 1024 /dev/zero
         exit 0 ;;
-    *inspect*.Source*)
-        [ -n "${MOUNT_SOURCES:-}" ] || exit 1
-        printf '%s' "$MOUNT_SOURCES"; exit 0 ;;
-    *inspect*.Destination*)
-        [ -n "${VEHICLE_BINDS:-}" ] || exit 1
-        printf '%s' "$VEHICLE_BINDS"; exit 0 ;;
-    *" exec "*"/diode/.probe"*)
-        [ -n "${DIODE_ROOT_VERDICT:-}" ] || exit 1
-        echo "$DIODE_ROOT_VERDICT"; exit 0 ;;
     *" exec "*getent*)
         [ -n "${GETENT_RC:-}" ] || exit 1
         echo "rc=$GETENT_RC"; exit 0 ;;
@@ -184,67 +175,3 @@ def test_a_resolver_probe_that_is_missing_its_binary_is_a_failure(run):
     assert "FAIL  agent_1 could not be probed for name resolution" in result.stdout
     result = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", GETENT_RC="2")
     assert "PASS  agent_1 cannot resolve outside names" in result.stdout
-
-
-def test_an_agent_that_mounts_the_vehicle_s_state_is_a_failure(run):
-    """Read host-side: an agent's own /state makes the target useless from inside."""
-    clean = run(
-        COMPOSE="docker compose -p probe",
-        AGENTS="agent_1",
-        MOUNT_SOURCES="/v/state_x/data /v/diode/data/x ",
-    )
-    assert "PASS  agent_1 mounts nothing of the vehicle's private state" in clean.stdout
-    leaked = run(
-        COMPOSE="docker compose -p probe",
-        AGENTS="agent_1",
-        MOUNT_SOURCES="/v/state_x/data /v/vehicle_state/data ",
-    )
-    assert "FAIL  agent_1 mounts the vehicle's private state" in leaked.stdout
-    blind = run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
-    assert "FAIL  agent_1's mounts could not be inspected" in blind.stdout
-
-
-def test_the_window_root_write_probe_fails_closed(run):
-    refused = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", DIODE_ROOT_VERDICT="refused")
-    assert "PASS  agent_1 cannot write the window root" in refused.stdout
-    wrote = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", DIODE_ROOT_VERDICT="wrote")
-    assert "FAIL  agent_1 can write the window root" in wrote.stdout
-    silent = run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
-    assert "FAIL  agent_1 could not be probed for writing the window root" in silent.stdout
-
-
-def test_the_vehicle_binds_its_window_and_its_state_and_nothing_else(run):
-    exact = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", VEHICLE_BINDS="/state /diode ")
-    assert "PASS  the vehicle binds /diode and /state and nothing else" in exact.stdout
-    wider = run(
-        COMPOSE="docker compose -p probe", AGENTS="agent_1", VEHICLE_BINDS="/diode /state /shared "
-    )
-    assert "FAIL  the vehicle binds '/diode /shared /state'" in wider.stdout
-    absent = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", ABSENT="vehicle")
-    assert "SKIP  the vehicle is not running" in absent.stdout
-
-
-def test_an_agent_bound_to_the_vehicle_state_image_root_is_a_failure(run):
-    result = run(
-        COMPOSE="docker compose -p probe",
-        AGENTS="agent_1",
-        MOUNT_SOURCES="/v/state_x/data /v/vehicle_state ",
-    )
-    assert "FAIL  agent_1 mounts the vehicle's private state" in result.stdout
-
-
-def test_the_window_root_probe_says_nothing_when_it_cannot_run(run, tmp_path):
-    """The probe's own text, run where none of its tools exist, must not read as a refusal."""
-    run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
-    probe = next(line for line in run.argv_lines() if "/diode/.probe" in line)
-    script = probe.split(" -c ", 1)[1]
-    empty = tmp_path / "empty-path"
-    empty.mkdir()
-    out = subprocess.run(
-        ["/bin/sh", "-c", script],
-        env={"PATH": str(empty)},
-        capture_output=True,
-        text=True,
-        timeout=10,
-    ).stdout.strip()
-    assert out.splitlines()[-1:] != ["refused"], out

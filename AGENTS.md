@@ -6,6 +6,12 @@ ground for Claude Code, `docs/design.md` is the rationale for every decision her
 `docs/superpowers/specs/2026-10-09-aurora-port-design.md` is the design of the world as it now is —
 read those before arguing with a rule below.
 
+## Governance
+
+Start at `governance/README.md`: who owns what across the two lines of work (the chassis, this
+repository; the vehicle, `tachyon-beep/space_vehicle`), each line's current state, its decisions,
+how it is worked, and what is open. It is never copied into an image.
+
 ## The scope boundary
 
 **This repository builds everything except the vehicle.** Nothing here models physics or names a

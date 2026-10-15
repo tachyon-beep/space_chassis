@@ -38,6 +38,7 @@ PERMANENT = (
     "tests/test_retired.py",  # this file names what it bans
     "docs/superpowers/",  # the specs and plans: the record of how the port was made
     "docs/deep_research/",  # the frozen corpus (CLAUDE.md: its map is integration/)
+    "governance/",  # the two lines' decision logs and records: history, kept as it was written
 )
 
 
@@ -101,3 +102,8 @@ def test_claude_md_says_home_is_a_tmpfs_that_does_not_persist():
     assert re.search(r"HOME[^\n]*/home/agent[^\n]*tmpfs[^\n]*does not persist", text), (
         "CLAUDE.md must state HOME is a tmpfs that does not persist"
     )
+
+
+def test_the_governance_record_may_name_what_was_retired():
+    # governance/'s decision logs and records are history; the guard holds the living tree.
+    assert "governance/" in PERMANENT

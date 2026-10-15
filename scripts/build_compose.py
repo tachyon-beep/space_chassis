@@ -294,7 +294,7 @@ def _diode() -> str:
     return text + LOGGING
 
 
-def _vehicle(count: int) -> str:
+def _vehicle() -> str:
     text = (
         "  # The vehicle: the reference console, serving into the same window image the fleet reads.\n"
         "  # `diode` above is the contract fixture; start one or the other. No network at all: its\n"
@@ -305,9 +305,6 @@ def _vehicle(count: int) -> str:
         f"    image: {IMAGE}\n"
         '    entrypoint: ["/usr/local/bin/serve_vehicle.sh"]\n'
         "    restart: unless-stopped\n"
-        # docker-init forwards SIGTERM to the exec'd console, which installs no handler: as PID 1 it
-        # would ignore `docker stop` until the SIGKILL.
-        "    init: true\n"
         '    profiles: ["vehicle"]\n'
         "    network_mode: none\n"
     )
@@ -315,7 +312,6 @@ def _vehicle(count: int) -> str:
         (
             ("DIODE_DIR", "/diode"),
             ("VEHICLE_DIR", "/opt/vehicle"),
-            ("VEHICLE_STATE_DIR", "/state"),
             # Which windows to serve: every agent's slug, from the roster in .env.
             ("VEHICLE_SLUGS", "${VEHICLE_SLUGS:-${FLEET_SLUGS:-vehicle}}"),
             ("VEHICLE_SCENARIO", "${VEHICLE_SCENARIO:-nominal}"),
@@ -324,7 +320,7 @@ def _vehicle(count: int) -> str:
             ("VEHICLE_RING_SLOTS", "${VEHICLE_RING_SLOTS:-300}"),
         )
     )
-    text += f"    volumes:\n      - {WINDOW_BIND}\n" + _binds("vehicle", None, count)
+    text += f"    volumes:\n      - {WINDOW_BIND}\n"
     text += (
         "    read_only: true\n"
         "    tmpfs: [/tmp]\n"
@@ -363,7 +359,7 @@ def build_text(count: int = DEFAULT_COUNT) -> str:
         "\n",
         _diode(),
         "\n",
-        _vehicle(count),
+        _vehicle(),
         "\n",
         NETWORKS,
     ]

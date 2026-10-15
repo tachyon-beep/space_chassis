@@ -19,6 +19,8 @@ site/
 
 .git/
 .github/
+# The two lines' governance: design reasoning and the vehicle's records, never the fleet's to read.
+governance/
 .scratch/
 # The smoke stack builds after it prepares, so its scratch root is beside the context.
 .smoke-*/

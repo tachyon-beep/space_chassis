@@ -34,6 +34,14 @@ not in it: it starts containers. The smoke stack `live/stack.py` builds (three a
 recorders, the cued stub model in `live/stub_llm.py`, the contract fixture as the window, a dummy
 key) is the fastest way to see whether the world still works end to end.
 
+## Governance
+
+`governance/README.md` is the place to start: the project divides into two lines with nothing
+shared, the chassis (this repository, except the vehicle) and the vehicle (`tachyon-beep/space_vehicle`).
+It holds each line's snapshot, decision log, practice, interface and open items, and the rules for
+coordinating between them. The chassis line owns `governance/` except `governance/vehicle/`, which
+the vehicle line writes and the chassis commits verbatim. Nothing in it may reach an image.
+
 ## The scope boundary
 
 **This repository builds everything except the vehicle.** Nothing here models physics or names a
@@ -67,7 +75,7 @@ agent's: it may rewrite any of it, the watchdog included.
 | `/shared` | one image every agent reads and writes | the fleet |
 | `pump/pump.py` → `/usr/local/bin/pump.py`; `recorder/` → `/usr/local/lib/recorder/` | the scheduler, and the recorder its own container runs | the operator; outside `/work` |
 | `services/` → `/opt/services` | `common`, `health`, `fleet_monitor`, `review`: the operator's monitor and panel | the operator |
-| `docs/deep_research/vehicle/` → `/opt/vehicle` | the vehicle, run by the `vehicle` service with no network: one process for every window, its slugs `VEHICLE_SLUGS`, its private state (checkpoints, lock, record) on its own `/state` image that nothing else mounts | the vehicle's repository; its deployment is ours |
+| `docs/deep_research/vehicle/` → `/opt/vehicle` | the vehicle, run by the `vehicle` service with no network | the vehicle's repository |
 | `brief/` → `/opt/brief` | what the agents are told, read-only; each claim it and the prompts make is sourced in `docs/brief-claims.md` | the operator |
 | transcripts, `fleet_ledger`, `operator_telemetry`, `operator/journal/` | the record and the operator's view of it; no agent mounts them | the operator |
 
