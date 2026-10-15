@@ -213,10 +213,12 @@ else:
     fi
 
     # 6b. Nothing of the vehicle in the agent's image (John, 2026-10-10: no risk of information
-    #     sharing): no /opt/vehicle, no serve script, and none of the vehicle's files by name
-    #     anywhere on the container's own filesystem. The agent's own window, /diode, is published to
-    #     it by contract and is not searched. A missing `find` says nothing, which fails.
-    case $(verdict "$agent" sh -c 'command -v find >/dev/null 2>&1 || exit 0; hits=$(find / -xdev \( -path /proc -o -path /sys -o -path /diode \) -prune -o \( -path /opt/vehicle -o -name serve_vehicle.sh -o -name mission.yaml -o -name vehicle.yaml -o -name coupling.yaml -o -name plant.md -o -name fault_policy.yaml \) -print 2>/dev/null | head -n 1); if [ -n "$hits" ]; then echo present; else echo absent; fi') in
+    #     sharing): no /opt/vehicle, no serve script, and none of the vehicle's files by name on the
+    #     image's root filesystem (`-xdev`: mounts are not searched; the window /diode/<slug> is
+    #     published by contract). The search must find a sentinel every image has, the entrypoint:
+    #     the sentinel alone is absent, the sentinel and anything else is present, and no sentinel
+    #     means the search did not run as written -- it prints nothing, which fails.
+    case $(verdict "$agent" sh -c 'command -v find >/dev/null 2>&1 || exit 0; out=$(find / -xdev \( -path /usr/local/bin/entrypoint.sh -o -path /opt/vehicle -o -name serve_vehicle.sh -o -name mission.yaml -o -name vehicle.yaml -o -name coupling.yaml -o -name plant.md -o -name fault_policy.yaml \) -print 2>/dev/null); case "$out" in /usr/local/bin/entrypoint.sh) echo absent ;; *"/usr/local/bin/entrypoint.sh"*) echo present ;; esac') in
         absent) ok "$agent has no vehicle in its image" ;;
         present) bad "$agent can read the vehicle" ;;
         *) bad "$agent could not be probed for the vehicle" ;;

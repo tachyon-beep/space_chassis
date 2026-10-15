@@ -61,9 +61,11 @@ docker compose --profile fleet up --build
 python3 scripts/status.py           # one line per agent
 ```
 
-The vehicle runs from an image of its own, the only one that carries it, so no agent can read it.
-A bare `docker compose build`, or `up --build`, skips the profiled vehicle: build it by name with
-`docker compose --profile vehicle build` before starting it, and again after any change to it.
+The vehicle runs from an image of its own, the only one that carries it: no agent's image holds any
+of it. (Until the vehicle adoption lands, the pinned vehicle still writes the run's scenario and seed
+into each agent's window; see `governance/chassis/open.md`.) A bare `docker compose build`, or
+`up --build`, skips the profiled vehicle: build it by name with
+`docker compose --profile vehicle build vehicle` before starting it, and again after any change to it.
 Rebuilding the agents' image no longer rebuilds the vehicle's.
 
 Every volume an agent or a recorder writes is a preallocated ext4 image,

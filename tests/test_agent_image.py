@@ -222,6 +222,8 @@ def test_the_base_stage_copies_exactly_its_allow_list():
     assert sources == BASE_COPY_SOURCES
     assert not {".", "docs/", "containers/"} & set(sources)
     assert not [line for line in base if "/opt/vehicle" in line or "serve_vehicle" in line]
+    # COPY is not the only way into a stage: no ADD, and no build-time bind of the context.
+    assert not [line for line in base if line.startswith("ADD ") or "--mount" in line]
 
 
 def test_the_vehicle_stage_adds_the_vehicle_and_its_entrypoint_only():

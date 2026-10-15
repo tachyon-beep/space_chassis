@@ -78,4 +78,4 @@ def test_the_quick_start_builds_the_crate_registry_before_host_preparation():
 def test_the_quick_start_builds_the_vehicle_image():
     # A bare `docker compose build` skips the profiled vehicle; its image is built by name.
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "docker compose --profile vehicle build" in readme
+    assert "docker compose --profile vehicle build vehicle" in readme

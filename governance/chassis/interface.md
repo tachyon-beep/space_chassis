@@ -34,12 +34,13 @@ commit, never before.
 
 ## What the agents see of the vehicle
 
-Each agent binds only its own `/diode/<slug>` and cannot write the window root.
-`scripts/verify_containment.sh` holds that, plus "no agent mounts `vehicle_state`" (read host-side)
-and "the vehicle binds `/diode` and `/state` and nothing else".
+Each agent binds only its own `/diode/<slug>` (`scripts/verify_containment.sh` check 5). With the
+adoption (`vehicle-adoption`), the script also checks that no agent can write the window root, that no
+agent mounts `vehicle_state` (read host-side), and that the vehicle binds `/diode` and `/state` and
+nothing else.
 
 **No agent's image carries the vehicle** (plan 8, 2026-10-10). `verify_containment.sh` sweeps each
-agent's filesystem for it by name. Before the split, every agent could read every
+agent image's root filesystem for it by name (not its mounts). Before the split, every agent could read every
 `domains/*/fault_policy.yaml` and run `tools/console.py --plan` for the mission's fault schedule.
 **Open, P1, the window half (`open.md`):** at the pinned `dd79e76` the vehicle writes the run's
 scenario, seed and armed faults into each agent's own `pending.json`. That closes with the adoption.
