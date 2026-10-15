@@ -139,7 +139,7 @@ remaining cleanup corrections from the existing owner via parent browser; no new
 or framework expansion. Capacity/occupancy and exact P/vehicle/test identities remain suitable;
 no new test/scope was observed or launched. No renewed diagnostic or broad/R/build/live grant.
 
-**CURRENT SLOT: RESERVED FOR CHASSIS DIAGNOSTICS — SPACE-20261011-P-DIAG-02, 12:08 AEDT
+**HISTORICAL DIAGNOSTIC GRANT — SPACE-20261011-P-DIAG-02, 12:08 AEDT
 (master §23).** Both bounded cleanup blockers are fixed in supervisor `2ead42be…`; independent
 source review and rerun of its 20 isolated controls pass. Fresh capacity and exact P/vehicle/test
 identities permit renewal for the existing owner `[8a7d49]`, pending parent browser delivery.
@@ -149,6 +149,16 @@ five-second monitoring, 600-second outer deadline and explicit release accountin
 Use fresh `phase-b-diag-P-019mkP-r2/arm1` and `/arm2`; retain all failed evidence. The supervisor's
 embedded DIAG-01 label is historical: the owner's outer receipts must identify DIAG-02 and the
 exact reviewed hash. No real test/scope launched here, no broad/R/build/live grant or new writer.
+
+**CURRENT SLOT: FREE / RELEASED — 12:17 AEDT (master §24).** DIAG-02's explicit release and
+both arms' cleanup are independently verified. Original SIGINT inheritance reproduced the
+unchanged test's 120-second failure; restored SIGINT passed it. Supervision held for both,
+with exact P/vehicle/test, enforced caps and no observed OOM/abort. The causal diagnosis is
+accepted; full qualification remains outstanding. No corrected full-suite adaptation is yet
+present for review: gate-v2.sh is the previously rejected unchanged version, while diag.py is
+single-node/600-second only. Parent browser should request the existing owner's minimal full
+adaptation and exact hash, then fresh review/grant. Root need not repeat. No full/R/build/live
+grant, new writer or real execution by this coordinator.
 
 | channel | for |
 |---|---|

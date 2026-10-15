@@ -1361,3 +1361,69 @@ Only this coordinator may mark the slot free after verifying that receipt. The o
 full result remains unqualified. Any broad rerun requires a separate review/readiness decision
 and fresh grant. Parent alone sends the browser message; no owner message or real test/scope
 was launched by this coordinator.
+
+## 24. DIAG-02 accepted and released; full-driver handoff pending — 2026-10-11 12:17 AEDT
+
+**Current slot: FREE / RELEASED.** Existing owner `[8a7d49]` explicitly released DIAG-02 in
+`.scratch/phase-b-diag-P-019mkP-r2/RECEIPT-DIAG-02.md`, SHA256
+`19735575f8e548d78eb73d73bc3c2c580250b844b6526c8296c59f5bc68c97e8`.
+The outer grant mapping/release log SHA256 is
+`a97a5e37568cc1d19bb403c29d017e68c2425fa14b892c80856e8337fc284faa`.
+Its explicit release is timestamped **12:14:01 AEDT**. This coordinator verified the underlying
+arm receipts, raw logs, launcher records, monitoring and current host cleanup before marking
+the reservation released. Neither the original full failure nor DIAG-01's pre-test abort is erased.
+
+| Selection, exactly once | Released / terminal receipt (AEDT) | Raw pytest outcome | Supervision |
+|---|---|---|---|
+| arm 1, inherited ignored SIGINT | 12:10:58 / 12:13:08 | exit 1, one failed; same node, 120-second timeout at `interrupted_console`'s `communicate(timeout=120)` | held, no abort reasons; cleanup verified |
+| arm 2, SIGINT restored | 12:13:23 / 12:13:33 | exit 0, one passed | held, no abort reasons; cleanup verified |
+
+Both arms used exact supervisor `2ead42be…` and unchanged launcher `91a813dc…`. The launcher
+records and observed pytest/worker/helper processes show SIGINT ignored throughout arm 1 and
+not ignored in arm 2. All observed scoped processes were nice 19. Before/after identity receipts
+match P `af671d04908817e914668750b7cd4f6f74034bf4`, vehicle
+`f44399645fb2633e695a5d758cb5a41f43fb848c`, and unchanged test-file SHA256
+`3b917de30861c432c467d92d6a75b1faf7b31cd0e62626dfde095997110c4a53`.
+Scope readbacks were `cpu.max=200000 100000`, `memory.max=8589934592` before release.
+
+Raw log hashes match their result receipts: arm 1
+`abf5edc7875950b4e5a9de2baa13289e920ff826eb783739c993ef9bbc5bf51a`; arm 2
+`0e0e01393285e70131d7f525375b9e0e3dab6d212f4b7bd06e6264b91c7d4cdf`.
+Independent aggregation found 27/3 monitor samples, minimum available RAM 42,086/42,137 MiB,
+maximum CPU busy 17.7/17.6%, maximum load1 2.61/2.82, and no observed OOM events or abort
+threshold crossings. Arm 1 cleanup completed before arm 2 admission.
+
+**Accepted causal finding:** restoring SIGINT at launch is sufficient to make this unchanged
+test pass; preserving the original launch inheritance reproduces the original failure at the
+same site. This establishes the gate-driver launch confound for that failure, with no product
+or test change. It does **not** qualify the full P suite or exclude other failures in a new run.
+
+Independent host check at **12:16:35 AEDT** found both
+`space-chassis-pdiag-arm1-1791681055.scope` and
+`space-chassis-pdiag-arm2-1791681200.scope` not-found/inactive with absent cgroups, no remaining
+matching launcher/diagnostic/pytest/worker/helper process, no Space scopes and no Compose
+projects. Available RAM **41.4 GiB**, sampled CPU busy **13.9%**, load **2.51/2.58/2.66**.
+Current tracked/index P identity, clean pinned vehicle and test-file hash remain exact.
+
+### Precise remaining full-rerun prerequisite
+
+No minimally adapted corrected full-suite driver was found in the owner evidence directories
+or scratch inventories inspected for this handoff. The full-capable
+`.scratch/phase-b-gates-P-019mkP/gate-v2.sh` remains SHA256
+`b924a9a9829fdeaab6120cc53cce0899d56bad0b1af9cb6e5e693ab76b6a679f`, unchanged from section 20's
+rejected supervision. The accepted Python supervisor remains diagnostic-only: hardcoded node,
+arm1/arm2 selection and a 600-second diagnostic deadline. Neither can be granted as the
+corrected full-suite driver on the current evidence.
+
+Parent browser relay should request the **existing owner's minimal full-suite adaptation** of
+the accepted supervisor and unchanged SIGINT-restoring launcher, in fresh evidence paths.
+Retain its admission, verified caps, monitoring, outcome/identity checks, bounded cleanup and
+explicit release; select only `python3 -m pytest -q -p no:cacheprovider -n 2`, always restoring
+SIGINT. Set a full-suite-appropriate outer safety deadline rather than retaining the diagnostic
+ten-minute limit, and submit the exact path/hash plus minimal diff for review before launch.
+No new framework or unrelated supervisor expansion is requested. **No root duplicate is
+needed:** P/product/tests have not changed and the 592-pass root evidence remains valid.
+
+The coordinator may grant P full only after that concrete driver review and refreshed capacity.
+No full grant, real test/scope execution, owner/browser message, new writer, R/build/live run,
+product/test edit or automatic retry occurred here. P/R and all failed evidence remain preserved.
