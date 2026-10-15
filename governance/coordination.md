@@ -1,6 +1,6 @@
 # Coordination between the lines
 
-As of **2026-10-10 19:51 AEDT**, `tachyon-beep/space_chassis` `aurora-port` @ `db1ed2d`. Owned by the chassis
+As of **2026-10-10 19:54 AEDT**, `tachyon-beep/space_chassis` `aurora-port` @ `3ec1b4e`. Owned by the chassis
 line, from a draft by the vehicle line. **Verify against the code before trusting any line here.**
 
 ## Programme leadership — 2026-10-10
