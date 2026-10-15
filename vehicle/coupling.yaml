@@ -312,7 +312,21 @@ nodes:
   bus_a:             {domain: power, kind: state,   unit: V,  apollo: "73-75"}
   bus_b:             {domain: power, kind: state,   unit: V,  apollo: "74"}
   bus_tie:           {domain: power, kind: discrete, unit: enum, apollo: "79"}
-  load_shed_state:   {domain: power, kind: discrete, unit: enum, apollo: "48"}
+  # `load_shed_state` carries two states: the ladder's class, and `load_enabled`, the switch position
+  # of every load (a map, so `key_space: by_state`). Together they are which loads the bus feeds. A
+  # node rather than the sentinel for the switches because thermal reads them too.
+  load_shed_state:
+    domain: power
+    kind: discrete
+    unit: enum
+    apollo: "48, :237"
+    key_space: by_state
+    state_order: independent
+    state_order_note: >-
+      the switch map is written by `set_load` and the ladder's class by the bus voltage
+      (`E-BUS-SHED`); neither reads the other within a tick, so there is no order to get wrong.
+      When the ladder is built and opens loads itself, it will write switch positions and this
+      becomes an order
 
   # --- thermal: lumped nodes plus the transport that an RC network loses ---------------
   coolant_flow:
@@ -2021,6 +2035,7 @@ edges:
   - id: E-BUS-SHED
     from: bus_a
     to: load_shed_state
+    advances: load_shed_class
     kind: discrete
     sensitivity:
       unit: shed tier
@@ -2056,6 +2071,14 @@ edges:
   - id: E-CMD-TIE
     from: command_executive
     to: bus_tie
+    kind: discrete
+    sensitivity: {value: 1.0, unit: "-", basis: derived, relation: "the coupling is the signal itself; one unit in, one unit out", at: nominal}
+  # `set_load`'s path to the load switches, the same unity signal as the rest of the family. It
+  # advances the switch map only: the ladder's class beside it on the node is not commanded.
+  - id: E-CMD-LOAD
+    from: command_executive
+    to: load_shed_state
+    advances: load_enabled
     kind: discrete
     sensitivity: {value: 1.0, unit: "-", basis: derived, relation: "the coupling is the signal itself; one unit in, one unit out", at: nominal}
   - id: E-CMD-ATM

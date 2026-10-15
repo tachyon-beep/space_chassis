@@ -2883,7 +2883,7 @@ def driver_nodes(world: World, state: State) -> list[str]:
 def state_values(world: World, state: State, value: Any) -> dict[str, Any]:
     """The map entries one state's new value belongs under.
 
-    **The value space was keyed by node, and ten nodes carry more than one state.** `cabin_atm`
+    **The value space was keyed by node, and eleven nodes carry more than one state.** `cabin_atm`
     carries four gas masses and a pressure, so `values["cabin_atm"]` held whichever the loader wrote
     last — and the first tick after the plant learned to evaluate derivations set `csm_cabin_o2_kg` to
     the *water vapour's* mass, and `lm_cabin_o2_kg` to the nitrogen's. Two plausible numbers of
@@ -2947,8 +2947,9 @@ def _refuse_shared_node(world: World, state: State, where: str) -> None:
     """Refuse a state whose node carries another state, because the value map cannot hold both.
 
     The map is keyed by node, so two states on one node overwrite each other and whichever advanced
-    first reads the other's number on the next tick. Ten nodes carry more than one state —
-    eleven until round 70 took the source regulator off the fuel cell's node;
+    first reads the other's number on the next tick. Eleven nodes carry more than one state — ten
+    after round 70 took the source regulator off the fuel cell's node, and eleven again once
+    `load_enabled` joined `load_shed_state`;
     `cabin_atm` and `lm_cabin_atm` carry five each. The fix is a key-space change and the reason this
     is a refusal rather than a repair: a value of the wrong quantity is indistinguishable from a
     right one on a panel.
@@ -3846,7 +3847,14 @@ def _stage_element(
     """
     key = "internal" if state.node == "internal" else state.node
     outer = dict(staged.get(key) or values.get(key) or {})
-    elements = dict(outer.get(state.id) or {})
+    # **The elements start from the state's own key, which is the one every node writes.** A node
+    # carrying more than one state has no node key at all (`state_values`), so reading the elements
+    # only from `values[node]` started a keyed state on a shared node from an empty map, and one
+    # `set_load` wrote a map with one load in it: every other switch vanished. `load_enabled` on
+    # `load_shed_state` is the first keyed state on a shared node, and it is what showed it.
+    elements = dict(
+        staged.get(state.id) or outer.get(state.id) or values.get(state.id) or {}
+    )
     elements[element] = value
     outer[state.id] = elements
     staged[key] = outer
