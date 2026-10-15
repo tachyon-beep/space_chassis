@@ -46,8 +46,14 @@ def definition(tmp_path: Path, rules: str | None = None, extra_spec: str = "") -
         text = path.read_text()
         assert text.count(ANCHOR) == 1
         path.write_text(text.replace(ANCHOR, ANCHOR + extra_spec))
-    if rules is not None:
-        (destination / "domains" / "power" / "rules.py").write_text(rules)
+    # Power's real rules register `bus_b_v` (the quiet-coast bus solve). The fixture is the vehicle
+    # without that one rule, and a planted `rules` adds to the others rather than replacing them.
+    power_rules = destination / "domains" / "power" / "rules.py"
+    bare = power_rules.read_text() + f"\ndel RULES[{STATE!r}]\n" if power_rules.exists() else ""
+    if bare and rules is not None:
+        rules = rules.replace("RULES = {", "RULES = {**RULES, ", 1)
+    if bare or rules is not None:
+        power_rules.write_text(bare + "\n" + (rules or ""))
     return destination
 
 
@@ -74,7 +80,7 @@ def counts(world: plant.World) -> dict[str, int]:
 
 BUS_B_RULE = """
 def bus_b_v(inputs, params, dt):
-    return params["fixture_open_v"] - params["fixture_drop_v_per_w"] * inputs["fuel_cell_power_w"]
+    return params["fixture_open_v"] - params["fixture_drop_v_per_w"] * inputs["bus_b_load_w"]
 
 
 RULES = {"bus_b_v": bus_b_v}
@@ -82,11 +88,11 @@ RULES = {"bus_b_v": bus_b_v}
 BUS_B_PARAMS = "    fixture_open_v: 31.0\n    fixture_drop_v_per_w: 0.001\n"
 
 
-def test_the_vehicle_has_no_rule_yet_and_the_class_refusal_stands():
+def test_the_vehicle_has_no_rule_yet_and_the_class_refusal_stands(tmp_path):
     """Adding the seam changes no count: with no `rules.py` the refusals are the ones they were."""
-    assert not list((VEHICLE / "domains").glob(f"*/{plant.RULES_FILE}"))
-    world = plant.load_world(VEHICLE)
-    assert world.rules == {}
+    # Power's real rules solve `bus_b_v`; the fixture copy is the vehicle without that one rule.
+    world = plant.load_world(definition(tmp_path))
+    assert STATE not in world.rules
     _, gaps = tick(world)
     assert "its rule is not in the configuration" in gaps[STATE].owed
 
@@ -94,22 +100,22 @@ def test_the_vehicle_has_no_rule_yet_and_the_class_refusal_stands():
 def test_an_empty_rules_file_moves_no_bucket(tmp_path):
     """A `rules.py` that registers nothing is the seam with nothing in it: the build order is the vehicle's."""
     root = definition(tmp_path, "RULES = {}\n")
-    assert counts(plant.load_world(root)) == counts(plant.load_world(VEHICLE))
+    assert counts(plant.load_world(root)) == counts(plant.load_world(definition(tmp_path)))
 
 
 def test_a_registered_rule_advances_its_state_from_its_snapshot_and_its_declaration(tmp_path):
     root = definition(tmp_path, BUS_B_RULE, BUS_B_PARAMS)
     world = plant.load_world(root)
-    assert set(world.rules) == {STATE}
+    assert STATE in world.rules
     assert world.rules[STATE].source == "domains/power/rules.py"
 
     after, gaps = tick(world)
     assert STATE not in gaps, gaps.get(STATE)
-    expected = 31.0 - 0.001 * after["fuel_cell_power_w"]
+    expected = 31.0 - 0.001 * after["bus_b_load_w"]
     assert after[STATE] == pytest.approx(expected) and after["bus_b"] == after[STATE]
 
     # The worklist moves by exactly that state: out of "owes a rule", into "ready now".
-    before = counts(plant.load_world(VEHICLE))
+    before = counts(plant.load_world(definition(tmp_path)))
     now = counts(world)
     assert now["ready"] == before["ready"] + 1 and now["rule"] == before["rule"] - 1, (before, now)
 
@@ -119,11 +125,11 @@ def test_a_rule_reads_this_tick_s_value_of_a_state_scheduled_before_it(tmp_path)
     root = definition(tmp_path, BUS_B_RULE, BUS_B_PARAMS)
     world = plant.load_world(root)
     order = [s.id for s in world.states]
-    assert order.index("fuel_cell_power_w") < order.index(STATE)
+    assert order.index("bus_b_load_w") < order.index(STATE)
     started = plant.initial_values(world)
-    computed = started["fuel_cell_power_w"]
+    computed = started["bus_b_load_w"]
     # Last tick's value is planted wrong; the producer recomputes it before the rule reads it.
-    stale = {**started, "fuel_cell_power_w": computed + 500.0, "fuel_cell": computed + 500.0}
+    stale = {**started, "bus_b_load_w": computed + 500.0}
     after, _ = tick(world, stale)
     assert after[STATE] == pytest.approx(31.0 - 0.001 * computed)
 
@@ -144,7 +150,9 @@ def test_rules_are_called_in_the_derived_tick_order(tmp_path):
 
         world.rules[state_id] = plant.DomainRule(state_id, rule.domain, recording, rule.source)
     tick(world, plant.initial_values(world))
-    walk = [s.id for s in world.states if s.id in world.rules]
+    fixture = ("bus_b_v", "lcl_tripped")
+    walk = [s.id for s in world.states if s.id in fixture]
+    called = [state_id for state_id in called if state_id in fixture]
     # `initial_values` resolves `algebraic` rules at t=0 (bus_b_v), then the tick walks both.
     assert called[-2:] == walk == ["bus_b_v", "lcl_tripped"], called
 
