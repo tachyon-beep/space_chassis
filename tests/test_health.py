@@ -149,6 +149,8 @@ def test_tool_errors_are_counted_from_the_new_results_only_never_twice():
 def test_spend_sums_closes_inside_the_hour_and_counts_429_and_503_as_refused():
     def close(seconds, status, tokens=None, stream="core"):
         event = {"timestamp": at(seconds), "event": "close", "stream": stream, "status": status}
+        if status == 503:
+            event["refusal"] = "fleet ledger unavailable"
         if tokens is not None:
             event["usage"] = {"total_tokens": tokens}
         return event

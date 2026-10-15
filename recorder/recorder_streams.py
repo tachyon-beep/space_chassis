@@ -778,15 +778,21 @@ class StreamRegistry:
         """Start the shared pool's new clock hour.
 
         The pool's window is the clock hour, not a rolling one. Entries are
-        (ticket, tokens, in_flight). A reservation still in flight across the
-        boundary is carried into the new hour, where its settle corrects it
-        (John's decision, plan 4b); a settled or charged entry ages out with its
-        hour. Called with the lock already held.
+        (ticket, tokens, in_flight, hour admitted). A reservation still in flight
+        across the boundary is carried into the new hour, where its settle
+        corrects it (John's decision, plan 4b); a finished, settled or charged
+        entry ages out with its hour. Called with the lock already held.
         """
         hour = int(now // BUDGET_WINDOW)
         if hour != self._shared_hour:
             self._shared_hour = hour
-            self._shared_entries = [entry for entry in self._shared_entries if entry[2]]
+            # Carried one hour at most: a request still unsettled after that is not in flight but
+            # lost, and carrying it on would let lost requests hold the pool for good.
+            self._shared_entries = [
+                (held, spent, False, admitted)
+                for held, spent, flight, admitted in self._shared_entries
+                if flight and hour - admitted <= 1
+            ]
 
     def _shared_used(self):
         """Tokens held against the shared pool this hour. Lock already held."""
@@ -912,7 +918,7 @@ class StreamRegistry:
             self._ticket += 1
             ticket = self._ticket
             tokens.append((now, reserved, ticket))
-            self._shared_entries.append((ticket, reserved, True))
+            self._shared_entries.append((ticket, reserved, True, int(now // BUDGET_WINDOW)))
         return composed, None, ticket
 
     def settle(self, stream, ticket, tokens):
@@ -926,13 +932,20 @@ class StreamRegistry:
         if ticket is None:
             return
         if isinstance(tokens, bool) or not isinstance(tokens, (int, float)) or tokens < 0:
+            # Unknown usage keeps the reservation, but the request is over: no longer in flight,
+            # so it ages out with its hour (the security review of e70434f).
+            with self._lock:
+                self._shared_entries = [
+                    (entry[0], entry[1], False, entry[3]) if entry[0] == ticket else entry
+                    for entry in self._shared_entries
+                ]
             return
         tokens = int(tokens)
         with self._lock:
             self._shared_roll(self._clock())
             self._shared_entries = [
-                (held, tokens, False) if held == ticket else (held, spent, flight)
-                for held, spent, flight in self._shared_entries
+                (held, tokens, False, admitted) if held == ticket else (held, spent, flight, admitted)
+                for held, spent, flight, admitted in self._shared_entries
             ]
             history = self._token_histories.get(stream)
             if not history:
@@ -965,7 +978,7 @@ class StreamRegistry:
             self._ticket += 1
             self._token_histories.setdefault(stream, []).append((now, tokens, self._ticket))
             self._shared_roll(now)
-            self._shared_entries.append((self._ticket, tokens, False))
+            self._shared_entries.append((self._ticket, tokens, False, int(now // BUDGET_WINDOW)))
 
     def state(self, streams_enabled=False, console_error=None, now=None):
         """The current streams.json document."""

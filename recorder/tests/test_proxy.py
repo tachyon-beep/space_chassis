@@ -779,7 +779,11 @@ def test_a_streamed_exchange_is_recorded_like_a_buffered_one(
     assert entry["response"]["choices"][0]["finish_reason"] == "tool_calls"
     assert entry["response"]["usage"]["total_tokens"] == 15
 
-    closes = [event for event in _events(transcripts) if event["event"] == "close"]
+    # The close event follows the transcript line, which it reports on (plan 4b), so it is
+    # waited for like the line itself.
+    closes = _wait_until(
+        lambda: [event for event in _events(transcripts) if event["event"] == "close"]
+    )
     assert closes[-1]["usage"]["total_tokens"] == 15
     assert _wait_until(lambda: _used_tokens(registry) == 15)
 

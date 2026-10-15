@@ -652,6 +652,63 @@ def relay_chunks(writer, response, record, size=65536, deadline=None):
     return error
 
 
+class _Ambiguous(ValueError):
+    pass
+
+
+def _no_duplicates(pairs):
+    keys = [key for key, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise _Ambiguous("a key appears twice in one object")
+    return dict(pairs)
+
+
+def _no_constants(name):
+    raise _Ambiguous(f"{name} is not a json number")
+
+
+def _finite_float(text):
+    value = float(text)
+    if not math.isfinite(value):
+        raise _Ambiguous(f"{text[:40]} overflows a double")
+    return value
+
+
+def strict_request(body):
+    """Why a request body is not one strict JSON object, or None.
+
+    The transcript must record what the upstream read. A body that parsers can read two ways -- a
+    key given twice, NaN or Infinity, a number that overflows a double, a lone surrogate -- or that
+    is not valid UTF-8 JSON at all, is refused before anything is admitted, so no exchange happens
+    that the record does not show.
+    """
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return "request body is not a json object"
+    try:
+        data = json.loads(
+            text,
+            object_pairs_hook=_no_duplicates,
+            parse_constant=_no_constants,
+            parse_float=_finite_float,
+        )
+    except _Ambiguous as e:
+        return f"ambiguous_json: {e}"
+    except (ValueError, RecursionError):
+        return "request body is not a json object"
+    if not isinstance(data, dict):
+        return "request body is not a json object"
+    try:
+        # A lone surrogate parses here and is read differently, or refused, by other parsers.
+        json.dumps(data, ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError:
+        return "ambiguous_json: a string carries a lone surrogate"
+    except (ValueError, RecursionError):
+        return "request body is not a json object"
+    return None
+
+
 def raw_record(data):
     """A body that is not recorded as JSON: as text, cut at RAW_RECORD_CHARS."""
     text = data.decode("utf-8", errors="replace")
@@ -933,6 +990,22 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 elapsed_s=round(deadline.elapsed(), 3),
             )
             self._finish_local(stream, req_data, 400, f"structure_limit: {over} over its limit")
+            return
+
+        problem = strict_request(req_body)
+        if problem is not None:
+            req_data = raw_record(req_body)
+            event_id = request_id()
+            log_event("open", stream, id=event_id, model=None, messages=0)
+            log_event(
+                "close",
+                stream,
+                id=event_id,
+                status=400,
+                elapsed_s=round(deadline.elapsed(), 3),
+                refusal=problem[:200],
+            )
+            self._finish_local(stream, req_data, 400, problem)
             return
 
         if not record_capacity_ok():
