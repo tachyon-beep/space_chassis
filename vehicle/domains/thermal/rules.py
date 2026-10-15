@@ -87,25 +87,33 @@ def radiator_share(inputs, params):
     return flow_share(inputs, params)
 
 
-def radiator_mean_k(supply_k, load_w, capacity_w_per_k, environment_w, eps_sigma_a):
+def radiator_mean_k(inlet_k, capacity_w_per_k, environment_w, eps_sigma_a):
     """The glycol's mean temperature in the panel: the root of
-    `T - T_ri + (eps_sigma_a * T^4 - environment_w) / (2 * capacity_w_per_k)`, by bisection.
-    With no capacity (no flow) it is the panel's own sink, where it rejects nothing."""
+    `T - T_ri + (eps_sigma_a * T^4 - environment_w) / (2 * capacity_w_per_k)`, by bisection
+    between the inlet and the panel's own sink. With no capacity (no flow) it is the sink, where
+    the panel rejects nothing."""
     sink = (environment_w / eps_sigma_a) ** 0.25
     if capacity_w_per_k <= 0.0:
         return sink
-    inlet = supply_k + load_w / capacity_w_per_k
-    low, high = min(inlet, sink), max(inlet, sink)
+    low, high = min(inlet_k, sink), max(inlet_k, sink)
     for _ in range(80):
         middle = 0.5 * (low + high)
         excess = (
-            middle - inlet + (eps_sigma_a * middle**4 - environment_w) / (2.0 * capacity_w_per_k)
+            middle - inlet_k + (eps_sigma_a * middle**4 - environment_w) / (2.0 * capacity_w_per_k)
         )
         if excess > 0.0:
             high = middle
         else:
             low = middle
     return 0.5 * (low + high)
+
+
+def rated_capacity(params):
+    """`m_dot * c_p` at the published flow. The stream's temperature rise across the loads is the
+    load over this whatever the flow: below the published rate the stream carries the same share
+    of the load as of the flow (the loop balance keeps the rest), so the rise does not run away as
+    the pump spins down."""
+    return float(params["rated_flow_kg_s"]) * float(params["specific_heat_j_per_kg_k"])
 
 
 def _eps_sigma_a(params):
@@ -120,12 +128,11 @@ def _radiator_eq(inputs, params, dt):
     capacity = 0.0
     if radiator_share(inputs, params) > 0.0:
         capacity = float(inputs[params["flow_state"]]) * float(params["specific_heat_j_per_kg_k"])
+    inlet = float(inputs[params["supply_state"]]) + float(inputs[params["load_state"]]) / (
+        rated_capacity(params)
+    )
     return radiator_mean_k(
-        float(inputs[params["supply_state"]]),
-        float(inputs[params["load_state"]]),
-        capacity,
-        float(inputs[params["environment_state"]]),
-        _eps_sigma_a(params),
+        inlet, capacity, float(inputs[params["environment_state"]]), _eps_sigma_a(params)
     )
 
 
@@ -144,11 +151,10 @@ def _evaporator_duty(inputs, params, dt):
         return 0.0
     capacity = flow * float(params["specific_heat_j_per_kg_k"])
     share = flow_share(inputs, params)
-    rejected = float(inputs[params["rejection_state"]]) * radiator_share(inputs, params)
-    inlet = (
-        float(inputs[params["supply_state"]])
-        + (float(inputs[params["load_state"]]) - rejected) / capacity
-    )
+    rejected = float(inputs[params["rejection_state"]]) if radiator_share(inputs, params) else 0.0
+    inlet = float(inputs[params["supply_state"]]) + (
+        float(inputs[params["load_state"]]) - rejected
+    ) / rated_capacity(params)
     setpoint = float(params["outlet_setpoint_k"])
     latched = float(inputs["evaporator_duty_w"]) > 0.0
     if not (inlet > float(params["actuation_k"]) or (latched and inlet > setpoint)):
