@@ -7,7 +7,7 @@ status of record; this is the line's working view. **Verify against the issues b
 
 | item | state | next |
 |---|---|---|
-| #21 WP08.3 resume | branch `codex/wp08-resume` @ `06f08a3` + fix round of 18 findings (`records/2026-10-10-wp08-3-review-fixes.md`) with the implementer | confirm review → gate both lanes → PR → CI → merge → post merge SHA on chassis filigree `space_chassis-93010ff54e` (unblocks chassis Phase B) |
+| #21 WP08.3 resume | branch `codex/wp08-resume` @ `f12e522` (`06f08a3` + fix rounds 1–3, `records/2026-10-10-wp08-3-review-fixes{,-2,-3}.md`; gate 515 passed both lanes); round 4 (J1–J4, `…-review-fixes-4.md`) with the implementer | confirm round 4 (stopping rule) → gate both lanes → file the residuals issue → PR → CI → merge → post merge SHA on chassis filigree `space_chassis-93010ff54e` (unblocks chassis Phase B) |
 
 ## Next by dependency (WP08, M1)
 
@@ -36,16 +36,15 @@ first integrated run at `m = 1` with ten windows is feasible since WP08.6 (#24).
 
 | risk | severity | owner | note |
 |---|---|---|---|
-| **Agents can read `/opt/vehicle`** (fault policies, failure chains, `console.py --plan` prints the fault schedule; default scenario/seed guessable) | **P1** | chassis (image topology; John's call) | `../chassis/open.md`; recommended: separate agent and vehicle images |
+| **Agents could read `/opt/vehicle`** (fault policies, failure chains, `console.py --plan` prints the fault schedule; default scenario/seed guessable) | P1 → **image half closed** 2026-10-10 | chassis | John chose separate images; plan 8 (`d7a1172`..`e3eff27`). The window half (scenario/seed in windows at the pinned `dd79e76`) closes at the chassis's adoption; `../chassis/open.md` |
 | `HELP.md` verb texts still carry designers' commentary | medium | vehicle | #35 |
 | Every vehicle bump forces a new world (engine hash covers the corpus and the engine tools) | known | operator procedure | `interface.md`; `--new-world` (#28) makes it recorded |
 | Process-level restart ≈ 5.5 s, dominated by YAML loading | low | vehicle | not yet an issue; matters with the clock (#23) |
-| Load-sensitive tests flake on a busy host (encoder cost ratio; the interrupt test aborting xdist) | medium | vehicle | in #21's fix round |
+| Load-sensitive tests flake on a busy host (encoder cost ratio; the interrupt test aborting xdist) | medium → fixed on the #21 branch | vehicle | F6 (subprocess and a real SIGINT), F7 (interleaved best-of-20); closes at #21's merge |
 | Two sessions driving one package collide | process | both lines | `practice.md` "One owner per branch"; close duplicate resumes |
 | Usage limits cut agents off mid-task | process | vehicle | `practice.md`; resume the same agent |
 | Physical evidence for M2 may be unavailable | programme | vehicle → John | `ROADMAP.md` risks: missing values stay unset; operator decides scope |
 
 ## Owner questions pending
 
-None open as of this snapshot. The `/opt/vehicle` exposure fix (image topology) is John's decision,
-raised by the chassis line.
+None open as of this snapshot. (The `/opt/vehicle` exposure was answered 2026-10-10: separate images.)

@@ -81,4 +81,4 @@ window's contents and `/diode/.executive.json`, start.
 | `/state` | private, writable, its own volume (never the diode volume or a second bind of it), uid 1000, **40 GB**, on disk | lock, journal, checkpoints: hashes, lineage and hidden truth |
 | no other mount of `/state` | no agent, monitor, review panel or recorder | it holds what the fleet must not see |
 | memory | 512 MB is ample (68 MB measured at 11 windows) | |
-| **agents must not see `/opt/vehicle`** | today they can (the shared image bakes it) — owned by the chassis, P1 in `../chassis/open.md` | the configuration, fault policies and `--plan` reveal the fault schedule |
+| **agents must not see `/opt/vehicle`** | done for the image (chassis plan 8): the vehicle runs `space-chassis-vehicle`, the agents' image carries none of it, and `verify_containment.sh` sweeps each agent image; `vehicle-adoption` adds a host-side check that no agent mounts the vehicle's source. The window half (scenario and seed in `pending.json`/`state.json` at the pinned `dd79e76`) closes when the chassis adopts `64fc58c` or later | the configuration, fault policies and `--plan` reveal the fault schedule |
