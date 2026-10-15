@@ -1,0 +1,29 @@
+{
+  "name": "long_haul",
+  "agents": 10,
+  "timeout_seconds": 900,
+  "turn_budget": 1200,
+  "run_max_turns": 40,
+  "ending_script": false,
+  "context_window": 4000,
+  "window_eviction": 1000,
+  "recorder_hourly_max": 100000,
+  "crashes": {
+    "every_seconds": 45,
+    "kinds": ["crash", "corrupt", "bad_code"]
+  },
+  "faults": {
+    "transient_every": 89,
+    "malformed_every": 233,
+    "no_model_every": 401,
+    "exhausted_every": 701
+  },
+  "expectations": {
+    "min_turns": 400,
+    "min_runs": 40,
+    "min_handoffs": 5,
+    "expect_tiers": [1, 2],
+    "expect_memory_survival": true,
+    "max_refusals": 80
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "ten_agents",
+  "agents": 10,
+  "timeout_seconds": 200,
+  "turn_budget": 400,
+  "run_max_turns": 3,
+  "ending_script": true,
+  "context_window": 6000,
+  "window_eviction": 1500,
+  "recorder_hourly_max": 100000,
+  "crashes": {
+    "every_seconds": 12,
+    "kinds": [
+      "crash",
+      "bad_code",
+      "corrupt",
+      "unrecoverable"
+    ]
+  },
+  "faults": {
+    "transient_every": 47,
+    "malformed_every": 101,
+    "no_model_every": 211
+  },
+  "expectations": {
+    "min_turns": 60,
+    "min_runs": 30,
+    "min_handoffs": 10,
+    "expect_tiers": [
+      1,
+      2
+    ],
+    "expect_memory_survival": true,
+    "max_refusals": 40
+  }
+}

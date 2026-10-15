@@ -1,0 +1,15 @@
+{
+  "name": "short",
+  "agents": 3,
+  "timeout_seconds": 90,
+  "turn_budget": 40,
+  "run_max_turns": 1,
+  "context_window": 8000,
+  "recorder_hourly_max": 100000,
+  "expectations": {
+    "min_turns": 6,
+    "min_runs": 6,
+    "min_handoffs": 1,
+    "expect_memory_survival": true
+  }
+}
