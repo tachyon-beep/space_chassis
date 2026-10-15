@@ -1499,3 +1499,55 @@ The slot remains reserved until this coordinator verifies that explicit receipt.
 state or a missing result is not release. There is **no root repeat, R/build/live grant,
 automatic next selection, new writer, host/security-setting change, commit or merge authority**.
 Parent alone relays the grant; this coordinator sends no owner/browser message.
+
+## 26. P full gate passed and slot explicitly released — 2026-10-11 13:01 AEDT
+
+**Current slot: FREE / RELEASED.** SPACE-20261011-P-FULL-01 completed successfully, and this
+coordinator accepts the existing owner's explicit release after reconciling raw logs, terminal
+receipts and independent host cleanup. Tests were released at **12:26:17 AEDT**; terminal result
+and cleanup were recorded at **12:57:30 AEDT** (**31 minutes 13 seconds**). The owner's outer
+release entry is **12:57:58 AEDT**, distinct from test completion.
+
+**Raw pytest: exit 0, 1,941 passed, zero failures/errors/skips. Supervision: held, no abort or
+failure reasons.** The raw log reaches 100% and independently counts exactly 1,941 passing
+progress marks, matching the terminal result and owner receipt. The owner reports supervisor
+exit 0. Actual command was `python3 -m pytest -q -p no:cacheprovider -n 2`, with no node filter.
+
+Exact identities before/after, also checked against the current worktree:
+
+- P tree `af671d04908817e914668750b7cd4f6f74034bf4`.
+- Clean vehicle `f44399645fb2633e695a5d758cb5a41f43fb848c`.
+- Driver `2557d326492e27e766dc13850aef68165eaad89119a475208a266de0c721a13f`.
+- Unchanged launcher `91a813dc8563ce50489e5619e32a23f9f8dfc468571bc1bedfbc0ef66b2c0ccd`.
+- Unchanged test-file hash `3b917de30861c432c467d92d6a75b1faf7b31cd0e62626dfde095997110c4a53`.
+
+Caps read back as `cpu.max=200000 100000`, `memory.max=8589934592`; observed scope processes
+were nice 19 with SIGINT not ignored. Independent aggregation of **374 monitor samples** found
+minimum available RAM **41,217 MiB**, maximum CPU busy **27.3%**, maximum load1 **5.28**, scope
+peak **3,164,946,432 bytes**, and no OOM events or abort-threshold crossings. The 5,400-second
+outer deadline was not reached.
+
+Explicit release: `.scratch/phase-b-full-P-019mkP/RECEIPT-P-FULL-01.md` states “the chassis
+releases the SPACE-20261011-P-FULL-01 reservation.” Its SHA256 is
+`4f03dc0e60896166d7e5dfd1c03c9f6bdce0661c94323d376762bd66e90e26f8`.
+Outer receipt `P-FULL-01-outer-receipt.log` SHA256:
+`f6cf654cf1b2af0219a4af0eeb3c0c7b5770b32d9712d37019d6a693b7e11c4c`.
+Terminal `full/receipt.jsonl` SHA256:
+`e319fe445e84163f193efc7808ece1fa2d63b30b09b9469ef6d6eb1628a23b10`.
+Raw `full/pytest.log` SHA256:
+`ea5741cf2c090550ca658090de3d2521e8c1f3e0483f376cb0e63ac64ba94e90`.
+
+At **13:01:14 AEDT / 02:01:14 UTC**, independent host inspection confirmed
+`space-chassis-pfull-1791681974.scope` is not-found/inactive, ControlGroup empty, cgroup absent,
+and no active/loaded matching Space scope or remaining matching owned launcher/full-driver/
+pytest/worker/helper process. The terminal cleanup receipt separately records the monitor
+ended, shell exit 0, no helpers and verified scope termination. Explicit owner release and
+cleanup both support the FREE state; neither elapsed time nor process absence alone was used.
+
+**Bounded conclusion:** exact P now has the retained **592-pass root** evidence and this
+**1,941-pass whole-suite** evidence. This grants no R qualification, build/live acceptance,
+commit, merge, publication or automatic next selection. The original full failure hash and
+DIAG-02 release hash remain unchanged as separate evidence; P/R and staging were preserved.
+Vehicle issue 39 product decisions remain pending. No ELSPETH admission work was done; its
+admission still waits for John's requested root-command output. Only coordinator-owned
+reservation records were updated, with no owner/browser message or extra execution.

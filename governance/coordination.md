@@ -160,7 +160,7 @@ single-node/600-second only. Parent browser should request the existing owner's 
 adaptation and exact hash, then fresh review/grant. Root need not repeat. No full/R/build/live
 grant, new writer or real execution by this coordinator.
 
-**CURRENT SLOT: RESERVED FOR CHASSIS P FULL — SPACE-20261011-P-FULL-01, 12:23 AEDT
+**HISTORICAL FULL GRANT — SPACE-20261011-P-FULL-01, 12:23 AEDT
 (master §25).** Minimal full driver `phase-b-full-P-019mkP/full.py`, exact SHA `2557d326…`,
 is accepted by bounded independent review and 20 passing isolated controls. Exact P/vehicle/test,
 fresh capacity and no competing occupancy verified. Existing owner `[8a7d49]` may run the full
@@ -170,6 +170,14 @@ verified 2 CPU/8 GiB scope, SIGINT restored, five-second monitoring, existing ab
 R/build/live selection or automatic retry. Full evidence path is fresh; preserve all prior failed
 artifacts. No actual test/scope or owner message launched here. Reservation persists until
 explicit owner release is independently verified.
+
+**CURRENT SLOT: FREE / RELEASED — 13:01 AEDT (master §26).** P FULL-01 completed
+12:57:30 AEDT: **1,941 passed, pytest exit 0; supervision held with no abort reasons**.
+The owner explicitly released at 12:57:58; current scope/process cleanup was independently
+verified at 13:01:14. Exact P/vehicle/driver unchanged; caps and monitoring held. P has passing
+root (592) and full (1,941) evidence only; no R/build/live qualification or next grant follows.
+Original failed full and paired diagnostics remain separate preserved evidence. Vehicle issue
+39 decisions remain pending; ELSPETH admission still waits for John's root-command output.
 
 | channel | for |
 |---|---|
