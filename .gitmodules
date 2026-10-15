@@ -1,0 +1,3 @@
+[submodule "docs/deep_research/vehicle"]
+	path = docs/deep_research/vehicle
+	url = https://github.com/tachyon-beep/space_vehicle.git

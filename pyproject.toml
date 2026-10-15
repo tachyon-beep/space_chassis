@@ -1,0 +1,52 @@
+[project]
+name = "space-chassis"
+version = "0.1.0"
+description = "A world for ten self-modifying agents: a floor of capability, one window outward, and a record they cannot reach"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# The vendored crate registry carries whatever Python its crates happen to
+# ship, which is not this project's code and not this project's business.
+# `harness/` is vendored from Aurora at 42faf41 and kept close to upstream so it can be re-synced.
+# `recorder/` is vendored from Aurora at 42faf41 the same way: its two modules and its seven
+# vendored test files, but not its conftest or the tests this repository adds.
+exclude = [
+    # endurance/runs/ is the retired endurance harness's output, left on the operator's disk.
+    "vendor", ".scratch", "endurance/runs", "harness",
+    # The vehicle is its own repository, with its own ruff configuration and its own checks.
+    "docs/deep_research/vehicle",
+    "recorder/proxy.py", "recorder/recorder_streams.py",
+    "recorder/tests/test_proxy.py", "recorder/tests/test_recorder_streams.py",
+    "recorder/tests/test_recorder_console_hostile.py", "recorder/tests/test_unix_listener.py",
+    "recorder/tests/test_upstream_selection.py", "recorder/tests/test_recorder_events.py",
+    "recorder/tests/hostile_inputs.py",
+    "pump/pump.py", "pump/tests/test_pump.py", "pump/tests/hostile_inputs.py",
+]
+
+[tool.ruff.format]
+# ruff 0.16 formats Python inside Markdown too. The corpus is frozen evidence, the vehicle is its own
+# repository with its own rules, and the plans are history: none of them is reformatted here.
+exclude = ["docs/deep_research/**", "docs/superpowers/**"]
+
+[tool.ruff.lint]
+# The services here are deliberately standard-library-first. E501 is off
+# because the docstrings carry the reasoning and the prose reads worse wrapped.
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501", "B008"]
+
+[tool.pytest.ini_options]
+# One suite: `pytest -q` at this root runs the operator side and the assertions about this
+# repository's own files (tests/), Aurora's harness, recorder and pump with the tests this
+# repository added to them, and the vehicle's referee (525 test functions at the adopted vehicle), which lives in its own
+# repository, mounted here as a git submodule. live/ is not here: it starts containers.
+testpaths = [
+    "tests",
+    "harness/tests",
+    "recorder/tests",
+    "pump/tests",
+    "docs/deep_research/vehicle/tests",
+]
+addopts = "-q"
+filterwarnings = ["error::DeprecationWarning"]
