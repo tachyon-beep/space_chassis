@@ -201,114 +201,16 @@ agent can read or change any transcript, its own included.
 The smoke stack brings up three agents and their recorders, answers them from a
 stub model that replies on cue instead of a real one, and mounts the contract
 fixture as the window, on scratch directories with a dummy key and its own
-compose project. It costs nothing. A second stack runs the same fleet with the
-vehicle as the window (`live/test_vehicle.py`); it replaces the first. One smoke
-stack at a time: a stack holds a lock every checkout of this user shares from
-its start to its `down`, and refuses to start while another smoke project is
-running. Every container the run starts is capped by the kernel -- each stack
-service (`CAPS` in `live/stack.py`: CPUs, and memory with no swap past it, read
-back from each container's cgroup before any test runs) and the containment
-check's image sweep -- and the live run refuses to start a stack outside a
-capped user scope, which holds pytest and the docker clients:
+compose project. It costs nothing and exercises everything except the vehicle:
 
 ```sh
-systemd-run --user --scope -p CPUQuota=35% -p MemoryMax=1G nice -n 19 python3 -m pytest live -q
+python3 -m pytest live -q
 ```
-
-Together that is 4.95 CPUs and 13.25 GiB of the live run's 5 CPUs and 14 GiB
-(Governance, 2026-10-11). Not capped: the docker daemon's own work, which the
-remainder is left for, and the image builds. The builds run one at a time;
-Docker's default builder runs their steps inside the daemon, and this harness
-sets no limit on them.
 
 It builds the image, runs the containment and acceptance checks against the
 running stack — no route out, the binds, the caps, a `done`, a reseed — and
 tears it down. It takes a few minutes, and it is the fastest way to see whether
 the world is intact after a change.
-
-## The vehicle
-
-The `vehicle` profile runs the spacecraft: one executive for every agent's
-window, with no network, its private state (checkpoints, its lock and the
-durable per-cycle record) on a `/state` image nothing else mounts. The windows
-it serves are `VEHICLE_SLUGS`, which compose fills from the roster; without a
-roster it serves one window called `vehicle`, for a probe in a stack with no
-fleet. The slug set, the scenario, the seed and the ring size are the world's
-identity: a restart that names any of them differently refuses.
-
-- **The first start is a new world.** Start it on cleared windows -- each
-  window's files removed but its `<slug>/` and `<slug>/output/` kept (agent
-  binds use `create_host_path: false`), and the window root's `.executive.json`
-  removed -- and an empty `/state`.
-- **A restart needs nothing.** The restart policy brings it back and it resumes
-  the same world: the same `world_id`, mission time not advancing while it was
-  down. Every command whose cycle was recorded gets exactly one result; a batch
-  claimed in the cycle a crash interrupted is lost with no result. (Until vehicle
-  #39 is fixed, a batch an agent replaces at the instant the vehicle claims the
-  file can also be lost with no result, with no crash at all.) A corrupt
-  checkpoint falls back to the generation before it. The work a restart redoes
-  is normally under one checkpoint interval (50 ticks); more when it falls back a
-  generation or a cadence checkpoint failed.
-- **A rebuild of the vehicle image** that changes the Python patch version, libc
-  (or the platform), or the vehicle's configuration or engine code makes the
-  checkpoint incompatible, and every restart after it refuses until a new world
-  is begun. The base, `python:3.13-slim`, is pinned by digest in
-  `Dockerfile.agent`, so a rebuild keeps its Python and libc until someone
-  changes that digest, which is a new-world event. (The checkpoint records
-  glibc's own version number; a Debian point update that the image's apt layer
-  picks up does not change it.) In practice every vehicle pointer bump changes
-  its configuration or engine too, so every adoption is a new world. A host
-  kernel update does not matter.
-- **A deliberate new world** -- a new mission, a changed roster, scenario or
-  seed, a vehicle update, or an exit 3 that will not clear because the record or
-  the checkpoints themselves are damaged: stop the fleet and
-  the vehicle (an agent's window is bound by inode, so moving it under a running
-  agent leaves the agent writing into the old one); move the whole of `/state`
-  aside, the contents of each window aside, keeping each `<slug>/` and
-  `<slug>/output/` (or rerun `prepare_host.sh`), and the window root's
-  `.executive.json` aside too -- it binds the old world; start. A start with no
-  checkpoint on a `/state` that holds a record refuses: one state directory is
-  one world. Start the vehicle before the fleet: until its first start
-  succeeds, a window an agent has written to (a `pending.json` from an older
-  world) makes that first start refuse.
-- **`--closed-interlock` on a restart** is added to the world's set and
-  journaled: a restart can trip an interlock but never clear one. It is
-  not wired into `serve_vehicle.sh`; passing it means overriding the service's
-  entrypoint for that start.
-- **A resume says so in the vehicle's log** (`docker compose logs vehicle`): "resumed world
-  ... at tick N (checkpoint ... at tick M, replayed K, republished R)", and a
-  line each when it falls back to the previous checkpoint, rewrites the window
-  root's record, or advises on a window's `pending.json`.
-- **An exit 3:** `docker compose logs vehicle`; the last line is one sentence
-  naming the file, the check and what clears it. The restart policy retries it:
-  a refused start claims no command and runs no cycle, and a transient read
-  error clears itself; one that repeats will not clear on its own. Read the named
-  file's permissions and the disk before anything else -- a record the vehicle
-  cannot open or write refuses in the same words as one that is damaged, and only
-  damage is a reason for a new world. The cases include:
-  - both checkpoint generations unusable;
-  - a record that cannot continue the checkpoint, or a record file that cannot
-    be verified (a new world, once its permissions and the disk are ruled out);
-  - an `OSError` anywhere on the start path, the configuration's reads
-    included, naming the path and the errno;
-  - a record that cannot be written, or cut back after a failed append (the
-    run stops);
-  - a handle that cannot be closed on the way out, when nothing else failed;
-  - a scenario, seed, ring size, phase or slug set that differs from the
-    world's, an incompatible checkpoint after a rebuild, a `/state` with a record
-    and no checkpoint, another executive holding the lock, or a window root whose
-    record names a different world (beside a checkpoint, a record that is
-    unreadable, missing or otherwise disagrees is rewritten from the recovered
-    world, and the start goes on unless that write fails);
-  - a checkpoint at the recovered tick that cannot be written: the start is
-    refused before anything is claimed, and the world resumes from the record at
-    the next start;
-  - and a run that stops itself mid-mission because its state can no longer be
-    compared.
-
-Probe a window (`contract/diode_probe.py` submits commands) only in a stack
-with no fleet in it, or on a scratch directory: in a live mission every window
-commands the one spacecraft the fleet is flying.
 
 ## Verifying the world
 

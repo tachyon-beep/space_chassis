@@ -12,7 +12,7 @@ python3 -m pytest harness/tests -q                     # one suite: the Aurora h
 python3 -m pytest recorder/tests -q                    # the recorder and the spend caps
 python3 -m pytest pump/tests -q                        # the pump
 python3 -m pytest docs/deep_research/vehicle/tests/test_vehicle_config.py -q   # the vehicle's referee
-systemd-run --user --scope -p CPUQuota=35% -p MemoryMax=1G nice -n 19 python3 -m pytest live -q   # the live run, inside its capped scope: builds the images and runs the smoke stacks one at a time; minutes
+python3 -m pytest live -q                              # the live run: builds the image and runs the smoke stack; minutes
 
 uvx ruff check . --no-cache                            # ruff is not installed here; uvx fetches it
 uvx ruff format --check . --no-cache
@@ -36,8 +36,10 @@ key) is the fastest way to see whether the world still works end to end.
 
 ## Governance
 
-`governance/README.md` is the place to start: the project divides into two lines with nothing
-shared, the chassis (this repository, except the vehicle) and the vehicle (`tachyon-beep/space_vehicle`).
+`governance/README.md` is the place to start: Space Aurora is one program building one product, with
+two project teams of equal importance working in parallel, the chassis line (this repository, except
+the vehicle) and the vehicle line (`tachyon-beep/space_vehicle`). Every path and task has exactly one
+owning team.
 It holds each line's snapshot, decision log, practice, interface and open items, and the rules for
 coordinating between them. The chassis line owns `governance/` except `governance/vehicle/`, which
 the vehicle line writes and the chassis commits verbatim. Nothing in it may reach an image.
@@ -45,7 +47,7 @@ the vehicle line writes and the chassis commits verbatim. Nothing in it may reac
 ## The scope boundary
 
 **This repository builds everything except the vehicle.** Nothing here models physics or names a
-single spacecraft verb. The vehicle lives behind a per-agent directory implemented by someone else;
+single spacecraft verb. The vehicle lives behind a per-agent directory implemented by the vehicle line;
 the only thing the two halves share is `docs/diode-contract.md`, and `contract/fake_diode.py` is a
 fixture that satisfies it and models nothing. A request that sounds like "add a thruster command"
 belongs on the far side of the window, not here.
@@ -75,7 +77,7 @@ agent's: it may rewrite any of it, the watchdog included.
 | `/shared` | one image every agent reads and writes | the fleet |
 | `pump/pump.py` → `/usr/local/bin/pump.py`; `recorder/` → `/usr/local/lib/recorder/` | the scheduler, and the recorder its own container runs | the operator; outside `/work` |
 | `services/` → `/opt/services` | `common`, `health`, `fleet_monitor`, `review`: the operator's monitor and panel | the operator |
-| `docs/deep_research/vehicle/` → `/opt/vehicle` | the vehicle, in its own image `space-chassis-vehicle` (Dockerfile.agent's `vehicle` stage), run by the `vehicle` service with no network: one process for every window, its slugs `VEHICLE_SLUGS`, its private state (checkpoints, lock, record) on its own `/state` image that nothing else mounts; no agent image carries any of it (`agent` is the default stage) | the vehicle's repository; its deployment is ours |
+| `docs/deep_research/vehicle/` → `/opt/vehicle` | the vehicle, in its own image `space-chassis-vehicle` (Dockerfile.agent's `vehicle` stage), run by the `vehicle` service with no network; no agent image carries any of it (`agent` is the default stage) | the vehicle's repository |
 | `brief/` → `/opt/brief` | what the agents are told, read-only; each claim it and the prompts make is sourced in `docs/brief-claims.md` | the operator |
 | transcripts, `fleet_ledger`, `operator_telemetry`, `operator/journal/` | the record and the operator's view of it; no agent mounts them | the operator |
 
