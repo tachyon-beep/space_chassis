@@ -121,7 +121,7 @@ held pending focused causal evidence and independent review of driver monitoring
 corrections. No R/build/live grant, product/test edit or new writer. See §20 for exact hashes,
 node, ordered selection and stop conditions. Parent alone relays the owner's message.
 
-**CURRENT SLOT: FREE / RELEASED — 11:54 AEDT (master §21).** DIAG-01 stopped before its
+**RELEASE / HOLD — 11:54 AEDT (master §21; current review below).** DIAG-01 stopped before its
 go-file; neither test ran, and no pytest attempt/result is counted. The owner's explicit
 `RECEIPT-arm1-stop.md` release is supported by independent scope/process cleanup checks.
 P, vehicle, test and failed evidence remain preserved. The exact `.scope` correction is sound,
@@ -130,6 +130,14 @@ post-launch errors, and honour monitor aborts both before go and after final joi
 available; no new user decision or framework work is needed. Existing owner only; parent
 browser route only. Corrected hash review precedes any renewed diagnostic grant. No broad
 rerun, R/build/live run or new writer is authorised.
+
+**CURRENT SLOT: FREE / RELEASED — 12:02 AEDT (master §22).** Reviewed r2 supervisor
+`d90fb3de…`: process-sampling and monitor-boundary fixes are present, but renewal remains held
+because exception reporting can still bypass cleanup and failed state reads after failed stop
+can skip owned-scope escalation. Isolated controls confirmed both paths. Request only these
+remaining cleanup corrections from the existing owner via parent browser; no new user decision
+or framework expansion. Capacity/occupancy and exact P/vehicle/test identities remain suitable;
+no new test/scope was observed or launched. No renewed diagnostic or broad/R/build/live grant.
 
 | channel | for |
 |---|---|

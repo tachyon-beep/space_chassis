@@ -1225,3 +1225,54 @@ the minimally corrected supervisor/hash for bounded review, then a fresh diagnos
 be considered with renewed capacity. All section 20 identity, two-arm, timeout, resource,
 monitoring and explicit cleanup/release conditions remain requirements. No new writer, owner
 message, test launch, broad rerun, R/build/live grant or host/security change occurred here.
+
+## 22. Bounded supervisor recheck — 2026-10-11 12:02 AEDT
+
+**Slot remains FREE / RELEASED; diagnostic renewal remains held on incomplete cleanup fixes.**
+Reviewed `.scratch/phase-b-diag-P-019mkP-r2/diag.py`, SHA256
+`d90fb3def47cc88255e96aed06d76e5963ec7540d72b93f0a3ff3416bb231697`, against the preserved
+`4a8d2d45…` supervisor and section 21's two blockers. The independent read-only reviewer agrees
+with this bounded verdict. No new framework, product/test edit or writer is requested.
+
+**Fixed:** `live_infos` tolerates disappearing process entries; first-sample checks now reject
+reported aborts, inactive scope and an ended watcher; final monitor failures are merged after
+joining. State-query timeouts are represented as errors. Stop timeouts no longer immediately
+escape the stop call, and escalation works when a subsequent state query positively says active.
+
+**Remaining parts of the existing cleanup blocker:**
+
+1. At **line 430**, the post-launch exception handler calls fallible `note()` before cleanup.
+   A broken stdout pipe or failed receipt write can cause the original failure and then fail
+   again while reporting it, skipping all owned-scope cleanup. Make exception reporting
+   best-effort and place cleanup on an unconditional path, such as `finally`.
+2. At **line 447**, escalation still requires a positively observed `active` state. If stop
+   times out/fails and the following state query also fails, SIGKILL is skipped even though the
+   known owned scope has not been shown to end. Attempt bounded escalation against that exact
+   owned scope unless termination is positively established. If control remains unavailable,
+   retain cleanup-unverified and hold the reservation; do not equate killing the shell with
+   ending its descendants.
+
+Isolated in-memory controls using the actual exception-handler and cleanup branch confirmed
+both paths: reporting failure skipped the subsequent cleanup marker; stop timeout followed by
+state-query error attempted only stop, never kill. These controls used fake I/O/processes,
+launched no real scope or pytest and wrote no files. Syntax compiled in memory successfully.
+The owner's claimed Ruff pass was **not reproduced under the repository's configuration**:
+`uvx --offline ruff check --no-cache` on the two explicit scripts reports C402 at lines 76/90
+and B905 at line 334. These lint findings are not additional diagnostic-renewal blockers;
+avoid unrelated style expansion. No automatic fixes were applied.
+
+Preservation checks: launcher remains byte-identical at
+`91a813dc8563ce50489e5619e32a23f9f8dfc468571bc1bedfbc0ef66b2c0ccd`; old supervisor and release
+hashes still match section 21, and the original failed full log remains
+`1e46921be8a0131e0dddf01d38a8f87881ad67c36e039d74369a92dae16d766c`. The new evidence parent
+contains only scripts and a diff, no arm directory/result. Existing arm 1 receipt SHA256:
+`60c20e6313a5f31351073f689c132ad7de1563f23c1152d8340b7ca65176a4fd`.
+P index/tracked files, pinned clean vehicle and unchanged test-file hash still match section 20.
+
+Fresh host inspection at approximately **12:01 AEDT**: no Space scopes, no matching test,
+launcher, diagnostic or build process, no Compose project; successful listing queries.
+Available RAM **41.4 GiB**, sampled CPU busy **13.6%**, load **2.69/2.69/2.84**. Capacity is not
+the blocker. No test or scope was launched by this review, and no owner/browser message was
+sent. Parent browser relay should request only these two remaining cleanup corrections and a
+new exact hash for bounded recheck. No renewed diagnostic, broad, R/build/live or retry grant
+has been issued. No new user decision is required for these already-authorised corrections.
