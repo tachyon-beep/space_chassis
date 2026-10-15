@@ -493,8 +493,11 @@ def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
     dockerfile = (REPO / "Dockerfile.agent").read_text()
     assert "COPY --chown=agent:agent docs/deep_research/vehicle/ /opt/vehicle/" in dockerfile
     assert "containers/serve_vehicle.sh /usr/local/bin/serve_vehicle.sh" in dockerfile
-    assert service["entrypoint"] == ["/usr/local/bin/serve_vehicle.sh"], service.get("entrypoint")
-    assert service["image"] == reference["image"], "a second image is a second vehicle"
+    # The vehicle runs an image of its own, whose entrypoint is the serve script; the fixture models
+    # nothing and runs the agents' image, which carries nothing of the vehicle (John, 2026-10-10).
+    assert "entrypoint" not in service, service.get("entrypoint")
+    assert service["image"] == "space-chassis-vehicle", service["image"]
+    assert reference["image"] == "space-chassis-agent", reference["image"]
     assert service["profiles"] == ["vehicle"], (
         "a bare `docker compose up` is the cheap one-agent stack; the window must not join it"
     )

@@ -40,6 +40,9 @@ case "$*" in
         # A whole archive ends in two zero blocks; a stream cut off mid-way does not.
         [ -n "${TAR_TRUNCATED:-}" ] || head -c 1024 /dev/zero
         exit 0 ;;
+    *" exec "*"/opt/vehicle"*)
+        [ -n "${VEHICLE_SIGHT:-}" ] || exit 1
+        echo "$VEHICLE_SIGHT"; exit 0 ;;
     *" exec "*getent*)
         [ -n "${GETENT_RC:-}" ] || exit 1
         echo "rc=$GETENT_RC"; exit 0 ;;
@@ -175,3 +178,30 @@ def test_a_resolver_probe_that_is_missing_its_binary_is_a_failure(run):
     assert "FAIL  agent_1 could not be probed for name resolution" in result.stdout
     result = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", GETENT_RC="2")
     assert "PASS  agent_1 cannot resolve outside names" in result.stdout
+
+
+def test_an_agent_that_can_see_the_vehicle_is_a_failure(run):
+    """John, 2026-10-10: no risk of information sharing. An agent's image carries nothing of it."""
+    absent = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", VEHICLE_SIGHT="absent")
+    assert "PASS  agent_1 has no vehicle in its image" in absent.stdout
+    present = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", VEHICLE_SIGHT="present")
+    assert "FAIL  agent_1 can read the vehicle" in present.stdout
+    silent = run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
+    assert "FAIL  agent_1 could not be probed for the vehicle" in silent.stdout
+
+
+def test_the_vehicle_probe_says_nothing_when_it_cannot_run(run, tmp_path):
+    """The probe's own text, run where none of its tools exist, must not read as an absence."""
+    run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
+    probe = next(line for line in run.argv_lines() if "/opt/vehicle" in line)
+    script = probe.split(" -c ", 1)[1]
+    empty = tmp_path / "empty-path"
+    empty.mkdir()
+    out = subprocess.run(
+        ["/bin/sh", "-c", script],
+        env={"PATH": str(empty)},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    ).stdout.strip()
+    assert out.splitlines()[-1:] != ["absent"], out

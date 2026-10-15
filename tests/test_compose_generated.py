@@ -246,10 +246,15 @@ def test_every_agent_and_recorder_restarts_unless_stopped() -> None:
         assert body["restart"] == "unless-stopped", name
 
 
-def test_the_image_is_built_once() -> None:
-    builders = [name for name, body in SERVICES.items() if "build" in body]
-    assert builders == ["agent_1"]
-    assert all(body["image"] == "space-chassis-agent" for body in SERVICES.values())
+def test_each_image_is_built_once_from_its_own_target() -> None:
+    # John, 2026-10-10: the agents' image carries nothing of the vehicle; the vehicle runs its own.
+    builders = {name: body["build"] for name, body in SERVICES.items() if "build" in body}
+    assert sorted(builders) == ["agent_1", "vehicle"]
+    assert builders["agent_1"]["target"] == "agent"
+    assert builders["vehicle"]["target"] == "vehicle"
+    for name, body in SERVICES.items():
+        expected = "space-chassis-vehicle" if name == "vehicle" else "space-chassis-agent"
+        assert body["image"] == expected, name
 
 
 def test_every_service_logs_with_a_bounded_json_file() -> None:

@@ -71,7 +71,7 @@ Aurora's affectless-docstring rule applies to all three. This is a deviation fro
 
 ### 3.2 Image and resources
 
-- **Image:** one agent image built in this repo from Aurora's `Dockerfile`, keeping space's mission package set (`docs/design.md` §4: Python scientific stack, C and Rust toolchains with the offline crate registry at `/vendor`, and the three servers).
+- **Image:** one agent image built in this repo from Aurora's `Dockerfile`, keeping space's mission package set (`docs/design.md` §4: Python scientific stack, C and Rust toolchains with the offline crate registry at `/vendor`, and the three servers). *Revised 2026-10-10 (John: no risk of information sharing; plan 8):* `Dockerfile.agent` has a `base` stage, an `agent` stage (the default, and the image every service but the vehicle runs) and a `vehicle` stage that alone adds `/opt/vehicle` and its serve script, tagged `space-chassis-vehicle`. Until then every agent could read the vehicle's fault policies and run `console.py --plan`.
 - **uid:** agents run as uid 1000, matching the vehicle and the existing volumes.
 - **Hardening:** a read-only root, all capabilities dropped, and `no-new-privileges`.
 - **Limits** sized for ten agents on this host (61 GB, 24 cores), all set from `.env`:

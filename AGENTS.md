@@ -55,7 +55,7 @@ runs every refusal, so run it before you commit. `live/` is separate because it 
 | `pump/` | `pump.py`: the agent's scheduled and kept-alive processes, run from the image, outliving every run |
 | `services/` | The operator's half: `health.py` (signals from the transcripts), `fleet_monitor.py`, `review.py`, `common.py` (atomic writes, bounded reads) |
 | `brief/` | What the agents are told (`/opt/brief`); `docs/brief-claims.md` sources each claim it and the prompts make |
-| `containers/` | `entrypoint.sh` (servers, pump, seed, then the watchdog) and `serve_vehicle.sh` (the vehicle service's entrypoint) |
+| `containers/` | `entrypoint.sh` (servers, pump, seed, then the watchdog) and `serve_vehicle.sh` (the vehicle image's entrypoint; the agents' image carries nothing of the vehicle) |
 | `contract/` | `diode_probe.py` (the instrument against the window) and `fake_diode.py` (a fixture that satisfies the contract and models nothing) |
 | `scripts/` | `prepare_host.sh`, `roster.py`, `volume_images.py`, `build_compose.py`, `status.py`, `journal.py`, `verify_containment.sh` |
 | `live/` | The smoke stack (`stack.py`, the cued `stub_llm.py`) and the checks run against it |

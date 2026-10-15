@@ -73,3 +73,9 @@ def test_the_quick_start_builds_the_crate_registry_before_host_preparation():
     # prepare_host.sh refuses without vendor/registry, which is gitignored.
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert readme.index("scripts/build_registry.sh") < readme.index("sh scripts/prepare_host.sh")
+
+
+def test_the_quick_start_builds_the_vehicle_image():
+    # A bare `docker compose build` skips the profiled vehicle; its image is built by name.
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "docker compose --profile vehicle build" in readme

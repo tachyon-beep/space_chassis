@@ -61,6 +61,11 @@ docker compose --profile fleet up --build
 python3 scripts/status.py           # one line per agent
 ```
 
+The vehicle runs from an image of its own, the only one that carries it, so no agent can read it.
+A bare `docker compose build`, or `up --build`, skips the profiled vehicle: build it by name with
+`docker compose --profile vehicle build` before starting it, and again after any change to it.
+Rebuilding the agents' image no longer rebuilds the vehicle's.
+
 Every volume an agent or a recorder writes is a preallocated ext4 image,
 loop-mounted under `volumes/`, so a full disk is one image's problem and never
 the host's or the record's. `prepare_host.sh` plans and creates the images and

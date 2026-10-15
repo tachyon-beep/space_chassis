@@ -10,7 +10,8 @@ docs/
 site/
 
 # **Except the vehicle.** `docs/deep_research/vehicle/` is the configuration the reference console
-# serves, and the `vehicle` compose service bakes it into the image at `/opt/vehicle`. The rest of
+# serves; the `vehicle` stage of Dockerfile.agent bakes it into the vehicle's image alone, at
+# `/opt/vehicle`, and the agents' image never carries it. The rest of
 # `docs/` stays out on purpose: it is the corpus and the design record -- sixteen thousand lines of
 # prose that no container needs, and the one folder in this repository that is *evidence* rather than
 # runtime. An `!` line has to follow the pattern it un-ignores, and re-including a subdirectory of an

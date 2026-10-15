@@ -159,9 +159,80 @@ def test_the_image_carries_no_agent_env():
     assert "agent.env" not in DOCKERFILE
 
 
-def test_the_image_still_carries_the_vehicle():
-    assert "COPY --chown=agent:agent docs/deep_research/vehicle/ /opt/vehicle/" in DOCKERFILE
-    assert "containers/serve_vehicle.sh /usr/local/bin/serve_vehicle.sh" in DOCKERFILE
+def _stages():
+    """The Dockerfile's stages as (name, base, instructions), split at each FROM, comments dropped."""
+    stages = []
+    for line in _instructions():
+        match = re.fullmatch(r"FROM (\S+) AS (\S+)", line)
+        if line.startswith("FROM "):
+            assert match, f"every stage is named: {line}"
+            stages.append((match[2], match[1], []))
+        else:
+            stages[-1][2].append(line)
+    return stages
+
+
+def _stage_copies(instructions):
+    """Each COPY in a stage as (flags, sources, destination)."""
+    copies = []
+    for line in instructions:
+        if line.startswith("COPY "):
+            words = line.split()[1:]
+            flags = [w for w in words if w.startswith("--")]
+            paths = [w for w in words if not w.startswith("--")]
+            copies.append((flags, paths[:-1], paths[-1]))
+    return copies
+
+
+BASE_COPY_SOURCES = sorted(
+    [
+        "requirements-agent.txt",
+        *(f"harness/{name}" for name in RUNTIME_FILES),
+        "pump/pump.py",
+        "recorder/proxy.py",
+        "recorder/recorder_streams.py",
+        "recorder/core_caps.py",
+        "llm_console_seed.json",
+        "brief/",
+        "services/common.py",
+        "services/health.py",
+        "services/fleet_monitor.py",
+        "services/review.py",
+        "containers/entrypoint.sh",
+    ]
+)
+
+
+def test_the_agent_image_is_the_default_target_and_carries_nothing_of_the_vehicle():
+    # John, 2026-10-10: no risk of information sharing. The agent image is the last stage, so a
+    # bare `docker build` of this file is the agent image, and it adds nothing to the base.
+    stages = _stages()
+    assert [(name, base.split(":")[0].split("@")[0]) for name, base, _ in stages] == [
+        ("base", "python"),
+        ("vehicle", "base"),
+        ("agent", "base"),
+    ]
+    assert stages[-1][2] == [], stages[-1][2]
+    assert [name for name, base, _ in stages if "python:" in base] == ["base"]
+
+
+def test_the_base_stage_copies_exactly_its_allow_list():
+    base = _stages()[0][2]
+    sources = sorted(s for _flags, paths, _dest in _stage_copies(base) for s in paths)
+    assert sources == BASE_COPY_SOURCES
+    assert not {".", "docs/", "containers/"} & set(sources)
+    assert not [line for line in base if "/opt/vehicle" in line or "serve_vehicle" in line]
+
+
+def test_the_vehicle_stage_adds_the_vehicle_and_its_entrypoint_only():
+    name, _base, instructions = _stages()[1]
+    assert name == "vehicle"
+    copies = _stage_copies(instructions)
+    assert copies == [
+        (["--chown=agent:agent"], ["docs/deep_research/vehicle/"], "/opt/vehicle/"),
+        (["--chmod=0755"], ["containers/serve_vehicle.sh"], "/usr/local/bin/serve_vehicle.sh"),
+    ], copies
+    assert 'ENTRYPOINT ["/usr/local/bin/serve_vehicle.sh"]' in instructions
 
 
 def test_governance_never_reaches_an_image():
