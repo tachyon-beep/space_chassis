@@ -25,6 +25,10 @@ one owns the work.
   - The vehicle states its needs in `vehicle/interface.md` and does not edit chassis files.
   - The chassis does not edit the vehicle repository, or the vehicle line's working tree in the
     chassis checkout.
+- **Every task has one lead; there are no shared tasks** (John, 2026-10-10). The lead team sets the
+  rule. Where the other team has to do the same thing on its side, it follows the lead's rule and
+  does not set its own. When the lead is unclear, settle it by message before either team starts,
+  and ask John if the two disagree.
 - **A request goes where its receiver reads.** A requirement written into one line's spec and
   addressed to the other line is not delivered. On 2026-10-09, chassis spec §8 asked the vehicle line
   to keep its service off worknet, while only chassis artefacts placed it there; nothing changed until
