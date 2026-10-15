@@ -1713,3 +1713,46 @@ Chassis is to draft the finished tier-1 brief replacement now, including the con
 promise at `brief/PROTOCOL.md:59–60`, and return exact target text for John's final-text approval.
 Drafting is already authorised; adopting/publishing final brief text waits for that approval
 under the design spec §6. Existing owner work is not interrupted and no substitute writer is created.
+
+## 30. Option B candidate-3 verified; C0/S1 supervisor review held — 2026-10-11 22:23 AEDT
+
+**No allocation/grant.** Reviewed the existing owner's `B-sel1` proposal without executing or
+importing it, running controls, collecting tests, or launching a scope. C0 and S1 remain separate
+unallocated selections. No duplicate owner instructions were sent; findings return through Emmy.
+
+Verified proposal SHA256 `8d77dbbf9eefceee0deb45909991122eab1739ea81e5d3c4c85497ba72d97247`;
+supervisor `206db6c9471e33233bb18315f65077b5f3175e02e2372ae5ccb963cc21fd0576`;
+launcher `b600a314f18722841a60c32aed0927cbff8aa98bc7e1145972393465b9255525`.
+Both spec hashes match the proposal. Current HEAD is `f75420c`; current diff matches candidate-3
+`0a00336feb10dcd5c8839893cabafbdc5cbea20474f918d76dc1e0eca3f2d01d`. All 92 tracked blobs match
+stored tree `b447955f60c528e78d05c324ecc4c4317128d1a1`, with no untracked non-ignored paths.
+Read the complete implementation review chain 0–3. Final source-only delta review approves;
+receipt SHA256 `41da8155ed3f5b16bb4d378fe6c0e896f915f8505d84bd426670b29a478fbe07`.
+Static AST inspection confirms S1's 25 unique named functions, each defined once without decorators.
+No C0/S1 evidence directory exists. Implementation review is accepted as submitted source evidence,
+not runtime qualification.
+
+Supervisor blockers (all line references in `B-sel1/supervise.py` unless stated):
+
+- P1: no exception-safe cleanup after launch (137 onwards); reporting itself can prevent cleanup (212).
+- P1: failed status queries count as ended; no empty/absent-cgroup or owned-process proof before release
+  (225–249). Scope ownership is not positively established before later stop/kill operations.
+- P2: admission sees only argv-matched pytest and two same-unit states (59–71,114–124), missing relative
+  argv/cwd, other Space drivers/scopes/build/live and failed/deactivating lookups; pre-GO sample is logged
+  rather than checked against admission health (158–165).
+- P2: systemctl/identity subprocesses have no timeout; launcher GO wait is infinite; the only deadline
+  starts after GO and cleanup commands/waits can remain unbounded (98–102,142,166,213–225; launch.sh:9).
+- P2: shell `trap - INT` does not establish restoration from inherited-ignore; use explicit signal
+  restoration and disposition evidence (launch.sh:6). Terminal OOM may be missed when the controller
+  exits before the next sample (173–186). Candidate identity is not checked after execution (99–106).
+- Validation gap: the sole 12-second success control exercises none of the abort/reporting/lookup/
+  deadline/cleanup failures. Require deterministic failure-injection controls against corrected code
+  before allocating the separate host smoke control; success alone cannot qualify supervision.
+
+The explicit proposed 2 CPU/6 GiB/no-swap ceiling is distinct from R2c's limits, but 6 GiB is a declared
+ceiling, not a measured peak. Explain the changed 16 GiB admission/10 GiB abort floors and absence of
+CPU-busy admission/abort checks against ELSPETH priority before grant. Refresh capacity and slot
+ownership only after corrected supervisor evidence is ready; the earlier capacity sample is not a
+launch admission. Preserve one Space selection, two workers total, nice 19 and no GPU.
+Chassis owns the final brief draft and Vehicle its contract wording; no final brief approval exists.
+Issue 42 remains separate. No source/spec/owner-report changes were made by this coordinator.
