@@ -1,3 +1,4 @@
+import fnmatch
 import hashlib
 import json
 import signal
@@ -47,6 +48,18 @@ MIRROR_EXCLUDE = ("__pycache__", ".git")
 
 AGENT_LOG_NAME = "agent_stdout.log"
 AGENT_LOG_MAX_BYTES = 2_000_000
+
+# Archived conversations, bounded like the log above. Every fresh restore copies the conversation
+# into tombstones/ and the git directory, and the chassis writes one more on exit 43; /work is a
+# 1 GiB tmpfs that counts against the container's memory, and a full /work makes a restore fail
+# and the ladder end in a reseed, which loses this repository's tags as well. The newest
+# ARCHIVE_KEEP bodies per directory are kept within the byte budget; notes, incarnation messages
+# and anything else are never touched. The figures are yours to change.
+ARCHIVE_KEEP = 20
+ARCHIVE_TOMBSTONE_BYTES = 128 * 1024 * 1024
+ARCHIVE_GIT_BYTES = 64 * 1024 * 1024
+TOMBSTONE_ARCHIVES = ("session_*.json", "corrupt_session_*.json")
+GIT_ARCHIVES = ("session_recovery_*.json",)
 
 # The liveness signal. The transcript is written by the recorder onto the
 # transcripts volume, which this container does not mount, so its size here is
@@ -370,6 +383,68 @@ def git_reset_all(work_dir=WORK_DIR, ref=BASELINE_REF):
     return commit
 
 
+def _prune_directory(directory, patterns, budget, keep_newest):
+    """Remove the archives past the newest ARCHIVE_KEEP within budget; return how many went."""
+    try:
+        if not stat.S_ISDIR(os.lstat(directory).st_mode):
+            return 0
+        names = os.listdir(directory)
+    except OSError:
+        return 0
+    found = []
+    for name in names:
+        if not any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns):
+            continue
+        try:
+            st = os.lstat(os.path.join(directory, name))
+        except OSError:
+            continue
+        if stat.S_ISREG(st.st_mode):
+            found.append((name == keep_newest, st.st_mtime_ns, name, st.st_size))
+    found.sort(reverse=True)
+    kept = used = removed = 0
+    for index, (_newest, _mtime, name, size) in enumerate(found):
+        if index == 0 or (kept < ARCHIVE_KEEP and used + size <= budget):
+            kept += 1
+            used += size
+            continue
+        # The first archive over the count or the budget, and everything older, goes.
+        for _n, _m, old_name, _s in found[index:]:
+            try:
+                os.remove(os.path.join(directory, old_name))
+                removed += 1
+            except OSError as exc:
+                print(f"archive prune failed for {old_name}: {exc}", flush=True)
+        break
+    return removed
+
+
+def prune_archives(work_dir=WORK_DIR, keep_newest=None):
+    """Bound the archived conversations in tombstones/ and the git directory; never raise.
+
+    keep_newest names the archive just made, kept whatever its modification time says.
+    """
+    removed = 0
+    try:
+        removed += _prune_directory(
+            os.path.join(work_dir, "tombstones"),
+            TOMBSTONE_ARCHIVES,
+            ARCHIVE_TOMBSTONE_BYTES,
+            keep_newest,
+        )
+        try:
+            git_dir = git_command(work_dir, "rev-parse", "--absolute-git-dir").decode().strip()
+        except Exception as exc:
+            print(f"archive prune skipped the git directory: {exc}", flush=True)
+        else:
+            removed += _prune_directory(git_dir, GIT_ARCHIVES, ARCHIVE_GIT_BYTES, keep_newest)
+    except Exception as exc:
+        print(f"archive prune failed: {exc}", flush=True)
+    if removed:
+        print(f"pruned {removed} archive(s)", flush=True)
+    return removed
+
+
 class Recovery:
     """Persist the finite code recovery ladder separately from elective checkpoint selection."""
 
@@ -437,6 +512,8 @@ class Recovery:
             archive_name = f"session_recovery_{time.time_ns()}.json"
             shutil.copyfile(session, os.path.join(os.path.dirname(self.path), archive_name))
             os.replace(session, os.path.join(tombstones, archive_name))
+            return archive_name
+        return None
 
     def evidence(self, reason):
         try:
@@ -471,7 +548,9 @@ class Recovery:
                 fresh = True
                 reason += "; saved conversation unavailable"
         if fresh:
-            self.fresh_session()
+            # Pruned whenever the conversation starts fresh, including after exit 43, whose
+            # archive the chassis has already written.
+            prune_archives(self.work_dir, keep_newest=self.fresh_session())
         session_path = os.path.join(self.work_dir, "session_context.json")
         pending_session = self.path + ".session"
         if not fresh:
@@ -686,6 +765,7 @@ def run_watchdog():
     """Supervise code recovery and preserve the finite ladder across self-reexec."""
     recovery = Recovery()
     recovery.note_seed_boot()
+    prune_archives()
     own_hash = file_hash(WATCHDOG_FILE)
     failures = []
     zero_exits = []

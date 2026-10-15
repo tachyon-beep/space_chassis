@@ -69,3 +69,38 @@ def test_the_cap_counts_bytes_not_characters(tmp_path):
     common.append_jsonl(path, record, max_bytes=line_bytes + 10)
     common.append_jsonl(path, record, max_bytes=line_bytes + 10)
     assert common.previous_generation(path).exists()
+
+
+def test_without_a_cap_append_never_rotates(tmp_path):
+    # The operator journal is append-only (spec section 3.4): its records are never rotated away.
+    import inspect
+
+    assert inspect.signature(common.append_jsonl).parameters["max_bytes"].default is None
+    path = tmp_path / "journal.jsonl"
+    for n in range(50):
+        common.append_jsonl(path, {"n": n, "pad": "x" * 100})
+    assert len(_lines(path)) == 50 and not common.previous_generation(path).exists()
+
+
+def _append_calls(relative):
+    import ast
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parent.parent / relative).read_text(encoding="utf-8")
+    return [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "append_jsonl"
+    ]
+
+
+def test_the_journal_never_rotates_its_records():
+    calls = _append_calls("scripts/journal.py")
+    assert calls and all(len(call.args) == 2 and not call.keywords for call in calls)
+
+
+def test_the_fleet_monitor_rotates_its_summary_log():
+    calls = _append_calls("services/fleet_monitor.py")
+    assert calls and all(
+        any(keyword.arg == "max_bytes" for keyword in call.keywords) for call in calls
+    )

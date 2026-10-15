@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-CITING = ("docs/brief-claims.md", "tests/test_startup.py")
+CITING = ("docs/brief-claims.md", "tests/test_startup.py", "docs/design.md")
 NODE = re.compile(r"((?:[\w./-]+/)?tests/[\w./-]+\.py)::(test_\w+)")
 BARE_LIVE = re.compile(r"live `(test_\w+)`")
 DEF = re.compile(r"^(?:async\s+)?def (test_\w+)\(", re.M)

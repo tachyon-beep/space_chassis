@@ -12,7 +12,6 @@ on 2026-10-09: context 1,048,576, 1,024,000 at the top provider, and a completio
 384,000. chars/4 undercounts JSON-heavy content, hence the 1.25 margin.
 """
 
-import json
 import re
 import subprocess
 import sys

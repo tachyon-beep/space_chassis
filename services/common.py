@@ -112,17 +112,18 @@ def previous_generation(path: Path) -> Path:
     return path.with_name(f"{path.stem}.1{path.suffix}")
 
 
-def append_jsonl(path: Path, record: dict, max_bytes: int = JSONL_MAX_BYTES) -> None:
+def append_jsonl(path: Path, record: dict, max_bytes: int | None = None) -> None:
     """Append one JSON record. Failure is the caller's to contain.
 
     Append-only is the point: a record of what happened is not something a
-    later event should be able to rewrite. Within a generation nothing is
-    rewritten; past `max_bytes` the file is renamed to its previous generation
-    (replacing the one before) and a new one begins, so the operator's own logs
-    stay bounded on their image without truncating anything. A failed rename
-    never stops the append. Each file has one writer -- the fleet monitor, one
-    journal pass at a time -- and nothing in production reads these logs, so
-    there is no reader to teach about the second generation.
+    later event should be able to rewrite. With no `max_bytes` that holds for
+    the file's whole life: the operator journal is append-only (spec section
+    3.4), on the host's disk. A derived log on a bounded image passes
+    `max_bytes` (the fleet monitor's summary, JSONL_MAX_BYTES): past it the file
+    is renamed to its previous generation, replacing the one before, and a new
+    one begins -- bounded without truncating anything. A failed rename never
+    stops the append. Each file has one writer, and nothing in production reads
+    these logs, so there is no reader to teach about the second generation.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
@@ -131,7 +132,7 @@ def append_jsonl(path: Path, record: dict, max_bytes: int = JSONL_MAX_BYTES) -> 
         size = path.stat().st_size
     except OSError:
         size = 0
-    if size > 0 and size + incoming > max_bytes:
+    if max_bytes is not None and size > 0 and size + incoming > max_bytes:
         with contextlib.suppress(OSError):
             os.replace(path, previous_generation(path))
     with open(path, "a", encoding="utf-8") as handle:
