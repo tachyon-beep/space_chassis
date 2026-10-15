@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import functools
 import hashlib
 import importlib.util
 import inspect
@@ -65,6 +66,7 @@ import sys
 import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -1862,7 +1864,422 @@ def stock_flux(
     return flux * (dt / SECONDS_PER_HOUR if per_hour else dt)
 
 
-def advance(world: World, state: State, values: dict[str, Any], dt: float) -> dict[str, Any]:
+# ------------------------------------------------------------------------------------------------
+# **WP10: the ledger** (`plant.md` §4 and §9 step 5).
+#
+# §4 asks three things of a stock and the plant had the first only in prose: a static exponent, so
+# a stock is an integer count of its quantum; **transfers that are one integer quantity, computed
+# once and applied to both ends**; and an assertion with *no tolerance*, because a non-zero residual
+# is a bug. So every tick books, for every stock it advances, a line — the count before, the count
+# after — and, for every edge that moves anything into or out of a stock, one `Transfer` with an
+# integer count of quanta. `assert_conservation` then holds each line to its transfers exactly.
+#
+# **What the ledger holds is bookkeeping, not physics, and the difference is §4's last bullet.**
+# A fuel cell turns oxygen and hydrogen into water and electricity at a float efficiency; that a
+# kilogram of reactant became 1.126 kg of water is the edge's sensitivity, and the ledger does not
+# assert it. What it asserts is that a stock moved by exactly the integers that were booked against
+# it, and that a transfer between two stocks was the same integer at both ends. Energy across a
+# conversion is a trend inside a declared band (`energy_trend`), never an assertion.
+#
+# **The pair.** A line also carries the level the tick *publishes*, and the assertion holds the
+# observation to the ledger: the published level is exactly the line's count times its quantum. A
+# ledger that balanced while the observation drifted would be two records of two different tanks.
+# ------------------------------------------------------------------------------------------------
+
+
+class ConservationError(AssertionError):
+    """A stock moved by an amount its transfers do not explain. Never a tolerance: a bug."""
+
+
+@dataclass(frozen=True)
+class Transfer:
+    """One edge's movement in one segment of one tick, as a signed count of quanta.
+
+    `source` and `target` are the stock *state ids* the edge leaves and enters, or `None` for an end
+    outside the stocks — a flow node, which is the conservation boundary (an external source or
+    sink). `quanta` is moved from `source` to `target`; `shortfall` is what the edge asked for and
+    the source did not have (§4: "zero-crossing records a shortfall").
+    """
+
+    edge: str
+    source: str | None
+    target: str | None
+    quanta: int
+    shortfall: int = 0
+    segment: int = 0
+
+
+@dataclass(frozen=True)
+class StockLine:
+    """One stock in one segment: its count before and after, in quanta of `numerator/denominator`."""
+
+    stock: str
+    unit: str
+    segment: int
+    numerator: int
+    denominator: int
+    entered: float
+    before: int
+    after: int
+
+    @property
+    def level(self) -> float:
+        """The published level this count is: correctly rounded, so `round(level / q)` is the count."""
+        return self.after * self.numerator / self.denominator
+
+    @property
+    def published(self) -> float:
+        """The level the tick publishes: the count's, or — where the count did not move — the level
+        it entered with, so a stock whose declared initial is finer than its quantum (four cabin gases
+        are) is not re-rounded by a tick that moved none of it. `_count` of either is `after`."""
+        return self.entered if self.after == self.before else self.level
+
+
+@dataclass
+class Ledger:
+    """A tick's transfers and stock lines, and — after the commit — the levels it published."""
+
+    transfers: list[Transfer] = field(default_factory=list)
+    lines: list[StockLine] = field(default_factory=list)
+    observed: dict[str, Any] = field(default_factory=dict)
+    segment: int = 0
+    # edge id -> the stock-to-stock transfer its source posted this segment, for its target to book.
+    posted: dict[str, Transfer] = field(default_factory=dict, repr=False)
+
+    def begin_segment(self) -> None:
+        self.segment += 1
+        self.posted = {}
+
+    def moved(self) -> int:
+        """How many transfers moved a non-zero count — zero is a vacuous ledger."""
+        return sum(1 for transfer in self.transfers if transfer.quanta)
+
+    def as_record(self) -> dict[str, Any]:
+        """The ledger as plain data, to be published beside the observation it accounts for."""
+        return {
+            "transfers": [
+                {
+                    "edge": t.edge,
+                    "source": t.source,
+                    "target": t.target,
+                    "quanta": t.quanta,
+                    "shortfall": t.shortfall,
+                    "segment": t.segment,
+                }
+                for t in self.transfers
+            ],
+            "stocks": [
+                {
+                    "stock": line.stock,
+                    "unit": line.unit,
+                    "segment": line.segment,
+                    "quantum": f"{line.numerator}/{line.denominator}",
+                    "before": line.before,
+                    "after": line.after,
+                }
+                for line in self.lines
+            ],
+            "observed": dict(self.observed),
+        }
+
+
+def stock_quantum(state: State, where: str) -> tuple[int, int]:
+    """A stock's quantum as an exact fraction, from its declared decimal — §4's static exponent."""
+    raw = state.spec.get("quantum")
+    quantum = _decimal_quantum(str(raw))
+    if quantum is None:
+        raise Unconfigured(
+            f"{where}.quantum", f"is {raw!r}; a quantum is a positive decimal amount"
+        )
+    return quantum
+
+
+@functools.lru_cache(maxsize=256)
+def _decimal_quantum(raw: str) -> tuple[int, int] | None:
+    try:
+        quantum = Fraction(raw)
+    except (ValueError, ZeroDivisionError):
+        return None
+    return (quantum.numerator, quantum.denominator) if quantum > 0 else None
+
+
+def _book_unadvanced(
+    world: World, state: State, values: dict[str, Any], ledger: Ledger
+) -> dict[str, Any]:
+    """A stock that could not advance this segment still receives what another stock sent it.
+
+    Its own flows are a gap and stand still, but a transfer its source already debited has to land
+    somewhere, or the gap would be a leak. Returns the staged entries, or nothing when no transfer
+    targets this stock.
+    """
+    arriving = [t for t in ledger.posted.values() if t.target == state.id]
+    current = state_level(values, state)
+    if not arriving or not isinstance(current, int | float):
+        return {}
+    where = f"domains/{state.domain}/components.yaml:state {state.id}"
+    numerator, denominator = stock_quantum(state, where)
+    before = _count(float(current), numerator, denominator, where)
+    line = StockLine(
+        stock=state.id,
+        unit=state.unit,
+        segment=ledger.segment,
+        numerator=numerator,
+        denominator=denominator,
+        entered=float(current),
+        before=before,
+        after=before + sum(t.quanta for t in arriving),
+    )
+    ledger.lines.append(line)
+    return state_values(world, state, line.level)
+
+
+def _count(level: float, numerator: int, denominator: int, where: str) -> int:
+    """A level as a whole count of quanta — exact for any level this file published itself."""
+    count = round(level * denominator / numerator)
+    if abs(count) >= 2**52:
+        raise Unconfigured(
+            f"{where}.quantum",
+            f"makes {level!r} a count of {count} quanta, beyond what a float level can carry exactly",
+        )
+    return count
+
+
+def _stock_target(world: World, edge: Edge) -> State | None:
+    """The stock state a stock-to-stock edge fills: its `advances`, or the one stock on the node."""
+    if (world.nodes.get(edge.target) or {}).get("kind") != "stock":
+        return None
+    stocks = [s for s in world.states_on(edge.target) if s.method == "stock"]
+    if edge.advances is not None:
+        stocks = [s for s in stocks if s.id == edge.advances]
+    return stocks[0] if len(stocks) == 1 else None
+
+
+def _integrate_stock(
+    world: World,
+    state: State,
+    values: dict[str, Any],
+    dt: float,
+    incoming: list[Edge],
+    current: float,
+    where: str,
+    ledger: Ledger,
+) -> dict[str, Any]:
+    """One stock's tick: every contributing edge as an integer transfer, booked to the ledger.
+
+    **One Bresenham accumulator per edge**, so each transfer is a whole count on its own — §4's
+    "computed once, applied to both ends" needs an integer per transfer, not per stock — and each is
+    still exact to the quantum over any horizon. The accumulators live under `<state>__residual`,
+    keyed by edge id. A drain is floored like a fill, so a tank is never debited ahead of its flow.
+
+    **A transfer between two stocks is computed by its source and booked by its target.** The source
+    posts it to the ledger; the target, later in the frozen order, books the same integer rather
+    than computing its own flux from its own driver, which is how two floats come to differ in the
+    last bit and the vehicle leaks in secret. A stock-to-stock edge on a back-edge would be booked in
+    two different ticks, so it is refused by name until something needs one.
+    """
+    numerator, denominator = stock_quantum(state, where)
+    quantum = numerator / denominator
+    before = _count(float(current), numerator, denominator, where)
+    carried = values.get(f"{state.id}__residual")
+    carried = carried if isinstance(carried, dict) else {}
+
+    # (edge, the stock state at the other end or None, +1 into this stock / -1 out of it, delta)
+    contributions: list[tuple[Edge, str | None, int, float]] = []
+    booked: list[Transfer] = []
+    for edge in canonical_contributors(incoming):
+        if (world.nodes.get(edge.source) or {}).get("kind") == "stock":
+            posted = ledger.posted.get(edge.id)
+            if posted is None:
+                raise Unconfigured(
+                    f"coupling.yaml:edge {edge.id}",
+                    f"moves stock into {state.id} from the stock on {edge.source!r}, and no transfer "
+                    "was posted by its source this tick. A transfer between two stocks is computed "
+                    "once, by the stock it leaves",
+                    needs=edge.source,
+                )
+            booked.append(posted)
+            continue
+        contributions.append((edge, None, +1, stock_flux(world, edge, values, dt)))
+    for edge in sorted(world.edges, key=lambda e: e.id):
+        if edge.source != state.node or edge.kind == "limit":
+            continue
+        if edge.drains is not None and edge.drains != state.id:
+            continue
+        other = _stock_target(world, edge)
+        if other is not None and edge.id in world.back_edges:
+            raise Unconfigured(
+                f"coupling.yaml:edge {edge.id}",
+                f"moves stock from {state.id} to {other.id} on a back-edge, so the two ends would "
+                "book one transfer in two different ticks. A transfer between stocks runs forward",
+            )
+        if other is not None and stock_quantum(other, where) != (numerator, denominator):
+            raise Unconfigured(
+                f"coupling.yaml:edge {edge.id}",
+                f"moves stock between {state.id} and {other.id}, whose quanta differ, so no one "
+                "integer can be booked at both ends",
+            )
+        delta = stock_flux(world, edge, values, dt, driver_node=edge.target)
+        contributions.append((edge, other.id if other is not None else None, -1, delta))
+
+    residuals: dict[str, float] = {}
+    counts: list[int] = []
+    for edge, _other, _sign, delta in contributions:
+        want = delta + float(carried.get(edge.id) or 0.0)
+        count = math.floor(want / quantum)
+        residuals[edge.id] = want - count * quantum
+        counts.append(count)
+    for (edge, other, _sign, _delta), count in zip(contributions, counts, strict=True):
+        if other is not None and count < 0:
+            raise Unconfigured(
+                f"coupling.yaml:edge {edge.id}",
+                f"would move stock backwards from {other} into {state.id}; a transfer between two "
+                "stocks moves from the edge's source to its target",
+            )
+
+    # "Zero-crossing raises an event and records a shortfall. Never clamp silently, never go
+    # negative." What a drain asked for and the stock did not have is taken off the drains, in edge
+    # order, and recorded on each — so every transfer booked is what actually moved.
+    signs = [sign for _e, _o, sign, _d in contributions]
+    after = before + sum(sign * count for sign, count in zip(signs, counts, strict=True))
+    short = [0] * len(contributions)
+    if after < 0:
+        deficit = -after
+        for index, (sign, count) in enumerate(zip(signs, counts, strict=True)):
+            effect = sign * count
+            if effect >= 0 or not deficit:
+                continue
+            cut = min(-effect, deficit)
+            short[index] = cut
+            counts[index] += sign * cut
+            deficit -= cut
+        after = before + sum(sign * count for sign, count in zip(signs, counts, strict=True))
+    for (edge, other, sign, _d), count, cut in zip(contributions, counts, short, strict=True):
+        transfer = Transfer(
+            edge=edge.id,
+            source=state.id if sign < 0 else None,
+            target=(other if sign < 0 else state.id),
+            quanta=count,
+            shortfall=cut,
+            segment=ledger.segment,
+        )
+        ledger.transfers.append(transfer)
+        if other is not None:
+            ledger.posted[edge.id] = transfer
+    after += sum(posted.quanta for posted in booked)
+    line = StockLine(
+        stock=state.id,
+        unit=state.unit,
+        segment=ledger.segment,
+        numerator=numerator,
+        denominator=denominator,
+        entered=float(current),
+        before=before,
+        after=after,
+    )
+    ledger.lines.append(line)
+    return {
+        **state_values(world, state, line.published),
+        f"{state.id}__residual": residuals,
+        f"{state.id}__shortfall": sum(short) * quantum,
+    }
+
+
+def assert_conservation(ledger: Ledger, *, nontrivial: bool = False) -> int:
+    """§9 step 5: every stock line explained by its transfers, exactly; returns transfers checked.
+
+    For each line, `after - before` equals the transfers booked into that stock minus those booked
+    out of it, in the same segment, with **no tolerance**. Every transfer between two stocks must be
+    booked at both ends; consecutive segments of one stock must join; the count may not be negative;
+    and the level the tick published must be exactly the last line's count times its quantum.
+
+    `nontrivial=True` refuses a ledger in which nothing moved, because an assertion that passes on
+    empty flows is vacuous (`docs/vehicle-completion/06-verification.md`) — an acceptance run passes
+    it; a single tick, which may legitimately move nothing, does not.
+    """
+    net: dict[tuple[int, str], int] = {}
+    for transfer in ledger.transfers:
+        if transfer.source is not None:
+            key = (transfer.segment, transfer.source)
+            net[key] = net.get(key, 0) - transfer.quanta
+        if transfer.target is not None:
+            key = (transfer.segment, transfer.target)
+            net[key] = net.get(key, 0) + transfer.quanta
+    lines = {(line.segment, line.stock): line for line in ledger.lines}
+    for key in net:
+        if key not in lines:
+            raise ConservationError(
+                f"{key[1]}: a transfer was booked against it in segment {key[0]} and the stock has "
+                "no line there — one end of a transfer moved and the other did not"
+            )
+    last: dict[str, StockLine] = {}
+    for line in sorted(ledger.lines, key=lambda row: row.segment):
+        residual = line.after - line.before - net.get((line.segment, line.stock), 0)
+        if residual:
+            raise ConservationError(
+                f"{line.stock}: moved {line.after - line.before} quanta in segment {line.segment} "
+                f"and its transfers explain {net.get((line.segment, line.stock), 0)}: residual "
+                f"{residual} of {line.numerator}/{line.denominator} {line.unit}"
+            )
+        if line.after < 0:
+            raise ConservationError(f"{line.stock}: holds {line.after} quanta, below zero")
+        previous = last.get(line.stock)
+        if previous is not None and previous.after != line.before:
+            raise ConservationError(
+                f"{line.stock}: segment {line.segment} starts at {line.before} quanta and the "
+                f"segment before it ended at {previous.after}"
+            )
+        last[line.stock] = line
+    for stock, level in ledger.observed.items():
+        line = last.get(stock)
+        if line is not None and level != line.published:
+            raise ConservationError(
+                f"{stock}: published {level!r} and the ledger holds {line.after} quanta, which is "
+                f"{line.published!r} — the observation and its ledger disagree"
+            )
+    if nontrivial and not ledger.moved():
+        raise ConservationError(
+            "the ledger moved nothing, so the assertion held vacuously; an acceptance check has to "
+            "run on transfers that move"
+        )
+    return len(ledger.transfers)
+
+
+def energy_trend(
+    ledgers: list[Ledger], band_j: tuple[float, float], unit: str = "J"
+) -> dict[str, dict[str, Any]]:
+    """Energy as a trend inside a declared band, never an assertion (`plant.md` §4).
+
+    For every stock in `unit` across consecutive tick ledgers: the net change over the window and
+    whether every per-tick change lay inside `band_j`. The band is the caller's declaration — a
+    tolerance nobody declared would be a plausible default — and the result is a report: a value
+    outside it is a finding for a reader, not an exception.
+    """
+    low, high = band_j
+    trend: dict[str, dict[str, Any]] = {}
+    for ledger in ledgers:
+        firsts: dict[str, StockLine] = {}
+        lasts: dict[str, StockLine] = {}
+        for line in sorted(ledger.lines, key=lambda row: row.segment):
+            if line.unit == unit:
+                firsts.setdefault(line.stock, line)
+                lasts[line.stock] = line
+        for stock, line in lasts.items():
+            change = (line.after - firsts[stock].before) * line.numerator / line.denominator
+            row = trend.setdefault(stock, {"ticks": 0, "net": 0.0, "outside_band": 0})
+            row["ticks"] += 1
+            row["net"] += change
+            if not low <= change <= high:
+                row["outside_band"] += 1
+    return trend
+
+
+def advance(
+    world: World,
+    state: State,
+    values: dict[str, Any],
+    dt: float,
+    ledger: Ledger | None = None,
+) -> dict[str, Any]:
     """One state's contribution to a tick, or a named refusal.
 
     The refusals are the point. Every one of them names the thing that would have to exist for
@@ -2018,7 +2435,6 @@ def advance(world: World, state: State, values: dict[str, Any], dt: float) -> di
         return state_values(world, state, driver + (current - driver) * alpha)
 
     if state.method == "stock":
-        quantum = float(state.spec["quantum"])
         # --------------------------------------------------------------------------------------
         # **The level, which this branch never read.** `stock_flux` returns a *delta* —
         # `sensitivity x driver x dt`, in the node's own unit, which its docstring says outright —
@@ -2052,69 +2468,19 @@ def advance(world: World, state: State, values: dict[str, Any], dt: float) -> di
                 f"{where}.initial",
                 f"integrates `{state.node}` from {current!r}, which is not a number",
             )
-        # **Sorted by id before summing**, because float addition is non-associative: the sum a
-        # declaration order produces is a sum an edit can change without changing the model.
-        total = 0.0
-        for edge in canonical_contributors(incoming):
-            total += stock_flux(world, edge, values, dt)
-        # And the outbound half, which was missing entirely: **every tank in the vehicle only
-        # filled.** The README states the rule — "a back-edge *out* of a stock still drains it,
-        # because the stock's own integrator subtracts the flow the back-edge reads" — and no tool
-        # implemented any of it. Twelve edges leave stock nodes, and the classifier can establish a
-        # flow for exactly one of them (`E-CREW-WATER`, at `kg/h per crew`); the rest are refused by
-        # name, which is why the linter reports them as debts too.
-        for edge in world.edges:
-            # **Back-edges included**, which is the README's own rule: "a back-edge *out* of a stock
-            # still drains it, because the stock's own integrator subtracts the flow the back-edge
-            # reads". Excluding them would have left `water_cooling` and `h2_csm` — the two the README
-            # names as discharging *entirely* through back-edges — draining nothing.
-            if edge.source != state.node:
-                continue
-            # A declared clamp is a relation, not a flow: it constrains what the node's channel may
-            # do and moves no matter, so it neither fills nor drains. See `CLAMP_KIND` in the linter.
-            if edge.kind == "limit":
-                continue
-            if edge.drains is not None and edge.drains != state.id:
-                continue
-            total -= stock_flux(world, edge, values, dt, driver_node=edge.target)
-        # --------------------------------------------------------------------------------------
-        # `plant.md` §4's Bresenham residual accumulator, which the branch did not have either.
-        #
-        # **"Every stock uses a Bresenham residual accumulator**: `moved = (scaled + acc) // SCALE;
-        # acc = (scaled + acc) % SCALE` ... Exact to the quantum over any horizon, integer-only,
-        # horizon-independent." The worked example is this vehicle's own: the nominal leak is
-        # `0.0064 g/s` against a 1 mg quantum, so `0.128` quanta per tick, which rounds to zero
-        # every tick — *"the leak never happens"*. Without the accumulator the sub-quantum branch
-        # below returned `None`, which `step` committed, so the tank's value became `None` on the
-        # first slow tick and every tick after it raised against a `None` level.
-        #
-        # The residual is carried in the same value map as the level, under a key namespaced to the
-        # state. That is where it belongs while the stock is a float: §4's `acc` is part of the
-        # stock's *representation*, and the representation here is the map. When the fixed-point
-        # mantissa lands the residual moves inside it, and this key disappears.
-        # --------------------------------------------------------------------------------------
-        residual_key = f"{state.id}__residual"
-        carried = float(values.get(residual_key) or 0.0)
-        quanta = (total + carried) / quantum
-        moved = math.floor(quanta)
-        level = current + moved * quantum
-        # "**Zero-crossing raises an event and records a shortfall.** Never clamp silently, never go
-        # negative. The shortfall is the evidence." The queue exists as of round 78 — §5's
-        # integer-microsecond stamps, carried by `Effect` — but a zero crossing is an event the
-        # *plant* generates, and nothing here raises one: the queue's contents are the executive's
-        # stamped effects, and a self-scheduled crossing needs the rule that computes the crossing.
-        # So the shortfall is returned with the level and named here, which is the same open half the
-        # hysteresis family still owes rather than a second one.
-        shortfall = 0.0
-        if level < 0.0:
-            shortfall = -level
-            level = 0.0
-            moved = round((level - current) / quantum) if quantum else 0
-        return {
-            **state_values(world, state, level),
-            residual_key: (total + carried) - moved * quantum,
-            f"{state.id}__shortfall": shortfall,
-        }
+        # The flows, the residual accumulators, the zero crossing and the booking are
+        # `_integrate_stock`'s: WP10's ledger needs every transfer as its own integer, so the sum of
+        # floats this branch used to floor once is now a sum of integers booked once each.
+        return _integrate_stock(
+            world,
+            state,
+            values,
+            dt,
+            incoming,
+            current,
+            where,
+            ledger if ledger is not None else Ledger(),
+        )
 
     if state.method == "delay":
         # --------------------------------------------------------------------------------------
@@ -2870,6 +3236,7 @@ def step(
     dt: float,
     gaps: list[Gap] | None = None,
     effects: list[Effect] | None = None,
+    ledger: Ledger | None = None,
 ) -> dict[str, Any]:
     """`plant.md`'s seven-step tick, with the parts that need code named rather than faked.
 
@@ -2921,6 +3288,10 @@ def step(
     # cut — `seen` is what a three-segment tick used to report three times over. And a transport
     # delay is indexed by tick (§3), so `_walk` advances it only on the segment that closes the tick.
     seen: list[Gap] = []
+    # WP10: the tick's ledger, filled by every stock the walk advances and asserted in step 5. A
+    # caller that passes one gets it back filled — the ledger and the levels it accounts for, as a
+    # pair; a caller that passes none still has the tick asserted.
+    book = ledger if ledger is not None else Ledger()
     for offset_us, effect in queue:
         # A zero-length segment is not walked at all: an effect stamped at the tick's start, or two
         # stamped at one microsecond, have no interval between them to integrate, and walking one
@@ -2928,7 +3299,7 @@ def step(
         if offset_us > elapsed_us:
             committed = _walk(
                 world, committed, (offset_us - elapsed_us) / 1_000_000, seen, tick_dt=dt,
-                closes_tick=False,
+                closes_tick=False, ledger=book,
             )
         # The effect lands on what the walk just committed, so a state it moves is visible to the
         # next segment's walk — which is the whole difference between a queue and a list of commands
@@ -2946,7 +3317,7 @@ def step(
     # floats puts back the ambiguity §5 took out.
     committed = _walk(
         world, committed, (_tick_us(dt) - elapsed_us) / 1_000_000, seen, tick_dt=dt,
-        closes_tick=True,
+        closes_tick=True, ledger=book,
     )
     if gaps is not None:
         reported: set[tuple[str, str, str]] = set()
@@ -2956,8 +3327,11 @@ def step(
                 reported.add(key)
                 gaps.append(gap)
 
-    # 5. Commit, then assert what can be asserted exactly. `assert_conservation` needs the
-    #    accumulator of every `conserve` edge, which exists once the stocks do.
+    # 5. Commit, then assert what can be asserted exactly: every stock line against its integer
+    #    transfers, with no tolerance, and the published levels against the ledger (WP10).
+    for stock in {line.stock for line in book.lines}:
+        book.observed[stock] = committed.get(stock)
+    assert_conservation(book)
     # 6. Instruments: T -> A. One-way, and the quality function cannot see the faults.
     # 7. Compare-point: `state_hash(committed)` is a hash over canonically-encoded state, and the
     #    caller takes it every tick — `--determinism` is the caller that does, and
@@ -3070,6 +3444,7 @@ def _walk(
     *,
     tick_dt: float,
     closes_tick: bool = True,
+    ledger: Ledger | None = None,
 ) -> dict[str, Any]:
     """§9's step 4 over one horizon: every node in the frozen order, then the sentinel.
 
@@ -3086,12 +3461,14 @@ def _walk(
     once, on the segment that closes the tick, with the tick's own `dt`; on the others it holds.
     """
     staged: dict[str, Any] = {}
+    book = ledger if ledger is not None else Ledger()
+    book.begin_segment()
 
     def produce(state: State) -> None:
         if state.method != "delay":
-            _advance_into(world, state, values, staged, horizon, gaps)
+            _advance_into(world, state, values, staged, horizon, gaps, book)
         elif closes_tick:
-            _advance_into(world, state, values, staged, tick_dt, gaps)
+            _advance_into(world, state, values, staged, tick_dt, gaps, book)
 
     for node in world.schedule:
         for state in world.states_on(node):
@@ -3113,6 +3490,7 @@ def _advance_into(
     staged: dict[str, Any],
     horizon: float,
     gaps: list[Gap] | None,
+    ledger: Ledger | None = None,
 ) -> None:
     """One producer's contribution, staged, or the reason it has none.
 
@@ -3121,8 +3499,10 @@ def _advance_into(
     came to read unstaged values and stop early without either problem being visible.
     """
     try:
-        staged.update(advance(world, state, {**values, **staged}, horizon))
+        staged.update(advance(world, state, {**values, **staged}, horizon, ledger))
     except Unconfigured as exc:
+        if ledger is not None and state.method == "stock":
+            staged.update(_book_unadvanced(world, state, {**values, **staged}, ledger))
         if gaps is not None:
             # `.where` and `.what`, not `args`: `Unconfigured.__init__` hands `Exception` the
             # formatted message as *one* argument, so `args[1]` is an IndexError and the tick dies
