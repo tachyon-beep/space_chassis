@@ -147,7 +147,9 @@ def generate(root: Path) -> str:
         "This file is generated from the vehicle's command registries and is the only place a verb "
         "name appears. Every verb below exists; every verb in the last section deliberately does "
         "not. Nothing here describes the mission, the vehicle's condition, or what may be wrong "
-        "with it — that is what `state.json` and the telemetry ring are for."
+        "with it — that is what `state.json` and the telemetry ring are for. The vehicle rewrites "
+        "this file from its registries on a slow cadence, about once a mission second, so an edit "
+        "made to it here lasts about that long."
     )
     add("")
     add("## How to read an entry")

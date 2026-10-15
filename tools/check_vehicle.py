@@ -18302,6 +18302,58 @@ def _checkpoint_run_keys(tree: ast.Module) -> set[str] | None:
     return None
 
 
+# The checkpoint's `clock` keys a flag names, by the flag's `dest` (#23, the clock seam, design §3): `m`, `k`
+# and `N` are run inputs the operator names and a resume inherits. `burst_bound` (always `k`) and
+# `lag_ceiling_s` (the backstop's constant until #26) are derived, and no flag names them.
+CHECKPOINT_CLOCK_FLAG_DESTS = {"m": "multiplier", "k": "cycle_ticks", "N": "checkpoint_ticks"}
+
+
+def _checkpoint_clock_keys(tree: ast.Module) -> set[str] | None:
+    """The keys of the `clock` section `tools/checkpoint.py`'s `capture_state` writes, as flag `dest`s.
+
+    The section is not a dictionary literal: it is a comprehension over `CLOCK_INPUTS`, the module's
+    tuple of the clock's names, which `_checkpoint_run_keys`' literal reader cannot read — so before
+    #23 the three clock flags would have escaped the rule. Both shapes are resolved here: a dictionary
+    literal of string keys, or `{name: … for name in NAME}` where `NAME` is a module-level tuple (or
+    list) of string literals. Anything else is a writer this check cannot read, `None`.
+    """
+    sequences: dict[str, list[str]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, (ast.Tuple, ast.List)) and all(
+            isinstance(e, ast.Constant) and isinstance(e.value, str) for e in node.value.elts
+        ):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    sequences[target.id] = [e.value for e in node.value.elts]  # type: ignore[union-attr]
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name == "capture_state"):
+            continue
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Dict):
+                continue
+            for key, value in zip(inner.keys, inner.values, strict=False):
+                if not (isinstance(key, ast.Constant) and key.value == "clock"):
+                    continue
+                names: list[str] | None = None
+                if isinstance(value, ast.Dict) and all(isinstance(k, ast.Constant) and isinstance(k.value, str) for k in value.keys):
+                    names = [k.value for k in value.keys]  # type: ignore[union-attr]
+                elif isinstance(value, ast.DictComp) and len(value.generators) == 1:
+                    generator = value.generators[0]
+                    if (
+                        isinstance(generator.iter, ast.Name)
+                        and generator.iter.id in sequences
+                        and isinstance(generator.target, ast.Name)
+                        and isinstance(value.key, ast.Name)
+                        and value.key.id == generator.target.id
+                    ):
+                        names = sequences[generator.iter.id]
+                if names is None:
+                    return None
+                return {CHECKPOINT_CLOCK_FLAG_DESTS.get(name, name) for name in names}
+        return None
+    return None
+
+
 def _console_identity_keys(tree: ast.Module) -> tuple[str, ...] | None:
     """`ROOT_RECORD_IDENTITY` as `tools/console.py` declares it: a tuple of string literals, or `None`."""
     for node in tree.body:
@@ -18344,6 +18396,12 @@ def check_console_flags(root: Path, report: Report) -> None:
     This is a claim about a tool rather than about the corpus, and it lives here for the reason
     `check_tool_docstrings` does: the console's parser is a declaration about the run's identity, and
     a declaration with no reader has already drifted.
+
+    **The clock is remembered too** (#23): a resume inherits `m`, `k` and `N` from the checkpoint's
+    `clock` section, which `capture_state` builds as a comprehension over `CLOCK_INPUTS`. The check
+    resolves that tuple (`_checkpoint_clock_keys`) and maps the three to the flags' dests
+    (`CHECKPOINT_CLOCK_FLAG_DESTS`), so `--multiplier`, `--cycle-ticks` and `--checkpoint-ticks` are
+    held to the `None` default; a `clock` section it cannot resolve is a refusal, not a pass.
     """
     source_path = root / "tools" / "console.py"
     if not source_path.is_file():
@@ -18363,9 +18421,10 @@ def check_console_flags(root: Path, report: Report) -> None:
     # the batch cap and the tripped interlocks from the checkpoint, so their flags are remembered too.
     checkpoint_path = root / "tools" / "checkpoint.py"
     try:
-        run_keys = _checkpoint_run_keys(ast.parse(checkpoint_path.read_text())) if checkpoint_path.is_file() else None
+        checkpoint_tree = ast.parse(checkpoint_path.read_text()) if checkpoint_path.is_file() else None
     except SyntaxError:
-        run_keys = None
+        checkpoint_tree = None
+    run_keys = _checkpoint_run_keys(checkpoint_tree) if checkpoint_tree is not None else None
     if run_keys is None:
         report.refuse(
             "tools/checkpoint.py",
@@ -18373,9 +18432,21 @@ def check_console_flags(root: Path, report: Report) -> None:
             "so the values a resume remembers — and the flags that must tell `named` from `named nothing` — are unknown",
         )
         return
+    # **And its `clock` section** (#23, the clock seam): a resume inherits `m`, `k` and `N`, so
+    # `--multiplier`, `--cycle-ticks` and `--checkpoint-ticks` are remembered too. The section is a
+    # comprehension over `CLOCK_INPUTS`, resolved here (`_checkpoint_clock_keys`).
+    clock_keys = _checkpoint_clock_keys(checkpoint_tree) if checkpoint_tree is not None else None
+    if clock_keys is None:
+        report.refuse(
+            "tools/checkpoint.py",
+            "no longer builds the checkpoint's `clock` section (`capture_state`) as a dictionary or a comprehension over "
+            "a tuple of names this check can resolve, so the clock a resume inherits — and the flags `--multiplier`, "
+            "`--cycle-ticks` and `--checkpoint-ticks` that must tell `named` from `named nothing` — are unknown",
+        )
+        return
     record_keys = set(durable) if durable is not None else None
     if durable is not None:
-        durable |= run_keys
+        durable |= run_keys | clock_keys
     if durable is None:
         report.refuse(
             "tools/console.py",

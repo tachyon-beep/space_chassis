@@ -11,16 +11,18 @@ receipt sequence and one state lineage**, and a **`Window`** is the per-slug ing
 publication view attached to it — its console, its results, its gate preferences, its deferral
 queue, its ring — with no physical state of its own.
 
-Each cycle the executive first settles every window's due deferrals (in a deterministic order:
-sorted slugs rotated by the tick, ADR choice A), then visits every window in that order, claims its
-console destructively and atomically, validates every line in order — empty, unknown verb, phase
-and gate, interlocks, arguments, dwell, argument resolution, conflict — and turns the accepted
-state-staging commands into `plant.Effect`s stamped at `offset_us = 0` in arbitration order. Then it
-steps the plant **exactly once**, appends the cycle's row to its durable record and `fsync`s it (ADR
-0002 J, below), writes every result (refusals included, one file each, each ending in a receipt
-block), notes durably that it did, rewrites every window's mirror and record, and appends one frame
-per window from the stepped truth. Validation and effect therefore read the same truth at the same
-simulated instant, and nothing a window is shown is something a restart could not recover.
+Each cycle the executive waits until the cycle is due on the mission clock (below), first settles
+every window's due deferrals (in a deterministic order: sorted slugs rotated by the cycle, ADR
+choice A), then visits every window in that order, claims its console destructively and atomically,
+validates every line in order — empty, unknown verb, phase and gate, interlocks, arguments, dwell,
+argument resolution, conflict — and turns the accepted state-staging commands into `plant.Effect`s
+stamped at `offset_us = 0` of the cycle's first tick in arbitration order. Then it steps the plant
+**`k` ticks** — the first with the effects, the other `k − 1` with none — appends the cycle's `k` rows
+to its durable record and `fsync`s them (ADR 0002 J, below), writes every result (refusals included,
+one file each, each ending in a receipt block), notes durably that it did, rewrites every window's
+mirror and record, and appends one frame per window from the stepped truth. Validation and effect
+therefore read the same truth at the same simulated instant, and nothing a window is shown is
+something a restart could not recover.
 
 A window is an agent's directory, and the executive treats it as one. The console is opened without
 following links and refused unless it is a regular file of bounded size; every path of a window is
@@ -39,9 +41,18 @@ What this slice substitutes, and says so (ADR 0001 "not established"):
   - **Unevaluated interlocks are refused.** Threshold evaluation is WP05's, so a verb that declares
     any interlock is refused `INTERLOCK UNEVALUATED` naming each one and why it cannot be read
     (choice C). `set_bus_tie`, `start_burn`, `arm_event` and `execute_event` are all in that set.
-  - **One tick per cycle, multiplier undecided.** The loop inherits one tick per cycle from the old
-    console. How many ticks a wall second carries, and the pause, overload and downtime policy, are
-    WP08's and are **not** decided here; `--poll` is a wall-clock sleep between cycles and nothing more.
+  - **The mission clock, without shedding** (ADR 0002 A, B2, J; WP08 child 5, #23). Three run inputs,
+    required with no default on a fresh serving start and inherited by a restart: `--multiplier`
+    (`m`, mission seconds per wall second, an exact fraction), `--cycle-ticks` (`k`, ticks per cycle,
+    one claim and one publication each, at most `tick_hz` over the highest channel rate) and
+    `--checkpoint-ticks` (`N`, a multiple of `k`). Tick `t` is due at `E + (t − t0)·dt/m` on
+    CLOCK_MONOTONIC from the segment's epoch, in integer nanoseconds; a cycle never starts before its
+    last tick is due, and one that is behind runs whole cycles back to back (burst `k`). Every row
+    records its cycle's start lag; a cycle's cost is carried to the next cycle's first row; the clean
+    end's manifest summarises them. A stall is journaled; a lag past 30 s is the interim backstop —
+    a clean end and exit 4, or a rebased epoch without a state directory — until #26 brings
+    shedding, dilation and the recorded hold. `SIGTERM` and `SIGINT` finish the cycle they land in and
+    take the clean end. `--poll` is gone.
   - **Resume is from the executive's own checkpoint, never from a window.** The old cross-process
     resume of ticks, arm tokens, dwell and deferrals from the agent-writable `pending.json` is
     withdrawn: it restored authority from a file an agent can write. With `--state-dir`, a start that
@@ -129,13 +140,15 @@ configuration constraint. With it:
     the path forms remain for callers that hold no handle.
 
 **The journal is the durable per-cycle record** (ADR 0002 J, child 4 — `#22`, format
-`vehicle.record.v2` since its review; the comment block above `RecordRefused` is the format). Each
-boot's segment opens with a header naming the format, the boot, the tick its first cycle started at,
-the boot before it and the chain value that boot ended on; every cycle appends one tick row — effects
-with their stamps, every verdict's receipts, the receipt counters, each window's spend, deferral and
-arm-token changes, the compare-point, the lineage link, and the `published` mark of every window about
-to publish — and `fsync`s it *before* the root record, a result, a frame or a mirror of the cycle is
-written, after any batch the cycle claimed is durable; each window's results are made durable and
+`vehicle.record.v3` since #23; the comment block above `RecordRefused` is the format). Each boot's
+segment opens with a header naming the format, the boot, the tick its first cycle started at, the
+boot before it, the chain value that boot ended on and the boot's `m`, `k` and `N`; every cycle
+appends `k` tick rows — on the first, the effects with their stamps, every verdict's receipts, the
+receipt counters, each window's spend, deferral and arm-token changes and the previous cycle's cost;
+on every one, the compare-point, the lineage link and the cycle's start lag; on the last, the
+`published` mark of every window about to publish — and `fsync`s them *before* the root record, a
+result, a frame or a mirror of the cycle is written, after any batch the cycle claimed is durable (a
+first row that carries anything is made durable before the cycle steps on); each window's results are made durable and
 then noted (`results_written`) before its frame. Every line carries a chain value, so an edit or a
 deletion anywhere refuses by name. What a cycle may add is bounded on the encoded bytes, per window
 and per receipt, whatever the agents send. A record that cannot be made durable stops the run by name
@@ -150,9 +163,9 @@ the segment boundaries.
 
 **Checkpoints and resume** (ADR 0002 F, G, J, K, L; child 3 — `#21`). The executive writes its own
 checkpoints through the held handle: a world's genesis at tick 0 before its first cycle (mandatory:
-a failure refuses the start with nothing bound), one at the end of every cycle whose tick is a
-multiple of `N` (`tick_hz`, recorded in the checkpoint's clock inputs until child 5 makes it a run
-input; a failure there is recorded and the run goes on), one at the recovered tick before a resumed
+a failure refuses the start with nothing bound), one at the end of every cycle that crosses a
+multiple of `N` (a run input since #23, in the checkpoint's clock inputs with `m` and `k`; a failure
+there is recorded and the run goes on), one at the recovered tick before a resumed
 run claims anything (mandatory), and one at a clean end. A checkpoint's segment entries carry the
 byte offset of the record it covers (format v2), so a resume reads `O(L − T)` lines from that anchor
 — the prefix before it attested by the verified checkpoint, not re-verified (`read_record`). It
@@ -179,8 +192,8 @@ side channel that reveals hidden changes; the journal carries them for the opera
 directory or at `--journal PATH`, and either is refused if the path lies inside `--diode-dir`.
 
     python3 tools/console.py --diode-dir .scratch/diode --slug alpha --slug bravo --init
-    python3 tools/console.py --diode-dir .scratch/diode --state-dir .scratch/state --slug alpha --slug bravo --cycles 60 --poll 1
-    python3 tools/console.py --diode-dir .scratch/diode --state-dir .scratch/state --slug alpha --slug bravo --cycles 60 --poll 1   # again: it resumes
+    python3 tools/console.py --diode-dir .scratch/diode --state-dir .scratch/state --slug alpha --slug bravo --cycles 60 --multiplier 1 --cycle-ticks 5 --checkpoint-ticks 50
+    python3 tools/console.py --diode-dir .scratch/diode --state-dir .scratch/state --slug alpha --slug bravo --cycles 60   # again: it resumes, on its clock
     python3 contract/diode_probe.py --diode-dir .scratch/diode --slug alpha --poll-seconds 1
 """
 
@@ -198,14 +211,17 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import stat
 import sys
+import threading
 import time
 import uuid
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -214,15 +230,21 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from checkpoint import (  # noqa: E402
     CURRENT,
+    LAG_CEILING_S,
+    MULTIPLIER_TEXT,
     SPEND_PLACEHOLDER_VERSION,
     CheckpointRefused,
     Compatibility,
     _structure_problem,
     capture_state,
     choose_generation,
+    clock_problem,
+    clock_section,
     decode,
     encode,
     git_commit,
+    multiplier_text,
+    parse_multiplier,
     releasing,
     restore_state,
     write_checkpoint,
@@ -311,8 +333,10 @@ JOURNAL_SEGMENT_NAME = re.compile(r"journal\.([A-Za-z0-9_-]{1,64})\.jsonl")
 # The record's format (ADR 0002 J, child 4), named in every segment's header row. A change to what a
 # row carries or how replay reads it is a change of this id, as a change to the checkpoint's body is
 # a change of `checkpoint.FORMAT`. v2 added the row chain, the counters, the parsed deferral and the
-# per-window budget (child 4's review); a v1 segment is refused by name.
-RECORD_FORMAT = "vehicle.record.v2"
+# per-window budget (child 4's review); v3 (#23, the clock seam) the header's `m`, `k` and `N`, every
+# row's `lag_us` and a cycle's first row's carried-forward cost. An older segment is refused by name
+# (and a v3 engine already refuses an older world's checkpoint by its engine identity).
+RECORD_FORMAT = "vehicle.record.v3"
 # The record's bounds, every one on the *encoded* bytes: rows are ASCII-escaped JSON, where an `é` is
 # six bytes and a lone surrogate twelve (review finding 1). A receipt's body keeps `RECORD_TEXT_BYTES`
 # and its command — the agent's own text, echoed — `RECORD_ECHO_BYTES`, each cut on a character with
@@ -1103,18 +1127,30 @@ def append_or_restore(fd: int, data: bytes, name: str) -> None:
         raise
 
 
-# -- the record (ADR 0002 J, child 4) ------------------------------------------------------------
+# -- the record (ADR 0002 J, child 4; format v3, #23) -------------------------------------------
 # **The journal is the record.** One segment per boot — `journal.<boot_id>.jsonl` in the state
 # directory, or a run of rows inside an explicit `--journal` file — whose first row is a header
 # (`event: segment`: the format, the boot, the world, the tick the boot's first cycle started at, the
-# boot before it and the chain value that boot ended on), then one *tick row* per cycle, and after each
-# window's results a `results_written` note for that window. A tick row is `tick` (the tick the cycle
-# reached), `world_id`, `boot_id`, the compare-point `state_hash` and the `lineage` link of that tick,
-# the `effects` with their stamps in arbitration order, every verdict's `receipts` (global `seq`,
+# boot before it and the chain value that boot ended on, and the boot's clock — `m` as its exact
+# fraction `"p/q"`, `k` and `N` — so a reader knows its cycle boundaries, `first_tick + i·k`), then one
+# *tick row* per tick, and after each window's results a `results_written` note for that window. A tick
+# row is `tick`, `world_id`, `boot_id`, the compare-point `state_hash` and the `lineage` link of that
+# tick, the `effects` with their stamps in arbitration order, every verdict's `receipts` (global `seq`,
 # window-local `local`, window, state, offset, command, body), the global `receipt` counter, the
 # per-window `windows` deltas (spend, the window's receipt counter, deferrals added and removed, arm
 # tokens set and cleared), the `published` mark of every window about to publish (the tick and the
-# frame number it will write), and the executive's `failures` count.
+# frame number it will write), the executive's `failures` count, and the cycle's start lag `lag_us`.
+#
+# **A cycle is `k` rows, and the reader holds them to one invariant** (#23, design §4): a cycle's
+# **first** row carries the effects, the receipts, the window deltas, the new receipt counter and the
+# previous cycle's carried-forward cost (`prev_cycle_us`, `prev_end_lag_us`, 0 on a segment's first
+# cycle); rows 2..k carry `effects: []`, `receipts: []`, `windows: {}` and repeat the counter, which
+# replay reads on every row; only the **last** row carries `published` marks. Receipts stay on row 1, so
+# a receipt's tick is still its row's less one — the cycle's start — and the readers accumulate a
+# cycle's receipts from its first row to the notes after its last. **`lag_us`, `prev_cycle_us` and
+# `prev_end_lag_us` are wall data**: they ride in the row chain, for the record's integrity, and never
+# in `state_hash`, the lineage, a compare-point or any replay decision; shedding (#26) records its
+# decisions and never re-derives them from lag.
 #
 # **Every row carries `chain`** (format v2, child 4's review finding 3): the SHA-256 of the previous
 # row's chain and the row's own canonical bytes (sorted compact JSON without `chain`), seeded by the
@@ -1124,11 +1160,11 @@ def append_or_restore(fd: int, data: bytes, name: str) -> None:
 # and whoever can write the `0600` state directory can re-chain. Against that, every field is typed
 # and bounded, a mark is its row's tick, a note is its row's, and the physics is re-run.
 #
-# **Every cycle writes its row, quiet or not**: rule 2's mark is written at every publication, and a
-# cycle always publishes (the mirror is rewritten every cycle), so a row is appended and `fsync`ed every
-# cycle anyway — the compare-point, the lineage link and the chain ride in it for bytes, not for an
-# `fsync`. The ticks of a record are therefore contiguous by construction, a hole is a missing cycle
-# wherever it falls, and replay checks every tick against the run's own compare-point.
+# **Every cycle writes its rows, quiet or not**: rule 2's mark is written at every publication, and a
+# cycle always publishes (the mirror is rewritten every cycle), so `k` rows are appended and `fsync`ed
+# every cycle anyway — the compare-points, the lineage links and the chain ride in them for bytes, not
+# for an `fsync`. The ticks of a record are therefore contiguous by construction, a hole is a missing
+# tick wherever it falls, and replay checks every tick against the run's own compare-point.
 #
 # **What one cycle may add is bounded, on the encoded bytes** (review finding 1). Rows are written as
 # ASCII-escaped JSON, so every bound counts the escaped form (an `é` is six bytes, a lone surrogate
@@ -1141,12 +1177,16 @@ def append_or_restore(fd: int, data: bytes, name: str) -> None:
 # RECORD_FINGERPRINT_BYTES)` plus the deltas and a fixed overhead, whatever the agents send.
 #
 # The order inside a cycle is the three rules (review finding 6 made each promise a disk fact): a
-# claimed batch's rewritten console and its window directory are `fsync`ed; the tick row (and on the
-# boot's first cycle the header with it) is appended and `fsync`ed **before** the root record, any
-# result, frame or mirror is written; then, window by window, the results are written and each file
-# `fsync`ed, the `output/` directory `fsync`ed, and the window's note appended and `fsync`ed, before
-# its frame, mirror and generated files. A quiet cycle is one `fsync`. A record that cannot be made
-# durable stops the run by name (`RecordUnwritable`, exit 3).
+# claimed batch's take and its window directory are `fsync`ed; **a cycle whose first row carries anything
+# — effects, receipts or deltas — appends and `fsync`s that row before it steps on** (write-ahead, #23:
+# the window in which a claimed batch exists only in memory stays one step), and its rows 2..k follow
+# with one `fsync`; a cycle with nothing to record appends all `k` rows (and on the boot's first cycle
+# the header with them) with one `fsync`; all of it **before** the root record, any result, frame or
+# mirror is written; then, window by window, the results are written and each file `fsync`ed, the
+# `output/` directory `fsync`ed, and the window's note appended and `fsync`ed, before its frame, mirror
+# and generated files. A record that cannot be made durable stops the run by name (`RecordUnwritable`,
+# exit 3); a recovery truncates a torn tail and replays to the last durable tick, so a partial cycle
+# publishes nothing.
 
 
 class RecordRefused(Exception):
@@ -1351,9 +1391,13 @@ _COMPARE_POINT = re.compile(r"[0-9a-f]{16,64}")
 _IDENT = re.compile(r"[A-Za-z0-9_-]{1,64}")
 VERDICT_STATES = frozenset({"accepted", "refused", "settled", "duplicate", "superseded", "deferred"})
 _ROW_KEYS = frozenset(
-    {"tick", "world_id", "boot_id", "lineage", "state_hash", "effects", "receipts", "receipt", "windows", "published", "failures", "chain"}
+    {"tick", "world_id", "boot_id", "lineage", "state_hash", "effects", "receipts", "receipt", "windows", "published", "failures", "chain", "lag_us"}
 )
-_HEADER_KEYS = frozenset({"event", "format", "world_id", "segment", "boot_id", "first_tick", "previous", "previous_chain", "wall_epoch", "chain"})
+# A cycle's first row: every row's keys, and the previous cycle's carried-forward cost (#23, design §2).
+_CYCLE_ROW_KEYS = _ROW_KEYS | {"prev_cycle_us", "prev_end_lag_us"}
+_HEADER_KEYS = frozenset(
+    {"event", "format", "world_id", "segment", "boot_id", "first_tick", "previous", "previous_chain", "wall_epoch", "chain", "m", "k", "N"}
+)
 _NOTE_KEYS = frozenset({"event", "boot_id", "world_id", "tick", "results", "chain"})
 _RECEIPT_KEYS = frozenset({"seq", "local", "window", "state", "offset_us"})
 _RECEIPT_TEXT = frozenset({"command", "body", "command_sha256", "command_bytes", "body_sha256", "body_bytes"})
@@ -1462,11 +1506,18 @@ def _delta_problem(delta: Any) -> str | None:
 
 
 def _row_problem(row: dict[str, Any]) -> tuple[str, str] | None:
-    """`(check, sentence)` for the first thing about a tick row this format cannot vouch for, or `None`."""
-    if set(row) != _ROW_KEYS:
-        return "row", f"the row's keys are not a tick row's ({sorted(set(row) ^ _ROW_KEYS)})"
+    """`(check, sentence)` for the first thing about a tick row this format cannot vouch for, or `None`.
+
+    A row is a cycle's first (`_CYCLE_ROW_KEYS`) or one of the others (`_ROW_KEYS`); which it must be,
+    by its position in its segment's cycles, is `_cycle_row_problem`'s.
+    """
+    keys = set(row)
+    if keys not in (_ROW_KEYS, _CYCLE_ROW_KEYS):
+        return "row", f"the row's keys are not a tick row's ({sorted(keys ^ (_CYCLE_ROW_KEYS if 'prev_cycle_us' in keys else _ROW_KEYS))})"
     if not (_count(row["tick"], 1) and _ident(row["world_id"]) and _ident(row["boot_id"])):
         return "row", "the row's tick, world or boot is malformed"
+    if not all(_count(row[key]) for key in ("lag_us", "prev_cycle_us", "prev_end_lag_us") if key in row):
+        return "row", "the row's lag or carried-forward cost is not a count of microseconds"
     compare_point = row["state_hash"]
     if not (isinstance(compare_point, str) and _COMPARE_POINT.fullmatch(compare_point)):
         return "row", "the row's compare-point is not a state hash"
@@ -1510,11 +1561,61 @@ def _row_problem(row: dict[str, Any]) -> tuple[str, str] | None:
     return None
 
 
+def _segment_clock_problem(entry: dict[str, Any]) -> str | None:
+    """Why a header's (or a checkpoint segment entry's) `m`, `k`, `N` are not a boot's clock, or `None`."""
+    m = entry.get("m")
+    if not (isinstance(m, str) and MULTIPLIER_TEXT.fullmatch(m) and multiplier_text(m) == m):
+        return f"the segment's multiplier {bounded_repr(m)} is not an exact fraction `p/q` in lowest terms"
+    if not (_count(entry.get("k"), 1) and _count(entry.get("N"), 1) and entry["N"] % entry["k"] == 0):
+        return "the segment's k and N are not positive tick counts with N a multiple of k"
+    return None
+
+
+def _cycle_row_problem(row: dict[str, Any], header: dict[str, Any], cycle_first: tuple[int, int] | None = None) -> str | None:
+    """The row invariant (#23, design §4): what a row at its position in its segment's cycles must and must not carry.
+
+    The segment's cycles begin at `first_tick + i·k`, so a row is its cycle's first when
+    `(tick − first_tick − 1) mod k = 0` and its last when `(tick − first_tick) mod k = 0`. The first
+    carries the carried-forward cost; the others carry no effect, receipt or delta, **and repeat the
+    first's receipt counter and start lag** (`cycle_first`, `(receipt, lag_us)` of the cycle's first row as this
+    read met it; candidate 1, Codex P2): a cycle draws its receipts before its first step and has one
+    start, so an interior row with another counter or another lag is not one this vehicle wrote — replay
+    would otherwise take a raised counter from a re-chained interior row. A row that is not its cycle's
+    last carries no `published` mark. A read that begins inside a cycle has no first row to hold the
+    others to; no anchor does (a checkpoint's is at a cycle's end, or a dead segment's).
+    """
+    offset = row["tick"] - int(header["first_tick"])
+    k = int(header["k"])
+    first = (offset - 1) % k == 0
+    if first != ("prev_cycle_us" in row):
+        return (
+            f"the row for tick {row['tick']} is the first of a cycle of {k} from tick {header['first_tick']} and carries no carried-forward cost"
+            if first else f"the row for tick {row['tick']} is inside a cycle of {k} from tick {header['first_tick']} and carries a carried-forward cost"
+        )
+    if not first and (row["effects"] or row["receipts"] or row["windows"]):
+        return f"the row for tick {row['tick']} is inside its cycle and carries effects, receipts or deltas, which are the cycle's first row's"
+    # `cycle_first` is `None` only when this read met no first row of the cycle: a read that begins inside
+    # a cycle. None does — every anchor is at a cycle boundary: a genesis checkpoint (before any row), a
+    # cadence or clean-end checkpoint (after its cycle's notes), or a resume's at a dead segment's end, after
+    # which that segment holds no more rows — so the skip is only for a first row the read never had.
+    if not first and cycle_first is not None and (row["receipt"], row["lag_us"]) != cycle_first:
+        return (
+            f"the row for tick {row['tick']} is inside its cycle and carries receipt counter {row['receipt']} and lag {row['lag_us']} µs, "
+            f"where the cycle's first row carries {cycle_first[0]} and {cycle_first[1]} µs: a cycle has one counter and one start"
+        )
+    if offset % k != 0 and row["published"]:
+        return f"the row for tick {row['tick']} is not the last of its cycle and carries a published mark"
+    return None
+
+
 def _header_problem(row: dict[str, Any]) -> str | None:
     if set(row) != _HEADER_KEYS:
         return f"the header's keys are not a segment header's ({sorted(set(row) ^ _HEADER_KEYS)})"
     if not (_ident(row["world_id"]) and _ident(row["boot_id"]) and row["segment"] == row["boot_id"] and _count(row["first_tick"])):
         return "the header's world, boot, segment or first tick is malformed"
+    problem = _segment_clock_problem(row)
+    if problem is not None:
+        return problem
     if row["previous"] is not None and not _ident(row["previous"]):
         return "the header's predecessor is not a boot"
     if row["previous_chain"] != "" and not _hex(row["previous_chain"]):
@@ -1716,9 +1817,11 @@ def _verified_lines(
 
     `kind` is `header`, `row`, `note`, or `torn` (the row is then `{}`, and closes its segment). Each
     header starts a segment and is held to its schema and its format; each tick row to the tick after
-    the last (`missing` or `order`), to the chain (`chain`), then to its schema (`row`, `published`);
-    each note to the chain, its schema, and its row (`note`: the same world, boot and tick, naming only
-    that row's receipts, each once). A line that is not an object is a torn append or corruption by
+    the last (`missing` or `order`), to the chain (`chain`), then to its schema (`row`, `published`) and
+    to the row invariant at its place in the header's cycles of `k` (`row`, #23); each note to the chain,
+    its schema, and its cycle (`note`: the same world, boot and tick as the cycle's last row, naming only
+    receipts the cycle's first row issued, each once — the receipts are accumulated from a cycle's first
+    row to its notes, not reset at every row). A line that is not an object is a torn append or corruption by
     `_torn_aware_lines`' one rule (R1); a torn line with no header before it in its file is a boot torn
     before its header (design note F2), and is dropped. Whether a torn segment was really the end of its
     boot is the seam's question (`concatenated`): the next segment names the chain its predecessor ended
@@ -1731,6 +1834,8 @@ def _verified_lines(
         header, chain, last_tick = seed
     receipts: set[tuple[str, int]] = set()
     noted: set[tuple[str, int]] = set()
+    # The receipt counter and start lag of the current cycle's first row, which rows 2..k repeat (#23).
+    cycle_first: tuple[int, int] | None = None
     for kind, number, at, end, row in _torn_aware_lines(dir_fd, name, offset, first):
         if kind == "torn" or row is None:
             # A fragment R1 accepts: the last line of its segment (a later boot's header may follow).
@@ -1750,6 +1855,7 @@ def _verified_lines(
             if row.get("chain") != record_chain(row["previous_chain"], row):
                 raise RecordRefused("chain", f"line {number} of {name}: the header's chain value is not its own", segment=row["boot_id"])
             header, chain, last_tick, receipts, noted = row, row["chain"], int(row["first_tick"]), set(), set()
+            cycle_first = None
             yield "header", number, at, end, row
             continue
         if _startup_event(row):
@@ -1779,6 +1885,8 @@ def _verified_lines(
             named = {(slug, n) for slug, locals_ in row["results"].items() for n in locals_} if problem is None else set()
             if problem is None and (row["world_id"], row["boot_id"], row["tick"]) != (header["world_id"], header["boot_id"], last_tick):
                 problem = f"the note names world {row['world_id']}, boot {row['boot_id']} and tick {row['tick']}, not its row's"
+            if problem is None and last_tick is not None and (last_tick - int(header["first_tick"])) % int(header["k"]) != 0:
+                problem = f"the note follows the row for tick {last_tick}, which is not the last of its cycle of {header['k']}"
             if problem is None and not named <= receipts - noted:
                 problem = f"the note names results {sorted(named - (receipts - noted))} its row did not issue, or that another note named"
             if problem is not None:
@@ -1792,8 +1900,15 @@ def _verified_lines(
             raise RecordRefused(found[0], f"line {number} of {name}: {found[1]}", tick=tick if _count(tick) else None, segment=segment)
         if (row["world_id"], row["boot_id"]) != (header["world_id"], header["boot_id"]):
             raise RecordRefused("row", f"line {number} of {name} is of world {row['world_id']}, boot {row['boot_id']}, not its header's", tick=tick, segment=segment)
+        problem = _cycle_row_problem(row, header, cycle_first)
+        if problem is not None:
+            raise RecordRefused("row", f"line {number} of {name}: {problem}", tick=tick, segment=segment)
         chain, last_tick = row["chain"], tick
-        receipts, noted = {(r["window"], r["local"]) for r in row["receipts"]}, set()
+        if "prev_cycle_us" in row:
+            # A cycle's first row: the receipts it issues are the cycle's, and the notes after the cycle's
+            # last row name them (#23, design §4). Rows 2..k issue none and reset nothing.
+            receipts, noted = {(r["window"], r["local"]) for r in row["receipts"]}, set()
+            cycle_first = (row["receipt"], row["lag_us"])
         yield "row", number, at, end, row
 
 
@@ -1861,6 +1976,32 @@ class Record:
             yield kind, row, end
         if (last_tick, chain, rows) != (segment.last_tick, segment.chain, segment.rows):
             raise RecordRefused("changed", f"{segment.name} changed between its check and its replay", segment=segment.boot_id)
+
+    def events(self, segment: SegmentInfo, names: set[str], since: int | None = None) -> Iterator[dict[str, Any]]:
+        """The segment's own unchained events called one of `names`, in order: its boot's, up to the next boot's header.
+
+        Startup events are not part of the trace (`_verified_lines` steps over them), so a reader that
+        wants the clock's events — a `stall`, a `lag_backstop`, the `manifest` (#23) — reads them here, by
+        the one torn-aware rule. A boot journals some before its header (a stall in its first wait), so
+        the read starts at `since` — where the file's previous segment ended, or the file's start —
+        rather than at the header; an anchored segment's starts at its anchor. Another boot's events are
+        passed over by `boot_id`, and the next boot's header, after this one's, ends the read.
+        """
+        if self._fd is None:
+            raise RecordRefused("file", "the record has been closed")
+        start = segment.offset if since is None or segment.anchored else since
+        own = segment.anchored
+        for kind, _number, _at, _end, row in _torn_aware_lines(self._fd, segment.name, start, 1):
+            if kind != "line" or row is None:
+                continue
+            if row.get("event") == "segment":
+                if row.get("boot_id") == segment.boot_id:
+                    own = True
+                elif own:
+                    return
+                continue
+            if _startup_event(row) and row.get("event") in names and row.get("boot_id") == segment.boot_id:
+                yield row
 
 
 def _chain(segments: list[SegmentInfo]) -> tuple[list[SegmentInfo], RecordRefused | None]:
@@ -2094,9 +2235,15 @@ def _anchored_segment(held: int, name: str, anchor: dict[str, Any]) -> SegmentIn
         "event": "segment", "format": RECORD_FORMAT, "world_id": anchor["world_id"], "segment": entry.get("segment"),
         "boot_id": entry.get("boot_id"), "first_tick": entry.get("first_tick"), "previous": entry.get("previous"),
         "previous_chain": None, "wall_epoch": entry.get("wall_epoch"), "chain": chain,
+        # The boot's clock, which the checkpoint's entry mirrors from the header (#23): the rows read from the
+        # anchor are held to its cycles of `k`.
+        "m": entry.get("m"), "k": entry.get("k"), "N": entry.get("N"),
     }
     if not (_ident(header["boot_id"]) and header["segment"] == header["boot_id"] and _count(header["first_tick"])):
         raise RecordRefused("anchor", f"the checkpoint's anchor names no boot this record could hold ({bounded_repr(entry)})")
+    clock = _segment_clock_problem(header)
+    if clock is not None:
+        raise RecordRefused("anchor", f"the checkpoint's anchor in {entry.get('segment')}: {clock}", segment=entry.get("segment"))
     tick = anchor["tick"]
     return SegmentInfo(header["boot_id"], name, header, tick, chain, offset=offset, line=1, end=offset, anchor_tick=tick, header_end=offset)
 
@@ -2454,6 +2601,7 @@ def replay_record(world: World, body: dict[str, Any], record: Record, *, through
                 "segment": header["segment"], "boot_id": header["boot_id"], "first_tick": header["first_tick"],
                 "previous": header["previous"], "wall_epoch": header["wall_epoch"],
                 "chain": reached[segment.boot_id][0], "offset": reached[segment.boot_id][1],
+                "m": header["m"], "k": header["k"], "N": header["N"],
             })
     body["identity"]["segments"] = [entry.get("segment") if isinstance(entry, dict) else entry for entry in body["segments"]]
     return Replayed(body=decode(encode(body)), points=points, chain=chain)
@@ -2467,8 +2615,11 @@ def unwritten_results(record: Record) -> list[dict[str, Any]]:
     `offset_us`, `command`, `body` (cut and fingerprinted past their bounds, or fingerprint-only past
     the window's budget, which a re-publication must say it cannot reproduce) — plus the `tick` the
     verdict was decided at (the receipt block's, one before the row's), the `world_id` and the
-    `boot_id`. Notes follow their row within the cycle, so the record is streamed with one row's
-    receipts pending at a time. Under wall-stamped result names a crash *after* the files and before
+    `boot_id`. Notes follow their cycle's last row and its receipts are on its first (#23, design §4),
+    so the record is streamed with one *cycle's* receipts pending at a time: they are gathered at the
+    cycle's first row — from the segment header's `k` — and whatever is still pending then is moved to
+    the unwritten list, never dropped, so a cycle whose publication failed stays owed. A crash after a
+    cycle's first row and before its notes leaves exactly that cycle's receipts owed. Under wall-stamped result names a crash *after* the files and before
     the note leaves results listed that are on disk; under child 12's L(b) names re-publication finds
     the exact name and skips it. A record read from a checkpoint's anchor (`read_record(anchor=)`) lists
     only the verdicts after it, in `O(L − T)` lines (addendum B5).
@@ -2482,6 +2633,8 @@ def unwritten_results(record: Record) -> list[dict[str, Any]]:
                     for local in locals_:
                         pending.pop((slug, local), None)
                 continue
+            if "prev_cycle_us" not in row:
+                continue  # rows 2..k of a cycle issue nothing and close nothing
             unwritten.extend(pending.values())
             pending = {
                 (entry["window"], entry["local"]): {**entry, "tick": row["tick"] - 1, "world_id": row["world_id"], "boot_id": row["boot_id"]}
@@ -2748,6 +2901,274 @@ def reconcile_root_record(
     return "agree", "the root record is the checkpoint's copy"
 
 
+# -- the clock (ADR 0002 A, B, C1, J; WP08 child 5, #23) -------------------------------------------------
+# The exit a lag backstop ends a run with (design §5): its own, beside 0 (a run that ended), 3 (a refusal
+# or a fault) and argparse's 2, so a supervisor and an operator can tell a backstop from a fault.
+EXIT_BACKSTOP = 4
+# The fixed-format line a backstop prints, in both shapes — the chassis's operator surfaces read it
+# (`docker compose logs vehicle`), because exit 4 alone may not survive a restart policy's record.
+BACKSTOP_LINE = "[console] lag_backstop lag_s={lag_s} consecutive={consecutive}"
+# The scheduler's longest single sleep: a stop (SIGTERM, SIGINT) is seen within it.
+WAIT_CAP_NS = 100_000_000
+# A stall (design §5): a sleep that returns at least this much later than it asked, or a start lag that
+# jumps by at least `max(STALL_NS, 10·k·dt/m)` between consecutive cycles.
+STALL_NS = 1_000_000_000
+
+
+class Pacer:
+    """The scheduler's clock and sleeper, and the stop flag the signal handlers set (#23, design §1 and §5).
+
+    `now_ns` is CLOCK_MONOTONIC (`time.monotonic_ns`) and `sleep` is `time.sleep`, unless a test injects
+    others — the scheduler is tested against an injected clock with pacing on. `stop` is the handler
+    `main` installs for `SIGTERM` and `SIGINT` before any recovery: it only sets `stopping`, which the
+    loop reads at a cycle's boundary and the wait reads between its sleeps, so a `docker stop` finishes
+    the cycle it lands in and takes the clean end. `signal` is the signal that asked, for the message.
+    """
+
+    def __init__(self, now_ns: Callable[[], int] | None = None, sleep: Callable[[float], object] | None = None) -> None:
+        self.now_ns = now_ns or time.monotonic_ns
+        self.sleep = sleep or time.sleep
+        self.stopping = False
+        self.signal: int | None = None
+
+    def stop(self, signum: int | None = None, _frame: object = None) -> None:
+        """The handler: the first signal asks for a stop at the next boundary; a second one stops the process now.
+
+        A slow stop that is still making progress — a long replay, a slow clean end — can take longer
+        than an operator will wait, so one who asks twice means it (candidate 1, systems P3). Python runs
+        a handler only when the interpreter can process signals, so it may be delayed; this is not a
+        guarantee of termination during blocked kernel I/O. A second `SIGINT` is the `KeyboardInterrupt` it always was. A second
+        `SIGTERM` ends the process with `os._exit(128 + SIGTERM)` (143), after one best-effort line on
+        stderr naming it — **not** by restoring the default action and raising the signal again: in the one-executive
+        container the console is its PID namespace's PID 1, and the kernel never applies a default action
+        the init of a namespace has not handled, so a `SIG_DFL` `SIGTERM` would be ignored and the
+        handler that worked would be gone (candidate 2, Codex P2). The line is one non-blocking
+        `os.write` to fd 2, never a buffered write and flush, so a full or stalled stderr pipe cannot hold
+        the exit (candidate 2 confirmation, Codex P2); if it cannot be written at once it is dropped.
+        Nothing else is flushed: the record and the checkpoints are crash-safe by construction, and the
+        next start resumes. Called
+        without a signal (in process), it only sets the flag.
+        """
+        if self.stopping and signum is not None:
+            if signum == signal.SIGINT:
+                signal.signal(signum, signal.default_int_handler)
+                signal.raise_signal(signum)
+                return
+            with contextlib.suppress(Exception):
+                os.set_blocking(2, False)
+                os.write(2, f"[console] a second {signal.Signals(signum).name}: stopping now, without a clean end\n".encode())
+            os._exit(128 + signum)
+        self.stopping = True
+        self.signal = signum
+
+
+class LagBackstop(Exception):
+    """A cycle's start lag past `LAG_CEILING_S`, found before anything of it was opened: the segment ends cleanly, exit 4."""
+
+    def __init__(self, lag_ns: int, consecutive: int) -> None:
+        self.lag_ns = lag_ns
+        self.consecutive = consecutive
+        super().__init__(
+            f"the cycle is {lag_ns / 1e9:.1f} s behind its due time, past the {LAG_CEILING_S} s lag ceiling (ADR 0002 A); "
+            f"backstop {consecutive} in a row"
+        )
+
+    @property
+    def lag_s(self) -> int:
+        return self.lag_ns // 1_000_000_000
+
+
+class CycleStats:
+    """A segment's cycles as the clean end summarises them (design §2): start lags and costs, counted by value.
+
+    Counted by value, not listed, so a segment of days holds as many entries as distinct microsecond
+    figures it saw rather than one per cycle; the percentiles are the same nearest-rank figures a list
+    gives (`_nearest_ranks`), which is what lets a reader's summary of the record equal this one.
+    """
+
+    def __init__(self) -> None:
+        self.lags: Counter[int] = Counter()
+        self.costs: Counter[int] = Counter()
+        self.cycles = 0
+        self.stalls = 0
+        self.backstops = 0
+
+    def add(self, lag_us: int) -> None:
+        self.lags[lag_us] += 1
+        self.cycles += 1
+
+    def cost(self, cost_us: int) -> None:
+        self.costs[cost_us] += 1
+
+
+def _nearest_ranks(counts: Counter[int]) -> dict[str, int] | None:
+    """p50, p95, p99 and max of the counted values, by nearest rank (the `⌈p·n/100⌉`-th smallest); `None` for none."""
+    total = sum(counts.values())
+    if total == 0:
+        return None
+    wanted = {name: max(1, -(-p * total // 100)) for name, p in (("p50", 50), ("p95", 95), ("p99", 99))}
+    found: dict[str, int] = {}
+    seen = 0
+    for value in sorted(counts):
+        seen += counts[value]
+        for name, rank in wanted.items():
+            if name not in found and seen >= rank:
+                found[name] = value
+    return {"p50": found["p50"], "p95": found["p95"], "p99": found["p99"], "max": max(counts)}
+
+
+def _summary(lags: Counter[int], costs: Counter[int], *, tick_us: int, m: Fraction | int | str, k: int) -> dict[str, Any]:
+    tick = Fraction(tick_us) / Fraction(m)
+    return {
+        "cycles": sum(lags.values()),
+        "start_lag_us": _nearest_ranks(lags),
+        "cycle_us": _nearest_ranks(costs),
+        "costs_known": sum(costs.values()),
+        "missed": sum(count for lag, count in lags.items() if lag > tick),
+        "overran": sum(count for cost, count in costs.items() if cost > int(k) * tick),
+    }
+
+
+def cycle_summary(lags_us: list[int], costs_us: list[int], *, tick_us: int, m: Fraction | int | str, k: int) -> dict[str, Any]:
+    """The clock summary of a run of cycles (ADR 0002 C1; design §2): their count, start lag and cost, missed and overran.
+
+    Start lag and cost are p50/p95/p99/max by nearest rank, over the cycles — cost over those whose cost
+    is known (`costs_known`). **Missed** is a cycle whose start lag exceeds one tick period, `dt/m`;
+    **overran** one whose cost exceeds its own period, `k·dt/m` (the completion deadline of
+    `docs/completion.md`). Container CPU throttling can stall a cycle up to a 100 ms quota period, so a
+    sporadic miss is not necessarily overload.
+    """
+    return _summary(Counter(lags_us), Counter(costs_us), tick_us=tick_us, m=m, k=k)
+
+
+def clock_line(summary: dict[str, Any]) -> str:
+    """A clock summary as the one line a clean end prints (design §2: written in the manifest and printed on stop)."""
+
+    def ranks(name: str) -> str:
+        found = summary.get(name)
+        return "none" if found is None else f"{found['p50']}/{found['p95']}/{found['p99']}/{found['max']} µs"
+
+    return (
+        f"clock: {summary['cycles']} cycle(s); start lag p50/p95/p99/max {ranks('start_lag_us')}; cost {ranks('cycle_us')} "
+        f"({summary['costs_known']} known); missed {summary['missed']}, overran {summary['overran']}, "
+        f"stalls {summary.get('stalls', 0)}, backstops {summary.get('backstops', 0)}"
+    )
+
+
+def segment_summaries(record: Record, tick_us: int) -> dict[str, dict[str, Any]]:
+    """Each segment's clock summary, as the manifest states it, computed by a reader from the record — a crashed segment's too.
+
+    A cycle is a first row (`prev_cycle_us` present), so a partial final cycle counts as one cycle with
+    its rows. Its start lag is its rows' `lag_us`; a cycle's cost is carried on the *next* cycle's first
+    row, so the rows give every cost but the last cycle's — which only a clean end's manifest has
+    (`last_cycle_us`), and a crashed segment's summary goes without. Stalls and backstops (design §2's
+    summary has both): a segment that ended cleanly takes them from its manifest, which is authoritative
+    (it counted what the executive saw, and an event whose advisory append failed never reached the
+    journal); a crashed segment, which has no manifest, counts its own `stall` and `lag_backstop` events
+    and marks the summary `"counts": "journaled"` — a lower bound. The thresholds are the segment's own
+    `m` and `k`, from its header. Over the cycles the record holds from where it was read (an anchored
+    read starts at its anchor). For a segment that ended cleanly the result is its manifest's `summary`,
+    field for field. Every boot that ends cleanly has a segment, a header-only one if it ran no cycle
+    (`Executive.open_segment`), so no manifest is outside the record.
+    """
+    summaries: dict[str, dict[str, Any]] = {}
+    ended: dict[str, int] = {}  # a file's offset just after the last segment read from it
+    for segment in concatenated(record.segments):
+        lags: list[int] = []
+        costs: list[int] = []
+        for kind, row, _end in record.lines(segment):
+            if kind != "row" or "prev_cycle_us" not in row:
+                continue
+            if lags:
+                costs.append(row["prev_cycle_us"])
+            lags.append(row["lag_us"])
+        stalls = backstops = 0
+        manifest: dict[str, Any] | None = None
+        since = ended.get(segment.name, 0)
+        ended[segment.name] = segment.end
+        for event in record.events(segment, {"stall", "lag_backstop", "manifest"}, since):
+            if event["event"] == "stall":
+                stalls += 1
+            elif event["event"] == "lag_backstop":
+                backstops += 1
+            else:
+                manifest = event
+        summary = cycle_summary(
+            [*lags], [*costs, *([manifest["last_cycle_us"]] if manifest and lags and _count(manifest.get("last_cycle_us")) else [])],
+            tick_us=tick_us, m=segment.header["m"], k=segment.header["k"],
+        )
+        stated = (manifest or {}).get("summary") if isinstance((manifest or {}).get("summary"), dict) else None
+        if stated is not None and _count(stated.get("stalls")) and _count(stated.get("backstops")):
+            # **The manifest is authoritative for its own counts** (candidate 2, Codex P2): it counted what the
+            # executive saw, and a `stall` or `lag_backstop` event whose advisory append failed is not in the
+            # journal for a reader to count.
+            summaries[segment.boot_id] = {**summary, "stalls": stated["stalls"], "backstops": stated["backstops"]}
+        else:
+            # A crashed segment has no manifest: its counts are the events that reached the journal, a lower
+            # bound, and the summary says so.
+            summaries[segment.boot_id] = {**summary, "stalls": stalls, "backstops": backstops, "counts": "journaled"}
+    return summaries
+
+
+def max_channel_rate(world: World) -> Fraction | None:
+    """The highest rate any declared channel publishes at (`channels.yaml#rate_hz`), exactly; `None` for none.
+
+    A cycle publishes one frame, so `tick_hz / k` frames per mission second must reach it (ADR 0002 B):
+    10 Hz in `channels.yaml` today, so `k ≤ 5` at `tick_hz = 50`.
+    """
+    rates = [
+        Fraction(str(row["rate_hz"]))
+        for row in world.channels.values()
+        if isinstance(row.get("rate_hz"), (int, float)) and not isinstance(row.get("rate_hz"), bool)
+        and math.isfinite(row["rate_hz"]) and row["rate_hz"] > 0
+    ]
+    return max(rates) if rates else None
+
+
+def previous_manifest(dir_fd: int, name: str, boot_id: str) -> dict[str, Any] | None:
+    """The manifest the boot `boot_id` ended its segment with, read back from the end of its journal file; `None` if none.
+
+    The manifest is the last thing a segment journals, so it is found reading backwards past at most
+    `STARTUP_LINES_BEFORE_HEADER` unchained events (a later boot's, in a shared `--journal`); a chained
+    line, an unparseable one or a manifest of another boot first means this boot wrote none — it
+    crashed — which resets the consecutive-backstop count (design §5).
+    """
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size == 0:
+            return None
+        end = info.st_size
+        if os.pread(fd, 1, end - 1) != b"\n":
+            found = _line_ending_at(fd, end + 1)  # a torn tail: step over it
+            if found is None:
+                return None
+            end = found[0]
+        for _ in range(STARTUP_LINES_BEFORE_HEADER + 1):
+            if end <= 0:
+                return None
+            found = _line_ending_at(fd, end)
+            if found is None:
+                return None
+            end, line = found
+            try:
+                row = loads_json(line.decode("utf-8"))
+            except Exception:  # noqa: BLE001 - a fragment or a damaged line: no manifest here
+                return None
+            if not isinstance(row, dict) or not _startup_event(row):
+                return None
+            if row.get("event") == "manifest":
+                return row if row.get("boot_id") == boot_id else None
+        return None
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
 @dataclass
 class Verdict:
     """One result in the making: what a window's line became, and the receipts it was given.
@@ -2807,17 +3228,26 @@ class Executive:
         journal_dir_fd: int | None = None,
         checkpoint_every: int | None = None,
         diode_fd: int | None = None,
+        multiplier: Fraction | int | str = 1,
+        cycle_ticks: int = 1,
+        pacer: Pacer | None = None,
     ) -> None:
         if int(max_batch) < 1:
             raise ValueError(f"max_batch must be at least 1, not {max_batch!r}")
-        # The checkpoint cadence `N` (ADR 0002 J: `N = tick_hz`, one mission second). It is not a flag
-        # until child 5 makes it a required run input; it is recorded in the checkpoint's clock inputs,
-        # and a resume takes it from there. `checkpoint_every` is for in-process callers (the tests).
-        # Validated before any handle is duplicated: a refusal here holds nothing (review F4).
+        # **The clock** (ADR 0002 A, B, J; #23): `m`, `k` and the checkpoint cadence `N`. `main` always
+        # passes the three the operator named or the checkpoint remembered — on the command line they are
+        # required with no default. The defaults here are the in-process seam only (the tests): `m = 1`,
+        # `k = 1`, `N = tick_hz`, and no pacer, which is a clock that is always on time. Validated before
+        # any handle is duplicated: a refusal here holds nothing (review F4).
         tick_hz = (world.documents.get("mission.yaml") or {}).get("tick_hz")
         cadence = checkpoint_every if checkpoint_every is not None else tick_hz
         if isinstance(cadence, bool) or not isinstance(cadence, int) or cadence < 1:
             raise ValueError(f"the checkpoint cadence must be a positive number of ticks, not {cadence!r}")
+        rate = max_channel_rate(world)
+        m = parse_multiplier(multiplier) if isinstance(multiplier, str) else Fraction(multiplier)
+        problem = clock_problem(m, cycle_ticks, cadence, tick_hz=tick_hz, max_rate=rate)
+        if problem is not None:
+            raise ValueError(f"the clock cannot be run: {problem[1]}")
         # Every handle this executive may hold, `None` until it holds it, so that `close` — which a refusal
         # anywhere below calls — releases exactly what was opened (review F4).
         self.state_fd = self.journal_dir_fd = self.diode_fd = self._record_fd = None
@@ -2827,6 +3257,8 @@ class Executive:
                 max_batch=max_batch, journal=journal, record_slugs=record_slugs, state_dir=state_dir, boot_id=boot_id,
                 state_fd=state_fd, journal_dir_fd=journal_dir_fd, cadence=cadence, diode_fd=diode_fd,
             )
+            self.tick_hz, self.max_rate, self.pacer = tick_hz, rate, pacer
+            self.set_clock(m, cycle_ticks, cadence)
         except BaseException:
             with contextlib.suppress(OSError):  # the refusal is what is raised (J4)
                 self.close()
@@ -2888,8 +3320,27 @@ class Executive:
         self.scenario = scenario
         self.seed = int(seed)
         self.max_batch = int(max_batch)
+        # The clock (#23): `set_clock` fills these from `__init__`, and a resume sets them again after its
+        # replay, from the operator's flags or the newest recovered policy (design §3).
+        self.multiplier: Fraction = Fraction(1)
+        self.cycle_ticks = 1
         self.checkpoint_every = cadence
-        self.clock: dict[str, Any] = {"N": self.checkpoint_every}
+        self.clock: dict[str, Any] = clock_section(1, 1, cadence)
+        self.tick_hz: Any = None
+        self.max_rate: Fraction | None = None
+        self.pacer: Pacer | None = None
+        # The scheduler (#23, design §1, §2, §5): the segment's epoch — `E` and its tick `t0`, read at its
+        # first wait — the previous cycle's start lag, for a stall's jump, its carried-forward cost and end
+        # lag, the segment's cycle statistics, the backstops that ended the segments before this one (read
+        # back by a resume from its predecessor's manifest), and whether the next cycle is the one after a
+        # crossing of `N`, which rewrites the generated files and reconciles the rings.
+        self.epoch_ns: int | None = None
+        self.epoch_tick = 0
+        self.last_lag_ns: int | None = None
+        self._carried: tuple[int, int] = (0, 0)
+        self.stats = CycleStats()
+        self.backstops_before = 0
+        self._refresh_next = False
         self.in_cycle = False
         self.checkpoint_failures = 0
         self.last_checkpoint_tick: int | None = None
@@ -3049,34 +3500,232 @@ class Executive:
             raise failed
 
     def order(self) -> list[Window]:
-        """This tick's visiting order: sorted slugs rotated left by `tick % n` (ADR choice A).
+        """This cycle's visiting order: sorted slugs rotated left by the cycle's index, `(tick // k) % n` (ADR choice A).
 
         No name holds a permanent priority, file arrival time decides nothing, and the order is a
         pure function of (slugs, tick) — so two executives fed the same ingress arbitrate the same.
+        **By cycle, not by tick** (#23, design §1): cycles start at ticks `0, k, 2k …`, and rotated by
+        `tick % n` a world with `gcd(n, k) > 1` would give the first place to only `n / gcd` windows
+        (ten windows at `k = 5`: two of them). Rotated by the cycle's index, each window goes first once
+        in `n` cycles whatever `gcd(n, k)`, which is `tick % n` at `k = 1`. After an unaligned resume
+        one window may go first twice in a row; the partial cycle before it published nothing.
         """
         slugs = sorted(self.windows)
         if not slugs:
             return []
-        k = self.tick % len(slugs)
+        k = (self.tick // self.cycle_ticks) % len(slugs)
         return [self.windows[s] for s in slugs[k:] + slugs[:k]]
+
+    # -- the clock (#23, WP08 child 5) ----------------------------------------------------------
+    def set_clock(self, multiplier: Fraction | int | str, cycle_ticks: int, checkpoint_every: int) -> None:
+        """Set `m`, `k` and `N` together, held to `clock_problem`'s bounds with this vehicle's channel rates; `ValueError` names why not."""
+        m = parse_multiplier(multiplier) if isinstance(multiplier, str) else Fraction(multiplier)
+        problem = clock_problem(m, cycle_ticks, checkpoint_every, tick_hz=self.tick_hz, max_rate=self.max_rate)
+        if problem is not None:
+            raise ValueError(f"the clock cannot be run: {problem[1]}")
+        self.multiplier, self.cycle_ticks, self.checkpoint_every = m, int(cycle_ticks), int(checkpoint_every)
+        self.clock = clock_section(m, self.cycle_ticks, self.checkpoint_every)
+
+    def _due_ns(self, tick: int) -> int:
+        """When tick `tick` is due on this segment's clock: `E + (tick − t0)·dt/m`, integer nanoseconds, rounded once.
+
+        Absolute from the epoch, never accumulated cycle to cycle, so no drift builds up; `dt` is the
+        integer tick in microseconds and `m` an exact fraction, so nothing passes through a float.
+        """
+        assert self.epoch_ns is not None
+        return self.epoch_ns + round(Fraction((tick - self.epoch_tick) * self.tick_us * 1000) / self.multiplier)
+
+    def _await_cycle(self) -> tuple[int, int] | None:
+        """Wait until the cycle starting at this tick is due: `(start_ns, lag_ns)`, or `None` when a stop was asked for.
+
+        **Never ahead** (John, design §1): the cycle covering `a+1 … a+k` starts at `max(due(a+k), end
+        of the previous cycle)` — never before its last tick is due — so a scheduler that is behind runs
+        whole cycles back to back without sleeping (burst = `k`, ADR 0002 A), and one that is early
+        sleeps. The wait is a loop on CLOCK_MONOTONIC (`Pacer.now_ns`), each sleep at most 100 ms, so an
+        early wake-up or a signal is handled and a stop (`Pacer.stopping`) is seen within 100 ms; a stop
+        before the cycle starts is a boundary, and nothing of the cycle runs.
+
+        **The epoch** is read here, at the segment's first wait — after the start's or the resume's
+        recovery and its checkpoint — so recovery time is never lag: the first cycle covers `t0+1 … t0+k`
+        and is due `k·dt/m` after it. CLOCK_MONOTONIC stops during host suspend, so the world pauses
+        with no lag; it runs on through `docker pause`, SIGSTOP and VM steal, which the next two bound.
+
+        **Stalls are named** (design §5): a sleep that returns at least 1 s later than it asked, or a
+        start lag that jumps by at least `max(1 s, 10·k·dt/m)` from the previous cycle's, is a `stall`
+        event, counted and journaled — distinct from overload. **The interim lag backstop** (John, until
+        #26): a start lag past `LAG_CEILING_S` is checked here, before any handle is opened or console
+        claimed, so no claimed batch is ever held. With a state directory it raises `LagBackstop` and
+        `main` ends the segment cleanly with exit 4; without one there is no clean end to take, so the
+        epoch is rebased — the world freezes through the stall rather than racing to catch up — the
+        event is journaled where a journal is named, the fixed-format line is printed, and the run goes on.
+
+        With no pacer (an in-process executive) the clock is always on time: no wait, a lag of 0.
+        """
+        pacer = self.pacer
+        if pacer is None:
+            return 0, 0
+        if pacer.stopping:
+            return None
+        if self.epoch_ns is None:
+            self.epoch_ns, self.epoch_tick = pacer.now_ns(), self.tick
+        while True:
+            due = self._due_ns(self.tick + self.cycle_ticks)
+            late = 0
+            now = pacer.now_ns()
+            while now < due:
+                if pacer.stopping:
+                    return None
+                ask = min(due - now, WAIT_CAP_NS)
+                pacer.sleep(ask / 1_000_000_000)
+                after = pacer.now_ns()
+                late = max(late, after - (now + ask))
+                now = after
+            if pacer.stopping:
+                return None
+            lag = max(0, now - due)
+            self._note_stall(lag, late)
+            if lag > LAG_CEILING_S * 1_000_000_000:
+                self.stats.backstops += 1
+                if self.state_fd is None:
+                    self._rebase(lag)
+                    continue
+                raise LagBackstop(lag, self.backstops_before + 1)
+            self.last_lag_ns = lag
+            return now, lag
+
+    def _note_stall(self, lag: int, late: int) -> None:
+        """Journal a `stall` when a sleep came back at least 1 s late or the start lag jumped (design §5)."""
+        kinds = []
+        if late >= STALL_NS:
+            kinds.append("wait")
+        cycle = round(Fraction(self.cycle_ticks * self.tick_us * 1000) / self.multiplier)
+        jump = lag - self.last_lag_ns if self.last_lag_ns is not None else 0
+        if jump >= max(STALL_NS, 10 * cycle):
+            kinds.append("lag_jump")
+        if not kinds:
+            return
+        self.stats.stalls += 1
+        self.journal_event({
+            "event": "stall", "wall": utc_now().isoformat(), "boot_id": self.boot_id, "world_id": self.world_id, "tick": self.tick,
+            "kinds": kinds, "late_us": max(0, late // 1000), "jump_us": max(0, jump // 1000), "lag_us": lag // 1000,
+        })
+
+    def _rebase(self, lag: int) -> None:
+        """The backstop without a state directory (design §5): a fresh epoch at this tick, journaled where a journal is named, always said."""
+        consecutive = self.stats.backstops
+        self.journal_event({
+            "event": "lag_backstop", "wall": utc_now().isoformat(), "boot_id": self.boot_id, "world_id": self.world_id, "tick": self.tick,
+            "lag_s": lag // 1_000_000_000, "consecutive": consecutive, "action": "rebase",
+        })
+        sys.stderr.write(BACKSTOP_LINE.format(lag_s=lag // 1_000_000_000, consecutive=consecutive) + "\n")
+        assert self.pacer is not None
+        self.epoch_ns, self.epoch_tick, self.last_lag_ns = self.pacer.now_ns(), self.tick, None
+
+    def _end_cycle(self, start: int) -> None:
+        """A cycle's cost and end lag, once its rows are durable and its checkpoint taken: carried to the next cycle's first row."""
+        if self.pacer is None or self.epoch_ns is None:
+            cost = end_lag = 0
+        else:
+            end = self.pacer.now_ns()
+            cost, end_lag = max(0, end - start) // 1000, max(0, end - self._due_ns(self.tick)) // 1000
+        self._carried = (cost, end_lag)
+        self.stats.cost(cost)
+
+    def summary(self) -> dict[str, Any]:
+        """This segment's clock summary so far (design §2): `cycle_summary`'s, with its stalls and backstops."""
+        return {
+            **_summary(self.stats.lags, self.stats.costs, tick_us=self.tick_us, m=self.multiplier, k=self.cycle_ticks),
+            "stalls": self.stats.stalls,
+            "backstops": self.stats.backstops,
+        }
+
+    def open_segment(self) -> None:
+        """Write this boot's segment header now, if it has none yet and there is a record: a header-only segment.
+
+        A boot's header is written with its first cycle's rows (`_append_record`). One that ends cleanly
+        without a cycle — its first wait backstopped, or a stop came before it — would otherwise journal a
+        manifest no segment holds, and a reader of the record would not see that boot (candidate 2, Codex
+        P3). The record already has header-only segments (a boot whose first cycle was torn) and every
+        reader takes them, so this adds no rule: the next boot names this one as its predecessor, from the
+        header's chain, and begins at the same tick. It is called before the clean-end checkpoint, so a
+        clean-end checkpoint, **when one is taken**, lists the segment; a boot that resumed and ran no cycle
+        already holds a checkpoint at this tick and takes none, so the header follows its newest checkpoint
+        unlisted — which is consistent: replay from that anchor reaches the header, adds the segment, and
+        the next resume inherits its clock from it (the "newer" rule). A failure is `RecordUnwritable`, as
+        any append's.
+        """
+        if self.journal is not None and self.journal_dir_fd is not None and self._segment is None:
+            self._append_record([], first_tick=self.tick)
+
+    def journal_event(self, event: dict[str, Any]) -> None:
+        """Append one unchained event to the journal, where one is named; advisory, unless the record cannot be restored (J2)."""
+        if self.journal is None or self.journal_dir_fd is None:
+            return
+        try:
+            append_journal_line(self.journal, event, dir_fd=self.journal_dir_fd)
+        except RecordUnwritable:
+            raise
+        except Exception:  # noqa: BLE001 - advisory, and the append left the record as it was
+            pass
+
+    def write_manifest(self, ended: str) -> dict[str, Any]:
+        """The segment's manifest (ADR 0002 C1, as #23 amends it: the clean-end event *is* the manifest), journaled; returned.
+
+        `ended` is `clean` or `lag_backstop`. `consecutive_backstops` is how many segments in a row ended
+        by the backstop, this one included — read back by the next resume from this event — and 0 for a
+        segment that ends otherwise. `last_cycle_us` and `last_end_lag_us` are the last cycle's cost and
+        end lag, which no row carries (design §2: "the segment's last cycle's cost goes only in the
+        manifest"), `None` when the segment ran no cycle; with them a reader's `segment_summaries` of a
+        cleanly ended segment is this `summary` exactly. A crashed segment has no manifest; its summary is
+        a reader's, without its last cycle's cost.
+        """
+        ran = self.stats.cycles > 0
+        event = {
+            "event": "manifest", "wall": utc_now().isoformat(), "boot_id": self.boot_id, "world_id": self.world_id, "tick": self.tick,
+            "ended": ended, "clock": {"m": self.clock["m"], "k": self.cycle_ticks, "N": self.checkpoint_every},
+            "summary": self.summary(), "consecutive_backstops": self.backstops_before + 1 if ended == "lag_backstop" else 0,
+            "last_cycle_us": self._carried[0] if ran else None, "last_end_lag_us": self._carried[1] if ran else None,
+        }
+        self.journal_event(event)
+        return event
 
     # -- the cycle ----------------------------------------------------------------------------
     def cycle(self) -> list[Path]:
-        """One tick: settle every window's due deferrals, claim and validate every window, step once, publish.
+        """One cycle: wait until it is due, settle every window's due deferrals, claim and validate every window, step `k` ticks, publish.
 
-        One tick per cycle is inherited from the old loop and is **not** a decision about the clock:
-        how many ticks a wall second carries is WP08's. What *is* decided is that every window's
-        validation reads the same truth, every accepted effect lands in the same step at
-        `offset_us = 0` in arbitration order, and every window's frame for this tick is built from
-        the same stepped truth.
+        **A cycle is `k` ticks** (ADR 0002 B2, #23): it claims every console once, stamps the accepted
+        effects at `offset_us = 0` of its first tick — the receipt's tick is the cycle's start tick —
+        steps `k` ticks (the other `k − 1` carry no effects) and publishes once, so within a segment the
+        frames are exactly `k` ticks and `k·dt` of mission time apart. **Causality, stated plainly**: a
+        command written while tick `a` is the newest frame is applied from tick `a`, whose due time has
+        passed by up to `k·dt/m` plus the cycle's cost (more while catching up); "takes effect within `k`
+        ticks" means it appears in the next frame. No claim time is published to a window. What *is*
+        decided is that every window's validation reads the same truth, every accepted effect lands in
+        the same step in arbitration order, and every window's frame is built from the same stepped truth.
 
         **Deferrals first, for every window, before any ingress.** `apollo_diode.md:578` is "first
-        valid command *received*", and a command due now was received a tick earlier than anything
+        valid command *received*", and a command due now was received a cycle earlier than anything
         claimed now — so the settlements take their turn at the conflict domains before the fresh
         commands do, in rotation order, and a settlement is published whether or not the same
         window's claim then fails.
+
+        The wait, the stall and backstop checks are `_await_cycle`'s, before anything is opened; a stop
+        asked for during the wait returns `[]` with nothing run. The cycle's start lag is on each of its
+        rows, and its cost is carried to the next cycle's first row (`_end_cycle`). A cycle that crosses
+        a multiple of `N` ends with a checkpoint; the cycle after it rewrites the generated files and
+        reconciles the ring (`Window.refresh`), so the two costs normally fall in different cycles.
         """
+        started = self._await_cycle()
+        if started is None:
+            return []
+        start, lag = started
         tick = self.tick
+        lag_us = lag // 1000
+        self.stats.add(lag_us)
+        if self._refresh_next:
+            self._refresh_next = False
+            for window in self.windows.values():
+                window.refresh = True
         # Until the cycle completes, its window counters may be ahead of its truth (a verdict draws its
         # receipt before the step): a checkpoint is never taken while this is set (`main`'s clean end).
         self.in_cycle = True
@@ -3101,7 +3750,7 @@ class Executive:
                 try:
                     window.open_handles()
                 except WindowAbsent as exc:
-                    # A dark tick, then back: the directory is made again (handle-relative, following
+                    # A dark cycle, then back: the directory is made again (handle-relative, following
                     # no link) and served next cycle with the identity the executive kept. Repair, not
                     # preparation: `prepare` wrote `pending.json` at tick 0 (addendum B7).
                     self._record_failure(window, "check", exc, tick)
@@ -3137,22 +3786,11 @@ class Executive:
                         effects.append(verdict.effect)
                         applied.append(verdict)
 
-            before = self.truth
-            # The link is computed on the stepped truth *before* the tick is committed: a state the
-            # compare-point refuses (plant.UncomparableState) leaves the executive at its last
-            # consistent tick — truth, tick and lineage together — rather than half-advanced.
-            # `advance` is replay's too (`replay_record`): the one path from a tick to the next.
-            after, digest, link = advance(self.world, before, self.lineage_head, effects, self.dt)
-            self.truth = after
-            for verdict in applied:
-                verdict.body += self._report_effect(verdict, before, self.truth)
-            self.tick += 1
-            self.lineage_head = link
-            self.lineage.append(self.lineage_head)
-            # **The record before anything of the cycle is published** (ADR 0002 J rules 1–3): the
-            # tick row, with every window's published-tick mark, appended and `fsync`ed. A record that
-            # cannot be made durable raises `RecordUnwritable` here, and nothing below runs.
-            self._record_cycle(tick, digest, effects, verdicts, healthy, before_windows)
+            # **The record before anything of the cycle is published** (ADR 0002 J rules 1–3): the cycle's
+            # `k` rows, with every window's published-tick mark on the last, appended and `fsync`ed —
+            # the first alone, first, when it carries anything (write-ahead). A record that cannot be
+            # made durable raises `RecordUnwritable` here, and nothing below runs.
+            self._record_cycle(tick, effects, applied, verdicts, healthy, before_windows, lag_us)
             self._write_root_record(tick)
 
             written: list[Path] = []
@@ -3173,10 +3811,15 @@ class Executive:
                     if window.marked_seq is not None and window.seq == window.marked_seq:
                         window.seq += 1
             self.in_cycle = False
-            # The cadence (ADR 0002 J, `N`): at the end of the cycle, once every window has published, so
-            # the checkpoint's anchor is after the cycle's notes and its obligations are what is owed.
-            if self.state_fd is not None and self.tick % self.checkpoint_every == 0:
-                self._cadence_checkpoint()
+            # The cadence (ADR 0002 J, `N`): at the end of a cycle that **crossed** a multiple of `N` —
+            # not one whose tick is one, which an unaligned resume would never reach again (#23) — once
+            # every window has published, so the checkpoint's anchor is after the cycle's notes and its
+            # obligations are what is owed. The next cycle rewrites the generated files.
+            if self.tick // self.checkpoint_every > tick // self.checkpoint_every:
+                self._refresh_next = True
+                if self.state_fd is not None:
+                    self._cadence_checkpoint()
+            self._end_cycle(start)
             return written
         finally:
             for window in order:
@@ -3336,73 +3979,151 @@ class Executive:
     def _record_cycle(
         self,
         tick: int,
-        digest: str,
         effects: list[Effect],
+        applied: list[Verdict],
         verdicts: dict[str, list[Verdict]],
         healthy: list[Window],
         before_windows: dict[str, tuple[int, list[Any], dict[str, str], int]],
+        lag_us: int,
     ) -> None:
-        """Append this cycle's tick row and `fsync` it; then mark each publishing window's `published_tick`.
+        """Step the cycle's `k` ticks into locals, append their rows and `fsync`, then commit; mark each publishing window.
 
-        `tick` is the tick the cycle started at; the row is keyed by the tick it reached, as every
-        journal row has been. The window deltas are what the cycle changed, against `before_windows`:
-        the accepted count (spend, version 0 until child 7), the window's receipt counter (review
-        finding 7: a number drawn before an internal fault is recorded though no verdict carries it),
-        deferral entries removed (by the window-local receipt each carries) and added (whole: a
-        deferral is its parsed command, bounded by its schema, finding 4), and arm tokens set and
-        cleared. A window with a verdict this cycle gets an entry even when nothing moved, so a
-        refusal-only cycle says its spend delta is zero rather than leaving it to be inferred. Each
-        window's receipts are `receipt_entries`', within the window's budget (finding 1). Without a journal nothing is written and the marks are still
-        set: `published_tick` is what the window has been told, whether or not anything keeps it.
+        `tick` is the tick the cycle started at; each row is keyed by the tick it reached, as every
+        journal row has been. **Stepping and effects** (determinism review P1-B): tick `tick+1` is stepped
+        with the cycle's effects, and `_report_effect` and the dwell bookkeeping run against *that*
+        step's before and after; the remaining `k − 1` ticks are stepped with none — exactly what replay
+        does row by row (`replay_record`), so a target that keeps moving after its step is reported and
+        dwelled the same live and replayed. Each step is `advance`, replay's own path from a tick to the
+        next, and nothing is committed to `tick`, `truth` or `lineage` until its row is durable.
+
+        **The rows** (format v3, design §4): the first carries the effects, every verdict's receipts
+        (`receipt_entries`, within each window's budget — finding 1), the window deltas against
+        `before_windows` (the accepted count — spend, version 0 until child 7; the window's receipt
+        counter — finding 7: a number drawn before an internal fault is recorded though no verdict
+        carries it; deferral entries removed by their window-local receipt and added whole — finding 4;
+        arm tokens set and cleared; a window with a verdict gets an entry even when nothing moved) and
+        the previous cycle's carried-forward cost; every row carries the receipt counter, the failure
+        count and the cycle's start lag; the last carries every publishing window's mark. **Write-ahead**:
+        when the first row's effects, receipts or deltas are not empty it is appended and `fsync`ed
+        before step 2, so a claimed batch is in memory only for one step, as before #23; the rest follow
+        with one `fsync`. A cycle with nothing to record appends all `k` with one.
+
+        **A compare-point refusal at step `j`** (`plant.UncomparableState`): the completed rows not yet
+        durable are appended with one `fsync` — rows `1 … j−1` on a quiet cycle, `2 … j−1` on a
+        write-ahead one, nothing when `j = 2` — and only the durable rows are committed; the refusal
+        carries `last_durable_tick`, which `main` names. Row 1 carries the cycle's receipts, so its batch is
+        owed and answered on resume. If that append itself fails, the durable prefix stands and the
+        refusal says so (`unwritable`). At `j = 1` nothing is recorded or committed, as before. Without a
+        journal nothing is durable, and nothing is committed.
+
+        Without a journal nothing is written and the marks are still set: `published_tick` is what the
+        window has been told, whether or not anything keeps it.
         """
-        marks = {window.slug: {"tick": self.tick, "seq": window.seq} for window in healthy}
-        for window in self.windows.values():
-            window.marked_seq = window.seq if window.slug in marks else None
-        if self.journal is not None:
-            receipts = [entry for rows in verdicts.values() for entry in receipt_entries(rows)]
-            changes: dict[str, dict[str, Any]] = {}
-            for slug, window in self.windows.items():
-                accepted, deferred_ids, arms, issued = before_windows.get(
-                    slug, (window.accepted, [], dict(window.arms), window.receipts)
-                )
-                delta: dict[str, Any] = {}
-                spend = window.accepted - accepted
-                if verdicts.get(slug) or spend:
-                    delta["spend"] = {"version": SPEND_PLACEHOLDER_VERSION, "accepted": spend}
-                if verdicts.get(slug) or window.receipts != issued:
-                    delta["receipts"] = window.receipts
-                remaining = {entry.get("receipt") for entry in window.deferred}
-                removed = [receipt for receipt in deferred_ids if receipt not in remaining]
-                if removed:
-                    delta["deferred_removed"] = removed
-                known = set(deferred_ids)
-                added = [dict(queued) for queued in window.deferred if queued.get("receipt") not in known]
-                if added:
-                    delta["deferred_added"] = added
-                armed = {event: token for event, token in window.arms.items() if arms.get(event) != token}
-                if armed:
-                    delta["arms_set"] = armed
-                cleared = sorted(event for event in arms if event not in window.arms)
-                if cleared:
-                    delta["arms_cleared"] = cleared
-                if delta:
-                    changes[slug] = delta
-            row = {
-                "tick": self.tick,
-                "world_id": self.world_id,
-                "boot_id": self.boot_id,
-                "lineage": self.lineage_head,
-                "state_hash": digest,
-                "effects": [[e.offset_us, e.verb, e.arguments] for e in effects],
-                "receipts": receipts,
-                "receipt": self.receipt,
-                "windows": changes,
-                "published": marks,
-                "failures": self.failure_count,
-            }
-            self._append_record([row], first_tick=tick)
+        k = self.cycle_ticks
+        recording = self.journal is not None
+        truth, head = self.truth, self.lineage_head
+        steps: list[tuple[dict[str, Any], str, str]] = []
+        rows: list[dict[str, Any]] = []
+        durable = 0
+        try:
+            for j in range(1, k + 1):
+                before = truth
+                stepped = advance(self.world, before, head, effects if j == 1 else [], self.dt)
+                truth, head = stepped[0], stepped[2]
+                steps.append(stepped)
+                if j == 1:
+                    for verdict in applied:
+                        verdict.body += self._report_effect(verdict, before, truth)
+                marks: dict[str, dict[str, int]] = {}
+                if j == k:
+                    marks = {window.slug: {"tick": tick + k, "seq": window.seq} for window in healthy}
+                    for window in self.windows.values():
+                        window.marked_seq = window.seq if window.slug in marks else None
+                if not recording:
+                    continue
+                row: dict[str, Any] = {
+                    "tick": tick + j,
+                    "world_id": self.world_id,
+                    "boot_id": self.boot_id,
+                    "lineage": stepped[2],
+                    "state_hash": stepped[1],
+                    "effects": [],
+                    "receipts": [],
+                    "receipt": self.receipt,
+                    "windows": {},
+                    "published": marks,
+                    "failures": self.failure_count,
+                    "lag_us": lag_us,
+                }
+                if j == 1:
+                    row["effects"] = [[e.offset_us, e.verb, e.arguments] for e in effects]
+                    row["receipts"] = [entry for verdict_rows in verdicts.values() for entry in receipt_entries(verdict_rows)]
+                    row["windows"] = self._window_deltas(verdicts, before_windows)
+                    row["prev_cycle_us"], row["prev_end_lag_us"] = self._carried
+                rows.append(row)
+                if j == 1 and k > 1 and (row["effects"] or row["receipts"] or row["windows"]):
+                    self._append_record(rows, first_tick=tick)
+                    durable = 1
+        except UncomparableState as exc:
+            if recording and len(rows) > durable:
+                try:
+                    self._append_record(rows[durable:], first_tick=tick)
+                    durable = len(rows)
+                except RecordUnwritable as again:
+                    exc.unwritable = str(again)  # type: ignore[attr-defined]
+            self._commit(steps[:durable] if recording else [])
+            exc.last_durable_tick = self.tick  # type: ignore[attr-defined]
+            raise
+        if recording and durable < len(rows):
+            try:
+                self._append_record(rows[durable:], first_tick=tick)
+            except RecordUnwritable:
+                # Row 1 may be durable (write-ahead): commit exactly that prefix, so the tick `main` names is the
+                # one recovery reaches (candidate 1, Codex P3, systems P3).
+                self._commit(steps[:durable])
+                raise
+        self._commit(steps)
         for window in healthy:
             window.published_tick = self.tick
+
+    def _commit(self, steps: list[tuple[dict[str, Any], str, str]]) -> None:
+        """Commit stepped ticks — truth, tick and lineage together — once their rows are durable (or there is no record)."""
+        for truth, _digest, link in steps:
+            self.truth = truth
+            self.tick += 1
+            self.lineage_head = link
+            self.lineage.append(link)
+
+    def _window_deltas(
+        self, verdicts: dict[str, list[Verdict]], before_windows: dict[str, tuple[int, list[Any], dict[str, str], int]]
+    ) -> dict[str, dict[str, Any]]:
+        """What the cycle changed of each window's half of the state, against `before_windows` (the first row's `windows`)."""
+        changes: dict[str, dict[str, Any]] = {}
+        for slug, window in self.windows.items():
+            accepted, deferred_ids, arms, issued = before_windows.get(slug, (window.accepted, [], dict(window.arms), window.receipts))
+            delta: dict[str, Any] = {}
+            spend = window.accepted - accepted
+            if verdicts.get(slug) or spend:
+                delta["spend"] = {"version": SPEND_PLACEHOLDER_VERSION, "accepted": spend}
+            if verdicts.get(slug) or window.receipts != issued:
+                delta["receipts"] = window.receipts
+            remaining = {entry.get("receipt") for entry in window.deferred}
+            removed = [receipt for receipt in deferred_ids if receipt not in remaining]
+            if removed:
+                delta["deferred_removed"] = removed
+            known = set(deferred_ids)
+            added = [dict(queued) for queued in window.deferred if queued.get("receipt") not in known]
+            if added:
+                delta["deferred_added"] = added
+            armed = {event: token for event, token in window.arms.items() if arms.get(event) != token}
+            if armed:
+                delta["arms_set"] = armed
+            cleared = sorted(event for event in arms if event not in window.arms)
+            if cleared:
+                delta["arms_cleared"] = cleared
+            if delta:
+                changes[slug] = delta
+        return changes
 
     def _note_window_results(self, window: Window) -> None:
         """Append and `fsync` one window's `results_written` note: its results on disk, by window-local receipt.
@@ -3459,7 +4180,7 @@ class Executive:
 
         The header is ADR 0002 G's segment entry — the boot, the tick its first cycle started at
         (`first_tick`), the segment before it and the chain value it ended on (the last of `segments`,
-        which a restore sets), its wall epoch — with the format and the world. Every line gets its
+        which a restore sets), its wall epoch and its clock (`m`, `k`, `N`, #23) — with the format and the world. Every line gets its
         `chain` (`record_chain`); the boot's entry in `segments` carries the chain reached, so a
         checkpoint names the exact point of the record it was taken at. The entry is appended to
         `segments` only once the header is durable. A line past `MAX_RECORD_LINE_BYTES`, or any failure
@@ -3479,6 +4200,10 @@ class Executive:
                 "first_tick": first_tick,
                 "previous": previous,
                 "wall_epoch": utc_now().isoformat(),
+                # The boot's clock (#23, format v3): a reader's cycle boundaries are `first_tick + i·k`.
+                "m": self.clock["m"],
+                "k": self.cycle_ticks,
+                "N": self.checkpoint_every,
             }
             header = {"event": "segment", "format": RECORD_FORMAT, "world_id": self.world_id, "previous_chain": previous_chain, **entry}
             header["chain"] = chain = record_chain(previous_chain, header)
@@ -4039,9 +4764,12 @@ class Executive:
             # re-checked when it is due, not when it was scheduled" — and the contract is equally
             # clear that the result arrives later. So the deferral is a live queue entry in ticks,
             # and `_settle` runs the whole chain again when it is due. It is counted as accepted
-            # once, here; its settlement is the same command reporting.
+            # once, here; its settlement is the same command reporting. **It is due at the next cycle's
+            # start, `tick + k`** (#23, design §1): `tick + 1` named a tick a cycle of `k` never starts at.
+            # It settles at the first cycle boundary at or after its due tick, which after a crash
+            # mid-cycle and a resume at `a + j` is a later one (`a + j + i·k`) — the text says so.
             window.accepted += 1
-            due = self.tick + 1
+            due = self.tick + self.cycle_ticks
             # The parse, not the line: a deferral is queued, checkpointed and recorded as its verb, its
             # schema-checked arguments and the command they spell (child 4's review finding 4).
             window.deferred.append(
@@ -4057,7 +4785,7 @@ class Executive:
             )
             verdict.state = "deferred"
             verdict.body = (
-                f"accepted: {verb!r} deferrable. Recorded at tick {self.tick}, due at tick {due}; "
+                f"accepted: {verb!r} deferrable. Recorded at tick {self.tick}, due at tick {due} (later across a restart); "
                 "it will be re-checked against the phase, its gate, its interlocks, its dwell and "
                 "its conflict domain when it is due rather than now (contract §9 check 9), and it "
                 f"expires if it is still waiting after {spec.get('maximum_queue_age_s')} s of "
@@ -4227,6 +4955,18 @@ class Window:
         # ended boot's take it keeps for the retry (or `[None]`). The window claims and adopts nothing
         # until the recovery is done.
         self.recovering: list[str | None] | None = None
+        # **The slow cadence** (#23, design §1 and §7): whether this window's next publication rewrites
+        # its generated `HELP.md` and `README.md` and reconciles its ring with a scan of `telemetry/` —
+        # on a segment's first cycle (a new `Window` is one), after a repair, and on the cycle after the
+        # one that crossed a multiple of `N` (`Executive._refresh_next`); never every cycle.
+        self.refresh = True
+        # **The ring's held frames, `(number, name)` oldest first, kept in memory** (design §7) — a cache on
+        # the window, independent of the per-cycle handles: `None` until a scan fills it, then pushed and
+        # pruned by name per frame. At 3,000 slots and ten windows, four listings per window per cycle
+        # were 120,000 directory entries a cycle. `ring_dir` is the `(st_dev, st_ino)` of the `telemetry/`
+        # the last cycle opened: another one means an agent replaced the directory, and the cache is dropped.
+        self.ring: deque[tuple[int, str]] | None = None
+        self.ring_dir: tuple[int, int] | None = None
 
     # -- the directory ----------------------------------------------------------------------
     def open_handles(self) -> Handles:
@@ -4262,6 +5002,14 @@ class Window:
         try:
             output = opened(self.output, root)
             telemetry = opened(self.telemetry, root)
+            # The ring's cache describes the directory it was built from (#23, design §7): an agent that
+            # replaced `telemetry/` replaced what it held, so a changed identity drops it, and the next
+            # frame rescans. Opening it every cycle is not a scan trigger.
+            info = os.fstat(telemetry)
+            identity = (info.st_dev, info.st_ino)
+            if self.ring_dir is not None and identity != self.ring_dir:
+                self.ring = None
+            self.ring_dir = identity
             for name in self.FILES:
                 try:
                     info = os.lstat(name, dir_fd=root)
@@ -4332,8 +5080,11 @@ class Window:
         Repair is not initialisation (addendum B7): a directory lost while the vehicle runs, or while
         it is down, is re-made handle-relative and following no link, and the next publication writes
         its mirror, `pending.json` and generated files from the state the executive holds. `prepare`
-        wrote `pending.json` at tick 0 here, which showed a window an earlier tick than it had seen.
+        wrote `pending.json` at tick 0 here, which showed a window an earlier tick than it had seen. The
+        window's next publication rewrites the generated files and rescans its ring (#23, design §1, §7).
         """
+        self.refresh = True
+        self.ring = None
         with contextlib.suppress(FileExistsError):
             os.mkdir(self.slug, dir_fd=self.executive.diode_fd)
         root = open_directory(self.slug, dir_fd=self.executive.diode_fd)
@@ -4777,11 +5528,17 @@ class Window:
 
     # -- publication ------------------------------------------------------------------------
     def publish(self, verdicts: list[Verdict]) -> list[Path]:
-        """Results, one frame, `state.json`, `HELP.md`, `README.md` and `pending.json`. Every cycle.
+        """Results, one frame, `state.json` and `pending.json` every cycle; `HELP.md` and `README.md` on the slow cadence.
 
         `state.json` is rewritten "whether or not anything was submitted", which is what makes the
-        probe's `check_state_is_a_mirror` meaningful. The generated files are rewritten from the
-        cached text for the same reason: a hand-edit lasts until the next cycle. The window-local
+        probe's `check_state_is_a_mirror` meaningful. **The generated files are rewritten from the
+        cached text every `N` ticks, not every cycle** (John, #23 design §1): 85 KB a window a cycle was
+        the cost ADR 0002 B moved to a slower cadence. They are rewritten at the end of the cycle *after*
+        the one that crossed a multiple of `N`, so the static and the checkpoint costs normally fall in
+        different cycles — also on a segment's first cycle and the cycle after a repair (`refresh`); when
+        `N = k` every cycle checkpoints, and a first-cycle or repair rewrite can coincide with a
+        checkpoint. A hand-edit lasts about a mission second. The same publication reconciles the ring
+        with one scan (`ring`). The window-local
         receipts of its results are appended to `landed` — and named in the record's `results_written`
         note (ADR 0002 J rule 3) — only once their files and `output/` are durable; a publication that
         fails before that leaves them owed (review F2), and the window's next publication finds what did
@@ -4808,12 +5565,17 @@ class Window:
             self.executive._note_window_results(self)
         else:
             self.landed.extend(made)
+        refresh = self.refresh
+        if refresh:
+            self.ring = None  # the reconcile: this frame's prune rescans `telemetry/` once
         # The frame first, so the mirror's ring accounting describes the directory as it is: the old
         # console wrote the mirror before the frame and its `newest_seq` ran one behind the ring.
         self.write_frame()
         write_json_atomic(self.state, self.mirror(), dir_fd=root)
-        write_text_atomic(self.help_file, self.executive.help_text, dir_fd=root)
-        write_text_atomic(self.readme, self.executive.readme_text, dir_fd=root)
+        if refresh:
+            write_text_atomic(self.help_file, self.executive.help_text, dir_fd=root)
+            write_text_atomic(self.readme, self.executive.readme_text, dir_fd=root)
+            self.refresh = False
         write_json_atomic(
             self.pending,
             {
@@ -4846,6 +5608,7 @@ class Window:
         # console may lower and never raise, so a gate the window has closed stays closed.
         honoured, allowance = self.honoured()
         variables.update(honoured)
+        held, losses = self.ring_counts()
         return {
             "published_at": utc_now().isoformat(),
             "available_commands": [row["verb"] for row in rows if row["available"]],
@@ -4863,8 +5626,8 @@ class Window:
             # out of the far end, and `held + losses` is what the window has produced.
             "ring": {
                 "slots": self.ring_slots,
-                "held": len(self.ring_frames()),
-                "losses": self.ring_losses(),
+                "held": held,
+                "losses": losses,
                 "newest_seq": max(0, self.seq - 1),
             },
             # `posture` is the *execution* machine's posture (`mission.yaml#postures`), which the
@@ -4912,9 +5675,21 @@ class Window:
                 frames.append((int(stem), entry.name))
         return [name for _, name in sorted(frames)]
 
+    def ring_counts(self) -> tuple[int, int]:
+        """`(held, losses)` from the ring's cache, scanning `telemetry/` once if there is none (#23, design §7).
+
+        `losses` is derived, not counted: the frames this window has produced that the ring no longer
+        holds, `seq − held`. An agent's deletion is not seen until the next reconcile, at most `N` ticks
+        later; until then `held` counts what the vehicle last knew it held.
+        """
+        if self.ring is None:
+            self.ring = deque((int(name.rpartition(".")[0]), name) for name in self.ring_frames())
+        held = len(self.ring)
+        return held, max(0, self.seq - held)
+
     def ring_losses(self) -> int:
         """Frames this window has produced that the ring no longer holds — derived, not counted."""
-        return max(0, self.seq - len(self.ring_frames()))
+        return self.ring_counts()[1]
 
     def write_frame(self) -> None:
         """Append one frame from the stepped truth, and drop the ones that fall out of the far end.
@@ -4926,7 +5701,13 @@ class Window:
 
         `NNN.json` is the *sequence* number, so a name is never reused and a reader can always tell
         a new frame from a rewritten one. The bound is a deletion rather than a wrap, for the same
-        reason, and the deletion is relative to the `telemetry/` handle.
+        reason, and the deletion is relative to the `telemetry/` handle. **The held list is the
+        window's cache** (#23, design §7): the new frame is pushed onto it and the oldest pruned by name,
+        with no listing; the one scan is made where the cache is empty — a segment's first cycle, a
+        reconcile every `N` ticks, a replaced `telemetry/`, a repair. A name an agent already deleted is
+        pruned as gone; a frame is forgotten only once its `unlink` succeeded (or found it gone), and any
+        other failure drops the cache — recorded, and the publication goes on — so the counts are a rescan's
+        rather than a prune around a frame still on disk.
         """
         executive = self.executive
         telemetry = self._handles().telemetry
@@ -4944,12 +5725,31 @@ class Window:
             vehicle="csm",
             state_revision=executive.tick,
         )
-        write_json_atomic(f"{self.seq:03d}.json", frame, dir_fd=telemetry)
+        name = f"{self.seq:03d}.json"
+        write_json_atomic(name, frame, dir_fd=telemetry)
         self.seq += 1
-        held = self.ring_frames()
-        for stale in held[: max(0, len(held) - self.ring_slots)]:
-            with contextlib.suppress(FileNotFoundError):
+        if self.ring is None:
+            self.ring_counts()  # the scan, which finds the frame just written
+        else:
+            self.ring.append((self.seq - 1, name))
+        assert self.ring is not None
+        while self.ring is not None and len(self.ring) > self.ring_slots:
+            _number, stale = self.ring[0]
+            try:
                 os.unlink(stale, dir_fd=telemetry)
+            except FileNotFoundError:
+                pass  # gone already (an agent deleted it): pruned all the same
+            except OSError as exc:
+                # A frame that could not be deleted is still on disk, so the cache would forget a frame the
+                # ring holds and prune newer ones in its place (candidate 1, Codex P2). The cache is dropped
+                # instead, and the failure is recorded as the window's `prune` — while the publication goes
+                # on (candidate 2, systems P3): the mirror and `pending.json` are still written, their counts
+                # from a rescan of what is on disk, so a deletion that keeps failing costs a scan a cycle,
+                # not the window's whole publication.
+                self.ring = None
+                self.executive._record_failure(self, "prune", exc, self.executive.tick - self.executive.cycle_ticks)
+                break
+            self.ring.popleft()
 
 
 # The old name, for readers of the round log: the class that used to own the physics.
@@ -5100,6 +5900,9 @@ def resume_executive(
     closed_interlocks: set[str] | None = None,
     checkpoint_every: int | None = None,
     diode_fd: int | None = None,
+    multiplier: Fraction | int | str | None = None,
+    cycle_ticks: int | None = None,
+    pacer: Pacer | None = None,
 ) -> tuple[Executive, Resumption]:
     """An executive resumed from a verified checkpoint (`checkpoint.choose_generation`) and the record after it.
 
@@ -5116,7 +5919,11 @@ def resume_executive(
        segments and every window's `seq`, receipts, spend, deferrals, arm tokens and published tick.
        Each window keeps its new `boot_id`, so the frames say the vehicle restarted; `seq` continues.
     4. The operator's live inputs: a named `--max-batch` replaces the saved one; named interlocks are
-       added to the saved trips (a restart that names none cannot un-trip one). Changes are journaled.
+       added to the saved trips (a restart that names none cannot un-trip one). **The clock** (#23,
+       design §3): each of `m` (`multiplier`), `k` (`cycle_ticks`) and `N` (`checkpoint_every`) is the
+       named value, else the newest recovered policy — the newer of the checkpoint's `clock` and the last
+       replayed segment's header — resolved *after* the replay and validated together. Changes are
+       journaled, and the checkpoint the caller takes before serving makes them durable.
     5. The root record is classified against the recovered state (`classify_root_record`); the
        `resumed` event — the downtime gap `(wall_down, wall_up, tick)`, the generation and whether it
        was a fall-back, the root record's class, the run-input changes and any `pending.json`
@@ -5132,6 +5939,8 @@ def resume_executive(
     run = body["run"]
     snapshot_tick = int(body["identity"]["tick"])
     try:
+        # Built at `k = 1` and the checkpoint's `N`, both of which any world accepts: the clock it serves on
+        # is resolved after the replay (`_resume`), from the flags or the newest recovered policy.
         executive = Executive(
             world,
             diode_dir,
@@ -5145,15 +5954,21 @@ def resume_executive(
             boot_id=boot_id,
             state_fd=state_fd,
             journal_dir_fd=journal_dir_fd,
-            checkpoint_every=checkpoint_every if checkpoint_every is not None else (body.get("clock") or {}).get("N"),
+            checkpoint_every=(body.get("clock") or {}).get("N"),
             diode_fd=diode_fd,
+            pacer=pacer,
         )
     except ValueError as exc:
         raise ResumeRefused(str(exc)) from exc
     except OSError as exc:
         raise ResumeRefused(_io_refusal(exc, Path(state_dir) if state_dir is not None else Path(diode_dir))) from exc
+    named = (
+        multiplier_text(parse_multiplier(multiplier) if isinstance(multiplier, str) else multiplier) if multiplier is not None else None,
+        cycle_ticks,
+        checkpoint_every,
+    )
     try:
-        return executive, _resume(executive, world, loaded, snapshot_tick, max_batch, closed_interlocks)
+        return executive, _resume(executive, world, loaded, snapshot_tick, max_batch, closed_interlocks, named)
     except OSError as exc:
         # Every I/O failure on the resume's path is a refusal by name, never a traceback (review F4).
         with contextlib.suppress(OSError):  # the refusal is what is raised (J4)
@@ -5173,7 +5988,13 @@ def _io_refusal(exc: OSError, where: Path) -> str:
 
 
 def _resume(
-    executive: Executive, world: World, loaded: Any, snapshot_tick: int, max_batch: int | None, closed_interlocks: set[str] | None
+    executive: Executive,
+    world: World,
+    loaded: Any,
+    snapshot_tick: int,
+    max_batch: int | None,
+    closed_interlocks: set[str] | None,
+    named: tuple[str | None, int | None, int | None] = (None, None, None),
 ) -> Resumption:
     body = loaded.body
     where = f"the checkpoint at {loaded.path}"
@@ -5202,8 +6023,25 @@ def _resume(
     except ValueError as exc:
         raise ResumeRefused(f"{where} cannot be restored: {exc}") from exc
     executive.resumed = True
-    # `restore_state` set the clock inputs the checkpoint remembered; `N` is the one this child reads.
-    executive.clock = {**executive.clock, "N": executive.checkpoint_every}
+    # **The clock, resolved after the replay** (#23, design §3). The newest recovered policy is the last
+    # replayed segment's header when the replay crossed into segments the checkpoint does not list — a boot
+    # after it, whose named change a fall-back to this older generation must not silently undo — and the
+    # checkpoint's own `clock` otherwise (the checkpoint a boot takes before it serves records the change
+    # it named before that boot's header exists). A named value wins; the three are validated together.
+    listed = {entry.get("segment") for entry in body["segments"] if isinstance(entry, dict)}
+    newer = [entry for entry in recovered["segments"] if isinstance(entry, dict) and entry.get("segment") not in listed]
+    policy = newer[-1] if newer else body["clock"]
+    inherited = {"m": policy["m"], "k": policy["k"], "N": policy["N"]}
+    resolved = {key: value if value is not None else inherited[key] for key, value in zip(("m", "k", "N"), named, strict=True)}
+    try:
+        executive.set_clock(resolved["m"], resolved["k"], resolved["N"])
+    except ValueError as exc:
+        spelled = ", ".join(f"{key} = {resolved[key]}" for key in ("m", "k", "N"))
+        which = ", ".join(flag for flag, value in zip(("--multiplier", "--cycle-ticks", "--checkpoint-ticks"), named, strict=True) if value is not None)
+        raise ResumeRefused(
+            f"{where} cannot be resumed on the clock {spelled} ({'named: ' + which if which else 'all inherited'}): {exc}"
+        ) from exc
+    clock_changes = {key: [inherited[key], resolved[key]] for key in ("m", "k", "N") if resolved[key] != inherited[key]}
 
     # Addendum B2: a fall-back never lets the next write rotate the unverified current generation over
     # the good previous one. The current is moved aside — to a name no generation has — before anything
@@ -5229,7 +6067,7 @@ def _resume(
         if entry["tick"] >= snapshot_tick:
             executive.owe(entry)
 
-    run_inputs: dict[str, Any] = {}
+    run_inputs: dict[str, Any] = dict(clock_changes)
     if max_batch is not None and int(max_batch) != executive.max_batch:
         run_inputs["max_batch"] = [executive.max_batch, int(max_batch)]
         executive.max_batch = int(max_batch)
@@ -5344,6 +6182,13 @@ def _resume(
     # right after the boot that made it; the record cannot say this, because a boot's segment header is
     # written with its first cycle. Once written it is never rolled back, whatever later refuses.
     prev_boot = read_boot_marker(executive.state_fd)
+    # **The consecutive-backstop count** (#23, design §5), read back from the segment the ended boot closed
+    # with: its manifest, if it ended by the backstop; any other end — a clean one, a crash — resets it.
+    if prev_boot is not None and executive.journal is not None and executive.journal_dir_fd is not None:
+        segment_file = executive.journal.name if executive.journal_shared else JOURNAL_SEGMENT.format(boot_id=prev_boot)
+        manifest = previous_manifest(executive.journal_dir_fd, segment_file, prev_boot)
+        if manifest is not None and manifest.get("ended") == "lag_backstop" and _count(manifest.get("consecutive_backstops"), 1):
+            executive.backstops_before = manifest["consecutive_backstops"]
     try:
         write_boot_marker(executive.state_fd, executive.boot_id)
     except Exception as exc:  # noqa: BLE001 - the refusal names it
@@ -5455,7 +6300,8 @@ class _StartPath(contextlib.ExitStack):
         return f"[console] {named} could not be closed ({code}: {self.unclosed.strerror}); every other handle was closed"
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, pacer: Pacer | None = None) -> int:
+    """The console's command line; `pacer` injects the scheduler's clock and sleeper (#23: the tests' seam, never a flag)."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--dir", default=str(Path(__file__).resolve().parent.parent))
     parser.add_argument("--diode-dir", default=".scratch/diode")
@@ -5471,8 +6317,35 @@ def main(argv: list[str] | None = None) -> int:
         help=f"the phase a new world starts in (default {DEFAULT_PHASE}); a restart resumes the phase its checkpoint "
         "records, and naming another refuses",
     )
-    parser.add_argument("--poll", type=float, default=1.0, help="seconds between cycles")
-    parser.add_argument("--cycles", type=int, default=0, help="0 runs until interrupted")
+    # **The clock** (ADR 0002 A, B, J; #23): three run inputs, required with no default on a serving start
+    # that has no checkpoint — the deployed stack names them — and remembered by the checkpoint, so each
+    # defaults to `None` (`check_console_flags`: a named value and "named nothing" must be two things).
+    parser.add_argument(
+        "--multiplier",
+        default=None,
+        metavar="M",
+        help="m, mission seconds per wall second (ADR 0002 A), an exact decimal or fraction such as 1, 0.5 or 1/3; "
+        "required with no default on a fresh serving start, and a restart keeps its checkpoint's unless this names another",
+    )
+    parser.add_argument(
+        "--cycle-ticks",
+        type=int,
+        default=None,
+        metavar="K",
+        help="k, the ticks of one cycle: one claim and one publication per cycle (ADR 0002 B), at most tick_hz over the "
+        "highest channel rate; required with no default on a fresh serving start, and a restart keeps its checkpoint's "
+        "unless this names another",
+    )
+    parser.add_argument(
+        "--checkpoint-ticks",
+        type=int,
+        default=None,
+        metavar="N",
+        help="N, the ticks between checkpoints (ADR 0002 J), a multiple of k; the generated HELP.md and README.md are "
+        "rewritten on the same cadence. Required with no default on a fresh serving start, and a restart keeps its "
+        "checkpoint's unless this names another",
+    )
+    parser.add_argument("--cycles", type=int, default=0, help="the cycles this invocation runs; 0 runs until stopped")
     parser.add_argument(
         "--closed-interlock",
         action="append",
@@ -5559,6 +6432,22 @@ def main(argv: list[str] | None = None) -> int:
             f"--slug names {repeated} more than once; a slug attaches to one executive once\n"
         )
         return 3
+
+    # A named clock input is refused by name when it is not one, before anything is opened; whether the three
+    # together are a clock, and whether one is missing, is asked once the start knows if it resumes (`start`).
+    named_m: Fraction | None = None
+    if args.multiplier is not None:
+        try:
+            named_m = parse_multiplier(args.multiplier)
+        except ValueError as exc:
+            sys.stderr.write(f"--multiplier {args.multiplier}: {exc}; m is mission seconds per wall second, a positive number (ADR 0002 A)\n")
+            return 3
+    for flag, value in (("--cycle-ticks", args.cycle_ticks), ("--checkpoint-ticks", args.checkpoint_ticks)):
+        if value is not None and value < 1:
+            sys.stderr.write(f"{flag} {value} is not a positive number of ticks\n")
+            return 3
+
+    pacer = pacer if pacer is not None else Pacer()
 
     try:
         world = load_world(Path(args.dir))
@@ -5750,7 +6639,15 @@ def main(argv: list[str] | None = None) -> int:
                 )
 
         def run(executive: Executive, banner: str) -> int:
-            """The loop, for a fresh world and a resumed one alike: the lock's holder line, the banner, the cycles, a clean end."""
+            """The loop, for a fresh world and a resumed one alike: the lock's holder line, the banner, the cycles, a clean end.
+
+            **The clean end** — `--cycles` exhausted, or a stop asked for by `SIGTERM` or `SIGINT`, which the
+            loop reads at a cycle's boundary (#23, design §5) — checkpoints the last completed cycle and
+            journals the segment's manifest (ADR 0002 C1: the clean-end event is the manifest), with its
+            clock summary, which it also prints. **A lag backstop** (`LagBackstop`, raised before the cycle
+            opened anything) journals `lag_backstop`, takes the same clean end with the manifest saying so,
+            prints `BACKSTOP_LINE` and exits `EXIT_BACKSTOP`; the restart resumes on a fresh epoch.
+            """
             # The holder's line in the lock, for the next start's refusal to name; a failure is named too.
             try:
                 os.ftruncate(lock_fd, 0)
@@ -5763,23 +6660,49 @@ def main(argv: list[str] | None = None) -> int:
             # `--cycles` counts the cycles **this invocation** runs; a resumed world continues its tick.
             ran = 0
             clean = False
+            ended = "clean"
+            backstop: LagBackstop | None = None
             try:
                 try:
-                    while args.cycles == 0 or ran < args.cycles:
-                        ran += 1
+                    while (args.cycles == 0 or ran < args.cycles) and not pacer.stopping:
+                        before = executive.stats.cycles
                         written = executive.cycle()
+                        if executive.stats.cycles == before:
+                            break  # a stop came during the wait: the cycle never started
+                        ran += 1
                         if written:
                             print(f"[console] tick {executive.tick}: {len(written)} result(s)", flush=True)
-                        time.sleep(args.poll)
                     clean = True
+                    if pacer.stopping:
+                        asked = f" ({signal.Signals(pacer.signal).name})" if pacer.signal is not None else ""
+                        print(f"\n[console] stopped after {executive.tick} tick(s){asked}", flush=True)
+                except LagBackstop as exc:
+                    backstop, ended, clean = exc, "lag_backstop", True
+                    try:
+                        executive.journal_event({
+                            "event": "lag_backstop", "wall": utc_now().isoformat(), "boot_id": executive.boot_id,
+                            "world_id": executive.world_id, "tick": executive.tick, "lag_s": exc.lag_s, "consecutive": exc.consecutive,
+                            "action": "stop",
+                        })
+                    except RecordUnwritable as again:
+                        # The event's failed append could not be cut back (J2): the record is unwritable, and the
+                        # clean end cannot follow it — the named refusal, never a traceback (candidate 1, Codex P2).
+                        sys.stderr.write(f"[console] stopped at tick {executive.tick}: {again}\n")
+                        return 3
                 except KeyboardInterrupt:
+                    # Where no handler could be installed (`main` off the main thread), an interrupt still raises.
                     print(f"\n[console] stopped after {executive.tick} tick(s)", flush=True)
                     # A checkpoint only at a cycle's boundary: mid-cycle the window counters can be ahead of the truth.
                     clean = not executive.in_cycle
                 except UncomparableState as exc:
+                    # Only the cycle's durable rows were committed (#23, design §1): the refusal names the last of them.
+                    durable = getattr(exc, "last_durable_tick", executive.tick)
+                    unwritable = getattr(exc, "unwritable", None)
                     sys.stderr.write(
-                        f"[console] stopped at tick {executive.tick}: the next tick's state cannot be compared "
-                        f"({exc}). The executive did not commit it; the lineage ends at tick {executive.tick}\n"
+                        f"[console] stopped at tick {durable}: the next tick's state cannot be compared "
+                        f"({exc}). The executive did not commit it; the lineage ends at tick {durable}, the last durable tick"
+                        + (f" (the rows before the refusal could not be appended: {unwritable})" if unwritable else "")
+                        + "\n"
                     )
                     return 3
                 except RecordUnwritable as exc:
@@ -5787,14 +6710,24 @@ def main(argv: list[str] | None = None) -> int:
                     return 3
                 # A clean end checkpoints the last completed cycle, unless the cadence just did; a failure is
                 # recorded and journaled as a cadence failure is, and not a changed exit, because the record
-                # already holds every tick.
-                if clean and executive.state_fd is not None and executive.last_checkpoint_tick != executive.tick:
+                # already holds every tick. The manifest is the segment's last event.
+                if clean:
                     try:
-                        executive.checkpoint_or_record("clean end")
+                        # A boot that ran no cycle (a backstop in its first wait, a stop before its first cycle)
+                        # has no segment yet: its header comes first, so its manifest belongs to a segment of the
+                        # record and the clean-end checkpoint lists it (candidate 2, Codex P3).
+                        executive.open_segment()
+                        if executive.state_fd is not None and executive.last_checkpoint_tick != executive.tick:
+                            executive.checkpoint_or_record("clean end")
+                        manifest = executive.write_manifest(ended)
                     except RecordUnwritable as exc:
                         # Its event's failed append could not be cut back (J2): the record is unwritable.
                         sys.stderr.write(f"[console] stopped at tick {executive.tick}: {exc}\n")
                         return 3
+                    print(f"[console] {clock_line(manifest['summary'])}", flush=True)
+                if backstop is not None:
+                    sys.stderr.write(BACKSTOP_LINE.format(lag_s=backstop.lag_s, consecutive=backstop.consecutive) + "\n")
+                    return EXIT_BACKSTOP
                 return 0
             finally:
                 # The executive is closed on the way out of `starting`, with every handle the start holds,
@@ -5852,6 +6785,10 @@ def main(argv: list[str] | None = None) -> int:
                         max_batch=args.max_batch,
                         closed_interlocks=set(args.closed_interlock or []),
                         diode_fd=diode_fd,
+                        multiplier=named_m,
+                        cycle_ticks=args.cycle_ticks,
+                        checkpoint_every=args.checkpoint_ticks,
+                        pacer=pacer,
                     )
                 except ResumeRefused as exc:
                     return refuse(f"{exc}. The executive does not start a fresh world over a saved one (ADR 0002 K)")
@@ -5876,8 +6813,8 @@ def main(argv: list[str] | None = None) -> int:
                     + (", fell back" if resumption.fell_back else "")
                     + f", replayed {resumption.replayed}, republished {sum(1 for r in resumption.republished if r.get('result') == 'written')}) "
                     f"slugs={','.join(sorted(executive.windows))} phase={executive.phase} scenario={executive.scenario} "
-                    f"seed={executive.seed} ring={','.join(map(str, rings))} poll={args.poll}s "
-                    f"cycles={args.cycles or 'until interrupted'} state-dir={state_dir}",
+                    f"seed={executive.seed} ring={','.join(map(str, rings))} m={executive.clock['m']} k={executive.cycle_ticks} "
+                    f"N={executive.checkpoint_every} cycles={args.cycles or 'until stopped'} state-dir={state_dir}",
                 )
             # `--plan` answers from the checkpoint's identity and writes nothing in the diode directory
             # (the state directory and its lock were made above, as for any start).
@@ -5898,6 +6835,27 @@ def main(argv: list[str] | None = None) -> int:
                     "or one that died before its first checkpoint was written. One state directory is one world's "
                     f"(ADR 0002 H): move {', '.join(holding)} out of {state_dir}, or point --state-dir at an empty directory"
                 )
+        if checkpoint_found is None and not (args.init or args.plan or args.plan_json):
+            # **A fresh serving start names its clock** (ADR 0002 A, B, J; #23): `m`, `k` and `N` are required
+            # with no default — the deployed stack names them, and the console assumes none. Every missing
+            # input is named, and the three are then held together to `clock_problem`'s bounds.
+            missing = [
+                flag for flag, value in (("--multiplier", args.multiplier), ("--cycle-ticks", args.cycle_ticks), ("--checkpoint-ticks", args.checkpoint_ticks))
+                if value is None
+            ]
+            if missing:
+                return refuse(
+                    f"a serving start names the clock it runs on, and this one names no {' and no '.join(missing)}: m, k and N are "
+                    "required with no default (ADR 0002 A, B and J), and the stack that starts the vehicle names them. A restart "
+                    "inherits them from its checkpoint; --init and --plan run no clock"
+                )
+            tick_hz = (world.documents.get("mission.yaml") or {}).get("tick_hz")
+            clock = clock_problem(named_m, args.cycle_ticks, args.checkpoint_ticks, tick_hz=tick_hz, max_rate=max_channel_rate(world))
+            if clock is not None:
+                flag, value = {
+                    "m": ("--multiplier", args.multiplier), "k": ("--cycle-ticks", args.cycle_ticks), "N": ("--checkpoint-ticks", args.checkpoint_ticks),
+                }[clock[0]]
+                return refuse(f"{flag} {value}: {clock[1]}")
         if problem is not None:
             return refuse(
                 f"the directory's record at {diode_dir / RECORD_FILE} cannot be read: {problem}. A record "
@@ -6057,6 +7015,11 @@ def main(argv: list[str] | None = None) -> int:
                 # path alone would have `Executive` walk the state directory a second time.
                 journal_dir_fd=journal_fd if journal_fd is not None else state_fd,
                 diode_fd=diode_fd,
+                # Named, all three, on a serving start (above); `--init` runs no clock, and builds with what it names.
+                multiplier=named_m if named_m is not None else 1,
+                cycle_ticks=args.cycle_ticks if args.cycle_ticks is not None else 1,
+                checkpoint_every=args.checkpoint_ticks,
+                pacer=pacer,
             )
         except ValueError as exc:
             return refuse(str(exc))
@@ -6113,7 +7076,8 @@ def main(argv: list[str] | None = None) -> int:
             executive,
             f"[console] {diode_dir} slugs={','.join(slugs)} phase={phase} "
             f"scenario={executive.scenario} seed={executive.seed} ring={ring} "
-            f"poll={args.poll}s cycles={args.cycles or 'until interrupted'} world={executive.world_id}"
+            f"m={executive.clock['m']} k={executive.cycle_ticks} N={executive.checkpoint_every} "
+            f"cycles={args.cycles or 'until stopped'} world={executive.world_id}"
             + (f" state-dir={state_dir}" if state_dir is not None else ""),
         )
 
@@ -6124,13 +7088,28 @@ def main(argv: list[str] | None = None) -> int:
     # naming the file (`exc.filename`, or the path of what was in use) and the errno.
     # A `close` on the way out that fails is not raised past `main` (round 4, J4): every handle is still
     # closed, and the first such failure — when nothing else failed first — is named, and the exit is 3.
-    with _StartPath() as starting:
-        try:
-            prepared = start(starting)
-        except OSError as exc:
-            sys.stderr.write(starting.refusal(exc) + "\n")
-            prepared = 3
-        outcome = prepared if isinstance(prepared, int) else prepared()
+    #
+    # **The stop handlers are installed first** (#23, design §5): before any recovery, so a `SIGTERM` during a
+    # long resume ends the run at its first boundary, and a `docker stop` finishes the cycle it lands in and
+    # takes the clean end — in the one-executive shape the console is PID 1, and only this handler makes
+    # `SIGTERM` effective at all. `SIGINT` is the same. They are restored on the way out, so an in-process
+    # caller's own handling of an interrupt is left as it was; off the main thread none can be installed.
+    stopper = pacer
+    installed: list[tuple[int, Any]] = []
+    if threading.current_thread() is threading.main_thread():
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            installed.append((signum, signal.signal(signum, stopper.stop)))
+    try:
+        with _StartPath() as starting:
+            try:
+                prepared = start(starting)
+            except OSError as exc:
+                sys.stderr.write(starting.refusal(exc) + "\n")
+                prepared = 3
+            outcome = prepared if isinstance(prepared, int) else prepared()
+    finally:
+        for signum, previous in installed:
+            signal.signal(signum, previous if previous is not None else signal.SIG_DFL)
     if starting.unclosed is not None:
         sys.stderr.write(starting.unclosed_refusal() + "\n")
         return outcome or 3

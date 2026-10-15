@@ -17,6 +17,7 @@ import contextlib
 import dataclasses
 import errno
 import hashlib
+import io
 import itertools
 import json
 import math
@@ -45,6 +46,14 @@ FILES = (
     "channels.yaml",
     "presentation.yaml",
 )
+
+# **The clock a console started by a test names** (#23, the clock seam): `m`, `k` and `N` are required
+# with no default, so every serving start names all three. `m = 10` makes a 20 ms tick 2 ms of wall
+# time and `k = 1` keeps one tick per cycle, so a test that counted cycles as ticks still does — and
+# really waits, on CLOCK_MONOTONIC, where `--poll 0` waited for nothing. `N = 50` is `tick_hz`.
+CLOCK = ("--multiplier", "10", "--cycle-ticks", "1", "--checkpoint-ticks", "50")
+# A console a test leaves running and kills: one tick per 50 ms (`m = 2/5`), the old `--poll 0.05`.
+SLOW_CLOCK = ("--multiplier", "0.4", "--cycle-ticks", "1", "--checkpoint-ticks", "50")
 
 
 def run_linter(vehicle_dir: Path, strict: bool = False) -> subprocess.CompletedProcess[str]:
@@ -10905,7 +10914,7 @@ def test_a_run_can_say_which_scenario_it_is(tmp_path):
     root = fixture_dir(tmp_path, "scenario")
     result = run_console(
         "--diode-dir", str(root), "--slug", "vehicle", "--scenario", "crisis", "--seed", "42",
-        "--cycles", "2", "--poll", "0",
+        "--cycles", "2", *CLOCK,
     )
     assert result.returncode == 0, result.stderr[-600:]
     assert "scenario=crisis seed=42" in result.stdout, result.stdout[-400:]
@@ -10938,7 +10947,7 @@ def test_a_run_can_say_which_scenario_it_is(tmp_path):
     )
     assert made.returncode == 0, made.stderr[-400:]
     assert json.loads((kept / ".executive.json").read_text())["world_id"] is None
-    resumed = run_console("--diode-dir", str(kept), "--slug", "kept", "--cycles", "1", "--poll", "0")
+    resumed = run_console("--diode-dir", str(kept), "--slug", "kept", "--cycles", "1", *CLOCK)
     assert resumed.returncode == 0, resumed.stderr[-400:]
     assert "scenario=crisis seed=42" in resumed.stdout, resumed.stdout[-400:]
     record = json.loads((kept / ".executive.json").read_text())
@@ -10970,7 +10979,7 @@ def test_a_run_can_say_which_scenario_it_is(tmp_path):
     assert prepared["scenario"] == "degraded" and prepared["seed"] == 3, prepared
     ran = run_console(
         "--diode-dir", str(renamed), "--slug", "renamed", "--scenario", "crisis", "--seed", "7",
-        "--cycles", "1", "--poll", "0",
+        "--cycles", "1", *CLOCK,
     )
     assert ran.returncode == 0, ran.stderr[-400:]
     assert "scenario=crisis seed=7" in ran.stdout, ran.stdout[-400:]
@@ -10993,7 +11002,7 @@ def test_a_run_can_say_which_scenario_it_is(tmp_path):
     record = json.loads((shared / ".executive.json").read_text())
     assert record["slugs"] == ["left", "right"] and record["scenario"] == "crisis" and record["seed"] == 42, record
     assert "scenario" not in json.loads((shared / "right" / "pending.json").read_text())
-    both = run_console("--diode-dir", str(shared), "--slug", "left", "--slug", "right", "--cycles", "1", "--poll", "0")
+    both = run_console("--diode-dir", str(shared), "--slug", "left", "--slug", "right", "--cycles", "1", *CLOCK)
     assert both.returncode == 0, both.stderr[-400:]
     assert "scenario=crisis seed=42" in both.stdout, both.stdout
 
@@ -11091,8 +11100,7 @@ def test_the_telemetry_ring_is_bounded_and_accounts_for_its_losses(tmp_path):
         "5",
         "--cycles",
         "14",
-        "--poll",
-        "0",
+        *CLOCK,
     ]
     first = subprocess.run(console, capture_output=True, text=True, check=False)
     assert first.returncode == 0, first.stderr[-600:]
@@ -11132,8 +11140,7 @@ def test_the_telemetry_ring_is_bounded_and_accounts_for_its_losses(tmp_path):
             "bounded",
             "--cycles",
             "3",
-            "--poll",
-            "0",
+            *CLOCK,
         ],
         capture_output=True,
         text=True,
@@ -11156,8 +11163,7 @@ def test_the_telemetry_ring_is_bounded_and_accounts_for_its_losses(tmp_path):
             "1",
             "--cycles",
             "4",
-            "--poll",
-            "0",
+            *CLOCK,
         ],
         capture_output=True,
         text=True,
@@ -11197,7 +11203,7 @@ def test_a_restart_may_not_re_bound_the_ring_and_says_so(tmp_path):
 
     # Naming the bound the window already has is not a disagreement, and it runs.
     same = subprocess.run(
-        [*entry, "--slug", "held", "--ring-slots", "6", "--cycles", "1", "--poll", "0"],
+        [*entry, "--slug", "held", "--ring-slots", "6", "--cycles", "1", *CLOCK],
         capture_output=True,
         text=True,
         check=False,
@@ -11213,7 +11219,7 @@ def test_a_restart_may_not_re_bound_the_ring_and_says_so(tmp_path):
     assert json.loads((other / ".executive.json").read_text())["ring_slots"] == {"other": 6}
     before = (other / ".executive.json").read_bytes()
     refused = subprocess.run(
-        [*other_entry, "--slug", "other", "--ring-slots", "10", "--cycles", "1", "--poll", "0"],
+        [*other_entry, "--slug", "other", "--ring-slots", "10", "--cycles", "1", *CLOCK],
         capture_output=True,
         text=True,
         check=False,
@@ -11225,7 +11231,7 @@ def test_a_restart_may_not_re_bound_the_ring_and_says_so(tmp_path):
     # And a fresh window is free to be bound however the caller likes, which is what keeps this a
     # rule about *restarts* rather than a rule against naming the bound at all.
     fresh = subprocess.run(
-        [sys.executable, str(VEHICLE / "tools" / "console.py"), "--diode-dir", str(tmp_path / "fresh"), "--slug", "fresh", "--ring-slots", "10", "--cycles", "1", "--poll", "0"],
+        [sys.executable, str(VEHICLE / "tools" / "console.py"), "--diode-dir", str(tmp_path / "fresh"), "--slug", "fresh", "--ring-slots", "10", "--cycles", "1", *CLOCK],
         capture_output=True,
         text=True,
         check=False,
@@ -11319,8 +11325,7 @@ def test_the_window_s_sixth_file_is_generated_from_the_configuration(tmp_path):
             "protocol",
             "--cycles",
             "2",
-            "--poll",
-            "0",
+            *CLOCK,
         ],
         capture_output=True,
         text=True,
@@ -11334,18 +11339,31 @@ def test_the_window_s_sixth_file_is_generated_from_the_configuration(tmp_path):
         assert (window / name).exists(), name
     assert (window / "telemetry").is_dir() and (window / "output").is_dir()
 
-    # A hand-edit does not survive a cycle, which is the difference between a generated file and a
-    # written one.
+    # A hand-edit does not survive the vehicle's cadence, which is the difference between a generated
+    # file and a written one. **The cadence is every `N` ticks now, not every cycle** (#23, design §1):
+    # the files are rewritten on a segment's first cycle, after a repair, and at the end of the cycle
+    # *after* the one that crossed a multiple of `N` — so a hand-edit lasts about a mission second, and
+    # the static rewrite and the checkpoint normally fall in different cycles. Here `N = 5`, `k = 1`.
     console, _plant, world = console_tools()
-    executive = console.Executive(world, tmp_path / "edited", phase="translunar_coast")
+    executive = console.Executive(world, tmp_path / "edited", phase="translunar_coast", checkpoint_every=5)
     executive.attach("protocol")
     edited = tmp_path / "edited" / "protocol"
     assert (edited / "README.md").read_text() == text
     (edited / "README.md").write_text("# doctored\n")
     (edited / "HELP.md").write_text("# doctored\n")
     executive.cycle()
-    assert (edited / "README.md").read_text() == text, "a hand-edit survived a cycle"
-    assert (edited / "HELP.md").read_text() == __import__("generate_help").generate(VEHICLE)
+    assert (edited / "README.md").read_text() == text, "a segment's first cycle rewrites the generated files"
+    help_now = __import__("generate_help").generate(VEHICLE)
+    assert (edited / "HELP.md").read_text() == help_now
+    (edited / "README.md").write_text("# doctored\n")
+    (edited / "HELP.md").write_text("# doctored\n")
+    for _ in range(4):  # ticks 2–5: the cycle reaching tick 5 crosses N and rewrites nothing itself
+        executive.cycle()
+        assert (edited / "README.md").read_text() == "# doctored\n", f"rewritten at tick {executive.tick}, off the cadence"
+    executive.cycle()  # tick 6: the cycle after the crossing
+    assert (edited / "README.md").read_text() == text, "a hand-edit survived the cadence"
+    assert (edited / "HELP.md").read_text() == help_now
+    executive.close()
     # `HELP.md` is where the verbs are, and nothing in the README is one.
     assert "zzz_definitely_not_a_verb" not in help_text
 
@@ -21379,7 +21397,7 @@ def test_a_state_the_compare_point_refuses_stops_the_run_at_its_last_consistent_
     code = console.main(
         [
             "--dir", str(VEHICLE), "--diode-dir", str(tmp_path / "entry"), "--slug", "alpha",
-            "--phase", "translunar_coast", "--cycles", "3", "--poll", "0",
+            "--phase", "translunar_coast", "--cycles", "3", *CLOCK,
         ]
     )
     err = capsys.readouterr().err
@@ -21916,8 +21934,10 @@ def test_a_conflict_domain_is_won_once_a_tick_and_the_rotation_decides_by_whom(t
     conflicted at all; the same verb with different arguments was exempt (`winner != verb`), so
     `set_rcs_quad ... enable` and `... inhibit` both applied in one tick; and the order in which
     windows were served was whichever process ran first. ADR 0001 choice A makes the order a pure
-    function of (slugs, tick): sorted slugs rotated left by `tick % n`, so for `alpha`, `bravo`,
-    `charlie` the winner at tick *t* is `sorted[t % 3]` — predicted here from the rule, not read back.
+    function of (slugs, tick): sorted slugs rotated left by the **cycle**'s index, `(tick // k) % n`
+    (#23: by cycle, not by tick, so every window goes first once in `n` cycles whatever `gcd(n, k)`),
+    which is `tick % n` at `k = 1`. For `alpha`, `bravo`, `charlie` the winner of the cycle starting at
+    tick *t* is `sorted[(t // k) % 3]` — predicted here from the rule, not read back.
 
     `ack_alarm` is the probe for the rotation: interlock-free, declared `conflict_domain:
     crew.alerts`, moves no state and has no dwell, so three distinct texts collide cleanly every tick.
@@ -21944,7 +21964,7 @@ def test_a_conflict_domain_is_won_once_a_tick_and_the_rotation_decides_by_whom(t
             clear_results(diode / slug)
             submit(diode / slug, [f"ack_alarm alert_id={slug}"])
         executive.cycle()
-        expected_winner = sorted(slugs)[tick % len(slugs)]
+        expected_winner = sorted(slugs)[(tick // executive.cycle_ticks) % len(slugs)]
         outcomes = {slug: results_of(diode / slug) for slug in slugs}
         assert all(len(bodies) == 1 for bodies in outcomes.values()), outcomes
         winner_body = outcomes[expected_winner][0]
@@ -22175,7 +22195,7 @@ def test_one_world_per_directory_is_enforced_by_a_lock_and_a_binding(tmp_path):
     diode = tmp_path / "diode"
     entry = [sys.executable, str(VEHICLE / "tools" / "console.py"), "--diode-dir", str(diode)]
     first = subprocess.Popen(
-        [*entry, "--slug", "alpha", "--slug", "bravo", "--cycles", "0", "--poll", "0.05"],
+        [*entry, "--slug", "alpha", "--slug", "bravo", "--cycles", "0", *SLOW_CLOCK],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -22190,7 +22210,7 @@ def test_one_world_per_directory_is_enforced_by_a_lock_and_a_binding(tmp_path):
         else:
             raise AssertionError("the first executive never bound its directory")
         second = subprocess.run(
-            [*entry, "--slug", "charlie", "--cycles", "1", "--poll", "0"],
+            [*entry, "--slug", "charlie", "--cycles", "1", *CLOCK],
             capture_output=True,
             text=True,
             check=False,
@@ -22213,7 +22233,7 @@ def test_one_world_per_directory_is_enforced_by_a_lock_and_a_binding(tmp_path):
         if p.is_file() and p.name != ".executive.lock"
     }
     stale = subprocess.run(
-        [*entry, "--slug", "alpha", "--cycles", "1", "--poll", "0"],
+        [*entry, "--slug", "alpha", "--cycles", "1", *CLOCK],
         capture_output=True,
         text=True,
         check=False,
@@ -22263,7 +22283,7 @@ def test_one_world_per_directory_is_enforced_by_a_lock_and_a_binding(tmp_path):
         json.dumps({"pending": [], "ticks": 3, "seq": 4, "scenario": "nominal", "seed": 0, "ring_slots": 300})
     )
     refused = subprocess.run(
-        [sys.executable, str(VEHICLE / "tools" / "console.py"), "--diode-dir", str(legacy_dir), "--slug", "legacy", "--cycles", "1", "--poll", "0"],
+        [sys.executable, str(VEHICLE / "tools" / "console.py"), "--diode-dir", str(legacy_dir), "--slug", "legacy", "--cycles", "1", *CLOCK],
         capture_output=True,
         text=True,
         check=False,
@@ -22284,7 +22304,7 @@ def test_one_world_per_directory_is_enforced_by_a_lock_and_a_binding(tmp_path):
     forged["ticks"] = 99
     (forged_dir / "alpha" / "pending.json").write_text(json.dumps(forged))
     ran = subprocess.run(
-        [sys.executable, str(VEHICLE / "tools" / "console.py"), "--diode-dir", str(forged_dir), "--slug", "alpha", "--cycles", "1", "--poll", "0"],
+        [sys.executable, str(VEHICLE / "tools" / "console.py"), "--diode-dir", str(forged_dir), "--slug", "alpha", "--cycles", "1", *CLOCK],
         capture_output=True,
         text=True,
         check=False,
@@ -22308,7 +22328,7 @@ def test_one_world_per_directory_is_enforced_by_a_lock_and_a_binding(tmp_path):
     assert again.returncode == 0, again.stderr[-600:]
     assert json.loads((fresh_dir / ".executive.json").read_text())["slugs"] == ["fresh", "other"]
     ran = subprocess.run(
-        [*fresh_entry, "--slug", "fresh", "--cycles", "2", "--poll", "0"],
+        [*fresh_entry, "--slug", "fresh", "--cycles", "2", *CLOCK],
         capture_output=True,
         text=True,
         check=False,
@@ -22339,7 +22359,7 @@ def test_the_entrypoint_serves_two_slugs_from_one_executive(tmp_path):
     assert json.loads((diode / ".executive.json").read_text())["slugs"] == ["alpha", "bravo"]
     submit(diode / "alpha", ["set_rcs_mode mode=manual"])
     run = subprocess.run(
-        [*entry, "--slug", "alpha", "--slug", "bravo", "--cycles", "2", "--poll", "0"],
+        [*entry, "--slug", "alpha", "--slug", "bravo", "--cycles", "2", *CLOCK],
         capture_output=True,
         text=True,
         check=False,
@@ -22359,7 +22379,7 @@ def test_the_entrypoint_serves_two_slugs_from_one_executive(tmp_path):
         assert frame["sim_step"] == 2 and frame["values"]["rcs.mode"] == "manual", (slug, frame)
     # The same slug twice in one command line is refused rather than attached twice.
     doubled = subprocess.run(
-        [*entry, "--slug", "charlie", "--slug", "charlie", "--cycles", "1", "--poll", "0"],
+        [*entry, "--slug", "charlie", "--slug", "charlie", "--cycles", "1", *CLOCK],
         capture_output=True,
         text=True,
         check=False,
@@ -23114,10 +23134,10 @@ def test_the_boot_marker_is_written_by_a_serving_start_and_its_name_cannot_be_a_
     """
     _checkpoint, console, _plant, world = checkpoint_tools()
     diode, state = tmp_path / "diode", tmp_path / "state"
-    assert console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"]) == 0
+    assert console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", *CLOCK]) == 0
     first = json.loads((state / ".boot.json").read_text())["boot_id"]
     assert (state / f"journal.{first}.jsonl").exists()
-    assert console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"]) == 0
+    assert console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", *CLOCK]) == 0
     second = json.loads((state / ".boot.json").read_text())["boot_id"]
     assert second != first and (state / f"journal.{second}.jsonl").exists()
     assert console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--plan"]) == 0
@@ -23943,7 +23963,7 @@ def test_a_checkpoint_round_trips_an_executive_byte_for_byte(tmp_path):
     assert not list(state_dir.glob(".*.tmp")), "no temporary survives a clean write"
     raw = written.read_bytes()
     header, body_bytes = split_checkpoint(raw)
-    assert header["format"] == "vehicle.checkpoint.v2", "format v2 (child 3): segment entries carry the record anchor"
+    assert header["format"] == "vehicle.checkpoint.v3", "format v3 (#23): segment entries carry m, k and N, and the clock is validated"
     assert header["body_sha256"] == hashlib.sha256(body_bytes).hexdigest()
     assert header["body_bytes"] == len(body_bytes)
     assert header["python"] == platform.python_version()
@@ -24390,7 +24410,7 @@ def test_a_damaged_format_field_is_corrupt_while_another_format_is_incompatible(
         return caught.value
 
     damaged = (
-        {**header, "format": "vehicle.checkpoint.v3"},  # value flipped (v2 is the format now)
+        {**header, "format": "vehicle.checkpoint.v4"},  # value flipped (v3 is the format now)
         {**header, "format": 1},  # not even a string
         {("formaT" if key == "format" else key): value for key, value in header.items()},  # key flipped
         {key: value for key, value in header.items() if key != "format"},  # key missing
@@ -24641,7 +24661,7 @@ def start(diode: Path, state: Path | None, *slugs: str, extra: list[str] | None 
     # A start that resumes a world runs its loop like any other; a generous timeout makes one that never
     # stops (`--cycles 0`) a failure of the test, never a hang and never a skip.
     return subprocess.run(
-        [*console_entry(diode, state, *slugs), *(extra or ["--cycles", "1", "--poll", "0"])],
+        [*console_entry(diode, state, *slugs), *(extra or ["--cycles", "1", *CLOCK])],
         capture_output=True,
         text=True,
         check=False,
@@ -24752,7 +24772,7 @@ def test_the_lock_moves_into_the_state_dir_and_a_second_executive_on_it_is_refus
     diode = tmp_path / "diode"
     state = tmp_path / "state"
     first = subprocess.Popen(
-        [*console_entry(diode, state, "alpha", "bravo"), "--cycles", "0", "--poll", "0.05"],
+        [*console_entry(diode, state, "alpha", "bravo"), "--cycles", "0", *SLOW_CLOCK],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -24804,7 +24824,7 @@ def test_the_lock_moves_into_the_state_dir_and_a_second_executive_on_it_is_refus
     assert resumed.returncode == 0 and f"resumed world {bound['world_id']}" in resumed.stdout, (resumed.stdout, resumed.stderr)
     # An explicit `--journal` still wins over the segment file.
     explicit = tmp_path / "explicit.jsonl"
-    ran = start(tmp_path / "fresh-diode", tmp_path / "fresh-state", "alpha", extra=["--journal", str(explicit), "--cycles", "2", "--poll", "0"])
+    ran = start(tmp_path / "fresh-diode", tmp_path / "fresh-state", "alpha", extra=["--journal", str(explicit), "--cycles", "2", *CLOCK])
     assert ran.returncode == 0, ran.stderr[-800:]
     assert len(tick_rows(explicit)) == 2
     assert not list((tmp_path / "fresh-state").glob("journal.*.jsonl"))
@@ -24815,10 +24835,16 @@ def test_the_lock_moves_into_the_state_dir_and_a_second_executive_on_it_is_refus
 # A journal tick row's keys, every one of them: the lineage and the hash are the operator's, `boot_id`
 # names the segment (ADR 0002 J, child 2), `windows` carries each window's deltas and `published` its
 # published-tick mark (child 4: the journal is the record), `receipt` the global receipt counter and
-# `chain` the row chain (child 4's review, format v2), and nothing else is in a row. A segment header,
-# a results-written note and a startup event are the rows that have an `event` key instead.
+# `chain` the row chain (child 4's review, format v2), `lag_us` the cycle's start lag on every row and,
+# on a cycle's first row, the previous cycle's carried-forward cost `prev_cycle_us` and end lag
+# `prev_end_lag_us` (#23, format v3: wall data, chained and never hashed) — and nothing else is in a
+# row. At `k = 1`, which every CLI test names, every row is its cycle's first. A segment header, a
+# results-written note and a startup event are the rows that have an `event` key instead.
 TICK_ROW_KEYS = frozenset(
-    {"tick", "world_id", "boot_id", "lineage", "state_hash", "effects", "receipts", "receipt", "windows", "published", "failures", "chain"}
+    {
+        "tick", "world_id", "boot_id", "lineage", "state_hash", "effects", "receipts", "receipt", "windows", "published", "failures", "chain",
+        "lag_us", "prev_cycle_us", "prev_end_lag_us",
+    }
 )
 
 
@@ -24838,11 +24864,12 @@ def test_without_a_state_dir_the_lock_and_the_journal_are_where_they_were(tmp_pa
     a change to the operator's record and must be made here, on purpose, with the README saying so.
     Child 4 made such changes twice: the tick row gained `windows` and `published`, and the file gained
     a segment header row before the first tick row (an `event` row, so the tick rows are counted
-    without it); its review added `receipt` and `chain` (format v2).
+    without it); its review added `receipt` and `chain` (format v2). #23 added the lag and the
+    carried-forward cost (format v3).
     """
     diode = tmp_path / "diode"
     journal = tmp_path / "j.jsonl"
-    ran = start(diode, None, "alpha", extra=["--journal", str(journal), "--cycles", "2", "--poll", "0"])
+    ran = start(diode, None, "alpha", extra=["--journal", str(journal), "--cycles", "2", *CLOCK])
     assert ran.returncode == 0, ran.stderr[-800:]
     assert (diode / ".executive.lock").exists() and len(tick_rows(journal)) == 2
     rows = tick_rows(journal)
@@ -25226,7 +25253,7 @@ def test_a_journal_that_cannot_take_the_event_refuses_and_nothing_is_rewritten(t
     record_path.write_text("{not json")
     journal_dir = tmp_path / "journal-is-a-directory"
     journal_dir.mkdir()
-    refused = start(diode, state, "alpha", extra=["--journal", str(journal_dir), "--cycles", "1", "--poll", "0"])
+    refused = start(diode, state, "alpha", extra=["--journal", str(journal_dir), "--cycles", "1", *CLOCK])
     assert refused.returncode == 3, (refused.returncode, refused.stderr)
     assert "Traceback" not in refused.stderr, refused.stderr
     assert journal_dir.name in refused.stderr and "not a regular file" in refused.stderr, refused.stderr
@@ -25293,7 +25320,7 @@ def test_an_explicit_journal_inside_the_diode_dir_is_refused_before_anything_is_
     record_path = diode / ".executive.json"
     record_path.write_text("{not json")
     inside = diode / "j.jsonl"
-    refused = start(diode, state, "alpha", extra=["--journal", str(inside), "--cycles", "1", "--poll", "0"])
+    refused = start(diode, state, "alpha", extra=["--journal", str(inside), "--cycles", "1", *CLOCK])
     assert refused.returncode == 3, (refused.returncode, refused.stderr)
     assert "--journal" in refused.stderr and "inside" in refused.stderr, refused.stderr
     assert not inside.exists() and record_path.read_text() == "{not json"
@@ -25443,7 +25470,7 @@ def test_a_state_dir_or_journal_spelled_through_the_diode_dir_is_refused_and_a_r
     assert sorted(p.name for p in (diode / "alpha").iterdir()) == before
     journal_alias = diode / "alpha" / "journal-alias"
     journal_alias.symlink_to(private)
-    refused = start(diode, None, extra=["--journal", str(journal_alias / "j.jsonl"), "--cycles", "1", "--poll", "0"])
+    refused = start(diode, None, extra=["--journal", str(journal_alias / "j.jsonl"), "--cycles", "1", *CLOCK])
     assert refused.returncode == 3 and "--journal" in refused.stderr and "through" in refused.stderr, refused.stderr
     assert list(private.iterdir()) == []
 
@@ -25486,7 +25513,7 @@ def test_a_symlink_loop_at_the_state_dir_the_diode_dir_or_the_journal_is_a_refus
         ("--state-dir", start(diode, loop / "below")),
         ("--diode-dir", start(loop, None)),
         ("--diode-dir", start(loop, tmp_path / "state")),
-        ("--journal", start(diode, None, extra=["--journal", str(loop / "j.jsonl"), "--cycles", "1", "--poll", "0"])),
+        ("--journal", start(diode, None, extra=["--journal", str(loop / "j.jsonl"), "--cycles", "1", *CLOCK])),
     )
     for flag, refused in cases:
         assert refused.returncode == 3, (flag, refused.returncode, refused.stderr)
@@ -25520,7 +25547,7 @@ def test_every_write_the_start_makes_for_itself_is_a_refusal_by_name(tmp_path, m
 
     monkeypatch.setattr(console, "write_serves_record", denied)
     diode, state = tmp_path / "fresh-diode", tmp_path / "fresh-state"
-    assert console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"]) == 3
+    assert console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", *CLOCK]) == 3
     err = capsys.readouterr().err
     assert "serves.json" in err and "EACCES" in err and str(state) in err, err
     assert not (diode / "alpha").exists(), "refused before a window was prepared"
@@ -25622,7 +25649,7 @@ def test_a_state_dir_reached_through_a_link_in_an_agents_window_is_refused_which
     assert not (diode / ".executive.json").exists()
     # The same hop rule for `--journal`, and `diode/../private` is refused too — conservative, by design:
     # a spelling that walks the agents' directory at all is not a spelling of a private path.
-    refused = start(diode, None, extra=["--journal", str(outside / "j.jsonl"), "--cycles", "1", "--poll", "0"])
+    refused = start(diode, None, extra=["--journal", str(outside / "j.jsonl"), "--cycles", "1", *CLOCK])
     assert refused.returncode == 3 and "--journal" in refused.stderr and "inside" in refused.stderr, refused.stderr
     refused = start(diode, diode / ".." / "private")
     assert refused.returncode == 3 and "inside" in refused.stderr, refused.stderr
@@ -25659,7 +25686,7 @@ def test_a_link_flipped_in_a_tight_loop_during_starts_never_hands_an_agent_the_s
     thread = threading.Thread(target=flipper, daemon=True)
     thread.start()
     try:
-        results = [start(diode, outside, extra=["--cycles", "1", "--poll", "0"]) for _ in range(12)]
+        results = [start(diode, outside, extra=["--cycles", "1", *CLOCK]) for _ in range(12)]
     finally:
         stop.set()
         thread.join(timeout=10)
@@ -25699,7 +25726,7 @@ def test_a_component_swapped_between_the_canonicalisation_and_the_open_is_refuse
             return real_walk(*args, **kwargs)
 
         monkeypatch.setattr(console, "walk_open_dir", swapped)
-        assert console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"]) == 3, swap
+        assert console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", *CLOCK]) == 3, swap
         err = capsys.readouterr().err
         assert "--state-dir" in err and "changed" in err and forged_world not in err, (swap, err)
         assert {p.name: p.read_bytes() for p in forged.iterdir()} == planted
@@ -25730,7 +25757,7 @@ def test_a_start_opens_its_state_dir_and_its_journal_directory_once_each(tmp_pat
         return real_walk(canonical, flag, **kwargs)
 
     monkeypatch.setattr(console, "walk_open_dir", counted)
-    base = ["--slug", "alpha", "--cycles", "2", "--poll", "0"]
+    base = ["--slug", "alpha", "--cycles", "2", *CLOCK]
     assert console.main(["--diode-dir", str(tmp_path / "d1"), "--state-dir", str(tmp_path / "s1"), *base]) == 0
     # And the diode directory once (confirmation G1): opened by the same walk from its one resolution.
     assert sorted(calls) == ["--diode-dir", "--state-dir"], calls
@@ -26067,7 +26094,7 @@ def test_segments_name_their_boot_first_tick_and_predecessor_and_concatenate_by_
     assert sorted(p.name for p in state.glob("journal.*.jsonl")) == [b_segment.name, a_segment.name]
 
     a_header, b_header = record_lines(a_segment)[0], record_lines(b_segment)[0]
-    assert a_header["event"] == "segment" and a_header["format"] == "vehicle.record.v2"
+    assert a_header["event"] == "segment" and a_header["format"] == "vehicle.record.v3"
     assert a_header["previous_chain"] == "" and b_header["previous_chain"] == stopped["segments"][-1]["chain"]
     assert (a_header["boot_id"], a_header["first_tick"], a_header["previous"]) == (a_boot, 0, None), a_header
     assert (b_header["boot_id"], b_header["first_tick"], b_header["previous"]) == (b_boot, 5, a_boot), b_header
@@ -26410,7 +26437,7 @@ def test_nothing_the_record_keeps_reaches_any_window_file(tmp_path):
         **{f"state_hash@{row['tick']}": row["state_hash"] for row in rows},
         "boot_id": executive.boot_id,
         "segment": executive.journal.name,
-        "format": "vehicle.record.v2",
+        "format": "vehicle.record.v3",
         **{f"chain@{row['tick']}": row["chain"] for row in rows},
         "note": "results_written",
         "state_dir": str(state.resolve()),
@@ -26503,9 +26530,12 @@ def test_a_record_that_cannot_be_made_durable_stops_the_run_before_the_cycle_is_
 
     monkeypatch.setattr(os, "fsync", dying)
     submit(diode / "alpha", ["set_rcs_mode mode=manual"])
+    durable = (executive.tick, executive.truth, executive.lineage_head, len(executive.lineage))
     with pytest.raises(console.RecordUnwritable) as stopped:
         executive.cycle()
     assert "EIO" in str(stopped.value) and segment in str(stopped.value), stopped.value
+    # Commit follows durability (#23): the cycle's stepped tick never reached tick, truth or lineage.
+    assert (executive.tick, executive.truth, executive.lineage_head, len(executive.lineage)) == durable
     assert not results_of(diode / "alpha")
     assert newest_frame(diode / "alpha")["sim_step"] == 1
     assert json.loads((diode / "alpha" / "state.json").read_text())["executive"]["tick"] == 1
@@ -26517,9 +26547,11 @@ def test_a_record_that_cannot_be_made_durable_stops_the_run_before_the_cycle_is_
         return real_fsync(fd)
 
     monkeypatch.setattr(os, "fsync", dying_everywhere)
-    code = console.main(["--diode-dir", str(tmp_path / "d2"), "--state-dir", str(tmp_path / "s2"), "--slug", "alpha", "--cycles", "2", "--poll", "0"])
+    code = console.main(["--diode-dir", str(tmp_path / "d2"), "--state-dir", str(tmp_path / "s2"), "--slug", "alpha", "--cycles", "2", *CLOCK])
     err = capsys.readouterr().err
-    assert code == 3 and "stopped at tick 1" in err and "EIO" in err and "cannot be written or made durable" in err, (code, err)
+    # The first cycle's append failed, so nothing of it is durable or committed: the run stops at tick 0 (#23:
+    # the tick is committed only once its row is durable; before #23 it was committed first, and this said 1).
+    assert code == 3 and "stopped at tick 0" in err and "EIO" in err and "cannot be written or made durable" in err, (code, err)
     assert "nothing of the cycle has been published" in err, err
 
     # A note that cannot be made durable comes *after* the window's results: the sentence says so,
@@ -26658,7 +26690,7 @@ def test_replay_memory_is_independent_of_how_much_record_precedes_the_checkpoint
                 emit({
                     "tick": tick, "world_id": header["world_id"], "boot_id": header["boot_id"], "lineage": lineage,
                     "state_hash": hashlib.sha256(str(-tick).encode()).hexdigest(), "effects": [], "receipts": [],
-                    "receipt": 0, "windows": {}, "published": {}, "failures": 0,
+                    "receipt": 0, "windows": {}, "published": {}, "failures": 0, "lag_us": 0, "prev_cycle_us": 0, "prev_end_lag_us": 0,
                 })
                 if tick == before:
                     snapshot["segments"][-1]["chain"] = chain
@@ -27201,6 +27233,7 @@ def test_a_journal_holding_many_boots_is_read_in_time_proportional_to_its_length
         header = {
             "event": "segment", "format": console.RECORD_FORMAT, "world_id": world_id, "segment": boot_id, "boot_id": boot_id,
             "first_tick": tick, "previous": previous, "previous_chain": previous_chain, "wall_epoch": "2026-10-09T00:00:00+00:00",
+            "m": "1/1", "k": 1, "N": 50,
         }
         header["chain"] = chain = console.record_chain(previous_chain, header)
         rows.append(header)
@@ -27209,7 +27242,7 @@ def test_a_journal_holding_many_boots_is_read_in_time_proportional_to_its_length
             row = {
                 "tick": tick, "world_id": world_id, "boot_id": boot_id, "lineage": hashlib.sha256(str(tick).encode()).hexdigest(),
                 "state_hash": hashlib.sha256(str(-tick).encode()).hexdigest()[:16], "effects": [], "receipts": [], "receipt": 0,
-                "windows": {}, "published": {}, "failures": 0,
+                "windows": {}, "published": {}, "failures": 0, "lag_us": 0, "prev_cycle_us": 0, "prev_end_lag_us": 0,
             }
             row["chain"] = chain = console.record_chain(chain, row)
             rows.append(row)
@@ -27296,7 +27329,7 @@ def torn_header_bytes(console, world_id: str, boot_id: str) -> bytes:
     """The first half of a boot's first append — its header line — as a kill mid-`write` leaves it."""
     header = {
         "event": "segment", "format": console.RECORD_FORMAT, "world_id": world_id, "segment": boot_id,
-        "boot_id": boot_id, "first_tick": 3, "previous": None, "previous_chain": "", "wall_epoch": "x",
+        "boot_id": boot_id, "first_tick": 3, "previous": None, "previous_chain": "", "wall_epoch": "x", "m": "1/1", "k": 1, "N": 50,
     }
     line = json.dumps(header, sort_keys=True, separators=(",", ":"))
     return line[: len(line) // 2].encode("ascii")
@@ -27420,7 +27453,9 @@ def test_a_checkpoints_segment_entry_carries_the_byte_offset_just_after_the_last
     assert entry["offset"] == len(raw) and raw[entry["offset"] - 1 : entry["offset"]] == b"\n", entry
     assert [r.get("event") for r in record_lines(executive.journal)][-2:] == ["results_written", "results_written"]
     assert entry["chain"] == record_lines(executive.journal)[-1]["chain"]
-    assert set(entry) == {"segment", "boot_id", "first_tick", "previous", "wall_epoch", "chain", "offset"}
+    # #23 (checkpoint format v3): the entry mirrors its boot's clock, so an anchored read knows its cycles.
+    assert set(entry) == {"segment", "boot_id", "first_tick", "previous", "wall_epoch", "chain", "offset", "m", "k", "N"}
+    assert (entry["m"], entry["k"], entry["N"]) == ("1/1", 1, 50), entry
     executive.close()
 
 
@@ -28813,12 +28848,12 @@ def test_a_restart_with_the_same_arguments_resumes_the_same_world_and_journals_t
     oracle_met_s = [f["met_s"] for f in frames_of(tmp_path / "oracle" / "alpha")]
     assert len(oracle_met_s) == 5
     diode, state = tmp_path / "diode", tmp_path / "state"
-    first = start(diode, state, "alpha", "bravo", extra=["--cycles", "3", "--poll", "0"])
+    first = start(diode, state, "alpha", "bravo", extra=["--cycles", "3", *CLOCK])
     assert first.returncode == 0, first.stderr[-800:]
     world_id = json.loads((diode / ".executive.json").read_text())["world_id"]
     assert generation_tick(state) == 3 and generation_tick(state, "checkpoint.prev.json") == 0
     time.sleep(1.1)
-    second = start(diode, state, "alpha", "bravo", extra=["--cycles", "2", "--poll", "0"])
+    second = start(diode, state, "alpha", "bravo", extra=["--cycles", "2", *CLOCK])
     assert second.returncode == 0, second.stderr[-800:]
     assert f"resumed world {world_id} at tick 3" in second.stdout, second.stdout
     root = json.loads((diode / ".executive.json").read_text())
@@ -28853,7 +28888,7 @@ def test_a_console_killed_with_sigkill_and_restarted_resumes_and_matches_an_unin
     checkpoint, console, plant, world = checkpoint_tools()
     diode, state = tmp_path / "diode", tmp_path / "state"
     process = subprocess.Popen(
-        [*console_entry(diode, state, "alpha", "bravo"), "--cycles", "0", "--poll", "0"],
+        [*console_entry(diode, state, "alpha", "bravo"), "--cycles", "0", *CLOCK],
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
     )
     try:
@@ -28865,7 +28900,7 @@ def test_a_console_killed_with_sigkill_and_restarted_resumes_and_matches_an_unin
         process.kill()
         process.wait(timeout=30)
     killed_at = all_tick_rows(state)[-1]["tick"]
-    resumed = start(diode, state, "alpha", "bravo", extra=["--cycles", "20", "--poll", "0"])
+    resumed = start(diode, state, "alpha", "bravo", extra=["--cycles", "20", *CLOCK])
     assert resumed.returncode == 0 and "resumed world" in resumed.stdout, resumed.stderr[-800:]
     rows = all_tick_rows(state)
     final = rows[-1]["tick"]
@@ -28887,7 +28922,7 @@ def test_a_restart_naming_another_scenario_seed_ring_bound_phase_or_slug_set_ref
     refused start opens no journal segment and rewrites nothing. Naming the recorded values resumes.
     """
     diode, state = tmp_path / "diode", tmp_path / "state"
-    first = start(diode, state, "alpha", "bravo", extra=["--cycles", "2", "--poll", "0", "--scenario", "degraded", "--seed", "7", "--ring-slots", "40"])
+    first = start(diode, state, "alpha", "bravo", extra=["--cycles", "2", *CLOCK, "--scenario", "degraded", "--seed", "7", "--ring-slots", "40"])
     assert first.returncode == 0, first.stderr[-800:]
     segments = sorted(p.name for p in state.glob("journal.*.jsonl"))
     record = (diode / ".executive.json").read_bytes()
@@ -28898,18 +28933,18 @@ def test_a_restart_naming_another_scenario_seed_ring_bound_phase_or_slug_set_ref
         (["--phase", "descent"], "--phase names 'descent'", "records 'translunar_coast'"),
     ]
     for extra, named, recorded in cases:
-        refused = start(diode, state, "alpha", "bravo", extra=[*extra, "--cycles", "1", "--poll", "0"])
+        refused = start(diode, state, "alpha", "bravo", extra=[*extra, "--cycles", "1", *CLOCK])
         lines = refused.stderr.strip().splitlines()
         assert refused.returncode == 3 and len(lines) == 1, refused.stderr
         assert named in lines[0] and recorded in lines[0] and "checkpoint.json" in lines[0] and "--new-world" in lines[0], lines[0]
-    refused = start(diode, state, "alpha", extra=["--cycles", "1", "--poll", "0"])
+    refused = start(diode, state, "alpha", extra=["--cycles", "1", *CLOCK])
     assert refused.returncode == 3 and "--slug names ['alpha']" in refused.stderr and "records ['alpha', 'bravo']" in refused.stderr
-    refused = start(diode, state, "alpha", "bravo", "charlie", extra=["--cycles", "1", "--poll", "0"])
+    refused = start(diode, state, "alpha", "bravo", "charlie", extra=["--cycles", "1", *CLOCK])
     assert refused.returncode == 3 and "['alpha', 'bravo', 'charlie']" in refused.stderr
     assert sorted(p.name for p in state.glob("journal.*.jsonl")) == segments and (diode / ".executive.json").read_bytes() == record
-    same = start(diode, state, "alpha", "bravo", extra=["--scenario", "degraded", "--seed", "7", "--ring-slots", "40", "--phase", "translunar_coast", "--cycles", "1", "--poll", "0"])
+    same = start(diode, state, "alpha", "bravo", extra=["--scenario", "degraded", "--seed", "7", "--ring-slots", "40", "--phase", "translunar_coast", "--cycles", "1", *CLOCK])
     assert same.returncode == 0 and "resumed world" in same.stdout and "scenario=degraded seed=7" in same.stdout, same.stderr
-    unnamed = subprocess.run([sys.executable, str(VEHICLE / "tools" / "console.py"), "--diode-dir", str(diode), "--state-dir", str(state), "--cycles", "1", "--poll", "0"], capture_output=True, text=True, timeout=300)
+    unnamed = subprocess.run([sys.executable, str(VEHICLE / "tools" / "console.py"), "--diode-dir", str(diode), "--state-dir", str(state), "--cycles", "1", *CLOCK], capture_output=True, text=True, timeout=300)
     assert unnamed.returncode == 0 and "slugs=alpha,bravo" in unnamed.stdout, (unnamed.stdout, unnamed.stderr)
 
 
@@ -28922,12 +28957,12 @@ def test_a_restart_naming_a_new_max_batch_or_closed_interlock_is_accepted_journa
     """
     checkpoint, _console, _plant, world = checkpoint_tools()
     diode, state = tmp_path / "diode", tmp_path / "state"
-    assert start(diode, state, "alpha", extra=["--cycles", "1", "--poll", "0", "--closed-interlock", "tie_dv_limit"]).returncode == 0
-    changed = start(diode, state, "alpha", extra=["--cycles", "1", "--poll", "0", "--max-batch", "3", "--closed-interlock", "rcs_quad_temp"])
+    assert start(diode, state, "alpha", extra=["--cycles", "1", *CLOCK, "--closed-interlock", "tie_dv_limit"]).returncode == 0
+    changed = start(diode, state, "alpha", extra=["--cycles", "1", *CLOCK, "--max-batch", "3", "--closed-interlock", "rcs_quad_temp"])
     assert changed.returncode == 0, changed.stderr[-800:]
     (event,) = journal_events(state, "resumed")
     assert event["run_inputs"] == {"max_batch": [32, 3], "tripped_interlocks": [["tie_dv_limit"], ["rcs_quad_temp", "tie_dv_limit"]]}, event
-    assert start(diode, state, "alpha", extra=["--cycles", "1", "--poll", "0"]).returncode == 0
+    assert start(diode, state, "alpha", extra=["--cycles", "1", *CLOCK]).returncode == 0
     body = checkpoint.read_generation(state, "checkpoint.json", checkpoint.Compatibility.current(world)).body
     assert body["run"]["max_batch"] == 3 and body["run"]["tripped_interlocks"] == ["rcs_quad_temp", "tie_dv_limit"]
     assert [e["run_inputs"] for e in journal_events(state, "resumed")].count({}) == 1
@@ -28943,7 +28978,7 @@ def test_a_corrupt_or_incompatible_checkpoint_with_no_verifying_previous_generat
     """
     checkpoint, _console, _plant, _world = checkpoint_tools()
     diode, state = tmp_path / "diode", tmp_path / "state"
-    assert start(diode, state, "alpha", extra=["--cycles", "2", "--poll", "0"]).returncode == 0
+    assert start(diode, state, "alpha", extra=["--cycles", "2", *CLOCK]).returncode == 0
     good = {name: (state / name).read_bytes() for name in ("checkpoint.json", "checkpoint.prev.json")}
     for name, raw in good.items():
         flipped = bytearray(raw)
@@ -28980,7 +29015,7 @@ def test_a_new_worlds_genesis_checkpoint_is_mandatory_and_its_failure_refuses_wi
         raise checkpoint.CheckpointWriteFailed("write", state / "checkpoint.json", "ENOSPC")
 
     monkeypatch.setattr(console, "write_checkpoint", refusing)
-    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"]
+    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", *CLOCK]
     assert console.main(argv) == 3
     assert "first checkpoint" in capsys.readouterr().err
     assert json.loads((diode / ".executive.json").read_text())["world_id"] is None
@@ -29000,7 +29035,7 @@ def test_a_resume_checkpoints_the_recovered_tick_before_it_claims_anything_and_r
     """
     checkpoint, console, _plant, _world = checkpoint_tools()
     diode, state = tmp_path / "diode", tmp_path / "state"
-    process = subprocess.Popen([*console_entry(diode, state, "alpha"), "--cycles", "0", "--poll", "0"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    process = subprocess.Popen([*console_entry(diode, state, "alpha"), "--cycles", "0", *CLOCK], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         deadline = time.time() + 60
         while time.time() < deadline and len(all_tick_rows(state)) < 60:
@@ -29014,7 +29049,7 @@ def test_a_resume_checkpoints_the_recovered_tick_before_it_claims_anything_and_r
     def refusing(*args, **kwargs):
         raise checkpoint.CheckpointWriteFailed("write", state / "checkpoint.json", "ENOSPC")
 
-    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"]
+    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", *CLOCK]
     monkeypatch.setattr(console, "write_checkpoint", refusing)
     assert console.main(argv) == 3
     assert "recovered tick" in capsys.readouterr().err
@@ -29034,46 +29069,74 @@ def test_a_resume_checkpoints_the_recovered_tick_before_it_claims_anything_and_r
 
 
 # A console process that says, by a file, when it has reached the point a test will interrupt it at:
-# the sleep after its second cycle (`sleep`), or the claim of its third (`claim`). The signal it then
-# receives is a real `SIGINT`, delivered by the test; only where it lands is arranged.
+# the scheduler's wait after its second cycle (`sleep`), the claim of its third (`claim`), the claim of
+# its first (`batch`), or the second step of its first cycle, after its claim (`step`). The signal it
+# then receives is a real one, delivered by the test; only where it lands is arranged. Each point is
+# *held* until the console's own handler has asked it to stop (#23): a held `time.sleep(120)` would be
+# resumed after the handler returned (PEP 475) and hold the full two minutes. **The scheduler's time
+# is injected too** (candidate 1, systems P2-3, Codex P3): it moves only when the scheduler sleeps, so
+# every cycle's wait sleeps and the `sleep` point is reached whatever the machine's load — with the
+# real clock, two slow cycles left the wait before the third already past due, and it never slept.
 INTERRUPTIBLE_CONSOLE = """
-import sys, time, types
+import sys, time
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 import console
 ready, mode, argv = Path(sys.argv[2]), sys.argv[3], sys.argv[4:]
-real_claim, sleeps, claims = console.Window.claim, [0], [0]
+real_claim, real_step, claims, steps, now = console.Window.claim, console.step, [0], [0], [10**12]
+
+def held():
+    while not pacer.stopping:
+        time.sleep(0.01)
 
 def sleep(seconds):
-    sleeps[0] += 1
-    if mode == "sleep" and sleeps[0] == 2:
+    if mode == "sleep" and claims[0] == 2 and not ready.exists():
         ready.write_text("between cycles")
-        time.sleep(120)
-    return time.sleep(seconds)
+        held()
+    now[0] += round(seconds * 1_000_000_000)
 
 def claim(self):
     claims[0] += 1
-    if mode == "claim" and claims[0] == 3:
+    if (mode == "claim" and claims[0] == 3) or (mode == "batch" and claims[0] == 1):
         ready.write_text("inside a cycle")
-        time.sleep(120)
+        held()
     return real_claim(self)
 
-# The console's own `time`, and only its loop's sleep: the process's `time` module is untouched.
-console.time = types.SimpleNamespace(sleep=sleep)
+def step(*args, **kwargs):
+    steps[0] += 1
+    if mode == "step" and claims[0] >= 1 and steps[0] == 2:
+        ready.write_text("inside a cycle, after its claim, between two of its steps")
+        held()
+    return real_step(*args, **kwargs)
+
+# The injected clock and sleeper (#23): the scheduler's own, and only its waits; the process's `time` is untouched.
+pacer = console.Pacer(now_ns=lambda: now[0], sleep=sleep)
 console.Window.claim = claim
-sys.exit(console.main(argv))
+console.step = step
+sys.exit(console.main(argv, pacer=pacer))
 """
 
+# The interrupted console's clock: one tick a cycle, 100 ms of (injected) wall time each.
+INTERRUPTIBLE_CLOCK = ("--multiplier", "0.2", "--cycle-ticks", "1", "--checkpoint-ticks", "50")
 
-def interrupted_console(tmp_path: Path, mode: str) -> tuple[subprocess.CompletedProcess, Path]:
-    """Run `console.py` until it reaches `mode`'s point, send it a real `SIGINT`, and return its exit and its state directory."""
+
+def interrupted_console(
+    tmp_path: Path, mode: str, *, signal_name: str = "SIGINT", commands: list[str] | None = None, clock: tuple[str, ...] = INTERRUPTIBLE_CLOCK
+) -> tuple[subprocess.CompletedProcess, Path]:
+    """Run `console.py` until it reaches `mode`'s point, send it a real signal, and return its exit and its state directory.
+
+    `commands`, when given, are in the window's console before the start; `clock` is the run's `m`, `k`, `N`.
+    """
     import signal
 
     root = tmp_path / mode
     root.mkdir()
     script, ready, state = root / "interruptible.py", root / "ready", root / "state"
     script.write_text(INTERRUPTIBLE_CONSOLE)
-    argv = ["--diode-dir", str(root / "diode"), "--state-dir", str(state), "--slug", "alpha", "--cycles", "0", "--poll", "0"]
+    if commands is not None:
+        (root / "diode" / "alpha").mkdir(parents=True)
+        submit(root / "diode" / "alpha", commands)
+    argv = ["--diode-dir", str(root / "diode"), "--state-dir", str(state), "--slug", "alpha", "--cycles", "0", *clock]
     process = subprocess.Popen(
         [sys.executable, str(script), str(VEHICLE / "tools"), str(ready), mode, *argv],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -29083,7 +29146,7 @@ def interrupted_console(tmp_path: Path, mode: str) -> tuple[subprocess.Completed
         while not ready.exists() and process.poll() is None and time.time() < deadline:
             time.sleep(0.02)
         assert ready.exists(), process.communicate(timeout=30) if process.poll() is not None else "never reached the point"
-        process.send_signal(signal.SIGINT)
+        process.send_signal(getattr(signal, signal_name))
         out, err = process.communicate(timeout=120)
     finally:
         if process.poll() is None:
@@ -29092,21 +29155,24 @@ def interrupted_console(tmp_path: Path, mode: str) -> tuple[subprocess.Completed
     return subprocess.CompletedProcess(process.args, process.returncode, out, err), state
 
 
-def test_a_run_ending_cleanly_checkpoints_its_last_completed_cycle_and_an_interrupt_mid_cycle_does_not(tmp_path):
-    """Commitment 5: a checkpoint at a clean end — `--cycles` exhausted, or an interrupt between cycles — and never mid-cycle.
+def test_a_run_ending_cleanly_checkpoints_its_last_completed_cycle_and_an_interrupt_mid_cycle_completes_the_cycle_first(tmp_path):
+    """Commitment 5: a checkpoint at a clean end — `--cycles` exhausted, or an interrupt — and never mid-cycle.
 
     Mid-cycle, a window's receipt counter is drawn before the step, so a capture then would be ahead of
-    the truth. An interrupt that lands in the sleep between cycles checkpoints the last completed
-    cycle; one that lands inside a cycle (here, in a window's claim) leaves the checkpoints as they
-    were and the record — which holds every completed tick — to the next resume.
+    the truth. An interrupt that lands in the scheduler's wait between cycles checkpoints the last
+    completed cycle. **One that lands inside a cycle (here, in a window's claim) now lets the cycle
+    finish** (#23, design §5): `SIGINT`, like `SIGTERM`, only sets the stop flag the loop reads at a
+    cycle's boundary, so the claimed batch is stepped, recorded and answered, and the clean end then
+    checkpoints it. Before #23 that interrupt raised `KeyboardInterrupt` mid-cycle, left the checkpoints
+    as they were, and lost the claimed batch's place in the cycle to the next resume.
 
     **Each interrupt is a real `SIGINT` to a real console process** (review F6, ruling R3). The first
     version raised `KeyboardInterrupt` from a `time.sleep` patched in the test's own process, which
     patched every sleep in it: under `xdist` an unrelated sleep in the worker raised it and took the
-    worker — and the session — down. The process's own `KeyboardInterrupt` handler is what is tested
-    here, and nothing in the test process is patched.
+    worker — and the session — down. The process's own handler is what is tested here, and nothing in
+    the test process is patched; the console process is given its sleeper through `main(pacer=)`.
     """
-    finished = start(tmp_path / "d1", tmp_path / "s1", "alpha", extra=["--cycles", "3", "--poll", "0"])
+    finished = start(tmp_path / "d1", tmp_path / "s1", "alpha", extra=["--cycles", "3", *CLOCK])
     assert finished.returncode == 0, finished.stderr[-800:]
     assert generation_tick(tmp_path / "s1") == 3
 
@@ -29115,9 +29181,11 @@ def test_a_run_ending_cleanly_checkpoints_its_last_completed_cycle_and_an_interr
     assert generation_tick(state) == 2 and generation_tick(state, "checkpoint.prev.json") == 0
 
     inside, state = interrupted_console(tmp_path, "claim")
-    assert inside.returncode == 0 and "stopped after 2 tick(s)" in inside.stdout, (inside.returncode, inside.stdout, inside.stderr)
-    assert generation_tick(state) == 0, "only the genesis: the interrupt came mid-cycle"
-    assert [row["tick"] for row in all_tick_rows(state)] == [1, 2]
+    assert inside.returncode == 0 and "stopped after 3 tick(s)" in inside.stdout, (inside.returncode, inside.stdout, inside.stderr)
+    assert generation_tick(state) == 3, "the interrupted cycle completed, and the clean end checkpointed it"
+    assert [row["tick"] for row in all_tick_rows(state)] == [1, 2, 3]
+    (manifest,) = journal_events(state, "manifest")
+    assert manifest["ended"] == "clean" and manifest["summary"]["cycles"] == 3, manifest
 
 
 def test_a_fresh_start_on_a_state_directory_that_holds_a_record_and_no_checkpoint_refuses_saying_what_to_move(tmp_path):
@@ -29180,7 +29248,7 @@ def test_a_resume_reads_and_writes_its_state_only_through_the_one_held_state_dir
     """
     checkpoint, console, _plant, _world = checkpoint_tools()
     diode, state = tmp_path / "diode", tmp_path / "state"
-    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "55", "--poll", "0"]
+    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "55", *CLOCK]
     assert console.main(argv) == 0
     flipped = bytearray((state / "checkpoint.json").read_bytes())
     flipped[-20] ^= 0x01
@@ -29235,7 +29303,7 @@ def test_a_resumed_world_whose_boot_tore_at_its_first_append_resumes_again_in_ei
         root.mkdir()
         diode, state = root / "diode", root / "state"
         extra = ["--journal", str(root / "journal.jsonl")] if layout == "journal" else []
-        argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--poll", "0", *extra]
+        argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", *CLOCK, *extra]
         assert console.main([*argv, "--cycles", "4"]) == 0
         real_write = console._write_all
         torn = [False]
@@ -29329,7 +29397,7 @@ def test_a_successor_whose_header_is_damaged_refuses_the_resume_by_name_and_the_
         with pytest.raises(console.RecordRefused) as refused:
             read()
         assert refused.value.check == "corrupt" and segment.name in str(refused.value), refused.value
-    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"]
+    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", *CLOCK]
     assert console.main(argv) == 3
     err = capsys.readouterr().err
     assert segment.name in err and "corrupt" in err, err
@@ -29603,7 +29671,7 @@ def test_an_io_error_on_the_resume_path_is_a_refusal_naming_the_errno_and_leaks_
     """
     _checkpoint, console, _plant, world = checkpoint_tools()
     diode, state = tmp_path / "diode", tmp_path / "state"
-    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "2", "--poll", "0"]
+    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "2", *CLOCK]
     assert console.main(argv) == 0
     capsys.readouterr()
     real = os.listdir
@@ -29814,7 +29882,7 @@ def test_a_state_directory_holding_a_record_and_no_checkpoint_is_named_first_wha
     the files to move; the diode directory is left alone.
     """
     diode, state = tmp_path / "diode", tmp_path / "state"
-    assert start(diode, state, "alpha", extra=["--cycles", "2", "--poll", "0"]).returncode == 0
+    assert start(diode, state, "alpha", extra=["--cycles", "2", *CLOCK]).returncode == 0
     for generation in state.glob("checkpoint*.json"):
         generation.unlink()
     (segment,) = state.glob("journal.*.jsonl")
@@ -29882,14 +29950,14 @@ def test_the_diode_directory_is_resolved_once_and_serves_json_records_the_path_m
 
     monkeypatch.setattr(console.Executive, "__init__", retargeted)
     state = tmp_path / "state"
-    assert console.main(["--diode-dir", str(alias), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"]) == 0
+    assert console.main(["--diode-dir", str(alias), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", *CLOCK]) == 0
     monkeypatch.undo()
     assert (first / "alpha" / "state.json").exists() and not (other / "alpha").exists(), sorted(p.name for p in other.iterdir())
     canonical, problem = console.canonicalise("--diode-dir", first, "the diode directory")
     assert problem is None and json.loads((state / "serves.json").read_text())["diode_dir"] == str(canonical.path)
     alias.unlink()
     alias.symlink_to(first)
-    assert console.main(["--diode-dir", str(alias), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"]) == 0
+    assert console.main(["--diode-dir", str(alias), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", *CLOCK]) == 0
 
 
 def test_a_clean_end_checkpoint_that_cannot_be_written_is_journaled_with_its_consecutive_count_as_the_adr_says(tmp_path, monkeypatch, capsys):
@@ -29911,7 +29979,7 @@ def test_a_clean_end_checkpoint_that_cannot_be_written_is_journaled_with_its_con
         return real(*args, **kwargs)
 
     monkeypatch.setattr(console, "write_checkpoint", genesis_only)
-    assert console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "2", "--poll", "0"]) == 0
+    assert console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "2", *CLOCK]) == 0
     err = capsys.readouterr().err
     assert "clean end" in err and "1 consecutive" in err, err
     (event,) = journal_events(state, "checkpoint_failed")
@@ -29928,14 +29996,14 @@ def test_a_restart_naming_another_journal_than_its_record_was_written_to_refuses
     refused by one sentence naming both; the same `--journal` resumes.
     """
     diode, state, journal = tmp_path / "diode", tmp_path / "state", tmp_path / "journal.jsonl"
-    assert start(diode, state, "alpha", extra=["--journal", str(journal), "--cycles", "2", "--poll", "0"]).returncode == 0
+    assert start(diode, state, "alpha", extra=["--journal", str(journal), "--cycles", "2", *CLOCK]).returncode == 0
     other = tmp_path / "other.jsonl"
     for extra, named in ((["--journal", str(other)], str(other)), ([], "the state directory's own segments")):
-        refused = start(diode, state, "alpha", extra=[*extra, "--cycles", "1", "--poll", "0"])
+        refused = start(diode, state, "alpha", extra=[*extra, "--cycles", "1", *CLOCK])
         lines = refused.stderr.strip().splitlines()
         assert refused.returncode == 3 and len(lines) == 1, refused.stderr
         assert str(journal) in lines[0] and named in lines[0] and "--journal" in lines[0], lines[0]
-    resumed = start(diode, state, "alpha", extra=["--journal", str(journal), "--cycles", "1", "--poll", "0"])
+    resumed = start(diode, state, "alpha", extra=["--journal", str(journal), "--cycles", "1", *CLOCK])
     assert resumed.returncode == 0 and "resumed world" in resumed.stdout, resumed.stderr
 
 
@@ -29978,7 +30046,7 @@ def test_the_confinement_checks_use_the_one_resolution_of_the_diode_directory_ma
             return result
 
         monkeypatch.setattr(console, "canonicalise", retargeting)
-        code = console.main(["--diode-dir", str(alias), *extra, "--slug", "alpha", "--cycles", "1", "--poll", "0"])
+        code = console.main(["--diode-dir", str(alias), *extra, "--slug", "alpha", "--cycles", "1", *CLOCK])
         monkeypatch.undo()
         err = capsys.readouterr().err
         assert code == 3 and "--diode-dir" in err, (case, code, err)
@@ -30207,7 +30275,7 @@ def test_an_io_error_scanning_a_fresh_state_directory_for_a_record_is_a_refusal_
 
     before = open_descriptors()
     monkeypatch.setattr(os, "listdir", failing)
-    code = console.main(["--diode-dir", str(tmp_path / "diode"), "--state-dir", str(tmp_path / "state"), "--slug", "alpha", "--cycles", "1", "--poll", "0"])
+    code = console.main(["--diode-dir", str(tmp_path / "diode"), "--state-dir", str(tmp_path / "state"), "--slug", "alpha", "--cycles", "1", *CLOCK])
     monkeypatch.undo()
     err = capsys.readouterr().err
     assert code == 3 and "EIO" in err and "Traceback" not in err, (code, err)
@@ -30491,9 +30559,9 @@ def start_path_scenario(tmp_path: Path, scenario: str) -> tuple[Path, list[str]]
     """A directory pair ready for one kind of start, and the argument list that starts it."""
     root = tmp_path / scenario
     diode, state = root / "diode", root / "state"
-    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--slug", "bravo", "--poll", "0"]
+    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--slug", "bravo", *CLOCK]
     if scenario == "resume":
-        assert start(diode, state, "alpha", "bravo", extra=["--cycles", "2", "--poll", "0"]).returncode == 0
+        assert start(diode, state, "alpha", "bravo", extra=["--cycles", "2", *CLOCK]).returncode == 0
         return root, [*argv, "--cycles", "1"]
     root.mkdir(parents=True)
     return root, [*argv, *(["--init"] if scenario == "init" else ["--cycles", "1"])]
@@ -30592,7 +30660,7 @@ def test_a_window_directory_is_checked_through_the_held_diode_handle_not_by_its_
         return real(self, *args, **kwargs)
 
     monkeypatch.setattr(console.Executive, "attach", retargeted)
-    argv = ["--diode-dir", str(alias), "--slug", "alpha", "--cycles", "1", "--poll", "0"]
+    argv = ["--diode-dir", str(alias), "--slug", "alpha", "--cycles", "1", *CLOCK]
     assert console.main(argv) == 0, capsys.readouterr().err
     monkeypatch.undo()
     assert (served / "alpha" / "state.json").exists() and not list(outside.iterdir())
@@ -30600,7 +30668,7 @@ def test_a_window_directory_is_checked_through_the_held_diode_handle_not_by_its_
     planted = tmp_path / "planted"
     planted.mkdir()
     (planted / "alpha").symlink_to(outside)
-    assert console.main(["--diode-dir", str(planted), "--slug", "alpha", "--cycles", "1", "--poll", "0"]) == 3
+    assert console.main(["--diode-dir", str(planted), "--slug", "alpha", "--cycles", "1", *CLOCK]) == 3
     err = capsys.readouterr().err
     assert "link" in err and str(planted / "alpha") in err and not list(outside.iterdir()), err
 
@@ -30660,9 +30728,9 @@ def test_a_corpus_directory_that_cannot_be_listed_refuses_the_start_by_name_and_
     diode, state = tmp_path / "diode", tmp_path / "state"
     resumes = during != "a world's genesis"
     if resumes:
-        assert start(diode, state, "alpha", extra=["--cycles", "2", "--poll", "0"]).returncode == 0
+        assert start(diode, state, "alpha", extra=["--cycles", "2", *CLOCK]).returncode == 0
     saved = {path.name: path.read_bytes() for path in state.glob("checkpoint*.json")}
-    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"]
+    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", *CLOCK]
     monkeypatch.setattr(console, "load_world", lambda _root: world)
     with monkeypatch.context() as patch:
         failing = CorpusListingFails(patch, checkpoint, 0 if during == "the start's identity" else 1)
@@ -30846,7 +30914,7 @@ def test_a_clean_ends_checkpoint_event_written_in_part_is_cut_back_or_the_run_en
             raise checkpoint.CheckpointWriteFailed("write", state / "checkpoint.json", "ENOSPC")
         return real(*args, **kwargs)
 
-    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--poll", "0"]
+    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", *CLOCK]
     monkeypatch.setattr(console, "load_world", lambda _root: world)
     with monkeypatch.context() as patch:
         patch.setattr(console, "write_checkpoint", genesis_only)
@@ -30948,7 +31016,7 @@ def test_a_close_that_fails_on_the_way_out_is_named_and_exit_3_with_every_other_
     """
     console, _plant, world = console_tools()
     diode, state = tmp_path / "diode", tmp_path / "state"
-    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"]
+    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", *CLOCK]
     monkeypatch.setattr(console, "load_world", lambda _root: world)
     assert console.main(argv) == 0, capsys.readouterr().err
     capsys.readouterr()
@@ -31051,7 +31119,7 @@ def test_a_refusal_is_reported_when_the_executive_then_fails_to_close(tmp_path, 
     """
     checkpoint, console, _plant, world = checkpoint_tools()
     diode, state = tmp_path / "diode", tmp_path / "state"
-    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"]
+    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", *CLOCK]
     monkeypatch.setattr(console, "load_world", lambda _root: world)
     if refusal == "a resume's first checkpoint":
         assert console.main(argv) == 0, capsys.readouterr().err
@@ -31114,7 +31182,1399 @@ def test_a_corpus_file_that_cannot_be_read_refuses_the_start_naming_it(tmp_path,
         patch.setattr(Path, "read_bytes", read_bytes)
         with pytest.raises(OSError) as failed:
             checkpoint.engine_identity(world.root)
-        code = console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", "--poll", "0"])
+        code = console.main(["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "1", *CLOCK])
     err = capsys.readouterr().err
     assert failed.value.errno == errno.EIO and failed.value.filename == str(target), failed.value
     assert code == 3 and str(target) in err and "EIO" in err, (code, err)
+
+
+# ---- #23 (WP08.5): the clock seam -------------------------------------------------------------------
+#
+# The scheduler is tested against an injected clock and sleeper with pacing on (design §6): time moves
+# only when the scheduler sleeps, or when a test charges a cycle a cost, so every lag and every cost
+# below is the test's own arithmetic, re-derived from the rule rather than read back.
+
+
+class InjectedClock:
+    """An injected CLOCK_MONOTONIC and sleeper: `now_ns` moves only by a sleep, a stall or a charge."""
+
+    def __init__(self, start_ns: int = 10**12) -> None:
+        self.now = start_ns
+        self.sleeps: list[float] = []
+        self.stalled = 0
+
+    def now_ns(self) -> int:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += round(seconds * 1_000_000_000) + self.stalled
+        self.stalled = 0
+
+    def stall(self, ns: int) -> None:
+        """The next sleep returns `ns` later than it asked: a `docker pause`, a SIGSTOP, VM steal."""
+        self.stalled += ns
+
+    def pacer(self, console):
+        return console.Pacer(now_ns=self.now_ns, sleep=self.sleep)
+
+
+def paced_executive(console, world, diode: Path, clock: InjectedClock, *, slugs=("alpha",), k: int = 5, m=1, n: int = 50, **kwargs):
+    """An executive at `k` ticks a cycle on the injected clock, its windows attached."""
+    executive = console.Executive(
+        world, diode, phase="translunar_coast", multiplier=m, cycle_ticks=k, checkpoint_every=n, pacer=clock.pacer(console), **kwargs
+    )
+    for slug in slugs:
+        executive.attach(slug)
+    return executive
+
+
+def charge_publication(monkeypatch, console, clock: InjectedClock, costs_ms: list[int]) -> None:
+    """Each window publication costs the next figure of `costs_ms` in wall milliseconds (one window: one per cycle)."""
+    real = console.Window.publish
+
+    def publish(self, verdicts):
+        clock.now += (costs_ms.pop(0) if costs_ms else 0) * 1_000_000
+        return real(self, verdicts)
+
+    monkeypatch.setattr(console.Window, "publish", publish)
+
+
+def schedule_oracle(costs_ms: list[int], period_ms: int) -> tuple[list[int], list[int]]:
+    """The rule, re-derived: cycle `i` is due at `i·period` after the epoch and starts at `max(due, previous end)`.
+
+    Returns each cycle's start lag and end lag, in milliseconds. A cycle never starts before it is due
+    (never ahead), and one that is late starts the moment the one before it ends (whole cycles back to back).
+    """
+    lags, end_lags, end = [], [], 0
+    for index, cost in enumerate(costs_ms, start=1):
+        due = index * period_ms
+        begun = max(due, end)
+        end = begun + cost
+        lags.append(begun - due)
+        end_lags.append(end - due)
+    return lags, end_lags
+
+
+def latest_event(where: Path, name: str) -> dict:
+    """The newest unchained event called `name`, by tick: `journal_events` lists a state directory's files by boot id, a uuid, not by time."""
+    events = journal_events(where, name)
+    assert events, f"no {name} event in {where}"
+    return max(events, key=lambda event: event["tick"])
+
+
+def nearest_rank(values: list[int]) -> dict | None:
+    """p50/p95/p99/max by nearest rank — the test's own, not the console's."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    rank = lambda p: ordered[max(1, math.ceil(p * len(ordered) / 100)) - 1]  # noqa: E731
+    return {"p50": rank(50), "p95": rank(95), "p99": rank(99), "max": ordered[-1]}
+
+
+def summary_oracle(lags_us: list[int], costs_us: list[int], *, tick_us: int, m: int, k: int, stalls: int = 0, backstops: int = 0) -> dict:
+    """The manifest's whole summary, re-derived. Missed: a start lag past one tick period, `dt/m`. Overran: a cost past the cycle's, `k·dt/m`."""
+    return {
+        "cycles": len(lags_us),
+        "start_lag_us": nearest_rank(lags_us),
+        "cycle_us": nearest_rank(costs_us),
+        "costs_known": len(costs_us),
+        "missed": sum(1 for lag in lags_us if lag * m > tick_us),
+        "overran": sum(1 for cost in costs_us if cost * m > k * tick_us),
+        "stalls": stalls,
+        "backstops": backstops,
+    }
+
+
+def test_frames_are_exactly_k_ticks_apart_within_a_segment_even_while_the_scheduler_catches_up(tmp_path, monkeypatch):
+    """#23 acceptance 1 (ADR 0002 B): within a segment the number of ticks between two frames is `k`, whatever the load.
+
+    A cycle claims once, steps `k` ticks and publishes once, so consecutive frames are `k` ticks and
+    `k·dt` of mission time apart. The third cycle here is charged 450 ms of wall time — four and a
+    half cycles at `m = 1`, `k = 5` — so the next ones start late and run back to back to catch up;
+    they still step exactly `k` ticks each, never more, because ticks are never dropped or bunched
+    (C4) and the burst bound is `k`. Across a resume the gap is longer (design §4), which is why the
+    property is stated within a segment.
+    """
+    _checkpoint, console, _plant, world = checkpoint_tools()
+    clock = InjectedClock()
+    diode = tmp_path / "diode"
+    executive = paced_executive(console, world, diode, clock)
+    charge_publication(monkeypatch, console, clock, [0, 0, 450, 0, 0, 0, 0, 0])
+    for _ in range(8):
+        executive.cycle()
+    lags, _ends = schedule_oracle([0, 0, 450, 0, 0, 0, 0, 0], 100)
+    assert any(lag > 0 for lag in lags), "the oracle's schedule must include catching up"
+    frames = frames_of(diode / "alpha")
+    assert [f["seq"] for f in frames] == list(range(8)), [f["seq"] for f in frames]
+    met = [round(f["met_s"] * 1000) for f in frames]
+    assert met == [100 * (i + 1) for i in range(8)], met
+    assert executive.tick == 40
+    executive.close()
+
+
+def test_a_command_lands_at_its_cycles_start_tick_at_offset_zero_and_takes_effect_in_the_next_frame(tmp_path):
+    """#23 acceptance 2 (ADR 0002 B): the claim is the cycle's, and its effects are stamped at `offset_us = 0` of the first tick.
+
+    A command written while tick 5 is the newest frame is claimed by the cycle that starts at tick 5:
+    its receipt says `tick=5 offset_us=0`, the record's row for tick 6 carries its effect at offset 0,
+    the dwell clock it restarts reads `5 · tick_us`, and the next frame — tick 10 — is the first to
+    show it. The remaining `k − 1` rows of the cycle carry no effects (design §1).
+    """
+    _checkpoint, console, _plant, world = checkpoint_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = console.Executive(world, diode, phase="translunar_coast", state_dir=state, cycle_ticks=5, checkpoint_every=50)
+    executive.attach("alpha")
+    executive.cycle()
+    submit(diode / "alpha", ["set_rcs_mode mode=manual"])
+    executive.cycle()
+    (body,) = results_of(diode / "alpha")
+    receipt = receipt_of(body)
+    assert (receipt["tick"], receipt["offset_us"], receipt["state"]) == ("5", "0", "accepted"), receipt
+    assert "applied at tick 5, offset 0 µs" in body, body
+    rows = {row["tick"]: row for row in tick_rows(executive.journal)}
+    assert [effect[:2] for effect in rows[6]["effects"]] == [[0, "set_rcs_mode"]], rows[6]
+    assert all(rows[t]["effects"] == [] for t in (7, 8, 9, 10)), {t: rows[t]["effects"] for t in (7, 8, 9, 10)}
+    assert executive.dwell["mode"]["changed_at_us"] == 5 * executive.tick_us, executive.dwell
+    assert math.isclose(newest_frame(diode / "alpha")["met_s"], 10 * 0.02)
+    executive.close()
+
+
+def test_a_cycle_never_steps_more_than_k_and_a_scheduler_behind_runs_whole_cycles_back_to_back_never_ahead_of_the_clock(tmp_path, monkeypatch):
+    """#23 acceptance 3 (John: cycles never run ahead; ADR 0002 A, burst = `k`).
+
+    The cycle covering `a+1 … a+k` starts at `max(due(a+k), end of the previous cycle)`: never before
+    its last tick is due, so the world is never ahead of the clock, and when it is behind it runs
+    whole cycles back to back without sleeping until it is on schedule. Watched from inside each
+    cycle (at its claim): the tick advanced by exactly `k` since the last claim, the clock is at or
+    past the cycle's due time, and a late cycle slept not at all. The waits are capped at 100 ms, so
+    the first one — exactly one cycle — is one sleep.
+    """
+    _checkpoint, console, _plant, world = checkpoint_tools()
+    clock = InjectedClock()
+    executive = paced_executive(console, world, tmp_path / "diode", clock)
+    costs = [0, 350, 0, 0, 0, 0]
+    charge_publication(monkeypatch, console, clock, list(costs))
+    seen: list[tuple[int, int, int]] = []
+    real_claim = console.Window.claim
+
+    def claim(self):
+        seen.append((self.executive.tick, clock.now, len(clock.sleeps)))
+        return real_claim(self)
+
+    monkeypatch.setattr(console.Window, "claim", claim)
+    epoch = clock.now
+    for _ in range(len(costs)):
+        executive.cycle()
+    lags, _ends = schedule_oracle(costs, 100)
+    assert [tick for tick, _now, _sleeps in seen] == [0, 5, 10, 15, 20, 25]
+    for index, (tick, now, _sleeps) in enumerate(seen):
+        due = epoch + (tick + 5) * 20_000_000
+        assert now >= due, f"the cycle from tick {tick} started {due - now} ns before it was due"
+        assert now - due == lags[index] * 1_000_000, (index, now - due, lags)
+    slept = [b[2] - a[2] for a, b in itertools.pairwise(seen)]
+    assert slept[1:4] == [0, 0, 0] and lags[2:5] == [250, 150, 50], (slept, lags)
+    assert clock.sleeps[0] == 0.1 and all(s <= 0.1 for s in clock.sleeps), clock.sleeps
+    executive.close()
+
+
+def test_every_row_carries_its_cycles_start_lag_and_its_first_row_the_cost_carried_forward_and_the_reader_summarises_as_the_clean_end_does(tmp_path, monkeypatch):
+    """#23 acceptance 4 (John: lag per cycle; design §2): `lag_us` on every row, the cost carried forward, and one summary.
+
+    A cycle's start lag is known when it starts, so each of its `k` rows carries it. Its cost and end
+    lag are known only once its rows are durable, so the *next* cycle's first row carries them
+    (`prev_cycle_us`, `prev_end_lag_us`; 0 on a segment's first cycle) and rows 2..k carry neither; the
+    expected figures are the oracle's schedule. **One summary, whoever computes it** (candidate 1,
+    Codex P2): the reader of the record (`segment_summaries`) counts the segment's `stall` and
+    `lag_backstop` events as the live executive does, so a crashed segment's summary — a partial final
+    cycle counted as one cycle, its last cost unknown — equals the live executive's over the same
+    cycles, field for field, marked `"counts": "journaled"` (its stall and backstop counts are the events
+    that reached the journal: a lower bound); and a cleanly ended segment's, whose manifest carries the
+    one cost no row does (`last_cycle_us`) and is authoritative for its counts (candidate 2), equals its
+    manifest's `summary` exactly, percentiles, stalls and backstops included. The resume here changes `k` and stalls two seconds in its first wait, and each segment is
+    summarised at its own `m` and `k`.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+    clock = InjectedClock()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = paced_executive(console, world, diode, clock, state_dir=state)
+    executive.checkpoint()  # the genesis `main` takes, so the resume below has a checkpoint to start from
+    costs = [30, 250, 10, 10, 0]
+    charge_publication(monkeypatch, console, clock, list(costs))
+    for _ in range(len(costs)):
+        executive.cycle()
+    lags, end_lags = schedule_oracle(costs, 100)
+    rows = tick_rows(executive.journal)
+    assert [row["tick"] for row in rows] == list(range(1, 26))
+    for row in rows:
+        cycle = (row["tick"] - 1) // 5
+        assert row["lag_us"] == lags[cycle] * 1000, (row["tick"], row["lag_us"], lags)
+        if (row["tick"] - 1) % 5 == 0:
+            carried = (costs[cycle - 1] * 1000, end_lags[cycle - 1] * 1000) if cycle else (0, 0)
+            assert (row["prev_cycle_us"], row["prev_end_lag_us"]) == carried, (row["tick"], row)
+        else:
+            assert "prev_cycle_us" not in row and "prev_end_lag_us" not in row, row
+    lags_us, costs_us = [lag * 1000 for lag in lags], [cost * 1000 for cost in costs]
+    expected = summary_oracle(lags_us, costs_us, tick_us=20_000, m=1, k=5)
+    assert expected["missed"] == 2 and expected["overran"] == 1, expected
+    assert executive.summary() == expected, executive.summary()
+    with console.read_record(state) as record:
+        assert console.segment_summaries(record, 20_000)[executive.boot_id] == {
+            **summary_oracle(lags_us, costs_us[:-1], tick_us=20_000, m=1, k=5), "counts": "journaled",
+        }
+
+    # A partial final cycle: a command-bearing cycle's first row is durable before its second step, and the kill lands there.
+    submit(diode / "alpha", ["zzz_partial"])
+    with monkeypatch.context() as patch:
+        killed_at_step(patch, console, 2)
+        with pytest.raises(SimulatedKill):
+            executive.cycle()
+    executive.close()
+    crashed = executive.summary()  # six cycles started, five ended: the population a reader of the record has
+    assert crashed == summary_oracle([*lags_us, 0], costs_us, tick_us=20_000, m=1, k=5), crashed
+    with console.read_record(state) as record:
+        # No manifest: the stalls and backstops are the journaled ones, a lower bound, and the summary says so.
+        assert console.segment_summaries(record, 20_000)[executive.boot_id] == {**crashed, "counts": "journaled"}
+
+    # The resume changes `k` to 1, stalls two seconds in its first wait, runs three cycles charged 5, 50 and 5 ms, and ends cleanly.
+    clock = InjectedClock()
+    resumed, resumption = resume_from(console, checkpoint, world, diode, state, cycle_ticks=1, pacer=clock.pacer(console))
+    assert resumption.tick == 26 and resumed.cycle_ticks == 1
+    charge_publication(monkeypatch, console, clock, [5, 50, 5])
+    clock.stall(2_000_000_000)
+    for _ in range(3):
+        resumed.cycle()
+    manifest = resumed.write_manifest("clean")
+    resumed.close()
+    assert manifest["summary"]["stalls"] == 1 and manifest["summary"]["costs_known"] == 3 and manifest["last_cycle_us"] == 5000, manifest
+    assert manifest["summary"]["cycle_us"] == {"p50": 5000, "p95": 50000, "p99": 50000, "max": 50000}, manifest
+    with console.read_record(state) as record:
+        summaries = console.segment_summaries(record, 20_000)
+    assert summaries[resumed.boot_id] == manifest["summary"], (summaries[resumed.boot_id], manifest["summary"])
+    assert summaries[executive.boot_id] == {**crashed, "counts": "journaled"}
+
+
+def clock_start(tmp_path: Path, name: str, *flags: str, init: bool = False, plan: bool = False) -> tuple[int, str]:
+    """`main` on a fresh diode and state directory naming only `flags` of the clock; `(exit, stderr)`."""
+    _checkpoint, console, _plant, _world = checkpoint_tools()
+    argv = ["--diode-dir", str(tmp_path / name / "diode"), "--state-dir", str(tmp_path / name / "state"), "--slug", "alpha", "--cycles", "1", *flags]
+    if init:
+        argv.append("--init")
+    if plan:
+        argv.append("--plan")
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+        code = console.main(argv)
+    return code, err.getvalue()
+
+
+def test_a_serving_start_naming_no_clock_refuses_by_name_and_init_and_plan_need_none(tmp_path):
+    """#23 acceptance 5 (ADR 0002 A, B, J): `m`, `k` and `N` are run inputs required with no default.
+
+    A serving start that names none of `--multiplier`, `--cycle-ticks` and `--checkpoint-ticks` is
+    refused with the console's start-refusal exit (3), every missing input named — one case per
+    missing input, and one per invalid value, each named by its flag. The multiplier is parsed from
+    its decimal string as an exact fraction, so `nan`, `inf`, a negative and zero are refused like a
+    word. `--init` and `--plan` run no clock and need none.
+    """
+    full = {"--multiplier": "1", "--cycle-ticks": "5", "--checkpoint-ticks": "50"}
+    code, err = clock_start(tmp_path, "none")
+    assert code == 3 and all(flag in err for flag in full), err
+    for index, missing in enumerate(full):
+        named = [part for flag, value in full.items() if flag != missing for part in (flag, value)]
+        code, err = clock_start(tmp_path, f"missing-{index}", *named)
+        assert code == 3 and missing in err and "required" in err, (missing, err)
+        assert not any(flag in err for flag in full if flag != missing), (missing, err)
+    for index, (flag, value) in enumerate(
+        [("--multiplier", "0"), ("--multiplier", "-1"), ("--multiplier", "fast"), ("--multiplier", "nan"), ("--multiplier", "inf"),
+         ("--cycle-ticks", "0"), ("--checkpoint-ticks", "0")]
+    ):
+        argv = [part for name, given in {**full, flag: value}.items() for part in (name, given)]
+        code, err = clock_start(tmp_path, f"invalid-{index}", *argv)
+        assert code == 3 and flag in err and value in err and "Traceback" not in err, (flag, value, err)
+    assert clock_start(tmp_path, "init", init=True)[0] == 0
+    assert clock_start(tmp_path, "plan", plan=True)[0] == 0
+    assert clock_start(tmp_path, "named", *[part for pair in full.items() for part in pair])[0] == 0
+
+
+def test_a_clock_whose_n_is_not_a_multiple_of_k_whose_k_outruns_the_channel_rates_or_whose_cycle_is_out_of_bounds_refuses_at_the_cli_and_in_the_checkpoint(tmp_path):
+    """#23 acceptance 6: `N mod k = 0`, `k ≤ tick_hz / max_rate` (ADR 0002 B), and `1 ms ≤ k·dt/m ≤ 60 s`.
+
+    `N mod k = 0` is required (it supersedes ADR J's "independent"). A cycle's frame rate, `tick_hz/k`
+    frames per mission second, must reach the highest declared channel rate — 10 Hz in
+    `channels.yaml` today, so `k ≤ 5`. And a cycle is at least 1 ms and at most 60 s of wall time, so
+    neither a vanishing nor an unbounded sleep can be configured. Each refuses at the CLI by its flag,
+    and in a checkpoint: `N mod k` and the bounds by the reader (corrupt, by `clock.*`), the
+    publication rate — which needs the vehicle's channels — by the resume that would serve it.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+    rates = [float(row["rate_hz"]) for row in world.channels.values() if isinstance(row.get("rate_hz"), (int, float))]
+    assert max(rates) == 10 and world.documents["mission.yaml"]["tick_hz"] == 50, "the bound below is derived from these"
+    for name, flags, said in (
+        ("modulus", ("--multiplier", "1", "--cycle-ticks", "5", "--checkpoint-ticks", "52"), ("--checkpoint-ticks", "52", "5")),
+        ("rate", ("--multiplier", "1", "--cycle-ticks", "6", "--checkpoint-ticks", "60"), ("--cycle-ticks", "6", "10")),
+        ("fast", ("--multiplier", "100", "--cycle-ticks", "1", "--checkpoint-ticks", "50"), ("--multiplier", "1 ms")),
+        ("slow", ("--multiplier", "0.0001", "--cycle-ticks", "5", "--checkpoint-ticks", "50"), ("--multiplier", "60 s")),
+    ):
+        code, err = clock_start(tmp_path, name, *flags)
+        assert code == 3 and all(part in err for part in said), (name, err)
+
+    executive = console.Executive(world, tmp_path / "diode", phase="translunar_coast", state_dir=tmp_path / "state", cycle_ticks=5, checkpoint_every=50)
+    executive.attach("alpha")
+    executive.cycle()
+    executive.checkpoint()
+    executive.close()
+    good = (tmp_path / "state" / "checkpoint.json").read_bytes()
+    compat = checkpoint.Compatibility.current(world)
+    for change, check in (
+        (lambda body: body["clock"].update(N=52), "clock.N"),
+        (lambda body: body["clock"].update(m="10000/1", k=1, burst_bound=1), "clock.m"),
+        (lambda body: body["clock"].update(m="1/10000"), "clock.m"),
+        (lambda body: body["clock"].update(burst_bound=4), "clock.burst_bound"),
+        (lambda body: body["clock"].update(m="2/4"), "clock.m"),
+        (lambda body: body["clock"].update(m=1), "clock.m"),
+    ):
+        (tmp_path / "state" / "checkpoint.json").write_bytes(rehashed_checkpoint(checkpoint, good, change))
+        with pytest.raises(checkpoint.CheckpointCorrupt) as refused:
+            checkpoint.read_generation(tmp_path / "state", "checkpoint.json", compat)
+        assert refused.value.check == check, (check, refused.value)
+    (tmp_path / "state" / "checkpoint.json").write_bytes(
+        rehashed_checkpoint(checkpoint, good, lambda body: body["clock"].update(k=10, burst_bound=10))
+    )
+    loaded = checkpoint.read_generation(tmp_path / "state", "checkpoint.json", compat)
+    assert loaded.body["clock"]["k"] == 10, "the reader cannot know the channels; the resume does"
+    with pytest.raises(console.ResumeRefused) as refused:
+        console.resume_executive(world, tmp_path / "diode", loaded, state_dir=tmp_path / "state")
+    assert "10" in str(refused.value) and "k" in str(refused.value), refused.value
+
+
+def test_a_resume_inherits_m_k_and_n_a_named_change_is_journaled_and_kept_and_a_fall_back_keeps_the_newer_policy(tmp_path):
+    """#23 acceptance 7 (ADR 0002 G; design §3): the precedence is the named flag, else the newest recovered policy.
+
+    A resume that names none of the three inherits them. One that names a change is accepted, the change
+    journaled in the `resumed` event's `run_inputs` (as `--max-batch` is), and the checkpoint the resume
+    takes before it serves makes it durable, so the next resume naming nothing keeps it. **The newest
+    recovered policy** is the newer of the base checkpoint's `clock` and the last replayed segment's
+    header: after a fall-back to the older checkpoint generation, the segment a resume named `k = 1` for
+    is replayed, and its header's `k` is what the next resume inherits — the fall-back does not silently
+    undo a journaled change.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    clock = ("--multiplier", "10", "--cycle-ticks", "5", "--checkpoint-ticks", "50")
+    assert start(diode, state, "alpha", extra=["--cycles", "2", *clock]).returncode == 0
+    compat = checkpoint.Compatibility.current(world)
+    assert checkpoint.read_generation(state, "checkpoint.json", compat).body["clock"] == {"m": "10/1", "k": 5, "N": 50, "burst_bound": 5, "lag_ceiling_s": 30}
+    inherited = start(diode, state, "alpha", extra=["--cycles", "1"])
+    assert inherited.returncode == 0, inherited.stderr[-800:]
+    assert generation_tick(state) == 15 and latest_event(state, "resumed")["run_inputs"] == {}
+    changed = start(diode, state, "alpha", extra=["--cycles", "1", "--cycle-ticks", "1"])
+    assert changed.returncode == 0, changed.stderr[-800:]
+    assert latest_event(state, "resumed")["run_inputs"] == {"k": [5, 1]}
+    assert checkpoint.read_generation(state, "checkpoint.json", compat).body["clock"]["k"] == 1
+    kept = start(diode, state, "alpha", extra=["--cycles", "1"])
+    assert kept.returncode == 0 and latest_event(state, "resumed")["run_inputs"] == {}, kept.stderr[-800:]
+    assert generation_tick(state) == 17
+
+    # `m` and `N` named alone, then all three together (candidate 1, Codex P2), each journaled as what it changed.
+    for flags, changes, tick, clock in (
+        (["--multiplier", "5"], {"m": ["10/1", "5/1"]}, 18, {"m": "5/1", "k": 1, "N": 50}),
+        (["--checkpoint-ticks", "100"], {"N": [50, 100]}, 19, {"m": "5/1", "k": 1, "N": 100}),
+        (["--multiplier", "2", "--cycle-ticks", "5", "--checkpoint-ticks", "10"], {"m": ["5/1", "2/1"], "k": [1, 5], "N": [100, 10]}, 24, {"m": "2/1", "k": 5, "N": 10}),
+    ):
+        named = start(diode, state, "alpha", extra=["--cycles", "1", *flags])
+        assert named.returncode == 0, (flags, named.stderr[-800:])
+        assert latest_event(state, "resumed")["run_inputs"] == changes, (flags, latest_event(state, "resumed"))
+        body = checkpoint.read_generation(state, "checkpoint.json", compat).body
+        assert generation_tick(state) == tick and body["clock"] == {**clock, "burst_bound": clock["k"], "lag_ceiling_s": 30}, (flags, body["clock"])
+    # Each valid alone against the inherited `k = 5`, `N = 10` (10 is a multiple of 2; 15 of 5), and not together.
+    joint = start(diode, state, "alpha", extra=["--cycles", "1", "--cycle-ticks", "2", "--checkpoint-ticks", "15"])
+    assert joint.returncode == 3 and "--cycle-ticks" in joint.stderr and "--checkpoint-ticks" in joint.stderr, joint.stderr[-800:]
+    assert "N = 15 is not a multiple of k = 2" in joint.stderr, joint.stderr[-800:]
+    assert generation_tick(state) == 24 and latest_event(state, "resumed")["tick"] == 19, "the refused resume changed nothing"
+    after = start(diode, state, "alpha", extra=["--cycles", "1"])
+    assert after.returncode == 0 and latest_event(state, "resumed")["run_inputs"] == {} and generation_tick(state) == 29, after.stderr[-800:]
+
+    # The fall-back: a world at k = 5 checkpointed at tick 10; a resume naming k = 1 runs three ticks and dies;
+    # the newer generation is damaged; the older one is chosen and the record past it carries the k = 1 boot.
+    diode, state = tmp_path / "fall-diode", tmp_path / "fall-state"
+    first = console.Executive(world, diode, phase="translunar_coast", state_dir=state, cycle_ticks=5, checkpoint_every=10)
+    first.attach("alpha")
+    first.cycle()
+    first.cycle()
+    assert generation_tick(state) == 10
+    first.close()
+    second, resumption = resume_from(console, checkpoint, world, diode, state, cycle_ticks=1)
+    assert resumption.run_inputs == {"k": [5, 1]}
+    second.checkpoint()
+    for _ in range(3):
+        second.cycle()
+    second.close()
+    assert generation_tick(state, "checkpoint.prev.json") == 10
+    (state / "checkpoint.json").write_bytes(b"damaged\n")
+    third, resumption = resume_from(console, checkpoint, world, diode, state)
+    assert resumption.fell_back is not None and resumption.tick == 13
+    assert (third.cycle_ticks, resumption.run_inputs) == (1, {}), "the replayed k = 1 header is newer than the k = 5 checkpoint"
+    third.close()
+
+
+def test_a_checkpoint_ends_every_cycle_that_crosses_a_multiple_of_n_including_after_an_unaligned_resume(tmp_path, monkeypatch):
+    """#23 acceptance 8 (ADR 0002 J; design §1): the cadence is a crossing, not a remainder.
+
+    At `k = 5`, `N = 10` the cycles reaching ticks 10 and 20 checkpoint. A kill in the second step of
+    the cycle from tick 20 leaves its first row durable (it carries a command: write-ahead), so the
+    resume is at tick 21, and its cycles reach 26, 31, 36, 41: `tick % N == 0` never holds again, and
+    the cycles reaching 31 and 41 — which crossed 30 and 40 — are the ones that checkpoint.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = console.Executive(world, diode, phase="translunar_coast", state_dir=state, cycle_ticks=5, checkpoint_every=10)
+    executive.attach("alpha")
+    taken: list[int] = []
+    real = console.Executive._cadence_checkpoint
+
+    def cadence(self):
+        taken.append(self.tick)
+        return real(self)
+
+    monkeypatch.setattr(console.Executive, "_cadence_checkpoint", cadence)
+    for _ in range(4):
+        executive.cycle()
+    assert taken == [10, 20] and generation_tick(state) == 20
+    submit(diode / "alpha", ["zzz_on_the_killed_cycle"])
+    real_step, steps = console.step, [0]
+
+    def killed(*args, **kwargs):
+        steps[0] += 1
+        if steps[0] == 2:
+            raise SimulatedKill
+        return real_step(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(console, "step", killed)
+        with pytest.raises(SimulatedKill):
+            executive.cycle()
+    executive.close()
+    resumed, resumption = resume_from(console, checkpoint, world, diode, state)
+    assert resumption.tick == 21 and resumed.cycle_ticks == 5
+    for _ in range(4):
+        resumed.cycle()
+    assert resumed.tick == 41 and taken == [10, 20, 31, 41], taken
+    assert generation_tick(state) == 41
+    resumed.close()
+
+
+def killed_at_step(monkeypatch, console, step: int) -> None:
+    """The cycle's `step`-th plant step (counting from now) never returns: a kill mid-cycle, in-process."""
+    real, calls = console.step, [0]
+
+    def stepped(*args, **kwargs):
+        calls[0] += 1
+        if calls[0] == step:
+            raise SimulatedKill
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(console, "step", stepped)
+
+
+def test_a_crash_inside_a_command_bearing_cycle_publishes_nothing_and_the_resume_owes_exactly_its_first_rows_receipts(tmp_path, monkeypatch):
+    """#23 acceptance 9 (design §4, write-ahead): a claimed batch lives only in memory for one step, as before.
+
+    A cycle whose first row carries anything (effects, receipts or deltas) appends and `fsync`s that
+    row before stepping on, and its remaining rows follow with one `fsync`. A kill after steps `1..j`
+    (`j` = 1 and 3 here, of `k = 5`) therefore leaves exactly the first row durable: nothing of the
+    cycle is published — no result, no frame — and the resume, at that row's tick, owes exactly its
+    receipts and writes each once, stamped with the cycle's start tick. Separately, a kill after every
+    row and before any result leaves all `k` rows and owes the same receipts.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+    expected = {("alpha", 1), ("alpha", 2), ("bravo", 1)}
+    for case in ("after step 1", "after step 3", "after the rows"):
+        root = tmp_path / case.replace(" ", "-")
+        diode, state = root / "diode", root / "state"
+        executive = console.Executive(world, diode, phase="translunar_coast", state_dir=state, cycle_ticks=5, checkpoint_every=50)
+        executive.attach("alpha")
+        executive.attach("bravo")
+        executive.checkpoint()
+        executive.cycle()
+        frames = {slug: len(frames_of(diode / slug)) for slug in ("alpha", "bravo")}
+        submit(diode / "alpha", ["set_rcs_mode mode=manual", "zzz_alpha"])
+        submit(diode / "bravo", ["ack_alarm alert_id=b"])
+        with monkeypatch.context() as patch:
+            if case == "after the rows":
+                def killed_result(self, command, body):
+                    raise SimulatedKill
+
+                patch.setattr(console.Window, "write_result", killed_result)
+            else:
+                killed_at_step(patch, console, int(case[-1]) + 1)
+            with pytest.raises(SimulatedKill):
+                executive.cycle()
+        executive.close()
+        durable = 10 if case == "after the rows" else 6
+        rows = tick_rows(executive.journal)
+        assert [row["tick"] for row in rows] == list(range(1, durable + 1)), (case, [row["tick"] for row in rows])
+        assert {(r["window"], r["local"]) for r in rows[5]["receipts"]} == expected, rows[5]
+        assert all(row["receipts"] == [] for row in rows[6:]), case
+        assert results_of(diode / "alpha") == [] and results_of(diode / "bravo") == [], case
+        assert {slug: len(frames_of(diode / slug)) for slug in frames} == frames, "nothing of the cycle is published"
+        resumed, resumption = resume_from(console, checkpoint, world, diode, state)
+        assert resumption.tick == durable, (case, resumption.tick)
+        assert {(r["window"], r["local"]) for r in resumption.republished if r.get("result") == "written"} == expected, resumption.republished
+        ledger = result_ledger(diode)
+        assert set(ledger) == expected and all(len(entries) == 1 for entries in ledger.values()), ledger
+        assert {tick for entries in ledger.values() for _state, tick, _body in entries} == {5}, "stamped with the cycle's start tick"
+        resumed.close()
+
+
+def test_a_deferral_settles_at_the_next_cycles_start_and_after_an_unaligned_resume_at_the_first_boundary_at_or_after_its_due_tick(tmp_path, monkeypatch):
+    """#23 acceptance 10 (design §1): a deferral accepted in a cycle is due at `a + k`, the next cycle's start.
+
+    `due = tick + 1` named a tick a `k = 5` executive never starts a cycle at. Accepted in the cycle
+    from tick 0, `request_imu_alignment` (deferred, no interlocks) says it is due at tick 5 "(later
+    across a restart)" and settles in the cycle from tick 5. Accepted in the cycle from tick 10 (due
+    15), whose kill after its first row leaves the resume at tick 11, its boundaries are 11, 16, 21: it
+    settles at the first boundary at or after its due tick, 16 — and its expiry, in simulated seconds,
+    is nowhere near (300 s).
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    alpha = diode / "alpha"
+    executive = console.Executive(world, diode, phase="translunar_coast", state_dir=state, cycle_ticks=5, checkpoint_every=50)
+    executive.attach("alpha")
+    executive.checkpoint()
+    submit(alpha, ["request_imu_alignment source=star target=LVLH"])
+    executive.cycle()
+    (accepted,) = results_of(alpha)
+    assert "Recorded at tick 0, due at tick 5 (later across a restart)" in accepted, accepted
+    assert [d["due_tick"] for d in executive.windows["alpha"].deferred] == [5]
+    clear_results(alpha)
+    executive.cycle()
+    (settled,) = results_of(alpha)
+    assert receipt_of(settled)["tick"] == "5" and receipt_of(settled)["state"] == "settled", settled
+    clear_results(alpha)
+    submit(alpha, ["request_imu_alignment source=star target=LVLH"])
+    with monkeypatch.context() as patch:
+        killed_at_step(patch, console, 2)
+        with pytest.raises(SimulatedKill):
+            executive.cycle()
+    executive.close()
+    resumed, resumption = resume_from(console, checkpoint, world, diode, state)
+    assert resumption.tick == 11 and [d["due_tick"] for d in resumed.windows["alpha"].deferred] == [15]
+    clear_results(alpha)  # the owed acceptance, written once by the resume
+    resumed.cycle()
+    assert results_of(alpha) == [], "the cycle from tick 11 starts before the deferral is due"
+    resumed.cycle()
+    (late,) = results_of(alpha)
+    assert receipt_of(late)["tick"] == "16" and receipt_of(late)["state"] == "settled", late
+    resumed.close()
+
+
+def test_the_generated_files_are_rewritten_on_the_staggered_n_cadence_on_a_segments_first_cycle_and_after_a_repair_and_not_every_cycle(tmp_path):
+    """#23 acceptance 11 (John: static files every `N` ticks; design §1).
+
+    `HELP.md` and `README.md` are 85 KB of text a window rewrote every cycle. They are rewritten at the
+    end of the cycle *after* the one that crossed a multiple of `N` — so the static and the checkpoint
+    costs normally fall in different cycles — on a segment's first cycle, and on the cycle after a
+    repair; a hand-edit otherwise survives. Here `k = 5`, `N = 20`: the cycles reaching 20 and 40 cross,
+    so the cycles from 20 and 40 rewrite, and so does the cycle after the one that repaired a lost
+    `telemetry/`.
+    """
+    _checkpoint, console, _plant, world = checkpoint_tools()
+    diode = tmp_path / "diode"
+    executive = console.Executive(world, diode, phase="translunar_coast", cycle_ticks=5, checkpoint_every=20)
+    executive.attach("alpha")
+    window = diode / "alpha"
+    generated = {name: (window / name).read_text() for name in ("README.md", "HELP.md")}
+
+    def doctor() -> None:
+        for name in generated:
+            (window / name).write_text("# doctored\n")
+
+    def rewritten() -> bool:
+        texts = {name: (window / name).read_text() for name in generated}
+        assert texts == generated or set(texts.values()) == {"# doctored\n"}, texts
+        return texts == generated
+
+    observed = []
+    doctor()
+    for cycle in range(1, 10):
+        if cycle == 7:
+            shutil.rmtree(window / "telemetry")
+        executive.cycle()
+        observed.append((cycle, executive.tick, rewritten()))
+        doctor()
+    assert [cycle for cycle, _tick, did in observed if did] == [1, 5, 8, 9], observed
+    executive.close()
+
+
+def test_the_linter_refuses_a_clock_flag_whose_default_is_not_none_and_a_clock_section_it_cannot_resolve(tmp_path):
+    """#23 acceptance 12 (design §3): `--multiplier`, `--cycle-ticks` and `--checkpoint-ticks` are remembered by the checkpoint.
+
+    A resume inherits `m`, `k` and `N` from the checkpoint's `clock` section, so each flag must be able to
+    say "named nothing". `check_console_flags` read only the `run` section's dictionary literal, and the
+    `clock` section is a comprehension over `CLOCK_INPUTS`, which it could not read: the three flags
+    would have escaped the rule. It now resolves `CLOCK_INPUTS` and maps `m`, `k`, `N` to the three
+    flags' dests, so a default on any of them is refused by name; a `clock` section it cannot resolve is
+    a refusal, not a pass.
+    """
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-1500:]
+    for flag, old, new in (
+        ("--multiplier", '"--multiplier",\n        default=None,', '"--multiplier",\n        default="1",'),
+        ("--cycle-ticks", '"--cycle-ticks",\n        type=int,\n        default=None,', '"--cycle-ticks",\n        type=int,\n        default=5,'),
+        ("--checkpoint-ticks", '"--checkpoint-ticks",\n        type=int,\n        default=None,', '"--checkpoint-ticks",\n        type=int,\n        default=50,'),
+    ):
+        copy = copy_definition(fixture_dir(tmp_path, "clock-flag"))
+        path = copy / "tools" / "console.py"
+        text = path.read_text()
+        assert text.count(old) == 1, f"the fixture no longer matches console.py's {flag}"
+        path.write_text(text.replace(old, new, 1))
+        result = run_linter(copy)
+        assert result.returncode == 1 and f"tools/console.py:{flag}" in result.stdout, (flag, result.stdout[-900:])
+    unreadable = copy_definition(fixture_dir(tmp_path, "checkpoint-clock"))
+    path = unreadable / "tools" / "checkpoint.py"
+    text = path.read_text()
+    old = '        "clock": {name: clock.get(name) for name in CLOCK_INPUTS},\n'
+    assert text.count(old) == 1
+    path.write_text(text.replace(old, '        "clock": dict(clock),\n', 1))
+    result = run_linter(unreadable)
+    assert result.returncode == 1 and "tools/checkpoint.py" in result.stdout and "`clock` section" in result.stdout, result.stdout[-900:]
+
+
+# Cycles 0–5 of a k = 5 world: commanded states, a deferral, a refusal by dwell, a conflict across windows.
+CLOCK_SCRIPT = {
+    0: {"alpha": ["set_rcs_mode mode=manual"], "bravo": ["set_rcs_quad group=sm_primary state=enable"]},
+    1: {"bravo": ["request_imu_alignment source=star target=LVLH"]},
+    3: {"alpha": ["ack_alarm alert_id=a"], "bravo": ["ack_alarm alert_id=b", "set_rcs_quad group=sm_primary state=inhibit"]},
+    5: {"alpha": ["set_rcs_mode mode=auto", "zzz_not_a_verb"]},
+}
+
+
+def test_live_equals_replay_at_k_5_including_the_dwell_a_commands_first_step_stamps(tmp_path, monkeypatch):
+    """#23 acceptance 13 (determinism review P1-B): dwell is computed against the cycle's first step, as replay computes it.
+
+    Replay advances each row with its own effects and restarts the dwell clock against that row's
+    before and after, at `(tick − 1) · tick_us` — row 1's tick less one is the cycle's start. So live
+    must step tick `a+1` with the effects, run `_report_effect` and the dwell bookkeeping against that
+    step's before and after, and only then step the other `k − 1`: comparing the start truth with the
+    truth `k` ticks on gives a different moved set or stored value for any target still moving, and an
+    effect reported on row `k` would stamp `(k − 1) · tick_us` late.
+
+    **The target is made to keep moving** (candidate 1, determinism review): no verb of this vehicle
+    reliably moves its target again after its step, so `plant.step` is wrapped by a *pure function of
+    its arguments* — never of a call counter, which live and replay would count differently — that,
+    given no effects and a truth whose RCS `mode` is the `manual` just commanded, returns the real step
+    with `mode` at `free_drift`. Step 1 applies the command; step 2 moves the target on; steps 3–5 hold
+    it. The precondition is asserted from the record's own replay: the truth at tick 1 and at tick 5
+    differ in `mode`. The live dwell records `manual`, the value the command left, at the cycle's start;
+    and the live checkpoint's `executive` (dwell included) and `windows` equal the replayed body's from
+    the world's genesis — a dwell computed against tick 5 would record `free_drift`, and differ.
+    """
+    checkpoint, console, plant, world = checkpoint_tools()
+    compat = checkpoint.Compatibility.current(world)
+    mode = next(state for state in world.states if state.id == "mode" and state.node == "internal")
+    assert "free_drift" in mode.spec["unit"], mode.spec["unit"]
+    real_step = console.step
+
+    def level(truth: dict) -> object:
+        """`mode`'s value as `plant.state_level` reads it: the flat key first, the sentinel's map second."""
+        return truth["mode"] if "mode" in truth else (truth.get("internal") or {}).get("mode")
+
+    def drifting(world_, truth, dt, rng, effects):
+        # Both representations move together (candidate 2, Codex P3: `plant.state_level` prefers the flat key).
+        stepped = real_step(world_, truth, dt, rng, effects)
+        if not effects and level(truth) == "manual":
+            stepped = dict(stepped)
+            if "mode" in stepped:
+                stepped["mode"] = "free_drift"
+            stepped["internal"] = {**(stepped.get("internal") or {}), "mode": "free_drift"}
+        return stepped
+
+    monkeypatch.setattr(console, "step", drifting)
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = console.Executive(world, diode, phase="translunar_coast", state_dir=state, cycle_ticks=5, checkpoint_every=50)
+    executive.attach("alpha")
+    executive.attach("bravo")
+    genesis = checkpoint.capture_state(executive, compat)
+    assert level(genesis["executive"]["truth"]) == "auto"
+    for index in range(6):
+        for slug, commands in CLOCK_SCRIPT.get(index, {}).items():
+            submit(diode / slug, commands)
+        executive.cycle()
+    with console.read_record(state) as record:
+        at = {tick: level(console.replay_record(world, genesis, record, through=tick).body["executive"]["truth"]) for tick in (1, 5)}
+    assert at == {1: "manual", 5: "free_drift"}, f"the precondition: the target moves after its step ({at})"
+    assert executive.dwell["mode"]["changed_at_us"] == 0, "stamped at the cycle's start tick, 0, not at its last"
+    assert executive.dwell["mode"]["value"] == ["manual"] and executive.dwell["mode"]["was"]["value"] == ["auto"], executive.dwell["mode"]
+    live = checkpoint.capture_state(executive, compat)
+    with console.read_record(state) as record:
+        replayed = console.replay_record(world, genesis, record)
+    assert replayed.body["executive"] == live["executive"]
+    assert replayed.body["windows"] == live["windows"]
+    executive.close()
+
+
+# The fields of a tick row that are the trace (design §6 test 14); the wall fields and the chain are not.
+TRACE_FIELDS = ("tick", "state_hash", "lineage", "effects", "receipts", "receipt", "windows", "published", "failures")
+
+
+def test_pacing_stays_out_of_the_trace(tmp_path, monkeypatch):
+    """#23 acceptance 14 (design §2): `lag_us` and the carried-forward cost are wall data, and nothing physical reads them.
+
+    The same ingress, run unpaced and under injected slow cycles and a two-second stall, with the world
+    and boot ids pinned: every row's tick, compare-point, lineage, effects, receipts, receipt counter,
+    deltas, marks and failure count, and the checkpoint body's `executive` and `windows`, are exactly
+    equal. Excluded, because they are wall data or depend on it: `lag_us`, `prev_cycle_us`,
+    `prev_end_lag_us`, the row chain, and the segments' wall epoch, chain and byte offset.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+    compat = checkpoint.Compatibility.current(world)
+
+    def run(name: str, paced: bool) -> tuple[list[dict], dict]:
+        diode, state = tmp_path / name / "diode", tmp_path / name / "state"
+        clock = InjectedClock()
+        executive = console.Executive(
+            world, diode, phase="translunar_coast", state_dir=state, cycle_ticks=5, checkpoint_every=10, boot_id="b" * 32,
+            pacer=clock.pacer(console) if paced else None,
+        )
+        executive.world_id = "a" * 32
+        executive.attach("alpha")
+        executive.attach("bravo")
+        with monkeypatch.context() as patch:
+            if paced:
+                charge_publication(patch, console, clock, [0, 0, 450, 0, 0, 0, 120, 300, 0, 0, 0, 0])
+            for index in range(6):
+                for slug, commands in CLOCK_SCRIPT.get(index, {}).items():
+                    submit(diode / slug, commands)
+                if paced and index == 1:
+                    clock.stall(2_000_000_000)  # the second cycle's wait returns two seconds late
+                executive.cycle()
+        body = checkpoint.capture_state(executive, compat)
+        rows = tick_rows(executive.journal)
+        if paced:
+            assert any(row["lag_us"] > 0 for row in rows) and any(row.get("prev_cycle_us") for row in rows), "the paced run was slow"
+        executive.close()
+        return rows, body
+
+    unpaced_rows, unpaced = run("unpaced", False)
+    paced_rows, paced = run("paced", True)
+    assert len(unpaced_rows) == len(paced_rows) == 30
+    for plain, slow in zip(unpaced_rows, paced_rows, strict=True):
+        assert {f: plain[f] for f in TRACE_FIELDS} == {f: slow[f] for f in TRACE_FIELDS}, plain["tick"]
+    assert unpaced["executive"] == paced["executive"] and unpaced["windows"] == paced["windows"]
+    # And the rest of the body wall data could reach (candidate 1, determinism P3): the obligations, the
+    # rng, and every segment entry but its wall epoch, chain and byte offset.
+    assert unpaced["obligations"] == paced["obligations"] and unpaced["rng"] == paced["rng"]
+
+    def entries(body: dict) -> list[dict]:
+        return [{key: value for key, value in entry.items() if key not in ("wall_epoch", "chain", "offset")} for entry in body["segments"]]
+
+    assert entries(unpaced) == entries(paced) and entries(paced), (entries(unpaced), entries(paced))
+
+
+def test_a_k_5_world_that_crashes_mid_cycle_resumes_at_k_1_across_an_n_boundary_and_replay_equals_live(tmp_path, monkeypatch):
+    """#23 acceptance 15 (design §1, §4): replay never needs `k`, and the physics does not depend on it.
+
+    A `k = 5` world is killed in the third step of its second cycle, which carried a command with an
+    effect (candidate 1, determinism P3: so the write-ahead partial cycle holds an effect, not only a
+    receipt), so its record ends on a partial cycle (tick 6) whose first row is that effect. It resumes
+    at `k = 1` (a named change) and runs across the `N = 10` boundary to tick 20. Every tick's
+    compare-point and lineage equal those of an uninterrupted `k = 1` world given the same commands at
+    the same ticks, and the whole record — a `k = 5` segment then a `k = 1` one — replayed from the
+    world's genesis equals the live checkpoint's `executive` and `windows`.
+    """
+    checkpoint, console, plant, world = checkpoint_tools()
+    compat = checkpoint.Compatibility.current(world)
+    script = {0: ["set_rcs_quad group=sm_primary state=enable"], 5: ["set_rcs_mode mode=manual"], 15: ["ack_alarm alert_id=a"]}
+    oracle_dir = tmp_path / "oracle"
+    oracle = console.Executive(world, oracle_dir, phase="translunar_coast")
+    oracle.attach("alpha")
+    expected = {}
+    for tick in range(20):
+        if tick in script:
+            submit(oracle_dir / "alpha", script[tick])
+        oracle.cycle()
+        expected[oracle.tick] = (plant.state_hash(oracle.truth), oracle.lineage_head)
+    oracle.close()
+
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = console.Executive(world, diode, phase="translunar_coast", state_dir=state, cycle_ticks=5, checkpoint_every=10)
+    executive.attach("alpha")
+    executive.checkpoint()
+    genesis = checkpoint.capture_state(executive, compat)
+    submit(diode / "alpha", script[0])
+    executive.cycle()
+    submit(diode / "alpha", script[5])
+    with monkeypatch.context() as patch:
+        killed_at_step(patch, console, 3)
+        with pytest.raises(SimulatedKill):
+            executive.cycle()
+    executive.close()
+    partial = {row["tick"]: row for row in tick_rows(executive.journal)}
+    assert max(partial) == 6 and [effect[1] for effect in partial[6]["effects"]] == ["set_rcs_mode"], "the partial cycle's first row holds the effect"
+    resumed, resumption = resume_from(console, checkpoint, world, diode, state, cycle_ticks=1)
+    assert resumption.tick == 6 and resumption.run_inputs == {"k": [5, 1]}
+    while resumed.tick < 20:
+        if resumed.tick in script:
+            submit(diode / "alpha", script[resumed.tick])
+        resumed.cycle()
+    assert generation_tick(state) == 20
+    live = checkpoint.capture_state(resumed, compat)
+    resumed.close()
+    rows = all_tick_rows(state)
+    assert {row["tick"]: (row["state_hash"], row["lineage"]) for row in rows} == expected
+    with console.read_record(state) as record:
+        assert [s.header["k"] for s in console.concatenated(record.segments)] == [5, 1]
+        replayed = console.replay_record(world, genesis, record)
+    assert replayed.body["executive"] == live["executive"] and replayed.body["windows"] == live["windows"]
+
+
+def test_a_k_5_cycle_with_verdicts_reads_back_with_its_notes_verified_and_a_clean_resume_writes_no_duplicate_result(tmp_path):
+    """#23 acceptance 16 (design §4: the readers accumulate per cycle).
+
+    A cycle's receipts are on its first row and its `results_written` notes follow its last, `k` rows
+    later. A reader that reset its receipt set at every row refused that record ("the note names results
+    its row did not issue"), and `unwritten_results` listed every result as owed — so a resume would have
+    refused, or written every result twice. Both now reset at a cycle's first row, from the header's `k`.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = console.Executive(world, diode, phase="translunar_coast", state_dir=state, cycle_ticks=5, checkpoint_every=50)
+    executive.attach("alpha")
+    executive.attach("bravo")
+    executive.checkpoint()
+    for index in range(4):
+        for slug, commands in CLOCK_SCRIPT.get(index, {}).items():
+            submit(diode / slug, commands)
+        executive.cycle()
+    executive.close()
+    notes = [row for row in record_lines(executive.journal) if row.get("event") == "results_written"]
+    assert notes and {note["tick"] for note in notes} <= {5, 10, 15, 20}, notes
+    with console.read_record(state) as record:
+        assert console.unwritten_results(record) == []
+    before = result_ledger(diode)
+    assert before and all(len(entries) == 1 for entries in before.values())
+    resumed, resumption = resume_from(console, checkpoint, world, diode, state)
+    assert resumption.tick == 20 and resumption.republished == []
+    assert result_ledger(diode) == before
+    resumed.close()
+
+
+def test_with_ten_windows_at_k_5_each_window_goes_first_exactly_once_in_ten_cycles(tmp_path):
+    """#23 acceptance 17 (ADR 0001 choice A; systems review P1-2): the rotation is by cycle, `(a // k) % n`.
+
+    Rotated by the tick, `tick % n` with cycles starting at ticks 0, 5, 10 … and `n = 10`, only the
+    first and sixth windows would ever go first — whenever `gcd(n, k) > 1` the rotation collapses. Every
+    window submits an `ack_alarm` in `crew.alerts` every cycle, so exactly one is accepted per cycle: the
+    first in that cycle's order. Over ten cycles each window wins exactly once, in sorted order.
+    """
+    _checkpoint, console, _plant, world = checkpoint_tools()
+    diode = tmp_path / "diode"
+    executive = console.Executive(world, diode, phase="translunar_coast", cycle_ticks=5, checkpoint_every=50)
+    slugs = [f"window{n}" for n in range(10)]
+    for slug in slugs:
+        executive.attach(slug)
+    winners = []
+    for _ in range(10):
+        for slug in slugs:
+            clear_results(diode / slug)
+            submit(diode / slug, [f"ack_alarm alert_id={slug}"])
+        executive.cycle()
+        accepted = [slug for slug in slugs if "CONFLICT_SUPERSEDED" not in results_of(diode / slug)[0]]
+        assert len(accepted) == 1, accepted
+        winners.extend(accepted)
+    assert winners == sorted(slugs), winners
+    executive.close()
+
+
+def test_a_compare_point_refusal_inside_a_cycle_appends_only_the_rows_not_yet_durable_and_stops_at_the_last_durable_tick(tmp_path, monkeypatch, capsys):
+    """#23 acceptance 18 (design §1): stepping runs into locals, and a refusal at step `j > 1` commits only the durable prefix.
+
+    A quiet cycle refused at step 3 appends its rows 1–2 with one `fsync`; a command-bearing cycle,
+    whose row 1 was durable before step 2 (write-ahead), appends nothing more when refused at step 2
+    and rows 2–3 when refused at step 4. Nothing past the durable rows reaches `tick`, `truth` or
+    `lineage`; the refusal names the last durable tick; and the batch, whose receipts are on the durable
+    row 1, is answered on resume. Through `main` the run exits 3 naming that tick.
+    """
+    checkpoint, console, plant, world = checkpoint_tools()
+
+    def poisoned_at(patch, j: int) -> None:
+        real, calls = console.step, [0]
+
+        def stepped(*args, **kwargs):
+            calls[0] += 1
+            out = dict(real(*args, **kwargs))
+            if calls[0] == j:
+                out["probe_nan"] = float("nan")
+            return out
+
+        patch.setattr(console, "step", stepped)
+
+    for name, commanded, j in (("quiet", False, 3), ("write-ahead-2", True, 2), ("write-ahead-4", True, 4)):
+        diode, state = tmp_path / name / "diode", tmp_path / name / "state"
+        executive = console.Executive(world, diode, phase="translunar_coast", state_dir=state, cycle_ticks=5, checkpoint_every=50)
+        executive.attach("alpha")
+        executive.checkpoint()
+        executive.cycle()
+        if commanded:
+            submit(diode / "alpha", ["zzz_on_the_refused_cycle"])
+        with monkeypatch.context() as patch:
+            poisoned_at(patch, j)
+            with pytest.raises(plant.UncomparableState, match="probe_nan") as refused:
+                executive.cycle()
+        durable = 5 + j - 1
+        assert refused.value.last_durable_tick == durable, (name, refused.value.last_durable_tick)
+        assert executive.tick == durable and executive.lineage_head == tick_rows(executive.journal)[-1]["lineage"], name
+        assert [row["tick"] for row in tick_rows(executive.journal)] == list(range(1, durable + 1)), name
+        assert results_of(diode / "alpha") == [], name
+        executive.close()
+        if commanded:
+            resumed, resumption = resume_from(console, checkpoint, world, diode, state)
+            assert resumption.tick == durable
+            assert [(r["window"], r["local"]) for r in resumption.republished if r.get("result") == "written"] == [("alpha", 1)]
+            resumed.close()
+
+    capsys.readouterr()
+    with monkeypatch.context() as patch:
+        poisoned_at(patch, 3)
+        code = console.main(
+            ["--diode-dir", str(tmp_path / "entry"), "--slug", "alpha", "--cycles", "2", "--multiplier", "10", "--cycle-ticks", "5", "--checkpoint-ticks", "50"]
+        )
+    err = capsys.readouterr().err
+    assert code == 3 and "stopped at tick 0" in err and "probe_nan" in err, err[-600:]
+
+
+def test_sigterm_during_a_command_bearing_cycle_completes_the_cycle_answers_the_batch_and_ends_cleanly(tmp_path):
+    """#23 acceptance 19 (design §5): a `docker stop` finishes the current cycle and takes the clean-end path.
+
+    In the one-executive shape the console is PID 1, and only its own handler makes `SIGTERM` effective
+    at all. The handler, installed before recovery, sets a stop flag the loop reads at a cycle's
+    boundary. **The signal lands where it matters** (candidate 1, Codex P2): at `k = 5`, after the first
+    cycle has claimed a batch of two commands and between two of its steps — the second step held until
+    the handler has run. The cycle completes all five ticks, both commands are answered, the clean end
+    checkpoints tick 5 and writes the segment's manifest, and the exit is 0.
+    """
+    done, state = interrupted_console(
+        tmp_path, "step", signal_name="SIGTERM", commands=["set_rcs_mode mode=manual", "zzz_not_a_verb"],
+        clock=("--multiplier", "1", "--cycle-ticks", "5", "--checkpoint-ticks", "50"),
+    )
+    assert done.returncode == 0 and "stopped after 5 tick(s) (SIGTERM)" in done.stdout, (done.returncode, done.stdout, done.stderr)
+    assert generation_tick(state) == 5 and [row["tick"] for row in all_tick_rows(state)] == [1, 2, 3, 4, 5]
+    answered = results_of(tmp_path / "step" / "diode" / "alpha")
+    assert sorted(receipt_of(body)["state"] for body in answered) == ["accepted", "refused"], answered
+    assert {receipt_of(body)["tick"] for body in answered} == {"0"}, "claimed by the cycle the signal landed in"
+    (manifest,) = journal_events(state, "manifest")
+    assert manifest["ended"] == "clean" and manifest["summary"]["cycles"] == 1, manifest
+
+
+def test_a_stall_past_the_lag_ceiling_ends_cleanly_with_exit_4_resumes_on_a_fresh_epoch_and_without_a_state_directory_rebases(tmp_path, monkeypatch, capsys):
+    """#23 acceptance 20 (John: an interim lag backstop until #26; design §5).
+
+    A start lag past the ADR's 30-second ceiling is checked at a cycle's start, before any handle is
+    opened or any console claimed. With a state directory the executive writes the clean-end checkpoint
+    and the segment's manifest, journals `lag_backstop`, prints the fixed-format line the chassis's
+    operator surfaces read, and exits 4 — its own code; the restart resumes on a fresh epoch, so the
+    world froze through the stall rather than racing to catch up. The consecutive count is read back from
+    the previous segment's manifest and reset by any segment that ends otherwise. A stall under the
+    ceiling is journaled as `stall`. Without a state directory there is no clean end to take, so the
+    backstop rebases the epoch, journals the event and prints the line, and the run goes on.
+    """
+    _checkpoint, console, _plant, _world = checkpoint_tools()
+    flags = ("--multiplier", "1", "--cycle-ticks", "1", "--checkpoint-ticks", "50")
+
+    def stalled_run(argv: list[str], stall_s: float | None) -> tuple[int, str]:
+        clock = InjectedClock()
+        real_claim, claims = console.Window.claim, [0]
+
+        def claim(self):
+            claims[0] += 1
+            if claims[0] == 2 and stall_s is not None:
+                clock.stall(int(stall_s * 1_000_000_000))  # the wait before the third cycle returns this late
+            return real_claim(self)
+
+        capsys.readouterr()
+        with monkeypatch.context() as patch:
+            patch.setattr(console.Window, "claim", claim)
+            code = console.main(argv, pacer=clock.pacer(console))
+        return code, capsys.readouterr().err
+
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "5", *flags]
+    for run, stall, code, consecutive in ((1, 31, 4, 1), (2, 31, 4, 2), (3, 2, 0, 0), (4, 31, 4, 1)):
+        got, err = stalled_run(argv, stall)
+        assert got == code, (run, got, err[-800:])
+        manifest = latest_event(state, "manifest")
+        assert manifest["consecutive_backstops"] == consecutive, (run, manifest)
+        # A reader of the record says what the manifest says, stalls and backstops included (candidate 1).
+        with console.read_record(state) as record:
+            assert console.segment_summaries(record, 20_000)[manifest["boot_id"]] == manifest["summary"], (run, manifest)
+        if code == 4:
+            assert f"[console] lag_backstop lag_s=31 consecutive={consecutive}\n" in err, (run, err[-800:])
+            assert manifest["ended"] == "lag_backstop" and manifest["summary"]["cycles"] == 2, manifest
+            assert latest_event(state, "lag_backstop")["action"] == "stop"
+        else:
+            assert "lag_backstop" not in err and manifest["ended"] == "clean" and manifest["summary"]["stalls"] == 1, (err, manifest)
+            assert {"wait", "lag_jump"} <= set(latest_event(state, "stall")["kinds"])
+    segments = sorted(state.glob("journal.*.jsonl"), key=lambda p: tick_rows(p)[0]["tick"])
+    assert len(segments) == 4 and len(journal_events(state, "lag_backstop")) == 3
+    for path in segments:
+        rows = tick_rows(path)
+        assert [row["lag_us"] for row in rows[:2]] == [0, 0], "each resume starts on a fresh epoch, not 31 s behind"
+
+    journal = tmp_path / "j.jsonl"
+    code, err = stalled_run(["--diode-dir", str(tmp_path / "bare"), "--journal", str(journal), "--slug", "alpha", "--cycles", "5", *flags], 31)
+    assert code == 0 and "[console] lag_backstop lag_s=31 consecutive=1\n" in err, (code, err[-800:])
+    (event,) = journal_events(journal, "lag_backstop")
+    assert event["action"] == "rebase" and event["lag_s"] == 31, event
+    assert [row["lag_us"] for row in tick_rows(journal)] == [0] * 5, "after the rebase the run is on schedule"
+    manifest = latest_event(journal, "manifest")
+    assert manifest["summary"]["backstops"] == 1 and manifest["summary"]["stalls"] == 1, manifest
+    with console.read_record(journal) as record:
+        assert console.segment_summaries(record, 20_000)[manifest["boot_id"]] == manifest["summary"]
+
+
+def test_the_telemetry_ring_at_3000_slots_is_kept_in_memory_and_rescanned_only_at_boot_after_a_repair_every_n_ticks_or_when_replaced(tmp_path, monkeypatch):
+    """#23 acceptance 21 (John: about five minutes of history, 3,000 frames; design §7).
+
+    `ring_frames()` listed the whole `telemetry/` directory four times per window per cycle — about
+    120,000 entries per cycle at 3,000 slots and ten windows. The held list is now a cache on the
+    `Window`, independent of the per-cycle handles: one scan on a segment's first cycle, then a push and
+    a prune by name per frame, `held` and `losses` from the cache. It is rescanned on a reconcile every
+    `N` ticks (so an agent's deletions show within a mission second), when the opened directory's
+    identity differs from the last cycle's (an agent replaced `telemetry/`), and after a repair — and
+    never on an ordinary cycle. Here `k = 1`, `N = 5`.
+    """
+    _checkpoint, console, _plant, world = checkpoint_tools()
+    diode = tmp_path / "diode"
+    executive = console.Executive(world, diode, phase="translunar_coast", checkpoint_every=5)
+    window = executive.attach("alpha", ring_slots=3000)
+    telemetry = diode / "alpha" / "telemetry"
+    for n in range(3000):  # a full ring, as a long-running world leaves one
+        (telemetry / f"{n:03d}.json").write_text("{}")
+    window.seq = 3000
+    scans: list[int] = []
+    real = console.Window.ring_frames
+
+    def counted(self):
+        scans.append(self.executive.tick)
+        return real(self)
+
+    monkeypatch.setattr(console.Window, "ring_frames", counted)
+
+    def ring() -> dict:
+        return json.loads((diode / "alpha" / "state.json").read_text())["ring"]
+
+    def on_disk() -> list[int]:
+        return sorted(int(p.stem) for p in telemetry.glob("*.json"))
+
+    def consistent() -> None:
+        held = ring()
+        assert held["held"] == len(on_disk()) and held["held"] + held["losses"] == window.seq, (held, len(on_disk()), window.seq)
+
+    executive.cycle()  # tick 1: a segment's first cycle scans once
+    assert scans == [1] and on_disk() == list(range(1, 3001)) and ring() == {"slots": 3000, "held": 3000, "losses": 1, "newest_seq": 3000}
+    for _ in range(2):
+        executive.cycle()
+    assert scans == [1], "ordinary cycles do not rescan"
+    assert on_disk() == list(range(3, 3003)) and ring()["held"] == 3000 and ring()["losses"] == 3
+    for n in range(3, 13):  # the agent deletes ten frames after tick 3
+        (telemetry / f"{n:03d}.json").unlink()
+    executive.cycle()
+    executive.cycle()  # ticks 4 and 5: the cache does not know yet, and nothing rescans
+    assert scans == [1]
+    executive.cycle()  # tick 6: the cycle after the one that crossed N = 5 reconciles
+    assert scans == [1, 6]
+    consistent()
+    telemetry.rename(diode / "alpha" / "telemetry.old")  # the agent replaces the directory
+    telemetry.mkdir()
+    executive.cycle()  # tick 7: another directory than tick 6's
+    assert scans == [1, 6, 7] and on_disk() == [window.seq - 1]
+    consistent()
+    executive.cycle()
+    assert scans == [1, 6, 7]
+    shutil.rmtree(telemetry)
+    executive.cycle()  # tick 9: the window is absent, repaired, and skipped
+    executive.cycle()  # tick 10: the cycle after the repair rescans
+    assert scans == [1, 6, 7, 10], scans
+    consistent()
+    executive.close()
+
+
+# ---- #23, candidate 1: the review round's tests ------------------------------------------------------
+
+
+def test_a_frame_the_ring_cannot_delete_is_kept_recorded_and_counted_and_the_next_cycle_prunes_it(tmp_path, monkeypatch):
+    """Candidate 1 (Codex P2): the ring forgets a frame only once its `unlink` succeeded, or found it gone.
+
+    The cache dropped the oldest entry before deleting it, so a deletion that failed (`EIO`, `EACCES`)
+    left the frame on disk and out of the cache: every later cycle pruned a newer frame in its place,
+    and `held` and `losses` were wrong until the next reconcile. Now any failure but `ENOENT` drops the
+    cache and is recorded as the window's `prune` failure, and the publication goes on (candidate 2,
+    systems P3): its mirror counts what a rescan finds on disk, frame 0 included, and the next cycle prunes
+    it. A ring of three, `k = 1`; the deletion of frame 0 fails once at tick 4.
+    """
+    _checkpoint, console, _plant, world = checkpoint_tools()
+    diode = tmp_path / "diode"
+    executive = console.Executive(world, diode, phase="translunar_coast")
+    window = executive.attach("alpha", ring_slots=3)
+    telemetry = diode / "alpha" / "telemetry"
+    for _ in range(3):
+        executive.cycle()
+    assert sorted(int(p.stem) for p in telemetry.glob("*.json")) == [0, 1, 2]
+    scans: list[int] = []
+    real_frames = console.Window.ring_frames
+
+    def counted(self):
+        scans.append(self.executive.tick)
+        return real_frames(self)
+
+    monkeypatch.setattr(console.Window, "ring_frames", counted)
+    real_unlink = os.unlink
+
+    def failing(path, *args, dir_fd=None, **kwargs):
+        if path == "000.json" and dir_fd is not None:
+            raise OSError(errno.EIO, os.strerror(errno.EIO), path)
+        return real_unlink(path, *args, dir_fd=dir_fd, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "unlink", failing)
+        executive.cycle()  # tick 4: frame 3 written; frame 0 cannot be deleted
+    assert executive.failures[-1]["stage"] == "prune" and executive.failures[-1]["tick"] == 3, executive.failures[-1]
+    assert sorted(int(p.stem) for p in telemetry.glob("*.json")) == [0, 1, 2, 3]
+    assert scans == [4], "the cache was dropped, and the mirror's count is a rescan, not a prune around frame 0"
+    ring = json.loads((diode / "alpha" / "state.json").read_text())["ring"]
+    assert (ring["held"], ring["losses"], window.seq) == (4, 0, 4), (ring, window.seq)
+    assert json.loads((diode / "alpha" / "pending.json").read_text())["ring_losses"] == 0
+    executive.cycle()  # tick 5: the cache holds frame 0 again, and the prune now deletes it with frame 1
+    assert scans == [4]
+    assert sorted(int(p.stem) for p in telemetry.glob("*.json")) == [2, 3, 4]
+    ring = json.loads((diode / "alpha" / "state.json").read_text())["ring"]
+    assert (ring["held"], ring["losses"], window.seq) == (3, 2, 5), (ring, window.seq)
+    executive.close()
+
+
+def test_a_backstop_whose_event_the_record_cannot_take_is_a_named_refusal_and_never_a_traceback(tmp_path, monkeypatch, capsys):
+    """Candidate 1 (Codex P2): the `lag_backstop` event is journaled outside the loop's refusal handlers, and is guarded.
+
+    An append that fails and is cut back is advisory (`journal_event`): the backstop still ends cleanly
+    with exit 4, its manifest written. One that fails and *cannot* be cut back (`RecordUnwritable`, J2)
+    leaves the record unwritable, so the clean end cannot follow it; it was a traceback out of `main`,
+    and is now the named refusal, exit 3, naming the tick the run reached.
+    """
+    _checkpoint, console, _plant, _world = checkpoint_tools()
+    flags = ("--multiplier", "1", "--cycle-ticks", "1", "--checkpoint-ticks", "50")
+    real_append = console.append_journal_line
+
+    def run(name: str, failure: BaseException) -> tuple[int, str, Path]:
+        clock = InjectedClock()
+        real_claim, claims = console.Window.claim, [0]
+
+        def claim(self):
+            claims[0] += 1
+            if claims[0] == 2:
+                clock.stall(31_000_000_000)
+            return real_claim(self)
+
+        def append(path, row, *, dir_fd=None):
+            if row.get("event") == "lag_backstop":
+                raise failure
+            return real_append(path, row, dir_fd=dir_fd)
+
+        state = tmp_path / name / "state"
+        argv = ["--diode-dir", str(tmp_path / name / "diode"), "--state-dir", str(state), "--slug", "alpha", "--cycles", "5", *flags]
+        capsys.readouterr()
+        with monkeypatch.context() as patch:
+            patch.setattr(console.Window, "claim", claim)
+            patch.setattr(console, "append_journal_line", append)
+            code = console.main(argv, pacer=clock.pacer(console))
+        return code, capsys.readouterr().err, state
+
+    code, err, state = run("rolled-back", OSError(errno.ENOSPC, os.strerror(errno.ENOSPC)))
+    assert code == 4 and "[console] lag_backstop lag_s=31 consecutive=1\n" in err and "Traceback" not in err, (code, err[-800:])
+    manifest = latest_event(state, "manifest")
+    assert journal_events(state, "lag_backstop") == [] and manifest["ended"] == "lag_backstop" and manifest["summary"]["backstops"] == 1
+    # The event was lost and the manifest counted it: a reader of the record takes the manifest's count (candidate 2).
+    with console.read_record(state) as record:
+        assert console.segment_summaries(record, 20_000)[manifest["boot_id"]] == manifest["summary"]
+    code, err, state = run("unwritable", console.RecordUnwritable("the append could not be cut back to where it began"))
+    assert code == 3 and "stopped at tick 2" in err and "could not be cut back" in err and "Traceback" not in err, (code, err[-800:])
+    assert journal_events(state, "manifest") == [], "no clean end follows a record that cannot be restored"
+
+
+def test_a_cycles_interior_rows_repeat_its_first_rows_receipt_counter_and_lag_and_the_reader_refuses_one_that_does_not(tmp_path):
+    """Candidate 1 (Codex P2): the row invariant includes the counter and the lag, and the reader holds rows 2..k to them.
+
+    A cycle draws its receipts before its first step and has one start, so its rows 2..k repeat its
+    first row's `receipt` counter and `lag_us`. Replay refused only a counter that went *back*, so a
+    re-chained interior suffix with a raised counter — a number no verdict was issued — was replayed
+    and restored. Each mutation is re-chained (`rewrite_record`), as a forger with the state directory
+    could, so it is the invariant, not the chain, that refuses it; the untouched copy reads.
+    """
+    _checkpoint, console, _plant, world = checkpoint_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = console.Executive(world, diode, phase="translunar_coast", state_dir=state, cycle_ticks=5, checkpoint_every=50)
+    executive.attach("alpha")
+    submit(diode / "alpha", ["zzz_counted"])
+    executive.cycle()
+    executive.cycle()
+    executive.close()
+    segment = executive.journal
+    assert {row["receipt"] for row in tick_rows(segment)} == {1}
+    with console.read_record(rewrite_record(console, segment, tmp_path / "untouched").parent):
+        pass
+    for name, key in (("counter", "receipt"), ("lag", "lag_us")):
+
+        def raised(row, key=key):
+            if "event" not in row and row["tick"] >= 7:
+                row[key] += 1
+
+        where = rewrite_record(console, segment, tmp_path / name, raised).parent
+        with pytest.raises(console.RecordRefused) as refused:
+            console.read_record(where)
+        assert refused.value.check == "row" and refused.value.tick == 7, refused.value
+        assert "a cycle has one counter and one start" in str(refused.value), refused.value
+
+
+def test_a_record_that_takes_a_cycles_first_row_and_not_the_rest_stops_at_that_rows_tick(tmp_path, monkeypatch, capsys):
+    """Candidate 1 (Codex P3, systems P3): after a durable write-ahead row, a failed append of rows 2..k commits row 1.
+
+    The write-ahead row is durable and recovery reaches its tick, but the failure of the group append
+    after it skipped the commit, so the run stopped naming the cycle's start tick — one behind what the
+    record holds. Now the durable prefix is committed before the failure goes on: in process the
+    executive stands at row 1's tick with its lineage, and through `main` the run stops naming it.
+    """
+    _checkpoint, console, _plant, world = checkpoint_tools()
+    real = console.append_or_restore
+
+    def rows_fail(marker: bytes):
+        def append(fd, data, name):
+            if marker in data:
+                raise console.RecordUnwritable("an append to the record failed and could not be cut back to where it began")
+            return real(fd, data, name)
+
+        return append
+
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = console.Executive(world, diode, phase="translunar_coast", state_dir=state, cycle_ticks=5, checkpoint_every=50)
+    executive.attach("alpha")
+    executive.cycle()
+    submit(diode / "alpha", ["zzz_on_the_cycle"])
+    with monkeypatch.context() as patch:
+        patch.setattr(console, "append_or_restore", rows_fail(b'"tick":7,'))
+        with pytest.raises(console.RecordUnwritable):
+            executive.cycle()
+    rows = tick_rows(executive.journal)
+    assert [row["tick"] for row in rows] == list(range(1, 7))
+    assert executive.tick == 6 and executive.lineage_head == rows[-1]["lineage"], (executive.tick, rows[-1]["tick"])
+    assert results_of(diode / "alpha") == []
+    executive.close()
+
+    entry = tmp_path / "entry"
+    (entry / "alpha").mkdir(parents=True)
+    submit(entry / "alpha", ["zzz_on_the_first_cycle"])
+    capsys.readouterr()
+    with monkeypatch.context() as patch:
+        patch.setattr(console, "append_or_restore", rows_fail(b'"tick":2,'))
+        code = console.main(
+            ["--diode-dir", str(entry), "--state-dir", str(tmp_path / "entry-state"), "--slug", "alpha", "--cycles", "2",
+             "--multiplier", "10", "--cycle-ticks", "5", "--checkpoint-ticks", "50"]
+        )
+    err = capsys.readouterr().err
+    assert code == 3 and "stopped at tick 1" in err and "Traceback" not in err, (code, err[-800:])
+
+
+SECOND_SIGNAL = """
+import signal, sys, time
+sys.path.insert(0, sys.argv[1])
+import console
+which = getattr(signal, sys.argv[2])
+pacer = console.Pacer()
+signal.signal(which, pacer.stop)
+signal.raise_signal(which)
+time.sleep(0.05)
+print("first", pacer.stopping, pacer.signal == which, flush=True)
+if sys.argv[3:] == ["full-stderr"]:
+    # fd 2 becomes a pipe nobody reads, filled until a write would block: the exit must not wait on it.
+    import os
+    read_end, write_end = os.pipe()
+    os.dup2(write_end, 2)
+    os.set_blocking(2, False)
+    try:
+        while True:
+            os.write(2, b"x" * 4096)
+    except BlockingIOError:
+        pass
+    os.set_blocking(2, True)
+    print("stderr full", flush=True)
+try:
+    signal.raise_signal(which)
+    time.sleep(0.05)
+    print("second ignored", flush=True)
+except KeyboardInterrupt:
+    print("second interrupts", signal.getsignal(which) is signal.default_int_handler, flush=True)
+"""
+
+
+def test_a_second_stop_signal_ends_the_process_now_even_when_stderr_cannot_be_written(tmp_path):
+    """Candidate 1 (systems P3): the first `SIGINT` or `SIGTERM` asks for a stop at a boundary; a second stops it now.
+
+    A slow stop that is still making progress — a long replay, a slow clean end — can outlast an
+    operator's patience; one who asks twice means it. The second `SIGINT` is the `KeyboardInterrupt` it
+    always was, and the second `SIGTERM` ends the process with exit 143 and a line naming it — by an
+    explicit exit, because in the one-executive container the console is PID 1 of its namespace and the
+    kernel would ignore a restored default (candidate 2, Codex P2). The line is best-effort: with
+    stderr a full pipe nobody reads, the exit is still 143 and does not wait on it (candidate 2
+    confirmation, Codex P2) — the run's timeout is what would catch a blocking write. Each in a process
+    of its own.
+    """
+    script = tmp_path / "second.py"
+    script.write_text(SECOND_SIGNAL)
+    interrupted = subprocess.run([sys.executable, str(script), str(VEHICLE / "tools"), "SIGINT"], capture_output=True, text=True, timeout=60)
+    assert "first True True" in interrupted.stdout and "second interrupts True" in interrupted.stdout, (interrupted.stdout, interrupted.stderr)
+    terminated = subprocess.run([sys.executable, str(script), str(VEHICLE / "tools"), "SIGTERM"], capture_output=True, text=True, timeout=60)
+    assert "first True True" in terminated.stdout and "second" not in terminated.stdout, (terminated.stdout, terminated.stderr)
+    # An explicit exit, not the default action, which the kernel never applies to a namespace's PID 1 (candidate 2).
+    assert terminated.returncode == 128 + signal_number("SIGTERM") == 143, terminated.returncode
+    assert "[console] a second SIGTERM: stopping now, without a clean end" in terminated.stderr, terminated.stderr
+    blocked = subprocess.run([sys.executable, str(script), str(VEHICLE / "tools"), "SIGTERM", "full-stderr"], capture_output=True, text=True, timeout=60)
+    assert "stderr full" in blocked.stdout and "second" not in blocked.stdout, (blocked.stdout, blocked.stderr)
+    assert blocked.returncode == 143, blocked.returncode
+
+
+def signal_number(name: str) -> int:
+    import signal
+
+    return int(getattr(signal, name))
+
+
+def test_a_boot_that_backstops_in_its_first_wait_leaves_a_header_only_segment_its_manifest_belongs_to(tmp_path, monkeypatch, capsys):
+    """Candidate 2 (Codex P3): a boot that ends cleanly having run no cycle still has a segment.
+
+    A boot's segment header is written with its first cycle's rows, so a backstop in the first wait — or
+    a stop before the first cycle — ended a boot that journaled a manifest no segment held, and a reader
+    of the record never saw it. The clean end now writes the boot's header first (`open_segment`): a
+    header-only segment, which the record already has for a boot whose first cycle was torn, so no rule
+    is added. Its reader summary is its manifest's — no cycle, one stall, one backstop — and the next
+    boot continues from it.
+    """
+    _checkpoint, console, _plant, _world = checkpoint_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    flags = ("--multiplier", "1", "--cycle-ticks", "1", "--checkpoint-ticks", "50")
+    argv = ["--diode-dir", str(diode), "--state-dir", str(state), "--slug", "alpha", "--cycles", "2", *flags]
+    clock = InjectedClock()
+    clock.stall(31_000_000_000)  # the very first wait returns 31 s late
+    capsys.readouterr()
+    assert console.main(argv, pacer=clock.pacer(console)) == 4
+    assert "[console] lag_backstop lag_s=31 consecutive=1\n" in capsys.readouterr().err
+    manifest = latest_event(state, "manifest")
+    assert manifest["summary"]["cycles"] == 0 and manifest["last_cycle_us"] is None, manifest
+    with console.read_record(state) as record:
+        (segment,) = console.concatenated(record.segments)
+        assert (segment.boot_id, segment.rows, segment.first_tick) == (manifest["boot_id"], 0, 0)
+        summary = console.segment_summaries(record, 20_000)[manifest["boot_id"]]
+    assert summary == manifest["summary"] and (summary["stalls"], summary["backstops"]) == (1, 1), summary
+    assert console.main(argv, pacer=InjectedClock().pacer(console)) == 0
+    with console.read_record(state) as record:
+        first, second = console.concatenated(record.segments)
+        assert first.boot_id == manifest["boot_id"] and second.previous == first.boot_id and second.last_tick == 2

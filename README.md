@@ -64,7 +64,7 @@ python3 tools/faults.py --list                              # every fault, its k
 
 # the vehicle's side of the frozen window, and the operator side's instrument against it
 python3 tools/console.py --diode-dir .scratch/diode --slug alpha --slug bravo --init
-python3 tools/console.py --diode-dir .scratch/diode --slug alpha --slug bravo --cycles 300 --poll 0.2
+python3 tools/console.py --diode-dir .scratch/diode --slug alpha --slug bravo --cycles 300 --multiplier 0.1 --cycle-ticks 1 --checkpoint-ticks 50
 # ... and from a *space_chassis* checkout, where the probe lives:
 #   python3 contract/diode_probe.py --diode-dir docs/deep_research/vehicle/.scratch/diode \
 #       --slug alpha --poll-seconds 1
@@ -19478,6 +19478,87 @@ older take is never evidence. Failing both, the map is unknown, as before (ADR 0
 | figure | before | after |
 |---|---:|---:|
 | referee tests | 528 | **537** |
+
+## The vehicle had no clock, and a cycle is now `k` ticks of one (#23, WP08 child 5)
+
+**What was wrong.** `tools/console.py` stepped one tick per cycle and slept `--poll` wall seconds
+between cycles, so mission time ran at whatever rate the poll and the cycle's cost made it — `m =
+dt / poll`, 0.004 in the deployed compose — and no lag was measured anywhere. ADR 0002 answered A
+(A2, `m = 1`, a 30 s ceiling, burst `k`), B (B2, `k = 5`) and J (`N = tick_hz`) on 2026-10-09; this
+round is the seam those answers name.
+
+**The clock** (ADR 0002 (xlvi)). Three run inputs, required with no default on a fresh serving start
+and inherited by a restart: `--multiplier M` (`m`, an exact fraction), `--cycle-ticks K` (`k`) and
+`--checkpoint-ticks N` (`N`, a multiple of `k`); a start that names none refuses with exit 3, naming
+each missing input. Tick `t` is due at `E + (t − t0)·dt/m` on CLOCK_MONOTONIC from the segment's epoch,
+in integer nanoseconds. **A cycle never runs ahead** (John): it starts when its last tick is due, or at
+once when it is behind, so a late scheduler runs whole cycles back to back. `k·dt/m` is held to
+`[1 ms, 60 s]` and `k` to `tick_hz / 10 Hz` (the highest channel rate). Neither `m` nor `k` is published.
+
+**The cycle.** One claim, `k` steps, one publication: effects at `offset_us = 0` of the first tick,
+the effect report and the dwell clock against that first step, as replay computes them; frames exactly
+`k` ticks apart within a segment. A deferral is due at the next cycle's start. The window order rotates
+by cycle, so ten windows at `k = 5` each go first once in ten cycles (by tick, only two ever would).
+`HELP.md` and `README.md` are rewritten every `N` ticks (John), in the cycle after the checkpoint's;
+the telemetry ring is a cache on the window, rescanned only then, at boot, after a repair or when
+`telemetry/` is replaced — never every cycle (at 3,000 slots, ten windows, that was 120,000 directory
+entries a cycle) — and a frame leaves the cache only once it is deleted.
+
+**The record is v3 and the checkpoint v3.** The segment header carries `m`, `k`, `N`; every row its
+cycle's start lag; a cycle's first row its receipts and deltas and the previous cycle's cost; only its
+last row the marks; rows 2..k repeat the first's receipt counter and lag, and the reader refuses one that
+does not. A cycle with something to record writes its first row ahead and `fsync`s it before stepping
+on, and a failure after that row commits exactly it. The readers accumulate a cycle's receipts from its
+first row to its notes. The checkpoint's
+`clock` is filled and validated, and its segment entries mirror `m`, `k`, `N`.
+
+**Lag, stalls, the backstop, stopping.** The clean end's manifest (C1's) summarises the segment: start
+lag and cost p50/p95/p99/max, missed (lag past `dt/m`), overran (cost past `k·dt/m`), stalls and
+backstops; a reader of the record computes the same — the last cycle's cost and the counts taken from
+the manifest, which is authoritative; a crashed segment's counts are its journaled `stall` and
+`lag_backstop` events, marked a lower bound, and its last cost unknown. A boot that ends cleanly without
+a cycle writes a header-only segment first, so every manifest has a segment. A sleep a second late,
+or a lag jumping by a second, is a `stall`. Past 30 s of lag the segment ends cleanly with exit **4**
+and `[console] lag_backstop lag_s=<n> consecutive=<n>` (John's interim backstop until #26), or, with no
+state directory, rebases its epoch. `SIGTERM` and `SIGINT` finish the cycle they land in and end cleanly;
+a second `SIGINT` is a `KeyboardInterrupt`, and a second `SIGTERM` exits 143 at once — explicitly, since
+the console is PID 1 in its container and the kernel would ignore a restored default.
+
+**What the round decided where the design was silent**, each in the implementation log: the checkpoint
+format moves to v3 (its reader checks shape before engine identity, so a v2 checkpoint would otherwise
+read as corrupt and be fallen back from); the in-process `Executive` defaults are `m = 1`, `k = 1`,
+`N = tick_hz` — the test seam, as `checkpoint_every` was; a first row and the others are two exact
+key sets; a resume's named change is journaled as `run_inputs["m"|"k"|"N"]`.
+
+**Review.** Candidate 0 had three independent reviews (Codex, systems, determinism): no P1; candidate 1
+answers their P2s and P3s (the ring's failed deletion, the backstop's journal write, the row invariant's
+counter and lag, the crashed-segment summary, `measure_clock`'s combined case, samples, margin and
+roots, three tests that did not establish their claims, the interrupt harness's timing, the suffix
+append's tick, the second signal), each with a test. Candidate 2 answers candidate 1's (determinism and
+systems approved; Codex asked for a second `SIGTERM` that works for PID 1, the manifest's counts as
+authoritative, the design's worst-cycle feasibility rule over the realistic cases, and zero-cycle boots
+in the record).
+
+**Qualification.** The tests were written first; they compile and are lint-clean, and **none has been run**:
+nothing of this round has been executed, and every run waits on a Governance slot (the `measure_clock`
+run of design §8 on the deployment's volume images, a bounded selection, then the full gate). The
+chassis's half (design §7: the compose values, `serve_vehicle.sh`, the probe's deadlines, the operator's
+view of exit 4) is the chassis's, after this merges.
+
+| finding (who) | what `7a87eb8` did | what it does now | the test that holds it |
+|---|---|---|---|
+| no mission clock; `--poll` set `m` by accident (ADR 0002 A, B) | one tick per cycle, `time.sleep(poll)` | `k` ticks per cycle on a due-time scheduler that never runs ahead | acceptance 1, 3 |
+| `m`, `k`, `N` not run inputs (ADR 0002 G, J) | `N` from `tick_hz`, no `m`, no `k` | three flags, required, inherited, journaled when changed | acceptance 5–8, 12 |
+| the receipts and notes of a `k`-row cycle would not read back (r1 P1) | receipts reset at every row | per-cycle accumulation from the header's `k` | acceptance 9, 16 |
+| dwell computed after `k` steps diverges from replay (r1 P1-B) | (one step) | dwell against the first step | acceptance 13, 15 |
+| the rotation collapses when `gcd(n, k) > 1` (r1 P1-2) | `tick % n` | `(tick // k) % n` | acceptance 17 |
+| overload unbounded until #26 (r1 P1-1) | (no clock) | the 30 s backstop, exit 4, and named stalls | acceptance 20 |
+| `SIGTERM` mid-cycle lost the batch (r1 P2-2) | `KeyboardInterrupt` mid-cycle; `SIGTERM` killed | the cycle completes, then a clean end | acceptance 19 and the adapted interrupt test |
+| static files and ring scans every cycle (John; r2 N1) | 85 KB and four listings per window per cycle | every `N` ticks; a cached ring | acceptance 11, 21 |
+
+| figure | before | after |
+|---|---:|---:|
+| referee tests | 537 | **564** |
 
 ## The invariants, and which of them are enforced
 
