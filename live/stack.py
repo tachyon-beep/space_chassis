@@ -10,8 +10,16 @@ The model key is a dummy. Compose lets the shell's environment beat --env-file, 
 call here runs with an allowlisted environment: whatever the operator's shell exports, no key and
 no upstream reaches the smoke recorders.
 
+It builds and runs its own image tag, SMOKE_IMAGE, so the operator's `space-chassis-agent` is never
+rebuilt from a working tree, and it puts back whatever console seed the operator's prepare_host.sh
+left (the build needs one from .env.example). The scratch directories are plain host directories
+the containers write as uid 1000, the image's agent: on a host whose user is another uid, the first
+symptom is the 60-second wait for a cue that is never claimed.
+
 start() prepares, builds and brings the stack up, and tears it down if any of that fails. down()
-is idempotent and also registered with atexit, so an interrupted run still cleans up.
+is idempotent and also registered with atexit, and it marks itself done only once compose has
+returned, so a teardown interrupted by a second Ctrl-C is retried at exit. Every docker call has a
+timeout, so a wedged daemon fails a test instead of hanging the suite.
 """
 
 from __future__ import annotations
@@ -31,6 +39,10 @@ sys.path.insert(0, str(REPO / "scripts"))
 import volume_images  # noqa: E402
 
 ALLOWED_VARIABLES = ("PATH", "HOME", "USER", "LANG", "XDG_RUNTIME_DIR")
+SMOKE_IMAGE = "space-chassis-agent:smoke"
+CONSOLE_SEED = REPO / "llm_console_seed.json"
+DOCKER_TIMEOUT_SECONDS = 120
+BUILD_TIMEOUT_SECONDS = 3600
 STUB_PORT = 8199
 DUMMY_KEY = "sk-smoke-dummy"
 
@@ -113,7 +125,7 @@ class SmokeStack:
         lines = [
             "services:",
             "  stub:",
-            "    image: space-chassis-agent",
+            f"    image: {SMOKE_IMAGE}",
             '    entrypoint: ["python", "/opt/live/stub_llm.py"]',
             "    environment:",
             f'      VERIFY_STUB_PORT: "{STUB_PORT}"',
@@ -129,13 +141,15 @@ class SmokeStack:
             '    security_opt: ["no-new-privileges:true"]',
         ]
         for n in range(1, self.agents + 1):
-            lines += [f"  recorder_{n}:", "    depends_on: [stub]"]
+            lines += [f"  agent_{n}:", f"    image: {SMOKE_IMAGE}"]
+            lines += [f"  recorder_{n}:", f"    image: {SMOKE_IMAGE}", "    depends_on: [stub]"]
             overrides = self.recorder_overrides.get(n)
             if overrides:
                 lines.append("    environment:")
                 lines += [f'      {key}: "{value}"' for key, value in overrides.items()]
         lines += [
             "  diode:",
+            f"    image: {SMOKE_IMAGE}",
             '    entrypoint: ["python", "/opt/fake/fake_diode.py"]',
             "    environment:",
             f"      AGENT_SLUGS: {','.join(self.slugs)}",
@@ -166,7 +180,14 @@ class SmokeStack:
             *args,
         ]
 
-    def run(self, argv: list[str], *, check: bool = True, stdin: str | None = None):
+    def run(
+        self,
+        argv: list[str],
+        *,
+        check: bool = True,
+        stdin: str | None = None,
+        timeout: float = DOCKER_TIMEOUT_SECONDS,
+    ):
         return self._runner(
             argv,
             cwd=str(REPO),
@@ -175,21 +196,35 @@ class SmokeStack:
             capture_output=True,
             text=True,
             check=check,
+            timeout=timeout,
         )
 
-    def compose(self, *args: str, check: bool = True, stdin: str | None = None):
-        return self.run(self.compose_command(*args), check=check, stdin=stdin)
+    def compose(
+        self,
+        *args: str,
+        check: bool = True,
+        stdin: str | None = None,
+        timeout: float = DOCKER_TIMEOUT_SECONDS,
+    ):
+        return self.run(self.compose_command(*args), check=check, stdin=stdin, timeout=timeout)
 
     def build(self) -> None:
-        self.run(
-            [
-                sys.executable,
-                str(REPO / "scripts" / "build_console_seed.py"),
-                "--source",
-                ".env.example",
-            ]
-        )
-        self.compose("build", "agent_1")
+        kept = CONSOLE_SEED.read_bytes() if CONSOLE_SEED.exists() else None
+        try:
+            self.run(
+                [
+                    sys.executable,
+                    str(REPO / "scripts" / "build_console_seed.py"),
+                    "--source",
+                    ".env.example",
+                ]
+            )
+            self.compose("build", "agent_1", timeout=BUILD_TIMEOUT_SECONDS)
+        finally:
+            if kept is None:
+                CONSOLE_SEED.unlink(missing_ok=True)
+            else:
+                CONSOLE_SEED.write_bytes(kept)
 
     def up(self) -> None:
         services = ["stub"]
@@ -244,7 +279,7 @@ class SmokeStack:
     def down(self) -> None:
         if self._torn_down:
             return
-        self._torn_down = True
         if (self.root / "override.yml").exists():
             self.compose("down", "-v", "--remove-orphans", "--timeout", "5", check=False)
+        self._torn_down = True
         shutil.rmtree(self.root, ignore_errors=True)

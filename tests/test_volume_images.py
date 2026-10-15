@@ -351,6 +351,7 @@ def test_the_monitor_writes_operator_telemetry_and_reads_every_agent_s_record() 
         (_source("telemetry", 2), f"/telemetry/agents/{_slug(2)}", True),
         (_source("transcripts", 1), f"/transcripts/{_slug(1)}", True),
         (_source("transcripts", 2), f"/transcripts/{_slug(2)}", True),
+        (_source("diode"), "/diode", True),
         (_source("operator_telemetry"), "/telemetry", False),
     ]
     review = volume_images.mounts_for("review", None, 2)
@@ -367,9 +368,13 @@ def test_the_shared_window_is_bound_whole_only_by_the_window_services_and_by_sub
         assert windows == [
             (_source("diode", subpath=f"/{_slug(index)}"), f"/diode/{_slug(index)}", False)
         ]
-    for role in ("recorder", "monitor", "review"):
+    for role in ("recorder", "review"):
         index = 1 if role == "recorder" else None
         assert not any("diode" in m[0] for m in volume_images.mounts_for(role, index, 10))
+    # The monitor counts the vehicle's result files, and only reads them.
+    assert [m for m in volume_images.mounts_for("monitor", None, 10) if "diode" in m[0]] == [
+        (_source("diode"), "/diode", True)
+    ]
 
 
 def test_mounts_for_emits_placeholders_not_resolved_paths(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -29,13 +29,20 @@ case "$*" in
         printf 'services:\n  recorder_1:\n    environment:\n      OPENROUTER_API_KEY: %s\n' "$SENTINEL"
         exit 0 ;;
     *" ps --format"*)
-        printf 'agent_1\nagent_2\nrecorder_1\nrecorder_2\n'; exit 0 ;;
+        printf '%b' "${SERVICES-agent_1\nagent_2\nrecorder_1\nrecorder_2\n}"; exit 0 ;;
     *" ps -q "*)
         for last in "$@"; do :; done
+        case " ${ABSENT:-} " in *" $last "*) exit 0 ;; esac
         printf 'cid-%s\n' "$last"; exit 0 ;;
     *" exec "*" tar "*)
         [ -n "${TAR_CONTENT:-}" ] || exit 1
-        printf '%s' "$TAR_CONTENT"; exit 0 ;;
+        printf '%s' "$TAR_CONTENT"
+        # A whole archive ends in two zero blocks; a stream cut off mid-way does not.
+        [ -n "${TAR_TRUNCATED:-}" ] || head -c 1024 /dev/zero
+        exit 0 ;;
+    *" exec "*getent*)
+        [ -n "${GETENT_RC:-}" ] || exit 1
+        echo "rc=$GETENT_RC"; exit 0 ;;
 esac
 exit 1
 """
@@ -142,3 +149,29 @@ def test_the_script_takes_its_compose_command_and_agents_from_the_environment(ru
 def test_without_agents_it_checks_every_running_agent(run):
     run(COMPOSE="docker compose -p probe")
     assert run.exec_targets() == {"agent_1", "agent_2", "review"}
+
+
+def test_a_run_that_checked_no_agent_is_not_a_success(run):
+    result = run(COMPOSE="docker compose -p probe", SERVICES="recorder_1\\n")
+    assert result.returncode == 2
+    assert "no agent" in result.stdout + result.stderr
+    result = run(COMPOSE="docker compose -p probe", AGENTS="agent_9", ABSENT="agent_9")
+    assert result.returncode == 2
+
+
+def test_a_truncated_archive_is_not_a_clean_search(run):
+    result = run(
+        COMPOSE="docker compose -p probe",
+        AGENTS="agent_1",
+        TAR_CONTENT="file bytes",
+        TAR_TRUNCATED="1",
+    )
+    assert "FAIL  agent_1 could not be searched for its recorder's real key" in result.stdout
+
+
+def test_a_resolver_probe_that_is_missing_its_binary_is_a_failure(run):
+    result = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", GETENT_RC="127")
+    assert "PASS  agent_1 cannot resolve outside names" not in result.stdout
+    assert "FAIL  agent_1 could not be probed for name resolution" in result.stdout
+    result = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", GETENT_RC="2")
+    assert "PASS  agent_1 cannot resolve outside names" in result.stdout

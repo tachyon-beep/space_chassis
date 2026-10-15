@@ -131,7 +131,11 @@ KINDS: tuple[Kind, ...] = (
         "2G",
         "SPACE_DIODE_SIZE",
         SHARED,
-        (("agent", "/diode/{slug}", False, "{slug}"), ("window", "/diode", False, "")),
+        (
+            ("agent", "/diode/{slug}", False, "{slug}"),
+            ("window", "/diode", False, ""),
+            ("monitor", "/diode", True, ""),
+        ),
     ),
     Kind(
         "fleet_ledger",

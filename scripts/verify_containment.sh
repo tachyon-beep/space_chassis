@@ -63,8 +63,8 @@ verdict() {
 }
 
 # Search stdin (a tar stream of an agent's files) for the recorder's credentials. The key is read
-# here, on the host, from `docker inspect`; it is never in this shell. Exit 0 found, 1 searched and
-# clean, 2 nothing to search or no key to search for.
+# here, on the host, from `docker inspect`; it is never in this shell. Exit 0 found, 1 searched a
+# whole archive and clean, 2 nothing (or not all of it) to search, or no key to search for.
 search_for_key() {
     python3 -c '
 import subprocess, sys
@@ -80,14 +80,16 @@ for line in env.splitlines():
 if not keys:
     sys.exit(2)
 keep = max(map(len, keys)) - 1
-tail, total = b"", 0
+tail, last, total = b"", b"", 0
 while chunk := sys.stdin.buffer.read(1 << 20):
     total += len(chunk)
     window = tail + chunk
     if any(key in window for key in keys):
         sys.exit(0)
     tail = window[-keep:] if keep else b""
-sys.exit(1 if total else 2)
+    last = (last + chunk)[-1024:]
+# A whole archive ends in two zero blocks; a stream cut off mid-way has not been searched.
+sys.exit(1 if total and last == bytes(1024) else 2)
 ' "$1"
 }
 
@@ -96,6 +98,7 @@ recorder_has_key() {
         | grep -q -e '^OPENROUTER_API_KEY=.' -e '^LLM_API_KEY=.'
 }
 
+CHECKED=0
 for agent in $AGENTS; do
     echo "== $agent"
     cid=$($COMPOSE ps -q "$agent" 2>/dev/null)
@@ -103,6 +106,7 @@ for agent in $AGENTS; do
         skip "$agent is not running"
         continue
     fi
+    CHECKED=$((CHECKED + 1))
     recorder="recorder_${agent#agent_}"
 
     # 1. No outward route. The connection is authoritative: a bridge always has a gateway line,
@@ -121,6 +125,7 @@ else:
     esac
     case $(verdict "$agent" sh -c 'timeout 5 getent hosts example.com >/dev/null 2>&1; echo "rc=$?"') in
         rc=0) bad "$agent resolved a public name" ;;
+        rc=126 | rc=127) bad "$agent could not be probed for name resolution" ;;
         rc=*) ok "$agent cannot resolve outside names" ;;
         *) bad "$agent could not be probed for name resolution" ;;
     esac
@@ -210,6 +215,7 @@ else:
     # 7. No recorder is reachable by name: they live on modelnet, which no agent joins.
     case $(verdict "$agent" sh -c "timeout 5 getent hosts $recorder >/dev/null 2>&1; echo rc=\$?") in
         rc=0) bad "$agent can resolve $recorder" ;;
+        rc=126 | rc=127) bad "$agent could not be probed for resolving $recorder" ;;
         rc=*) ok "$agent cannot resolve $recorder" ;;
         *) bad "$agent could not be probed for resolving $recorder" ;;
     esac
@@ -261,6 +267,7 @@ else:
     esac
     case $(verdict review sh -c 'timeout 4 getent hosts recorder_1 >/dev/null 2>&1; echo "rc=$?"') in
         rc=0) bad "the review panel can see a recorder" ;;
+        rc=126 | rc=127) bad "the review panel could not be probed for seeing a recorder" ;;
         rc=*) ok "the review panel cannot see a recorder" ;;
         *) bad "the review panel could not be probed for seeing a recorder" ;;
     esac
@@ -297,4 +304,9 @@ fi
 
 echo
 printf '%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
+# A run that reached no agent checked none of the walls: that is not a pass.
+if [ "$CHECKED" -eq 0 ]; then
+    echo "no agent container was checked; is the fleet up?" >&2
+    exit 2
+fi
 [ "$FAIL" -eq 0 ] || exit 1
