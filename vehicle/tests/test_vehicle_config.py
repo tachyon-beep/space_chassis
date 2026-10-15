@@ -622,13 +622,18 @@ def test_a_transport_delay_carries_its_temperature_rather_than_transforming_it()
     # them produces kilograms per *joule* — so the coefficient belongs to `E-FC-DRAW-O2`, whose unit
     # is exactly `kg/s per W`, and the state computes the rate from it. A per-joule figure under a
     # per-second unit is what the round's new rule refuses.
+    # ADR 0003 item 3 moved it again: reactants are published per *ampere* (J-Mission EPS handout
+    # p. 2.6-21), so the edge is `kg/s per A` over the published per-ampere figure and the state
+    # multiplies it by the module current, not the power.
     o2_edge = next(e for e in coupling["edges"] if e["id"] == "E-FC-DRAW-O2")
-    assert o2_edge["sensitivity"]["derivation"]["inputs"]["output_v"] == (
-        "vehicle.yaml:electrical.fuel_cells.output_v"
+    assert o2_edge["sensitivity"]["unit"] == "kg/s per A"
+    assert o2_edge["sensitivity"]["derivation"]["inputs"]["h2_lb_per_h_per_a"] == (
+        "vehicle.yaml:electrical.fuel_cells.h2_lb_per_h_per_a"
     )
-    assert draw["provenance"]["derivation"]["inputs"]["per_joule_kg"] == (
+    assert draw["provenance"]["derivation"]["inputs"]["per_amp_kg_s"] == (
         "coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value"
     )
+    assert draw["provenance"]["derivation"]["inputs"]["current_a"] == "fuel_cell_current_a"
 
     # And the corpus composes with the edge valued — the id still appears in `open_debts` prose
     # about the *loop transit* itself, which is a different obligation (the volume and the flow).
@@ -866,8 +871,9 @@ def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
         for node in {s.node for s in world.states if s.node != "internal"}
         if len(world.states_on(node)) > 1
     }
-    # 11 -> 10 in round 70, with the source regulator off the fuel cell's node.
-    assert len(crowded) == 12, sorted(crowded)
+    # 11 -> 10 in round 70, with the source regulator off the fuel cell's node; 13 with ADR 0003's
+    # rules (`load_shed_state`, `ground_received`, `fuel_cell` and `radiator_reject`'s duty).
+    assert len(crowded) == 13, sorted(crowded)
 
     # No blocked state is filed under a state that lives on a node with no value key.
     offenders = [
@@ -3250,10 +3256,13 @@ def test_the_linter_holds_a_domain_s_declared_reads(tmp_path):
     assert report.refusals == [], report.refusals
     assert len(report.debts) == 1, report.debts
     owed = report.debts[0]
-    assert "23 cross-domain reads that no edge carries" in owed, owed
+    # 23 -> 24 with ADR 0003: thermal reads `load_shed_state` for the switch map its heat rates sum
+    # over, a one-way read. `thermal->link` was the delayed half of a declared cycle and is carried
+    # by `E-AMP-HEAT` now, so no read is left in that class.
+    assert "24 cross-domain reads that no edge carries" in owed, owed
     assert "8 of them return into a node the reading domain writes" in owed, owed
-    # The one read that is the delayed half of a declared cycle, named so it is not counted.
-    assert "thermal->link" in owed, owed
+    assert "thermal->load_shed_state" in owed, owed
+    assert "0 more are the delayed half of a loop" in owed, owed
 
     # And the refusal fires when a declaration loses a node an edge carries.
     definition = copy_definition(tmp_path / "domainreads")
@@ -6246,47 +6255,32 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
     The twelve are also the reader for three clusters of declarations that had none: the
     environment figures, the metabolic rates and the loop conductance.
     """
+    # ADR 0003's quiet-coast rules (D5) moved thirteen of these to `domains/<name>/rules.py`: the
+    # five heat rates, the two loop loads, the two cabin equilibria, the radiator's equilibrium and
+    # rejection, the bus load and the coldplate's lump are rules now, held by
+    # `tests/test_thermal_rules.py` and `tests/test_power_rules.py` against their homes. A rule is
+    # not also a derivation (`plant.rule_refusals` refuses the pair), so they leave this map; the
+    # environment's derivation is the hot hold's figure, `sun_hold_w` (ADR 0003 item 9).
     converted = {
-        "cabin_heat_csm_w": "csm_cabin_fan",
-        "cabin_heat_lm_w": "lm_cabin_fan",
-        "service_bay_heat_w": "csm_coolant_pump_1",
-        "descent_bay_heat_w": "lm_landing_radar",
         "environment_heat_w": "solar_flux_w_m2",
-        "cabin_eq_csm_k": "conductance_w_per_k",
-        "cabin_eq_lm_k": "conductance_w_per_k",
         "cabin_o2_supply_csm_kg_s": "leak_kg_per_h",
         "cabin_o2_supply_lm_kg_s": "leak_kg_per_h",
         "co2_removal_csm_kg_s": "co2_kg_per_crew_day",
         "co2_removal_lm_kg_s": "co2_kg_per_crew_day",
-        "fc_h2_draw_kg_s": "h2_per_o2",
-        "fc_o2_draw_kg_s": "per_joule_kg",
-        # The three zones whose thermal lump was a sentence: their time constant is `m x c_p / G`
+        "fc_h2_draw_kg_s": "per_amp_kg_s",
+        "fc_o2_draw_kg_s": "per_amp_kg_s",
+        # The two zones whose thermal lump was a sentence: their time constant is `m x c_p / G`
         # over three fields now, so it re-derives like everything else in this dict.
         "zone_csm_cabin_t": "tau_s",
         "zone_lm_cabin_t": "tau_s",
-        "zone_csm_avionics_t": "tau_s",
-        # The fourth heat rate, which is a sum of three loads like the other three — the map names
-        # the first of its inputs so the test reads the same declaration the derivation does.
-        "avionics_bay_heat_w": "csm_imu",
-        # And the two loop loads, which sum the *heat rates*: the same idiom one level up, where a
-        # loop's collected load is the sum over the zones that name it.
-        "loop_primary_load_w": "cabin_heat_csm_w",
-        "loop_lm_load_w": "cabin_heat_lm_w",
-        # The radiative balance: the equilibrium temperature the panel relaxes toward, and the
-        # rejection the corpus's own law gives at it.
-        "radiator_eq_t": "environment_heat_w",
-        "radiator_rejection_w": "emissivity",
         # The two cabins' pressures (round 47): one law over four gas stocks and the zone
         # temperature *as a reading*, and the first derivations whose `computes` field is the
         # state's own id rather than a parameter of it.
         "csm_cabin_pressure_pa": "o2_mass",
         "lm_cabin_pressure_pa": "o2_mass",
-        # And the electrical load the bus solve reads (round 50): the relation was the state's own
-        # note ("sum of the enabled loads") and the fourteen `demand_w` fields were already summed
-        # by `check_power_inventory` — so this is the *state* where before there was only a check.
-        "bus_a_load_w": "csm_sband_transceiver",
         "cabin_dp_psi": "pressure_pa",
-        "fuel_cell_power_w": "csm_sband_transceiver",
+        # The cells' output is the two bus loads read the other way (ADR 0003 item 1).
+        "fuel_cell_power_w": "bus_a_load",
         # And the RCS propellant estimate (round 48): the relation was a sentence and every
         # ingredient — the impulse stock and the capacity C-26 re-derived — was declared.
         "propellant_estimate": "impulse_used",
@@ -6770,11 +6764,16 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     # connected electrical load (the fourteen `demand_w` fields). They are the reason the subject
     # list below is no longer a closed vocabulary of parameter names — a state that *is* its computed
     # value has no parameter to name, and the field it produces is the state itself.
-    assert len(declared) == 27, f"{len(declared)} declared arithmetics"
+    #
+    # 27 -> 14 with ADR 0003's quiet-coast rules (D5): thirteen states whose arithmetic was a
+    # derivation are rules in `domains/<name>/rules.py` now (the heat rates, the loop loads, the cabin
+    # equilibria, the radiator's equilibrium and rejection, the bus load, the coldplate), and a rule is
+    # not also a derivation. `environment_heat_w`'s derivation computes the hot hold, `sun_hold_w`
+    # (ADR 0003 item 9), where it computed the state's `total_w`.
+    assert len(declared) == 14, f"{len(declared)} declared arithmetics"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
     assert subjects == [
-        "bus_a_load_w",
         "cabin_dp_psi",
         "csm_cabin_pressure_pa",
         "draw_kg_s",
@@ -6782,9 +6781,8 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
         "lm_cabin_pressure_pa",
         "nominal_kg_s",
         "propellant_estimate",
+        "sun_hold_w",
         "tau_s",
-        "total_k",
-        "total_w",
     ], subjects
     # Each subject is a numeric field on its own state, or the comparison has nothing to make.
     for _, _, state, prov in declared:
@@ -6823,30 +6821,31 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     # **The expression moved in round 57**, when the hydrogen draw stopped computing a mass ratio
     # under a rate's unit and started computing the rate from the cell's power and the edge's own
     # per-joule figure. The break keeps its shape: one term added, the field renamed with it.
-    break_an_expression("power", "fc_h2_draw_kg_s", "fuel_cell_power_w * per_joule_kg + 1")
+    # ADR 0003 item 3 made it per ampere: the module current times the edge's per-ampere figure.
+    break_an_expression("power", "fc_h2_draw_kg_s", "current_a * per_amp_kg_s + 1")
     result = run_linter(fixture)
     assert result.returncode == 1, result.stdout[-1200:]
     assert "fc_h2_draw_kg_s.draw_kg_s" in result.stdout, (
         "the refusal names the field the arithmetic produces"
     )
     assert "no longer re-derives" in result.stdout
-    break_an_expression("power", "fc_h2_draw_kg_s", "fuel_cell_power_w * per_joule_kg")
+    break_an_expression("power", "fc_h2_draw_kg_s", "current_a * per_amp_kg_s")
 
-    # And one the list did hold, refused once rather than twice.
-    break_an_expression(
-        "thermal", "cabin_heat_csm_w", " + ".join(THERMAL_CABIN_LOADS) + " + 1"
-    )
+    # And one the list did hold, refused once rather than twice. (It was the CSM cabin's heat rate,
+    # which is a thermal rule now; the CSM's CO2 removal is the same shape, a sum over declarations.)
+    co2 = "crew * co2_kg_per_crew_day / seconds_per_day"
+    break_an_expression("eclss", "co2_removal_csm_kg_s", co2 + " + 1")
     result = run_linter(fixture)
     assert result.returncode == 1, result.stdout[-800:]
     assert result.stdout.count("no longer re-derives") == 1, (
         "one wrong arithmetic is one refusal; three hand-written sites made it two"
     )
-    break_an_expression("thermal", "cabin_heat_csm_w", " + ".join(THERMAL_CABIN_LOADS))
+    break_an_expression("eclss", "co2_removal_csm_kg_s", co2)
     assert run_linter(fixture).returncode == 0, "the fixture did not come back"
 
     # The rest of the coverage claim: every one of the twelve is reached.
     for domain, sid, _state, prov in declared:
-        if (domain, sid) in (("power", "fc_h2_draw_kg_s"), ("thermal", "cabin_heat_csm_w")):
+        if (domain, sid) in (("power", "fc_h2_draw_kg_s"), ("eclss", "co2_removal_csm_kg_s")):
             continue
         original = str(prov["derivation"]["expression"])
         break_an_expression(domain, sid, f"({original}) + 1")
@@ -7961,7 +7960,7 @@ def test_the_stock_integrator_reads_its_driver():
     pascals-per-kelvin to kilograms-per-hour and calling the result a mass is not an approximation;
     it is a dimension error wearing a number.
 
-    That stop is gone: a tick now walks all 139 states and records what it cannot advance, so the
+    That stop is gone: a tick now walks all 152 states and records what it cannot advance, so the
     integrator is reached by the order rather than only by a hand-written call. It still cannot be
     *exercised* from the live corpus, because every stock's driver is itself gapped — the tick
     reaches `lm_cabin_o2_kg` and gives up on it for a reason that belongs to the other state. The
@@ -7983,8 +7982,9 @@ def test_the_stock_integrator_reads_its_driver():
     rad = next(e for e in world.edges if e.id == "E-WATER-RAD")
     # **The state the edge names, which round 72 declared.** Its target carries the rejection in
     # watts and the surface temperature in kelvin, so the flux multiplies the watts — and the value
-    # goes in under the state's own key, which is what `reads:` is for.
-    assert rad.reads == "radiator_rejection_w"
+    # goes in under the state's own key, which is what `reads:` is for. ADR 0003 item 5 moved the
+    # read to the evaporator's duty: the water pays for what the evaporator rejects, not the panel.
+    assert rad.reads == "evaporator_duty_w"
     assert plant.stock_flux(world, rad, {rad.reads: 1000.0}, 1.0) == pytest.approx(4.0816e-4)
 
 
@@ -8366,21 +8366,19 @@ def test_the_linter_refuses_a_state_order_over_one_state(tmp_path):
     definition = copy_definition(fixture_dir(tmp_path, "one-state-order"))
     path = definition / "coupling.yaml"
     text = path.read_text()
-    old = """  fuel_cell:
-    domain: power
-    kind: flow
-    unit: W
-    apollo: "261-263"
+    # `fuel_cell` was the node, until ADR 0003's power rules put the bus loads and the module current
+    # beside the cell's power and gave it a real order; `bus_b` carries one state and stands in.
+    old = """  bus_b:             {domain: power, kind: state,   unit: V,  apollo: "74"}
 """
-    new_order = old + """    state_order: [fuel_cell_power_w]
-    state_order_note: a fixture's order over the one state this node carries
+    new_order = """  bus_b:             {domain: power, kind: state,   unit: V,  apollo: "74", state_order: [bus_b_v],
+                      state_order_note: "a fixture's order over the one state this node carries"}
 """
-    assert old in text, "the fixture no longer matches fuel_cell"
+    assert old in text, "the fixture no longer matches bus_b"
     path.write_text(text.replace(old, new_order, 1))
 
     out = run_linter(definition).stdout
-    assert "coupling.yaml:node fuel_cell" in out, out[-1200:]
-    assert "carries one state (fuel_cell_power_w) and declares" in out, out[-1200:]
+    assert "coupling.yaml:node bus_b" in out, out[-1200:]
+    assert "carries one state (bus_b_v) and declares" in out, out[-1200:]
     assert "Declare the edge, or drop the order" in out, out[-1200:]
 
 
@@ -8405,15 +8403,25 @@ def test_a_voltage_does_not_live_on_a_node_declared_in_watts():
     import plant
 
     world = plant.load_world(VEHICLE)
-    assert [state.id for state in world.states_on("fuel_cell")] == ["fuel_cell_power_w"]
+    # ADR 0003's power rules put the bus loads and the module current on the cell's node beside its
+    # power — all four are the cells' own quantities, in watts or the current those watts draw — so
+    # the node is crowded again, and every edge leaving it names the state it reads (`reads:`),
+    # which is what keeps the five edges off `None`.
+    assert [state.id for state in world.states_on("fuel_cell")] == [
+        "bus_a_load_w",
+        "bus_b_load_w",
+        "fuel_cell_power_w",
+        "fuel_cell_current_a",
+    ]
     assert [state.id for state in world.states_on("source_converter")] == ["source_converter_v"]
+    leaving = [e for e in world.edges if e.source == "fuel_cell"]
+    assert leaving and all(e.reads for e in leaving), [(e.id, e.reads) for e in leaving]
 
     values = plant.initial_values(world)
     for _ in range(3):
         values = plant.step(world, values, plant.tick_seconds(world), [])
     # The number five edges were reading as `None`.
-    assert isinstance(values.get("fuel_cell"), (int, float)), values.get("fuel_cell")
-    assert values["fuel_cell"] == values["fuel_cell_power_w"]
+    assert isinstance(values.get("fuel_cell_power_w"), (int, float)), values.get("fuel_cell_power_w")
     assert values["source_converter"] == values["source_converter_v"]
     # And the two are different quantities, which is the whole reason one node could not hold both.
     assert world.nodes["fuel_cell"]["unit"] == "W"
@@ -8492,7 +8500,11 @@ def test_a_crowded_node_is_read_through_the_state_the_edge_names():
     import plant
 
     world = plant.load_world(VEHICLE)
-    values = plant.initial_values(world)
+    # The quiet-coast episode's start (ADR 0003 item 9): under its sun-on-radiator hold the
+    # evaporator works from MET 0, so `E-WATER-RAD`'s driver is a number above zero. In the default
+    # vehicle's passive thermal control the panel carries the load and the duty is a true zero.
+    episode = plant.load_scenario(world, VEHICLE / "scenarios" / "quiet_coast.yaml")
+    values = plant.initial_values(world, episode)
     for _ in range(2):
         values = plant.step(world, values, plant.tick_seconds(world), [])
 
@@ -8518,11 +8530,19 @@ def test_a_crowded_node_is_read_through_the_state_the_edge_names():
         if e.reads:
             drives_from = e.target if e.source in stock_nodes else e.source
             assert owner[e.reads] == drives_from, (e.id, e.reads, drives_from)
+    # ADR 0003's power rules crowded `fuel_cell` again (the two bus loads, the module current and
+    # the power), so its five edges name what they read: each bus its own load, the reactant draws
+    # the current, and the heat the power.
     assert sorted(e.reads for e in world.edges if e.reads) == [
         "amp_dissipation_w",
         "attitude",
+        "bus_a_load_w",
+        "bus_b_load_w",
         "coolant_flow_kg_s",
         "evaporator_duty_w",
+        "fuel_cell_current_a",
+        "fuel_cell_current_a",
+        "fuel_cell_power_w",
         "link_snr",
         "orbital_state",
         "playback_rate",
@@ -10209,7 +10229,9 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # rather than the domain code this bucket was asking it for.
     # 45 -> 44 with `orbital_state`, the first `dynamics` state with a rule the plant carries.
     # 44 -> 42: ADR 0003 quiet coast: the thermal, power and comms rules together.
-    assert len(buckets["rule"]) == 42, "just under a third of the vehicle is domain code"
+    # 42 -> 40 with the power rules merged after them: `bus_a_v` and `bus_b_v` left for `ready`, and
+    # the two states the power rules added (`bus_b_load_w`, `fuel_cell_current_a`) are ready too.
+    assert len(buckets["rule"]) == 40, "about a quarter of the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -10411,23 +10433,21 @@ def test_the_bus_load_is_the_sum_the_inventory_already_states(tmp_path):
     assert sum(int(row["demand_w"]) for row in csm.values()) == 1723
     assert power["load_budget"]["csm_total_demand_w"] == 1723
 
-    state = next(s for s in power["state"] if s["id"] == "bus_a_load_w")
-    provenance = state["provenance"]
-    assert provenance["basis"] == "derived"
-    assert provenance["computes"] == "bus_a_load_w"
-    assert state["bus_a_load_w"] == 1723
-    # Every CSM load is named, and every input is that load's own declared demand.
-    derivation = provenance["derivation"]
-    named = {str(v).rsplit(".", 2)[-2] for v in derivation["inputs"].values()}
-    assert named == set(csm), sorted(set(csm) ^ named)
-    for key, source in derivation["inputs"].items():
-        assert source == f"domains/power/components.yaml:loads.{key}.demand_w", key
+    # ADR 0003 item 2 split the one sum into a load per bus (`domains/power/rules.py`, over the
+    # switches), and the generation is the two added: the 1,723 W is now `fuel_cell_power_w`'s.
+    states = {s["id"]: s for s in power["state"]}
+    bus_a, bus_b = states["bus_a_load_w"]["loads_w"], states["bus_b_load_w"]["loads_w"]
+    assert set(bus_a).isdisjoint(bus_b) and set(bus_a) | set(bus_b) == set(csm)
+    for name, watts in {**bus_a, **bus_b}.items():
+        assert watts == csm[name]["demand_w"], name
+    assert states["fuel_cell_power_w"]["fuel_cell_power_w"] == 1723
+    assert states["fuel_cell_power_w"]["provenance"]["computes"] == "fuel_cell_power_w"
 
-    # The plant computes it, and the number is the inventory's.
+    # The plant computes bus B's share from the switches, and the number is the inventory's.
     plant = _plant()
     world = plant.load_world(VEHICLE)
     values = plant.step(world, plant.initial_values(world), 0.02, [])
-    assert values["bus_a_load_w"] == 1723.0
+    assert values["bus_b_load_w"] == float(sum(bus_b.values())) == 575.0
 
     # And moving one load's demand, in a broken copy, is refused rather than silently summed at the
     # old total — which is what makes this a *derived* value rather than a second declaration of one.
@@ -10440,7 +10460,7 @@ def test_the_bus_load_is_the_sum_the_inventory_already_states(tmp_path):
     path.write_text(text.replace(old, "    demand_w: 320\n", 1))
     result = run_linter(definition)
     assert result.returncode == 1
-    assert "bus_a_load_w.provenance.derivation" in result.stdout, result.stdout[-900:]
+    assert "declares csm_total_demand_w as 1723 and its loads sum to 1743 W" in result.stdout
 
 
 def test_the_structural_differential_is_the_compartments_own_pressure(tmp_path):
@@ -10518,16 +10538,21 @@ def test_the_cells_output_is_the_load_read_the_other_way(tmp_path):
     power = yaml.safe_load((VEHICLE / "domains" / "power" / "components.yaml").read_text())
     loads = {row["id"]: row for row in power["loads"]}
     csm = {name: row for name, row in loads.items() if row["vehicle"] == "csm"}
-    cell = next(s for s in power["state"] if s["id"] == "fuel_cell_power_w")
-    bus = next(s for s in power["state"] if s["id"] == "bus_a_load_w")
+    states = {s["id"]: s for s in power["state"]}
+    cell = states["fuel_cell_power_w"]
     assert cell["provenance"]["basis"] == "derived"
     assert cell["provenance"]["computes"] == "fuel_cell_power_w"
     assert cell["fuel_cell_power_w"] == 1723
-    # The two derivations name the same declarations, which is what makes them one quantity.
-    assert set(cell["provenance"]["derivation"]["inputs"]) == set(
-        bus["provenance"]["derivation"]["inputs"]
-    )
-    assert set(cell["provenance"]["derivation"]["inputs"]) == set(csm)
+    # ADR 0003 item 2: the load is two bus loads now, each the switched sum of its share of the
+    # inventory, and the generation is the two of them added — so it still names nothing but the
+    # loads, through the states that sum them.
+    assert cell["provenance"]["derivation"]["inputs"] == {
+        "bus_a_load": "bus_a_load_w",
+        "bus_b_load": "bus_b_load_w",
+    }
+    shares = [set(states[bus]["loads_w"]) for bus in ("bus_a_load_w", "bus_b_load_w")]
+    assert shares[0].isdisjoint(shares[1]) and shares[0] | shares[1] == set(csm)
+    assert states["bus_a_load_w"]["bus_a_load_w"] + states["bus_b_load_w"]["bus_b_load_w"] == 1723
     # And the headroom is the capacity, which is what `load_margin_w`'s note says a margin means.
     modules = [c for c in power["components"] if str(c.get("id", "")).startswith("fc_")]
     assert len(modules) == 3 and sum(int(c["rated_w"]) for c in modules) == 4260
@@ -10536,9 +10561,9 @@ def test_the_cells_output_is_the_load_read_the_other_way(tmp_path):
     plant = _plant()
     world = plant.load_world(VEHICLE)
     values = plant.step(world, plant.initial_values(world), 0.02, [])
-    assert values["fuel_cell_power_w"] == values["bus_a_load_w"] == 1723.0
+    assert values["fuel_cell_power_w"] == values["bus_a_load_w"] + values["bus_b_load_w"]
 
-    # A load that moves moves both, because neither restates the total.
+    # A load that moves is refused against the budget the reference operating point re-derives.
     definition = copy_definition(fixture_dir(tmp_path, "cell-load-moved"))
     path = definition / "domains" / "power" / "components.yaml"
     document = yaml.safe_load(path.read_text())
@@ -10547,9 +10572,8 @@ def test_the_cells_output_is_the_load_read_the_other_way(tmp_path):
     path.write_text(yaml.safe_dump(document, sort_keys=False, width=100))
     result = run_linter(definition)
     assert result.returncode == 1
-    assert "fuel_cell_power_w.provenance.derivation" in result.stdout, result.stdout[-900:]
-    assert "bus_a_load_w.provenance.derivation" in result.stdout, (
-        "the load and the generation are one quantity, so a moved load has to refuse both"
+    assert "declares csm_total_demand_w as 1723 and its loads sum to 1743 W" in result.stdout, (
+        result.stdout[-900:]
     )
 
 
@@ -11473,6 +11497,11 @@ def test_a_state_with_an_outbound_edge_and_no_driver_is_reported():
     for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
         for state in (yaml.safe_load(path.read_text()) or {}).get("state") or []:
             methods[state["id"]] = (state.get("method"), state.get("node"))
+    # And the rule the plant uses for a ruled state: its domain rule reads what its domain declares,
+    # so no inbound edge is asked of it (`advance()`'s `ruled`). `environment_heat_w` is the case: a
+    # held boundary (`dynamics`, ADR 0003 item 9) on a node nothing flows into.
+    ruled = _plant().registered_rule_states(VEHICLE)
+    assert "environment_heat_w" in ruled
 
     undriven = [
         name
@@ -11480,7 +11509,7 @@ def test_a_state_with_an_outbound_edge_and_no_driver_is_reported():
         if name not in forward
         and any(e["from"] == name for e in coupling["edges"])
         and not nodes[name].get("preloaded")
-        and any(m in driving and n == name for m, n in methods.values())
+        and any(m in driving and n == name and sid not in ruled for sid, (m, n) in methods.items())
     ]
     # `fuel_cell` left this list in round 70: it has an inbound edge (`E-H2-FC`, from the hydrogen
     # tank) and it is no longer undriven — what the round removed was the *converter* riding on it.
@@ -11494,6 +11523,7 @@ def test_a_state_with_an_outbound_edge_and_no_driver_is_reported():
         assert f"coupling.yaml:node {name}: has edges but none into it" not in result.stdout, (
             f"{name} is pre-loaded and must not be reported as undriven"
         )
+    assert "coupling.yaml:node environment_heat: has edges but none into it" not in result.stdout
 
 
 def test_the_heat_inputs_are_a_partition_of_the_load_inventory(tmp_path):
@@ -12634,7 +12664,12 @@ def test_every_stock_declares_where_it_starts():
     # P00 computer mode and CMC-owned RCS mode each add a seeded state key.
     # 75 -> 79 with the comms task model: `transmitter_on` on `link`, `recorder` on its own
     # node (id and node alias), and `delivered_bits` on `ground_received`.
-    assert len(on_nodes) == 79, f"{len(on_nodes)} node keys carry a value"
+    # 79 -> 89 with ADR 0003's thermal rules and the PTC boundary: `coldplate_t`, `comm_amp_t`,
+    # `coolant_pump`, `evaporator_duty_w`, `evaporator_feed`, `radiator_bypass` and
+    # `zone_csm_avionics_t` seed under their ids, `load_enabled` (the switch map `set_load`
+    # writes) under its own, and `environment_heat_w` — a held boundary since item 9 — under its
+    # id and its single-state node's alias, `environment_heat`.
+    assert len(on_nodes) == 89, f"{len(on_nodes)} node keys carry a value"
     # And the map a tick actually starts from is that seed plus the declared arithmetic, so the
     # resolved states are a strict superset and every one of them is `algebraic`.
     assert seeded_integrators.keys() < seeded.keys(), "the resolution added nothing to the seed"
@@ -12646,11 +12681,14 @@ def test_every_stock_declares_where_it_starts():
     # different map — this one is the sub-map rather than the ids beside it.
     # 13 -> 15 in round 80: `telemetry_rate` and `antenna_selection` are sentinel states with a
     # position now, so they join this sub-map as well as the ids beside it.
-    assert len(seeded_integrators["internal"]) == 18, sorted(seeded_integrators["internal"])
-    # Six of the sentinel's `algebraic` states resolve at t=0 as well — the bus load, the bay heat,
-    # the cabin pressure differential and three more — so the sentinel's sub-map is the same map the
-    # tick commits, merged rather than replaced.
-    assert len(seeded["internal"]) == 24, sorted(seeded["internal"])
+    # 18 -> 22 with ADR 0003's thermal rules: the amplifier's temperature and the three loop
+    # switch maps (`coolant_pump`, `evaporator_feed`, `radiator_bypass`) are sentinel states.
+    assert len(seeded_integrators["internal"]) == 22, sorted(seeded_integrators["internal"])
+    # Five of the sentinel's `algebraic` states resolve at t=0 as well — the bay heat, the cabin
+    # pressure differential and three more — so the sentinel's sub-map is the same map the tick
+    # commits, merged rather than replaced. (Six until ADR 0003's power rules moved the bus load to
+    # the cells' node.)
+    assert len(seeded["internal"]) == 27, sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
     # six of the twenty-four declared values are the last of their key rather than a key of their
@@ -12726,13 +12764,18 @@ def test_every_stock_declares_where_it_starts():
         # Post-ejection P00 and the active CMC DAP are separate seeded modes.
         "computer_mode",
         "mode",
+        # ADR 0003's thermal rules: the S-band amplifier's lump and the loop's three switch maps.
+        "comm_amp_t",
+        "coolant_pump",
+        "evaporator_feed",
+        "radiator_bypass",
     }, sorted(seeded_integrators["internal"])
-    # **And the six `algebraic` states the resolver adds**, the sentinel's half of the declared
-    # arithmetic: the bus load, the bay heat rate, the cabin pressure differential, the two loops'
-    # collected loads and the RCS propellant estimate. They are values a tick computes and a seed
+    # **And the five `algebraic` states the resolver adds**, the sentinel's half of the declared
+    # arithmetic: the bay heat rate, the cabin pressure differential, the two loops' collected loads
+    # and the RCS propellant estimate. (The bus load was the sixth, until ADR 0003's power rules
+    # moved it to the cells' node.) They are values a tick computes and a seed
     # cannot, which is why the map a tick starts from is a strict superset of what it seeds.
     assert set(seeded["internal"]) == set(seeded_integrators["internal"]) | {
-        "bus_a_load_w",
         "avionics_bay_heat_w",
         "cabin_dp_psi",
         "loop_primary_load_w",
@@ -12742,7 +12785,10 @@ def test_every_stock_declares_where_it_starts():
     # Zero everywhere except the supply tank's pressure, which is the one seeded sentinel value that
     # is not an accumulator's origin — and, from round 67, `auto`, which is not a number at all and
     # is the reason the value assertions below name their states rather than ranging over the map.
-    assert set(seeded_integrators["internal"].values()) == {
+    # The three switch maps are maps, which a set cannot hold, so they are asserted by name below.
+    switch_maps = {k for k, v in seeded_integrators["internal"].items() if isinstance(v, dict)}
+    assert switch_maps == {"coolant_pump", "evaporator_feed", "radiator_bypass"}, switch_maps
+    assert {v for k, v in seeded_integrators["internal"].items() if k not in switch_maps} == {
         0.0,
         35.0,
         900.0,
@@ -12756,6 +12802,8 @@ def test_every_stock_declares_where_it_starts():
         "idle",
         # The comms task model's playback switch, stopped at the episode's start (chosen).
         "off",
+        # The amplifier's lump at its MET-0 equilibrium, transmitter off (ADR 0003 item 10).
+        283.35,
     }
     assert seeded["internal"]["o2_supply_pressure_psi"] == 900.0
     assert seeded["internal"]["suit_loop_flow_cfm"] == 35.0
@@ -12976,8 +13024,12 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
                     assert not named, (state["id"], named)
                 else:
                     raise AssertionError((state["id"], mover))
-    assert states == 43, states
-    assert (commands, triggers, events, logic) == (17, 5, 6, 23), (
+    # 43 -> 49 and 17 -> 23 commands with the quiet coast's task model and rules (ADR 0003):
+    # comms' `transmitter_on` (`set_power_amplifier`) and `recorder_play` (`play_recorder`), power's
+    # `load_enabled` (`set_load`), and thermal's three loop switch maps, `coolant_pump`,
+    # `evaporator_feed` and `radiator_bypass`, each moved by its own verb.
+    assert states == 49, states
+    assert (commands, triggers, events, logic) == (23, 5, 6, 23), (
         commands, triggers, events, logic,
     )
     # Two states still owe it, and they are the two the crew debt names.
@@ -17220,7 +17272,7 @@ def test_the_linter_refuses_a_front_table_that_states_the_wrong_figures(tmp_path
             "while `METHODS` holds 7",
         ),
         ("cycles", "seven declared cycles", "six declared cycles", "while it declares 7"),
-        ("order", "the 59-node tick order", "the 39-node tick order", "while the linter derives 59"),
+        ("order", "the 61-node tick order", "the 39-node tick order", "while the linter derives 61"),
     ):
         definition = copy_definition(tmp_path / f"front-{name}")
         path = definition / "README.md"
@@ -17243,12 +17295,12 @@ def test_the_linter_refuses_a_per_domain_paragraph_whose_counts_have_drifted(tmp
     definition = copy_definition(tmp_path / "domain-count")
     path = definition / "README.md"
     text = path.read_text()
-    old = "declares 13 states, 17 thresholds, 5 verbs, 12 faults"
+    old = "declares 16 states, 17 thresholds, 5 verbs, 12 faults"
     assert old in text, "the fixture no longer matches the power clause"
-    path.write_text(text.replace(old, "declares 9 states, 17 thresholds, 5 verbs, 12 faults", 1))
+    path.write_text(text.replace(old, "declares 12 states, 17 thresholds, 5 verbs, 12 faults", 1))
     result = run_linter(definition)
     assert result.returncode == 1
-    assert "while `domains/power/` declares 13" in result.stdout, result.stdout[-900:]
+    assert "while `domains/power/` declares 16" in result.stdout, result.stdout[-900:]
 
 
 def test_the_linter_refuses_a_domain_paragraph_with_no_count_clause(tmp_path):
@@ -17264,10 +17316,10 @@ def test_the_linter_refuses_a_domain_paragraph_with_no_count_clause(tmp_path):
     definition = copy_definition(tmp_path / "no-clause")
     path = definition / "README.md"
     text = path.read_text()
-    old = "24 states, 17 thresholds, 5 verbs, 11 faults"
+    old = "28 states, 17 thresholds, 5 verbs, 11 faults"
     assert old in text, "the fixture no longer matches the thermal clause"
     path.write_text(
-        text.replace(old, "twenty states, seventeen thresholds, five verbs, eleven faults", 1)
+        text.replace(old, "twenty-eight states, seventeen thresholds, five verbs, eleven faults", 1)
     )
     result = run_linter(definition)
     assert result.returncode == 1
@@ -17285,9 +17337,9 @@ def test_the_linter_refuses_two_count_clauses_for_one_domain(tmp_path):
     definition = copy_definition(tmp_path / "two-clauses")
     path = definition / "README.md"
     text = path.read_text()
-    old = "declares 13 states, 17 thresholds, 5 verbs, 12 faults"
+    old = "declares 16 states, 17 thresholds, 5 verbs, 12 faults"
     assert old in text, "the fixture no longer matches the power clause"
-    second = "It also declares 9 states, 17 thresholds, 5 verbs, 12 faults. "
+    second = "It also declares 12 states, 17 thresholds, 5 verbs, 12 faults. "
     path.write_text(text.replace(old, second + old, 1))
     result = run_linter(definition)
     assert result.returncode == 1
@@ -18063,7 +18115,7 @@ def test_the_gate_s_own_prose_states_the_vehicle_it_tests():
 def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     """The status line's own sentence, held whole rather than in the three figures a test read.
 
-    The sentence is "148 channels, 139 states over 59 scheduled nodes, 142 thresholds, 58 verbs and
+    The sentence is "148 channels, 152 states over 61 scheduled nodes, 142 thresholds, 59 verbs and
     128 classified events". `test_the_readme_status_matches_the_tools` reads the first three; the
     last three were read by nothing, which is the same defect one clause further along in the same
     line. The fixture moves the threshold count by one, because that is the smallest change the
@@ -18075,9 +18127,9 @@ def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     # The sentence is hard-wrapped between "142" and "thresholds", so the anchor is the half that
     # fits on one line. A fixture that matched the whole clause would fail on a reflow rather than
     # on the value it is about — the same distinction the reader itself makes.
-    old = "thresholds, 58 verbs and 128 classified events"
+    old = "thresholds, 59 verbs and 128 classified events"
     assert old in text, "the fixture no longer matches the status line"
-    path.write_text(text.replace(old, "thresholds, 58 verbs and 127 classified events", 1))
+    path.write_text(text.replace(old, "thresholds, 59 verbs and 127 classified events", 1))
     result = run_linter(definition)
     assert result.returncode == 1
     assert "states 127 classified events while the corpus declares 128" in result.stdout, (
@@ -18309,10 +18361,11 @@ def test_the_fuel_cells_reactant_chain_re_derives_from_the_operating_point():
     # where a `kg/s per W` figure belongs: round 57 found the two the other way round, with a
     # per-joule figure under a `kg O2/s` unit and a tank that would have read it as a flow.
     assert o2["provenance"]["computes"] == "draw_kg_s"
-    assert o2["provenance"]["derivation"]["inputs"]["per_joule_kg"] == (
+    # Per ampere of module current since ADR 0003 item 3 (J-mission EPS handout p. 2.6-21).
+    assert o2["provenance"]["derivation"]["inputs"]["per_amp_kg_s"] == (
         "coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value"
     )
-    assert o2["provenance"]["derivation"]["inputs"]["fuel_cell_power_w"] == "fuel_cell_power_w"
+    assert o2["provenance"]["derivation"]["inputs"]["current_a"] == "fuel_cell_current_a"
 
     # The three consequences, each carrying the state's figure rather than restating it — which is
     # what makes the chain one number in four places instead of four numbers that agree by hand.
@@ -18323,9 +18376,9 @@ def test_the_fuel_cells_reactant_chain_re_derives_from_the_operating_point():
         # division, and the denominator is the module's rated output.
         (
             "E-FC-DRAW-O2",
-            "h2_lb_per_h_per_a * lb_to_kg / seconds_per_hour / output_v / h2_per_o2",
+            "h2_lb_per_h_per_a * lb_to_kg / seconds_per_hour / h2_per_o2",
         ),
-        ("E-FC-DRAW-H2", "per_joule_kg * h2_per_o2"),
+        ("E-FC-DRAW-H2", "per_amp_kg * h2_per_o2"),
         (
             "E-FC-HEAT",
             "enthalpy_j_per_mol_o2 * cells_per_module / "
@@ -18548,7 +18601,6 @@ def test_a_zones_time_constant_is_its_lump_over_its_conductance(tmp_path):
     for zone, (mass, heat, conductance, tau) in (
         ("zone_csm_cabin_t", (400, 900, 125, 2880)),
         ("zone_lm_cabin_t", (400, 900, 125, 2880)),
-        ("zone_csm_avionics_t", (60, 900, 133, 406)),
     ):
         state = states[zone]
         assert state["lumped_mass_kg"] == mass, zone
@@ -18557,6 +18609,15 @@ def test_a_zones_time_constant_is_its_lump_over_its_conductance(tmp_path):
         assert state["tau_s"] == tau, zone
         assert state["provenance"]["computes"] == "tau_s", zone
         assert state["provenance"]["basis"] == "derived", zone
+    # The avionics plate left the `lag` class with ADR 0003 item 11: it is a heat balance on its own
+    # lump now (`dynamics`, `C dT/dt = Q - G (T - T_coolant)`), so it carries C and G and no `tau_s`
+    # to derive — and G is chosen, 133 -> 120 W/K, to keep the plate inside its apollo band at MET 0.
+    # The time constant is still the lump over the conductance, and the reason says which.
+    plate = states["zone_csm_avionics_t"]
+    assert plate["method"] == "dynamics" and "tau_s" not in plate
+    assert (plate["lumped_mass_kg"], plate["specific_heat_j_per_kg_k"]) == (60, 900)
+    assert plate["conductance_w_per_k"] == 120 and plate["provenance"]["basis"] == "chosen"
+    assert 60 * 900 / 120 == 450 and "C/G = 450 s" in plate["provenance"]["reason"]
 
     # The two bays keep their owed mass, and it is now the *one* scalar between the zone and a
     # closed edge: both edges carry the division that reads it.
@@ -19573,7 +19634,7 @@ def test_the_battery_s_smallest_flow_is_its_smallest_load_and_its_quantum_is_fin
 def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     """The lag integrator applies no conversion, and nothing said so — so both were dimensional errors.
 
-    A real tick advanced exactly two of the vehicle's 139 states, and both numbers were nonsense: `crew_workload`
+    A real tick advanced exactly two of the vehicle's 152 states, and both numbers were nonsense: `crew_workload`
     is an `enum-level` and was relaxed toward `water_potable`'s 14 kg of water; `thrust_main_n` is in
     newtons and was relaxed toward `prop_main`'s 18,508 kg of propellant. Neither is a crash — both
     are plausible numbers — which is why the rule has to exist rather than the values being watched.
@@ -19839,7 +19900,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # 19 -> 21 in round 80: `telemetry_rate` and `antenna_selection`, the sentinel's second and
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
-    assert len(values["internal"]) == 28, sorted(values["internal"])
+    # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
+    assert len(values["internal"]) == 27, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
@@ -19881,7 +19943,11 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
     assert published == 142, published
     # 33 -> 31 in round 70: two published channels read states that shared the fuel cell's node, and
     # the node publishes its key now, so they are nameable.
-    assert unnameable == 32, unnameable
+    # 31 -> 32 when `load_enabled` joined `load_shed_state` (`power.load_shed_class`), and 32 -> 36
+    # with ADR 0003's power rules: the bus loads and the module current joined the cells' power on
+    # `fuel_cell`, so `bus_a_current_a`, `lcl_[n]_current_a`, `load_margin_w` and `source_1_current_a`
+    # read a crowded node again.
+    assert unnameable == 36, unnameable
 
     # The plant's half of the debt is closed: a frame's `values` keys are channel ids the registry
     # declares, and a channel that is *derived* from its source (a different unit) is omitted rather
@@ -20253,8 +20319,10 @@ def test_every_integrator_declares_where_its_value_starts(tmp_path):
     # where the decision and what would close it are written.
     unannotated = copy_definition(fixture_dir(tmp_path, "lag-note"))
     path = unannotated / "domains" / "thermal" / "components.yaml"
-    start = components.index("  - id: comm_amp_t")
-    end = components.index("  - id: coolant_loop_t")
+    # `comm_amp_t` was the state until ADR 0003 item 10 derived its start; the CSM service bay's
+    # temperature is still owed, with the note that says why.
+    start = components.index("  - id: zone_csm_service_t")
+    end = components.index("  - id: zone_lm_cabin_t")
     block = components[start:end]
     assert "    initial_note: >-\n" in block
     # The note *only* comes out — the state's provenance stays, so this fixture isolates one refusal
@@ -20291,9 +20359,13 @@ def test_every_integrator_declares_where_its_value_starts(tmp_path):
     # panel's law gives for the environment this corpus declares — the temperature at which the
     # rejection equals the load, so the loop closes from the first tick instead of after a warm-up
     # that put the coolant return above its own band.
-    assert states["zone_radiator_t"]["initial_source"] == (
-        "domains/thermal/components.yaml:state.radiator_eq_t.total_k"
-    )
+    # ADR 0003 item 10 moved it again: the panel starts at `radiator_eq_t`'s fixed point for the
+    # MET-0 operating point, a quartic with no closed form, so the number is a chosen
+    # `initial_provenance` naming the rule that computes it rather than an `initial_source`.
+    radiator = states["zone_radiator_t"]
+    assert "initial_source" not in radiator
+    assert radiator["initial_provenance"]["basis"] == "chosen"
+    assert "`radiator_eq_t`'s fixed point" in radiator["initial_provenance"]["reason"]
     assert states["coolant_flow_kg_s"]["initial_derivation"]["expression"] == (
         "nominal_flow_lb_per_h * lb_to_kg * seconds_per_hour".replace(
             "* seconds_per_hour", "/ seconds_per_hour"
@@ -21115,8 +21187,12 @@ def test_the_mechanical_conversions_land_on_the_declarations_that_sized_them():
     # t=0 gives the load a value before the tick, and the two channels follow: 7.199 C against the
     # supply's 7.200 and the radiator inlet's 26.06, which are the loop's own rise and the
     # radiator's own law rather than the supply's number wearing their names.
-    assert frame["thermal.coolant_return_c"] == pytest.approx(7.198785, abs=1e-5)
-    assert frame["thermal.radiator_inlet_c"] == pytest.approx(26.056117, abs=1e-5)
+    # ADR 0003 moved both figures: the inlet is the supply plus the MET-0 collected load (1,651 W,
+    # the amplifier's transmitter off) over the stream's capacity, and the return is the panel's own
+    # outlet in passive thermal control (item 9, `environment_heat_w`'s 1,086.9 W) — 7.202 C, inside
+    # the 5-15 C band the default vehicle starts in. The episode's hot hold is the scenario's.
+    assert frame["thermal.coolant_return_c"] == pytest.approx(7.201921, abs=1e-5)
+    assert frame["thermal.radiator_inlet_c"] == pytest.approx(25.268166, abs=1e-5)
     assert frame["thermal.coolant_return_c"] != frame["thermal.coolant_supply_c"]
     # And a channel whose derivation is still prose is omitted rather than filled with its source's
     # number, which is the property those two used to demonstrate.
@@ -21816,30 +21892,47 @@ def test_a_state_whose_unit_is_a_rate_computes_a_rate(tmp_path):
     plant = _plant()
     world = plant.load_world(VEHICLE)
 
-    # The corpus's own answer: both draw states compute the rate their unit names, from the cell's
-    # power and the coefficient the coupling edge already carries in `kg/s per W`.
+    # The corpus's own answer: both draw states compute the rate their unit names, from the cells'
+    # module current and the coefficient the coupling edge carries in `kg/s per A` (ADR 0003 item 3;
+    # it was `kg/s per W` of the cells' power until the quiet-coast power rules).
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    edges = {edge["id"]: edge for edge in coupling["edges"]}
+    per_amp = {}
     for state_id, edge in (("fc_o2_draw_kg_s", "E-FC-DRAW-O2"), ("fc_h2_draw_kg_s", "E-FC-DRAW-H2")):
         state = next(s for s in world.states if s.id == state_id)
         provenance = state.spec["provenance"]
         assert state.spec["unit"].endswith("/s"), state.spec["unit"]
         assert linter._named_as_a_rate(str(provenance["computes"])), provenance["computes"]
-        assert provenance["derivation"]["inputs"]["per_joule_kg"] == (
+        assert provenance["derivation"]["inputs"]["per_amp_kg_s"] == (
             f"coupling.yaml:edges.{edge}.sensitivity.value"
         ), provenance["derivation"]["inputs"]
+        assert provenance["derivation"]["inputs"]["current_a"] == "fuel_cell_current_a"
+        per_amp[state_id] = float(edges[edge]["sensitivity"]["value"])
 
-    # And the four declarations agree at the declared demand, which is the check the old shape could
-    # not pass: the state's live rate, the consumer's budget rate, and the edge's coefficient times
-    # the cell's power are one number.
+    # And the declarations agree, which is the check the old shape could not pass. The live rate is
+    # the coefficient times the solved current; each state's reference figure is the coefficient
+    # times the current's own reference figure; and the consumer's budget is the coefficient times
+    # the declared demand over the modules' rated 29 V — a budget, not the tick, as its relation says.
     values = plant.initial_values(world)
-    demand = values["fuel_cell_power_w"]
-    assert demand == 1723, demand
+    current = values["fuel_cell_current_a"]
+    reference = next(s for s in world.states if s.id == "fuel_cell_current_a").spec[
+        "fuel_cell_current_a"
+    ]
+    power = yaml.safe_load((VEHICLE / "domains" / "power" / "components.yaml").read_text())
+    demand = float(power["load_budget"]["csm_total_demand_w"])
+    fuel_cells = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())["electrical"]["fuel_cells"]
+    rated_v = float(fuel_cells["output_v"])
     consumers = yaml.safe_load(
         (VEHICLE / "domains" / "consumables" / "components.yaml").read_text()
     )["consumers"]
     for state_id, consumer in (("fc_o2_draw_kg_s", "fuel_cell_o2"), ("fc_h2_draw_kg_s", "fuel_cell_h2")):
+        k = per_amp[state_id]
+        assert values[state_id] == pytest.approx(k * current, rel=1e-12), state_id
+        declared = next(s for s in world.states if s.id == state_id).spec["draw_kg_s"]
+        assert declared == pytest.approx(k * reference, rel=1e-5), state_id
         entry = next(c for c in consumers if c["id"] == consumer)
-        assert abs(values[state_id] - float(entry["rate_kg_s"])) <= 1e-9 * float(entry["rate_kg_s"]), (
-            f"{state_id} is {values[state_id]} and {consumer} budgets {entry['rate_kg_s']}"
+        assert float(entry["rate_kg_s"]) == pytest.approx(k * demand / rated_v, rel=1e-5), (
+            f"{consumer} budgets {entry['rate_kg_s']}"
         )
 
     # The hydrogen draw is the oxygen draw over the reaction's own ratio — the corpus's 0.126.
@@ -21849,7 +21942,7 @@ def test_a_state_whose_unit_is_a_rate_computes_a_rate(tmp_path):
     definition = copy_definition(fixture_dir(tmp_path, "coefficient"))
     path = definition / "domains" / "power" / "components.yaml"
     text = path.read_text()
-    old = """    draw_kg_s: 0.000152690537
+    old = """    draw_kg_s: 0.000145681
     provenance:
       basis: derived
       computes: draw_kg_s"""
@@ -22096,9 +22189,10 @@ def test_a_command_whose_interlock_cannot_be_evaluated_is_refused_in_every_windo
     """ADR 0001 choice C: a command the executive cannot guard is a command it must not accept.
 
     `set_bus_tie` declares one interlock, `tie_dv_limit` (`domains/power/commands.yaml`), which
-    watches `power.dc_bus_a_v` (`domains/power/profiles.yaml`), a reading of `bus_a_v` — an
-    `algebraic` state whose rule is unwritten, so the point has no value and the comparator cannot
-    run. The reference console applied the command anyway and labelled nothing, which is the
+    watches `power.dc_bus_a_v` (`domains/power/profiles.yaml`), a reading of `bus_a_v`. Since ADR
+    0003's power rules the state has a value every tick, and the comparator still cannot run: band
+    and dwell evaluation is WP05's, so the refusal names the reading it has and the comparison it
+    lacks. The reference console applied the command anyway and labelled nothing, which is the
     alternative the ADR rejected. `bus_tie_closed` starts `open` (`domains/power/components.yaml`),
     and it must still read `open` in both rings afterwards.
 
@@ -22128,7 +22222,8 @@ def test_a_command_whose_interlock_cannot_be_evaluated_is_refused_in_every_windo
         assert len(bodies) == 1, bodies
         assert "refused: INTERLOCK UNEVALUATED" in bodies[0], bodies[0]
         assert "tie_dv_limit" in bodies[0] and "power.dc_bus_a_v" in bodies[0], bodies[0]
-        assert "bus_a_v" in bodies[0] and "UNCONFIGURED" in bodies[0], bodies[0]
+        assert "bus_a_v" in bodies[0] and "has a reading this tick" in bodies[0], bodies[0]
+        assert "is not implemented in this slice (WP05)" in bodies[0], bodies[0]
         assert "succeeded" not in bodies[0]
         assert receipt_of(bodies[0])["state"] == "refused"
         assert newest_frame(diode / slug)["values"]["power.bus_tie_state"] == "open", slug

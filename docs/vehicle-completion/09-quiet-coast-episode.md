@@ -23,7 +23,7 @@ and its productive task carries a deadline. Which form of scarcity to accept is 
 |---|---|
 | productive activity | **stored-data delivery**: play back the CSM recorder over the high-gain S-band link before a deadline, using a minimal task model that this document specifies (§1) |
 | interval | `translunar_coast`, starting at **MET 0 / tick 0** from `mission.yaml#launch_state`, lasting **40 min = 120,000 ticks** (§2) |
-| environment | a declared constant **sun-on-radiator hold**: `environment_heat_w` = 2,477 W, already derived in the configuration. There is no attitude dynamics (§2, §4) |
+| environment | a declared constant **sun-on-radiator hold**: `environment_heat_w` = 2,477 W, set by the episode scenario (`vehicle/scenarios/quiet_coast.yaml`) only. The default vehicle starts in passive thermal control at a `chosen` 1,086.9 W bounded by SP-368 p. 525 (John, 2026-10-15: "Hold in episode only"; ADR 0003 item 9). There is no attitude dynamics (§2, §4) |
 | scarcity | evaporator headroom (2,345 W capacity, of which about 1,160–1,620 W is already spent at baseline) and cooling water (§3) |
 | evaluator | a vehicle-side tool that reads private state and the per-tick truth trace and writes a neutral outcome record that the chassis consumes (§6) |
 | blockers for John | B1–B5 (§8) |
@@ -57,7 +57,7 @@ Three candidates, judged against the configuration as it stands:
 | start | **MET 0, tick 0** | the **only** documented initial state (`mission.yaml#launch_state`, Apollo 17 checklist pp. 33–59). Any later start needs a second sourced initial condition |
 | duration | **40 min = 2,400 s = 120,000 ticks** at 50 Hz | about 6 coldplate time constants (τ 406 s), 8 radiator (τ 300 s) and 9 comm-amp (τ 265 s), so delayed thermal costs land inside the interval. It covers less than one cabin τ (2,880 s), so the cabin is a slow margin and not the loss path |
 | contact deadline | MET 40 min, the prescribed end of the hot hold (return to passive thermal control) | an explicit boundary, not an orbit claim |
-| environment | `environment_heat_w` held at 2,477 W (1,361 W/m² × 0.2 × 9.1 m², `domains/thermal/components.yaml` `radiator_model.environment`) | a declared sun-on-radiator hold. Rejected alternative: a passive-thermal-control average, whose absorbed load is owed (B4) |
+| environment | `environment_heat_w` held at 2,477 W (1,361 W/m² × 0.2 × 9.1 m², `domains/thermal/components.yaml` `radiator_model.environment`) | a declared sun-on-radiator hold, applied by the episode scenario only; the default vehicle's passive-thermal-control load is a `chosen` 1,086.9 W (ADR 0003 item 9) |
 
 **Time cost.** The plant measures 3,751 µs/tick at 53 advancing states (`--mission --ticks 3000`).
 A scripted run is therefore about **450 s of wall time (7.5 min), roughly 5× faster than real
@@ -107,7 +107,7 @@ bucket; **new** = does not exist yet; **wrong** = advances, but with a defect th
 | element | status | missing input | evidence lead |
 |---|---|---|---|
 | `cabin_heat_csm_w`, `service_bay_heat_w`, `avionics_bay_heat_w`, `loop_primary_load_w` | ready, but **constant** derivations over `demand_w` | rule: sum over enabled loads, so a shed load stops heating in the same tick, as their own notes promise | none |
-| `environment_heat_w` | ready (2,477 W) | none for a hot hold. The passive-thermal-control average is owed (B4) | radiator absorbed-heat analysis; TN D-6718 is the first place to look |
+| `environment_heat_w` | ready (default 1,086.9 W PTC, `chosen`; 2,477 W in the episode scenario) | a sourced PTC absorbed load would replace the chosen default | radiator absorbed-heat analysis; TN D-6718 is the first place to look |
 | `radiator_eq_t`, `zone_radiator_t`, `radiator_rejection_w` | ready, **wrong for this use** | the radiator settles at 322 K while rejecting the whole 1,723 W load *and* `E-WATER-RAD` drains water for the same 1,723 W. That double-counts, and the panel is 25 K hotter than the loop's declared 22.8–23.9 °C radiator inlet | rule: rejection evaluated at the loop's temperature (`E-RAD-THERM`'s owed "rejection law") |
 | evaporator duty | **new** (`evaporator_csm` has `rejection_w: 2345`, NR, and no state) | rule: `duty = clamp(load − radiator_net, 0, 2,345 W)` while `set_evaporator_feed` is on (that verb writes no state today), plus the outlet setpoint at which it activates | AOH Vol 1 ECS section (evaporator outlet-temperature control). Setpoint **not found** in this pass |
 | `water_cooling_kg`, `E-WATER-RAD` | ready, **wrong**: it drains 1/2.45e6 kg/s for every watt the *radiator* rejects. That is 2.53 kg/h at baseline, and 13 kg runs out in 5.1 h | read the evaporator duty, not `radiator_rejection_w` | **historical oracle**: Apollo 14 evaporated **9.0 lb (4.1 kg) in the whole flight** (A14 MR §7.10.4), two orders of magnitude below the configured drain |
