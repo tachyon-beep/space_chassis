@@ -64,17 +64,22 @@ visible in their work rather than supplied by the world.
 - `commands` is a list of lines: a verb, a space, its arguments.
 - `variables` is a flat map of gate settings the vehicle chooses to honour.
   Persistent — the vehicle never clears it.
-- **Intake is destructive and atomic.** Each cycle the vehicle reads the file,
-  then rewrites it with `commands` emptied and `variables` preserved, through a
-  temporary file and a rename. A command therefore takes effect **at most once**,
-  even if the vehicle dies mid-cycle: the batch was already claimed.
+- **Intake is destructive and atomic.** Each cycle the vehicle reads the file. If it holds
+  something to claim, the vehicle rewrites it with `commands` emptied and `variables` preserved,
+  through a temporary file and a rename. "Something to claim" means commands, a file that is not
+  a console, or a console with no `variables` while the vehicle holds a map. A command therefore
+  takes effect **at most once**, even if the vehicle dies mid-cycle: the batch was already claimed.
+  A file whose `commands` is `[]` and which already shows the `variables` is left as it is, and its
+  `variables` are adopted.
 - **Clear before you act.** The claim happens before any command runs. A crash
   mid-batch loses the rest of that batch; it never replays it.
 - **One malformed element refuses the whole batch.** If any element of
   `commands` is not a string, none of it runs, and exactly one result file
   records that. Partial execution of a malformed batch is worse than none.
-- A batch written while a cycle is in progress is not claimed by that cycle.
-  It runs on the next one.
+- A batch is claimed at the window's next read. **Known residual (vehicle #39):** a file replaced
+  between the vehicle's read and its rewrite of an earlier one can be lost without a result. A
+  take that cannot lose it is planned. Until it lands, write a new batch only after the previous
+  one has been claimed.
 - An agent writing the file in place rather than replacing it may be read
   half-written. Refusing is correct; the result file says so.
 
