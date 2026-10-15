@@ -1,5 +1,12 @@
 # Chassis — snapshot
 
+> **2026-10-15, governance stream.** This snapshot predates the restructure. Since then: `aurora-port`
+> is merged into `main`; the chassis is `aurora/`; the vehicle is `vehicle/` in this repository (not a
+> submodule); Phase B's P and R2c are staged on John's machine and go to `wip/aurora/phase-b`
+> (`../decisions.md` D11); the slot regime is retired (D2). The programme picture is `../status.md`;
+> the integration plan is `../../docs/vehicle-completion/04-integration.md`. Paths below are as they
+> were (`harness/` is `aurora/harness/`).
+
 As of **2026-10-10**, `tachyon-beep/space_chassis` **`aurora-port` @ `e3eff27`** (plan 8, complete and
 pushed; the commits after it are governance only), with `vehicle-adoption` @ `be63f93` (pushed,
 parked, rebased onto plan 8) and the local dry-run branch `phase-b-dryrun` @ `39ba76d`. `main` is @ `fa43b25`, 100 commits behind `aurora-port`. Maintained by the Space Chassis

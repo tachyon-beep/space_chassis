@@ -1,5 +1,11 @@
 # Chassis — open items
 
+> **2026-10-15, governance stream.** Of the items below: P1.1's window half closes with Phase B;
+> P1.2 (adopt the vehicle) is now against `vehicle/` at vehicle main and proceeds under D9; P1.3 (the
+> image bakes the working tree) is moot, there is one tree; P1.4 (land the port on `main`) is done.
+> The questions for John under spec §10 are answered by D15 except the cap figures (D16, residual 2).
+> The programme's open items are in `../status.md` and `../../docs/vehicle-completion/08-risks.md`.
+
 As of **2026-10-10**, `space_chassis` `aurora-port` @ `3ec1b4e`. **Verify against the code and
 filigree before trusting any line here.** Filigree (`filigree list --status open`) is authoritative
 for issues; this file holds the ones that steer the line, and the questions for John.
