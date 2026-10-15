@@ -57,6 +57,7 @@ written; its blocker was process, not engineering.
 | [06-verification.md](06-verification.md) | Gates D/I/V/M/E, the CI to build, and what counts as evidence |
 | [07-sequencing.md](07-sequencing.md) | The critical path, what runs in parallel, worktrees, and choke points |
 | [08-risks.md](08-risks.md) | Risks, assumptions, open issues, dependencies, and the decisions that will come back to John |
+| [09-quiet-coast-episode.md](09-quiet-coast-episode.md) | F0: the bounded quiet-coast episode (D14, D22) — activity, interval, causal closure, policies, evaluator, rule work list, blockers for John |
 
 Decisions taken for this suite are in [`governance/decisions.md`](../../governance/decisions.md)
 (2026-10-15, D3–D9, D14, and John's answers D18–D22). The governance review that preceded it is
