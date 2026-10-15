@@ -1,9 +1,10 @@
 # The `wip/` branches pushed under D18: inventory and disposition
 
 2026-10-15. Written by the cloud triage thread from `git fetch origin` against `main` @ `30b9adf`.
-Origin holds **26** `wip/` branches from this push: the first round of 17 below, then nine more
+Origin holds **37** `wip/` branches from this push: the first round of 17 below, then nine more
 (`wip/stashes`, six `wip/vehicle-*` aliases, `wip/host-prep-2026-10-15`, and a second commit on
-`wip/local-state`), listed under "Second round". The branches were pushed from John's machine (nyx) by his local session under D18; nothing on
+`wip/local-state`), listed under "Second round", then eleven mirrors of `space_vehicle`'s
+`codex/*` branches ("Mirrored from space_vehicle"). The branches were pushed from John's machine (nyx) by his local session under D18; nothing on
 them was rewritten, and nothing here deletes them. `wip/*` stay the untouched originals; anything
 re-applied to `main` goes on a new `<stream>/<topic>` branch.
 
@@ -17,8 +18,8 @@ predates it. Vehicle commits name paths as the vehicle repository did (`tools/co
 | branch | base | carries | disposition |
 |---|---|---|---|
 | `wip/39-take-by-rename` | vehicle `f75420c` | `7a87eb8` (2026-10-12), `#39` Option B: the claim takes the console by rename and never writes over a file. 4 files, +929/−75 | re-applied under `vehicle/` with `#23` below, on `vehicle/clock-seam` |
-| `wip/23-clock-seam` | `7a87eb8` above | `7e2a4b1`: the uncommitted `#23` clock-seam work (candidate 3a) as a snapshot commit. 9 files under `tools/`, `tests/`, `docs/decisions/0002`, README; +3,518/−367 over `7a87eb8` | cherry-picked `-X subtree=vehicle` onto `main`, clean, on `vehicle/clock-seam` |
-| `wip/diag-contract-probe-loss` | chassis `6135575` (2026-10-10) | `73f7082`: snapshot of the probe-diag worktree. The probe's `--trace`, the probe test's evidence directory, two trace readers; also a submodule pointer bump to vehicle `8c6f71d` | re-applied onto `main` on `aurora/probe-diag`: files moved to `aurora/`, the pointer bump dropped (the vehicle is `vehicle/` at `f75420c` now), one path fixed to `AURORA / "tests"` |
+| `wip/23-clock-seam` | `7a87eb8` above | `7e2a4b1`: the uncommitted `#23` clock-seam work (candidate 3a) as a snapshot commit. 9 files under `tools/`, `tests/`, `docs/decisions/0002`, README; +3,518/−367 over `7a87eb8` | cherry-picked `-X subtree=vehicle` onto `main`, clean, on `vehicle/clock-seam` (PR #9) |
+| `wip/diag-contract-probe-loss` | chassis `6135575` (2026-10-10) | `73f7082`: snapshot of the probe-diag worktree. The probe's `--trace`, the probe test's evidence directory, two trace readers; also a submodule pointer bump to vehicle `8c6f71d` | re-applied as PR #8, **merged to `main` as `2c72d7b`**: files moved to `aurora/`, the pointer bump dropped (the vehicle is `vehicle/` at `f75420c` now), one path fixed to `AURORA / "tests"` |
 | `wip/phase-b-adoption-staged` | chassis `6262dc8` (2026-10-10) | plan 7: the 12 Phase A commits of `vehicle-adoption` (`6a45936`..`be63f93`) plus `ff83ac4`, the uncommitted Phase B work in the vehicle-adoption worktree. Its tree is identical to `wip/preserve-phase-b-R2c` | **not re-applied; conflicts with landed work** (below) |
 | `wip/phase-b-dryrun` | chassis `6262dc8` | the same 12 Phase A commits plus 5 (`ed7a0d3`..`39ba76d`): the vehicle as the smoke stack's window, its resume checked, and `bd74535` "DRY RUN ONLY: reconciliation pins at vehicle 06f08a3". Superseded by `phase-b-adoption-staged`, which carries all of it forward (the staged tree takes `39ba76d` further in 16 files, +1,116/−110, and keeps the dry-run pin) | not re-applied separately; goes with Phase B |
 
@@ -80,11 +81,28 @@ re-apply with `git cherry-pick -X subtree=vehicle`.
 `wip/sv-recorder-opus-20261008` (on chassis `fa43b25`, 2026-10-08, 125 files) is also on `origin`
 but was not part of this push; it predates D18 and stays parked, as the restructure plan lists it.
 
-## Still on `space_vehicle` only
+## Mirrored from `space_vehicle`
 
-`codex/39-quiet-skip`, `codex/wp08-*`, `codex/wp01-on-issue16`, `codex/window-record-no-seed`,
-`codex/ci-referee-timeout`, `codex/vehicle-delivery-scaffold`, `codex/diag-ingress-trace`. They
-need mirroring here as `wip/vehicle-*` before D21 archives that repository; nyx is pushing them.
+Eleven `codex/*` branches of `tachyon-beep/space_vehicle`, pushed here as `wip/vehicle-<name>` so
+the code is durable before D21 archives that repository. Ten are already wholly on `main` (their
+tips are ancestors of `main`, through the vehicle's absorbed history):
+
+| `wip/vehicle-…` | tip | on `main` |
+|---|---|---|
+| `39-quiet-skip` | `7ac9791` | yes |
+| `ci-referee-timeout` | `b3c328d` | yes |
+| `vehicle-delivery-scaffold` | `d4f7d04` | yes |
+| `window-record-no-seed` | `e756ceb` | yes |
+| `wp01-on-issue16` | `bdfaf8b` | yes |
+| `wp08-checkpoint-format` | `25fffb5` | yes |
+| `wp08-design` | `47856fa` | yes |
+| `wp08-encoder` | `b1feb0e` | yes |
+| `wp08-resume` | `45f4267` | yes |
+| `wp08-state-dir` | `770159e` | yes |
+| `diag-ingress-trace` | `1caab23` on vehicle `8c6f71d` | **no**: one commit, an env-gated ingress trace (`VEHICLE_INGRESS_TRACE`) that PR #8's diagnosis run reads where the vehicle has one. Recorded, not re-applied; it re-applies with `git cherry-pick -X subtree=vehicle` when the probe diagnosis resumes |
+
+This covers the branches the nyx session named as still on `space_vehicle`. Whether that
+repository holds anything else (tags, other branches, issues per D21) was not checked from here.
 
 ## Host step (nyx)
 
