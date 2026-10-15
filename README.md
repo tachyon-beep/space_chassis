@@ -200,6 +200,51 @@ running stack — no route out, the binds, the caps, a `done`, a reseed — and
 tears it down. It takes a few minutes, and it is the fastest way to see whether
 the world is intact after a change.
 
+## The vehicle
+
+The `vehicle` profile runs the spacecraft: one executive for every agent's
+window, with no network, its private state (checkpoints, its lock and the
+durable per-cycle record) on a `/state` image nothing else mounts. The windows
+it serves are `VEHICLE_SLUGS`, which compose fills from the roster; without a
+roster it serves one window called `vehicle`, for a probe in a stack with no
+fleet. The slug set, the scenario, the seed and the ring size are the world's
+identity: a restart that names any of them differently refuses.
+
+- **The first start is a new world.** Start it on cleared windows -- each
+  window's files removed but its `<slug>/` and `<slug>/output/` kept (agent
+  binds use `create_host_path: false`), and the window root's `.executive.json`
+  removed -- and an empty `/state`.
+- **A restart needs nothing.** The restart policy brings it back and it resumes
+  the same world: the same `world_id`, mission time not advancing while it was
+  down. Every command whose cycle was recorded gets exactly one result; a batch
+  claimed in the cycle a crash interrupted is lost with no result. A corrupt
+  checkpoint falls back to the generation before it. The work a restart redoes
+  is bounded by one checkpoint interval.
+- **A rebuild of the agent image that changes Python or libc** -- a
+  `docker compose build --pull` for any reason -- makes the checkpoint
+  incompatible (it records the Python version and the platform), and every
+  restart after it refuses until a new world is begun. Rebuild the vehicle's
+  image only when a new world is acceptable.
+- **A deliberate new world** -- a new mission, a changed roster, scenario or
+  seed, a vehicle update, or an exit 3 that will not clear: stop the fleet and
+  the vehicle (an agent's window is bound by inode, so moving it under a running
+  agent leaves the agent writing into the old one); move the whole of `/state`
+  aside, the contents of each window aside, keeping each `<slug>/` and
+  `<slug>/output/` (or rerun `prepare_host.sh`), and the window root's
+  `.executive.json` aside too -- it binds the old world; start. A start with no
+  checkpoint on a `/state` that holds a record refuses: one state directory is
+  one world.
+- **`--closed-interlock` on a restart** is added to the world's set and
+  journaled: a restart can trip an interlock but never clear one. It is
+  not wired into `serve_vehicle.sh`; passing it means overriding the service's
+  entrypoint for that start.
+- **An exit 3:** `docker compose logs vehicle`; the last line names the file,
+  the check and what clears it.
+
+Probe a window (`contract/diode_probe.py` submits commands) only in a stack
+with no fleet in it, or on a scratch directory: in a live mission every window
+commands the one spacecraft the fleet is flying.
+
 ## Verifying the world
 
 ```sh
