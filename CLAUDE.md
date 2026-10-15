@@ -13,6 +13,7 @@ python3 -m pytest recorder/tests -q                    # Aurora's recorder and t
 python3 -m pytest pump/tests -q                        # Aurora's pump: its own process until plan 5 retires services/pump.py
 python3 -m pytest tests/test_chassis.py::test_a_conversation_round_trips -q
 python3 -m pytest docs/deep_research/vehicle/tests/test_vehicle_config.py -q   # the vehicle's referee
+python3 -m pytest live -q                               # the first live run: builds the image and runs the smoke stack; minutes
 
 uvx ruff check . --no-cache                            # ruff is not installed here; uvx fetches it
 uvx ruff format --check . --no-cache
