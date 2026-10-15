@@ -595,3 +595,25 @@ def test_the_panel_renders_what_a_real_run_produced(panel):
 
 def test_the_fixture_carries_no_key():
     assert b"sk-" not in FIXTURE.read_bytes()
+
+
+def test_the_fleet_table_shows_the_cache_share(panel):
+    slug = "otter"
+    write_transcript(panel, slug, [turn_record(0, [{"role": "user", "content": "go"}])])
+
+    def publish(spend: dict) -> str:
+        signals = {"incarnations": 1, "spend": spend, "caps": {}}
+        (panel / "telemetry" / "fleet.json").write_text(
+            json.dumps(
+                {"at": "x", "agents": [{"slug": slug, "liveness": "active", "signals": signals}]}
+            ),
+            encoding="utf-8",
+        )
+        row = review.agent_row(slug)
+        return review.render_fleet([row], review.fleet_summary([row])).decode()
+
+    page = publish({"requests": 3, "cache_share": 0.2})
+    assert "<th>cache</th>" in page and "<td title='cache share'>20%</td>" in page
+    # A snapshot published before the cache signals existed, or an hour with nothing prompted.
+    assert "<td title='cache share'>—</td>" in publish({"requests": 3})
+    assert "<td title='cache share'>—</td>" in publish({"requests": 3, "cache_share": None})

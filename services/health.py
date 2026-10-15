@@ -159,9 +159,29 @@ def tool_errors(records: list) -> tuple[int, int]:
     return errors, results
 
 
+def _count(usage: dict, key: str) -> int | None:
+    value = usage.get(key)
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
 def spend(events: list, now: float, window: float = 3600.0) -> dict:
-    """Core closes inside the hour: requests, tokens from usage, and 429/503 refusals."""
-    total = {"requests": 0, "tokens": 0, "refused": 0}
+    """Core closes inside the hour: requests, tokens from usage, and 429/503 refusals.
+
+    The recorder flattens `prompt_tokens_details.cached_tokens` into `usage.cached_tokens`. A close
+    is priced when it carries a valid prompt count; its cached tokens count only then, and never
+    above its prompt, so the share is a share.
+    """
+    total = {
+        "requests": 0,
+        "tokens": 0,
+        "refused": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "cached_tokens": 0,
+        "priced": 0,
+    }
     for event in events:
         if not isinstance(event, dict) or event.get("event") != "close":
             continue
@@ -178,9 +198,22 @@ def spend(events: list, now: float, window: float = 3600.0) -> dict:
         if status == 429 or (status == 503 and "fleet ledger unavailable" in refusal):
             total["refused"] += 1
         usage = event.get("usage")
-        tokens = usage.get("total_tokens") if isinstance(usage, dict) else None
+        if not isinstance(usage, dict):
+            continue
+        tokens = usage.get("total_tokens")
         if isinstance(tokens, int) and not isinstance(tokens, bool) and tokens > 0:
             total["tokens"] += tokens
+        completion = _count(usage, "completion_tokens")
+        if completion is not None:
+            total["completion_tokens"] += completion
+        prompt = _count(usage, "prompt_tokens")
+        if prompt is not None:
+            total["priced"] += 1
+            total["prompt_tokens"] += prompt
+            total["cached_tokens"] += min(_count(usage, "cached_tokens") or 0, prompt)
+    prompted = total["prompt_tokens"]
+    total["cache_share"] = total["cached_tokens"] / prompted if prompted > 0 else None
+    total["mean_prompt_tokens"] = prompted // total["priced"] if total["priced"] else None
     return total
 
 
@@ -281,11 +314,21 @@ def signals(records: list, events: list, *, now: float, caps: dict) -> dict:
 
     commands = [sum(window_calls(record) for record in group) for group in groups]
 
+    # Only a group that opens on a fresh start is an incarnation that began; a tail can open
+    # mid-incarnation, and that group's first record is not a start.
+    started = [
+        parse_timestamp(group[0].get("timestamp"))
+        for group in groups
+        if is_fresh_start(_messages(group[0]))
+    ]
+    last_hour = sum(1 for when in started if when is not None and now - 3600.0 <= when <= now)
+
     times = [t for t in (parse_timestamp(r.get("timestamp")) for r in core) if t is not None]
     lines = [r for r in records if isinstance(r, dict)]
     stamps = [t for t in (parse_timestamp(r.get("timestamp")) for r in lines) if t is not None]
     return {
         "incarnations": len(groups),
+        "incarnations_last_hour": last_hour,
         "requests_per_incarnation": [len(group) for group in groups],
         "resets": max(0, len(groups) - 1),
         "system_prompt_changes": changes,

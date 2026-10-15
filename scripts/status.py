@@ -160,6 +160,19 @@ def _first_line(text: str | None, width: int = 100) -> str:
     return health.printable(text.splitlines()[0][:width])
 
 
+def _percent(share) -> str:
+    if isinstance(share, (int, float)) and not isinstance(share, bool) and 0 <= share <= 1:
+        return f"{round(100 * share)}%"
+    return "—"
+
+
+def _count(value) -> str:
+    """A count the monitor published, or a dash for one a snapshot from before it lacks."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return "—"
+
+
 def render(rows: list[dict], verbose: bool) -> str:
     if not rows:
         return "no agents found under the volume root"
@@ -176,6 +189,10 @@ def render(rows: list[dict], verbose: bool) -> str:
             f"mirror {_seconds(row['mirror_age']):>5}",
             f"incarnations {signals['incarnations']}{'+' if signals['window'].get('truncated') else ''}",
             f"hour {spend['requests']}/{cap}",
+            f"cache {_percent(spend.get('cache_share'))}",
+            f"prompt {_count(spend.get('mean_prompt_tokens'))}",
+            f"inc/h {_count(signals.get('incarnations_last_hour'))}"
+            f"{'+' if signals['window'].get('truncated') else ''}",
             f"refusals {signals['refusals']}",
         ]
         if container is not None:
