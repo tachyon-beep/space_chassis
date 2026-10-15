@@ -123,3 +123,29 @@ def test_a_roster_whose_count_disagrees_with_its_agents_is_refused(tmp_path):
 def test_a_roster_with_a_repeated_slug_is_refused(tmp_path):
     _plant(tmp_path, [_entry(1, "ibex"), _entry(2, "ibex")])
     _refused(tmp_path)
+
+
+def test_the_roster_prints_without_its_retired_columns(tmp_path):
+    """print_roster read the retired `mount` field (plan 5): a regression guard on the printout."""
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "scripts" / "roster.py"),
+            "--count",
+            "2",
+            "--seed",
+            "1",
+            "--roster-dir",
+            str(tmp_path / "operator"),
+            "--env-file",
+            str(tmp_path / "test.env"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "2 agents, seed 1" in result.stdout

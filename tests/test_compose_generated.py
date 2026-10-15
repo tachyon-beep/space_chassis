@@ -277,7 +277,7 @@ def test_the_generator_scales_to_a_smaller_fleet(count: int) -> None:
 def test_the_recorders_carry_the_plan_4b_settings_with_their_defaults() -> None:
     expected = {
         "RESPONSE_MAX_BYTES": "${RESPONSE_MAX_BYTES:-16777216}",
-        "RECORDER_MIN_FREE_BYTES": "${RECORDER_MIN_FREE_BYTES:-67108864}",
+        "RECORDER_MIN_FREE_BYTES": "${RECORDER_MIN_FREE_BYTES:-134217728}",
         "RECORDER_CLIENT_TIMEOUT": "${RECORDER_CLIENT_TIMEOUT:-600}",
         "RECORDER_DEADLINE_MARGIN": "${RECORDER_DEADLINE_MARGIN:-30}",
         "RECORDER_UPSTREAM_DEADLINE": "${RECORDER_UPSTREAM_DEADLINE:-540}",

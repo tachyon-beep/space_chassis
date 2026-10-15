@@ -182,9 +182,13 @@ def test_a_partial_transcript_is_withheld_and_the_next_turn_is_recorded_cleanly(
         return real(fd, data)
 
     monkeypatch.setattr(proxy, "_os_write", once_short)
+    clock = {"now": 0.0}
+    monkeypatch.setattr(proxy, "RECORD_CLOCK", lambda: clock["now"])
     upstream["response"] = lambda: _BufferedResponse(json.dumps(ENOSPC_BODY).encode())
     path = stream_factory(max_tokens=10)
     assert _post(path, {"model": "m", "messages": []}).status_code == 502
+    # The failed record holds new requests back until a probe write succeeds after the cool-off.
+    clock["now"] += proxy.RECORD_RETRY_SECONDS + 1
     assert _post(path, {"model": "m", "messages": []}).status_code == 200
     lines = (transcripts / "transcript.jsonl").read_bytes().split(b"\n")
     assert json.loads(lines[1])["response"] == ENOSPC_BODY
@@ -288,7 +292,9 @@ def test_a_failed_record_refuses_new_requests_until_the_volume_takes_a_write_aga
     path = stream_factory(max_tokens=10)
     assert _post(path, {"model": "m", "messages": []}).status_code == 502
     calls = []
-    upstream["response"] = lambda: calls.append(1) or _BufferedResponse(json.dumps(ENOSPC_BODY).encode())
+    upstream["response"] = lambda: (
+        calls.append(1) or _BufferedResponse(json.dumps(ENOSPC_BODY).encode())
+    )
     used = _used_tokens(registry)
     refused = _post(path, {"model": "m", "messages": []})
     assert refused.status_code == 503

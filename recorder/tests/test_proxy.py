@@ -1656,8 +1656,10 @@ def test_the_only_removals_in_the_recorder_are_its_own_temporary_and_socket_file
         "bind_stream",
         "poll_once",
         "main",
+        # Plan 4b: the record latch's probe file, the recorder's own temporary.
+        "_probe_write",
     }
-    assert [kind for name, kind in removals if name != "rotate_if_needed"] == ["unlink"] * 5
+    assert [kind for name, kind in removals if name != "rotate_if_needed"] == ["unlink"] * 6
     assert [kind for name, kind in removals if name == "rotate_if_needed"] == ["remove"]
 
 

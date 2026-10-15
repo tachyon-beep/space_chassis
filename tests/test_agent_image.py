@@ -140,3 +140,23 @@ def test_the_dockerignore_keeps_test_leftovers_and_tests_out_of_the_image():
         "pump/tests/",
     ):
         assert pattern in lines, pattern
+
+
+def test_the_image_carries_only_the_operator_services():
+    copies = [line for line in DOCKERFILE.splitlines() if line.startswith("COPY") and "services" in line]
+    assert len(copies) == 1, copies
+    sources = copies[0].split()[1:-1]
+    sources = [s for s in sources if not s.startswith("--")]
+    assert sorted(sources) == sorted(
+        f"services/{name}.py" for name in ("common", "health", "fleet_monitor", "review")
+    )
+    assert copies[0].split()[-1] == "/opt/services/"
+
+
+def test_the_image_carries_no_agent_env():
+    assert "agent.env" not in DOCKERFILE
+
+
+def test_the_image_still_carries_the_vehicle():
+    assert "COPY --chown=agent:agent docs/deep_research/vehicle/ /opt/vehicle/" in DOCKERFILE
+    assert "containers/serve_vehicle.sh /usr/local/bin/serve_vehicle.sh" in DOCKERFILE

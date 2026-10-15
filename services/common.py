@@ -1,15 +1,13 @@
-"""Shared pieces for every operator-side service.
+"""Shared pieces for the operator's services and scripts.
 
-Standard library only, and deliberately small: this module is imported by the
-recorder, the supervisor, the pump and the watcher, all of which run from the
-read-only image and are never visible to an agent.
+Standard library only, and deliberately small: this module is imported by the fleet monitor and
+the review panel, which run from the read-only image, and by the host-side scripts (status,
+journal) and the window's probe. None of it is visible to an agent.
 
-The one thing worth stating out loud is `write_json_atomic`. Every service here
-publishes a file that somebody else reads while it is being written -- the
-pump's state, the supervisor's lifecycle record, the recorder's socket
-directory. A reader that catches a half-written file must not conclude anything
-about the world, so every published file is built in a temporary beside it and
-moved into place.
+The one thing worth stating out loud is `write_json_atomic`. A published file -- the monitor's
+fleet.json, for one -- is read by somebody else while it is being written. A reader that catches a
+half-written file must not conclude anything about the world, so every published file is built in
+a temporary beside it and moved into place.
 """
 
 from __future__ import annotations
@@ -19,7 +17,6 @@ import datetime as dt
 import json
 import os
 import tempfile
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -40,17 +37,6 @@ def stamp(now: dt.datetime | None = None) -> str:
 
 def iso(now: dt.datetime | None = None) -> str:
     return (now or utc_now()).isoformat().replace("+00:00", "Z")
-
-
-def slugify(text: str, max_bytes: int = 160) -> str:
-    """Every character that is not alphanumeric becomes an underscore.
-
-    Truncation is by *bytes* after encoding, so a multi-byte character at the
-    boundary cannot produce a partial sequence, and no separator or traversal
-    sequence can survive into a path.
-    """
-    safe = "".join(ch if ch.isalnum() else "_" for ch in text)
-    return safe.encode("utf-8")[:max_bytes].decode("utf-8", "ignore")
 
 
 def read_bounded(path: Path, limit: int = MAX_READ_BYTES) -> bytes | None:
@@ -154,22 +140,6 @@ def tail_jsonl(path: Path, max_bytes: int = 512 * 1024) -> list[dict]:
     return records
 
 
-@contextlib.contextmanager
-def env_defaults(**values: str) -> Iterator[None]:
-    """Temporarily set environment defaults, restoring what was there after."""
-    saved = {key: os.environ.get(key) for key in values}
-    for key, value in values.items():
-        os.environ.setdefault(key, value)
-    try:
-        yield
-    finally:
-        for key, previous in saved.items():
-            if previous is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = previous
-
-
 def env_int(name: str, default: int) -> int:
     raw = (os.environ.get(name) or "").strip()
     if not raw:
@@ -178,23 +148,6 @@ def env_int(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
-
-
-def env_optional_int(name: str) -> int | None:
-    raw = (os.environ.get(name) or "").strip()
-    if not raw:
-        return None
-    try:
-        return int(raw)
-    except ValueError:
-        return None
-
-
-def env_bool(name: str, default: bool = False) -> bool:
-    raw = (os.environ.get(name) or "").strip().lower()
-    if not raw:
-        return default
-    return raw not in {"0", "false", "no", "off"}
 
 
 def slugs_from_env(name: str = "AGENT_SLUGS", default: str = "") -> list[str]:
