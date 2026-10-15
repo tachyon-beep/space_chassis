@@ -1,0 +1,253 @@
+name: CI
+
+# Root CI (governance/decisions.md D6; the design is docs/vehicle-completion/06-verification.md).
+#
+# One workflow rather than one per stream, so that branch protection (D20) can require a single
+# check, `required`, which passes when every job that ran passed and every job that was not needed
+# was skipped. Path filters at the workflow level would leave a required check pending forever on a
+# pull request that never triggers it; the `changes` job does the filtering instead. The aurora
+# suite takes about a minute and carries the doc and citation guards, so it runs on every change;
+# the vehicle referee takes far longer and runs only when a change can reach it.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      vehicle: ${{ steps.paths.outputs.vehicle }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - id: paths
+        name: Decide whether this change can affect the vehicle
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != pull_request ]; then
+            # A push to main or a manual run checks everything.
+            echo "vehicle=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only "$(git merge-base "$BASE_SHA" HEAD)" HEAD | tee changed.txt
+          # vehicle/, the files outside it that check_vehicle.py's EXTERNAL_CITATIONS name, this
+          # workflow, and the root files that set up either stream.
+          if grep -qE '^(vehicle/|docs/diode-contract\.md$|docs/deep_research/|aurora/contract/|\.github/|requirements-dev\.txt$|pyproject\.toml$|Makefile$)' changed.txt; then
+            echo "vehicle=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "vehicle=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      # The versions `make lint` pins: 0.17.0 at the root (requirements-dev.txt), 0.16.8 for
+      # vehicle/ under its own configuration (vehicle/requirements-dev.lock). The corpus, the
+      # plans and vehicle/ are excluded from the root check by pyproject.toml.
+      - run: python -m pip install ruff==0.17.0
+      - run: ruff check . --no-cache
+      - run: ruff format --check . --no-cache
+      - run: python -m pip install ruff==0.16.8
+      - run: ruff check . --no-cache
+        working-directory: vehicle
+
+  aurora:
+    name: aurora tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Confirm the runner is not root
+        # test_journal.py::test_an_unreadable_shared_file_is_skipped_and_the_pass_completes fails
+        # as root, because root reads a file whatever its mode. Hosted runners are not root, so it
+        # runs here like any other test; this step makes that a checked fact, not an assumption.
+        run: test "$(id -u)" -ne 0
+      - name: Operator suite, harness, recorder and pump (the doc guards included)
+        run: |
+          mkdir -p .scratch/ci
+          python -m pytest -n auto -rs --junitxml=.scratch/ci/aurora.xml \
+            aurora/tests aurora/harness/tests aurora/recorder/tests aurora/pump/tests
+      - name: Compose file parses
+        working-directory: aurora
+        run: docker compose --profile fleet config -q
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: aurora-tests
+          path: .scratch/ci/
+          retention-days: 30
+
+  vehicle:
+    name: vehicle check (${{ matrix.python }})
+    needs: changes
+    if: ${{ needs.changes.outputs.vehicle == 'true' }}
+    runs-on: ubuntu-24.04
+    # The referee took 30-45 minutes on a 2-core runner (vehicle/.github/workflows/development.yml);
+    # the limit guards against a hung job, it is not a performance target.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.13']
+    defaults:
+      run:
+        working-directory: vehicle
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install --require-hashes -r requirements-dev.lock
+      - name: Record source and environment
+        run: |
+          mkdir -p .scratch/validation
+          python - <<'PYCODE'
+          import hashlib
+          import importlib.metadata
+          import json
+          import os
+          import platform
+          from pathlib import Path
+          data = {
+              'source_sha': os.environ['GITHUB_SHA'],
+              'event': os.environ['GITHUB_EVENT_NAME'],
+              'run_id': os.environ['GITHUB_RUN_ID'],
+              'python': platform.python_version(),
+              'platform': platform.platform(),
+              'lock_sha256': hashlib.sha256(Path('requirements-dev.lock').read_bytes()).hexdigest(),
+              'packages': {d.metadata['Name']: d.version for d in importlib.metadata.distributions()},
+          }
+          Path('.scratch/validation/environment.json').write_text(json.dumps(data, indent=2) + '\n')
+          PYCODE
+      - run: python tools/check_vehicle.py
+      - name: Full referee, less one test
+        # DESELECTED: test_a_sub_tick_effect_lands_where_a_short_tick_would_have_put_it needs more
+        # than 13 GB of memory and a hosted runner has 16 GB shared with the other workers. It is
+        # deselected here, not skipped in the test, and recorded as a known gap in
+        # governance/status.md; D6 requires it to be made to fit and then run here.
+        run: |
+          python -m pytest -n auto -q -o addopts='' --junitxml=.scratch/validation/tests.xml \
+            --deselect tests/test_vehicle_config.py::test_a_sub_tick_effect_lands_where_a_short_tick_would_have_put_it
+      - name: Require executed tests and zero skips
+        if: ${{ !cancelled() }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          report = Path('.scratch/validation/tests.xml')
+          root = ET.parse(report).getroot()
+          suites = [root] if root.tag == 'testsuite' else list(root.iter('testsuite'))
+          counts = {key: sum(int(s.get(key, 0)) for s in suites)
+                    for key in ('tests', 'failures', 'errors', 'skipped')}
+          print(counts)
+          if counts['tests'] <= 0 or any(counts[k] for k in ('failures', 'errors', 'skipped')):
+              raise SystemExit('The referee must execute with zero skips/failures/errors')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: referee-${{ matrix.python }}
+          path: vehicle/.scratch/validation/
+          if-no-files-found: error
+          retention-days: 30
+
+  readiness:
+    name: vehicle readiness
+    needs: changes
+    if: ${{ needs.changes.outputs.vehicle == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: vehicle
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --require-hashes -r requirements-dev.lock
+      - name: Record current readiness without concealing refusals
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .scratch/validation
+          python tools/check_vehicle.py > .scratch/validation/composition.txt
+          python tools/check_vehicle.py --debts > .scratch/validation/debts.txt
+          python tools/plant.py --readiness > .scratch/validation/readiness.txt
+          python tools/plant.py --build-order > .scratch/validation/build-order.txt
+          python tools/plant.py --mission --ticks 500 > .scratch/validation/mission-500.txt
+          set +e
+          python tools/check_vehicle.py --strict > .scratch/validation/strict.txt 2>&1
+          strict_exit=$?
+          set -e
+          echo "$strict_exit" > .scratch/validation/strict-exit.txt
+          case "$strict_exit" in
+            0) result='No declared debts; physical and mission acceptance remain separate gates.' ;;
+            2) result='INCOMPLETE: declared debts remain. Development checks may pass.' ;;
+            *) cat .scratch/validation/strict.txt; exit "$strict_exit" ;;
+          esac
+          {
+            echo '### Vehicle readiness diagnostic'
+            echo "$result"
+            echo 'This report does not certify a complete vehicle or accepted mission.'
+            echo
+            echo '```'
+            tail -n 20 .scratch/validation/mission-500.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: vehicle-readiness
+          path: vehicle/.scratch/validation/
+          if-no-files-found: error
+          retention-days: 30
+
+  required:
+    # The one check branch protection requires (D20). Skipped jobs count as passed: they were not
+    # needed for this change. Anything else (failure, cancellation) fails this check.
+    name: required
+    if: ${{ always() }}
+    needs: [changes, lint, aurora, vehicle, readiness]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every needed job passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS"
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ['RESULTS'])
+          bad = {name: job['result'] for name, job in needs.items()
+                 if job['result'] not in ('success', 'skipped')}
+          if bad:
+              sys.exit(f'not passed: {bad}')
+          PY
