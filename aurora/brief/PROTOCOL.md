@@ -48,16 +48,54 @@ Write a single JSON file, `console.json`:
   how the far side splits it is its business, not yours.
 - `variables` is a flat map of gate settings. The far side publishes which
   gates exist and what they open. It persists: the far side does not clear it.
-- **Intake is destructive and atomic.** Each pass, the far side reads the file
-  and rewrites it with `commands` emptied and `variables` kept. A command
-  therefore runs *at most once*. You can tell a submitted batch from a pending
-  one by watching `commands` return to empty.
+- **Intake is destructive, and the claim is not atomic.** Each pass, the far
+  side reads the file. If it holds something to claim, the far side then
+  replaces it with a copy whose `commands` is empty and whose `variables` are
+  kept. The replacement is a single rename, so you never read a half-rewritten
+  file. But the read and the rename are two separate steps, and nothing ties
+  the file the rename replaces to the file that was read (see below). A file
+  holds nothing to claim when `commands` is exactly `[]` and it carries a
+  `variables` map, or carries no `variables` while the far side holds none.
+  Such a file is left untouched: nothing is written, and its `variables` map
+  is taken as it stands. Once the far side's checks let it take the file in,
+  anything else is claimed: a batch; a missing, unreadable or half-written
+  file, or one that is not a JSON object; one with no `commands` list; one
+  whose `variables` is present but not a map; or one with no `variables`
+  while the far side holds a map.
+- **A command runs at most once, not exactly once.** The far side replaces
+  the file before it acts on any command in it, and acts on nothing in the
+  file until that replacement has succeeded. If the far side's process stops
+  part-way through a batch, the file it finds when it starts again is the
+  replacement, so that batch is not run again. If the whole machine stops,
+  this rests on the replacement having reached the disk: this far side keeps
+  a record, flushes a claimed batch's replacement to disk before acting on
+  it, and relies on the disk keeping what it was told to flush. A far side
+  that kept no record would not flush it, and a crash of the machine could
+  then undo the claim. A batch can also run less than once. It can be lost
+  before it is claimed (below). And when the far side stops part-way, what it
+  had not yet recorded of a claimed batch is lost and never answered. Writing
+  the same command again submits it again.
 - **One bad element refuses the whole batch.** If any element of `commands` is
   not a string, none of it runs, and one result file records that. Partial
   execution of a malformed batch would be worse than none, and the far side
   will not do it.
-- A batch you write while a pass is in progress is not consumed by that pass.
-  It runs on the next one.
+- **A batch you put in place can be lost while an earlier file is being
+  claimed.** Between the far side's read and its rename, whatever you put in
+  place is replaced unread. Its batch runs nothing, and nothing answers or
+  records it. The file you then see shows `commands` empty, exactly as if
+  your batch had been taken. That holds whether you renamed your file in or
+  wrote it in place. A pass that reads a file holding nothing to claim does
+  not rewrite it, so a batch renamed in over such a file is not lost this
+  way: it stays until the far side next reads the file, and is claimed then
+  if it is still there. Nothing says when that next read comes. Writing in
+  place has no such protection: the far side can read the file half-written,
+  refuse it and replace it, and the rest of your write then lands on a file
+  that is no longer there. So keep to one writer, and publish each file
+  whole, through a temporary file and a rename. After you put in place
+  anything that holds something to claim, replace the file again, with
+  anything at all, only once the far side's cleared copy has appeared. Even
+  then, a cleared console shows only that some file was claimed, not that
+  yours was taken or answered. Look for your batch's answers in `output/`.
 
 Write the file whole, not in pieces: a reader that catches it half-written sees
 a broken batch and refuses it. This is the one place where how you write
@@ -65,17 +103,25 @@ matters as much as what you write.
 
 ### Reading
 
-Every command produces exactly one file in `output/`:
+The far side answers in `output/`. Each answer is a file ending in a
+`receipt:` line, whose `seq` numbers that answer for your window. Count
+answers by `seq`, not by files. A deferred command is answered twice, when
+it is accepted and again when it settles. An answer that could not be
+published remains owed and may be written later. Retrying publication can
+create another file with the same `seq`. If more than 256 answers are owed
+to your window, the oldest is given up and may never be written. A batch
+lost as described above has no answers at all:
 
 ```
 20260912T021345_123456Z_<name>_diode_set_mode_standby.txt
 └──────── timestamp ────────┘ └agent┘ └──── the command ────┘
 ```
 
-The name carries the submission time, who submitted it, and the command. A
-refusal is a file too: an unavailable verb, a rate-limited call and a
-successful command all produce one. **Failure and success are the same shape**,
-deliberately, so that the only way to know what happened is to read it.
+The filename carries the publication time, your window name, and the
+command. A refusal is answered the same way as a success: an unavailable
+verb, a rate-limited call and a successful command are all answers.
+**Failure and success are the same shape**, deliberately, so that the only
+way to know what happened is to read it.
 
 Nothing waits for you. Submit, and read later.
 
