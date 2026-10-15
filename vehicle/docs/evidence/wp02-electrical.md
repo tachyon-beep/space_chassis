@@ -199,6 +199,15 @@ Corpus, cited and not edited: `apollo_diode.md:72-80` (the power channel table),
 - **Finding.** The CSM glycol pumps are AC loads behind the inverters (A14DB), while the model puts
   them on DC bus B at 250 W each; a DC-side figure would need inverter efficiency, which no text
   reached gives. The `chosen` draws stay as declared and are listed for WP04.
+- **Leads from the WP02 thermal/consumables research (reported there, not re-read here).** TN D-6718
+  (<https://ntrs.nasa.gov/api/citations/19720012252/downloads/19720012252.pdf>) p. 3 Table II, "ECS
+  Power Summary", whose OCR cannot be aligned row-to-value with confidence but is consistent with a
+  glycol pump of tens of watts rather than 250 W; Program Apollo WP-1321
+  (<https://ntrs.nasa.gov/api/citations/19700025125/downloads/19700025125.pdf>) p. 10 Table IV: suit
+  compressor 104 W including its inverter share, cabin blowers 76 W; SP-368 ch. 5
+  (<https://ntrs.nasa.gov/api/citations/19760005606/downloads/19760005606.pdf>) p. 525: CSM coast heat
+  load under PTC 1,170-1,470 W. These are the next step for the pump, fan and suit-compressor rows,
+  and the last is a second independent bound on the coast total besides the flown currents above.
 
 ## Not electrical evidence
 
