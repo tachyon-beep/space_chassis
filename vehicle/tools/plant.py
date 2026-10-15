@@ -7,7 +7,7 @@ is implementable and a list of what is missing, in the order the missing things 
 
 The idea is `simulator-design.md:146-150`'s, applied to the plant instead of to the linter: you
 do not enumerate what a simulator needs up front, you build it, run it, and it tells you what you
-now owe. `check_vehicle.py` does that for the *definition* — it reports 273 declared debts by
+now owe. `check_vehicle.py` does that for the *definition* — it reports 270 declared debts by
 path, and `test_the_readme_status_matches_the_tools` holds that figure in this file as well as in
 the README, because it said 202 here for longer than anybody noticed. This tool does it for the *implementation*: it loads the whole world, builds the tick order,
 and then walks the tick in that order, stopping at the first thing it cannot compute and saying
@@ -67,6 +67,7 @@ from typing import Any
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import trajectory  # noqa: E402  (a sibling tool, not a package)
 from check_vehicle import (  # noqa: E402  (a sibling tool, not a package)
     INTEGRATOR_METHODS,
     Report,
@@ -548,7 +549,7 @@ def load_world(root: Path) -> World:
         verbs=verbs,
         plant_published=[str(e.get("channel")) for e in presentation.get("plant_published") or []],
         # Counted here rather than taken from the linter, and deliberately a *different* number:
-        # the linter reports 273 declared debts, including prose obligations ("this needs a
+        # the linter reports 270 declared debts, including prose obligations ("this needs a
         # patched-conic design") recorded in `open_debts` lists. This counts only the values that
         # are literally `UNCONFIGURED`, because those are the ones that stop a plant. Two numbers
         # with one name would be worse than either.
@@ -1781,6 +1782,9 @@ def advance(world: World, state: State, values: dict[str, Any], dt: float) -> di
             ring_key: {"next": (next_slot + 1) % delay_ticks, "slots": slots},
         }
 
+    if state.method == "dynamics" and state.spec.get("rule") == TRAJECTORY_RULE:
+        return advance_trajectory(world, state, values, incoming, dt, where)
+
     if state.method == "dynamics":
         # --------------------------------------------------------------------------------------
         # **The sixth class, and the one this file has refused longest.**
@@ -2242,12 +2246,105 @@ def initial_values(world: World) -> dict[str, Any]:
             # gas. `state_values` is the one place that decides what a state's entries are, so the
             # seeding and the advancing cannot disagree about the key space.
             values.update(state_values(world, state, float(initial)))
+    # **The trajectory's start, which is a vector and so was outside the scalar seed above.** A
+    # `dynamics` state with a `rule` is seeded by that rule from its own declarations, and the one
+    # rule there is starts from `mission.yaml#initial_state` and the Moon at MET 0.
+    for state in world.states:
+        if state.method == "dynamics" and state.spec.get("rule") == TRAJECTORY_RULE:
+            seeded = trajectory_start(world)
+            if seeded is not None:
+                values.update(state_values(world, state, seeded))
     # The key exists even when nothing seeds it, so a reader can tell the sentinel is there and
     # empty rather than absent — the same distinction `state.json`'s gate map draws for a closed
     # gate and an unnamed one.
     values.setdefault("internal", {})
     resolve_declared_states(world, values)
     return values
+
+
+# The rule name a `dynamics` state declares to be integrated as a trajectory: the vehicle's centre of
+# mass under the Earth's and the Moon's gravity, with the Moon carried beside it (`tools/trajectory.py`).
+TRAJECTORY_RULE = "cislunar_point_masses"
+
+
+def trajectory_start(world: World) -> dict[str, list[float]] | None:
+    """`orbital_state` at MET 0: the declared start vector and the Moon at the same instant, in SI.
+
+    The Moon travels inside the state's value rather than beside it, because the vehicle's
+    acceleration needs the Moon's position *this* tick, and a value that carries it is a value a
+    checkpoint restores whole: a restart resumes the same geometry rather than recomputing it from
+    MET, which the plant does not know. None while `mission.yaml` declares no start vector.
+    """
+    mission = world.documents.get("mission.yaml") or {}
+    vehicle = world.documents.get("vehicle.yaml") or {}
+    start = trajectory.declared_start(mission)
+    if start is None:
+        return None
+    try:
+        moon_r, moon_v = trajectory.moon_at_met0(vehicle, mission)
+    except (KeyError, TypeError, ValueError):
+        return None  # the linter names what is missing; the tick reports the state unseeded
+    return {
+        "position_m": start[0],
+        "velocity_m_s": start[1],
+        "moon_position_m": moon_r,
+        "moon_velocity_m_s": moon_v,
+    }
+
+
+def advance_trajectory(
+    world: World, state: State, values: dict[str, Any], incoming: list[Edge], dt: float, where: str
+) -> dict[str, Any]:
+    """One tick of the translational truth: velocity Verlet under both bodies' gravity.
+
+    `plant.md` §3 gives a coast to Verlet and a burn to RK4. **This branch is the coast**, and it
+    says so rather than flying a burn wrongly: the main engine's force reaches this state through
+    `E-ENG-DYN`, but its *direction* is the attitude's, and `attitude` owes a rule. So a thrust the
+    plant can read and that is not zero is refused by name, and the tick stands at its last state;
+    a thrust nothing supplies (the engine's own state is still blocked) is no thrust, which is what
+    an engine with no model does.
+    """
+    current = state_level(values, state)
+    if not isinstance(current, dict):
+        raise Unconfigured(
+            f"{where}",
+            "has no start vector: `mission.yaml#initial_state.position_xyz_km` and "
+            "`velocity_xyz_m_s` are what seeds it",
+            needs="mission.yaml:initial_state.position_xyz_km",
+        )
+    for edge in canonical_contributors(incoming):
+        thrust = edge_driver(world, edge, values)
+        if isinstance(thrust, (int, float)) and not isinstance(thrust, bool) and float(thrust) != 0.0:
+            raise Unconfigured(
+                f"coupling.yaml:edge {edge.id}",
+                f"delivers {float(thrust):g} N to {state.id}, and a force without a direction cannot "
+                "be integrated: the direction is `attitude`'s, whose rule is owed",
+                needs="attitude",
+            )
+    gravity = _gravity(world)
+    r, v, mr, mv = trajectory.verlet(
+        gravity,
+        list(current["position_m"]),
+        list(current["velocity_m_s"]),
+        list(current["moon_position_m"]),
+        list(current["moon_velocity_m_s"]),
+        dt,
+    )
+    return state_values(
+        world,
+        state,
+        {"position_m": r, "velocity_m_s": v, "moon_position_m": mr, "moon_velocity_m_s": mv},
+    )
+
+
+def _gravity(world: World) -> trajectory.Gravity:
+    """`vehicle.yaml#environment`'s two parameters, read every tick.
+
+    Not cached by `id(world)`: an id is reused once a world is collected, and a test suite loads
+    hundreds of worlds, so a cache keyed that way can hand one world another's constants. Reading
+    two rows from a list of a few dozen is not what a tick's budget is spent on.
+    """
+    return trajectory.Gravity.from_vehicle(world.documents.get("vehicle.yaml") or {})
 
 
 def resolve_declared_states(world: World, values: dict[str, Any]) -> list[str]:
