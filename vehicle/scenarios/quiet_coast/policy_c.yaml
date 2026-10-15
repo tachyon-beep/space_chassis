@@ -1,0 +1,18 @@
+# Policy C: over-conservative (09 §5). Sheds as B, plays D1 only, then stands the link down and
+# keeps it down. Large margins; the mandatory block is delivered and the secondary is not.
+policy: c
+name: over_conservative
+expected_class: partial
+commands:
+  - {tick: 0, verb: set_load, arguments: {load: csm_lighting, state: "off"}}
+  - {tick: 0, verb: set_load, arguments: {load: csm_comm_heaters, state: "off"}}
+  - {tick: 0, verb: set_comm_mode, arguments: {mode: sband_high}}
+  - {tick: 0, verb: select_antenna, arguments: {antenna: high_gain}}
+  - {tick: 0, verb: set_telemetry_profile, arguments: {profile: high}}
+  - {tick: 0, verb: set_evaporator_feed, arguments: {vehicle: csm, state: "on"}}
+  - {tick: 0, verb: set_power_amplifier, arguments: {state: "on"}}
+  - {tick: 0, verb: play_recorder, arguments: {state: "on"}}
+  # MET 15:00: D1 is down; stop, and stay on the low-rate link for the rest of the contact.
+  - {tick: 45001, verb: play_recorder, arguments: {state: "off"}}
+  - {tick: 45001, verb: set_power_amplifier, arguments: {state: "off"}}
+  - {tick: 45001, verb: set_comm_mode, arguments: {mode: sband_low}}
