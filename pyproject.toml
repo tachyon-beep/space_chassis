@@ -19,6 +19,7 @@ exclude = [
     "recorder/tests/test_recorder_console_hostile.py", "recorder/tests/test_unix_listener.py",
     "recorder/tests/test_upstream_selection.py", "recorder/tests/test_recorder_events.py",
     "recorder/tests/hostile_inputs.py",
+    "pump/pump.py", "pump/tests/test_pump.py", "pump/tests/hostile_inputs.py",
 ]
 
 [tool.ruff.lint]
@@ -28,10 +29,10 @@ select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 ignore = ["E501", "B008"]
 
 [tool.ruff.lint.isort]
-# Bare `import recorder` in tests/ means services/recorder.py; the top-level recorder/ is
-# Aurora's, tested as its own process. Without this, ruff files the old one as first-party.
-# Plan 5 of the Aurora port retires services/recorder.py, and this with it.
-known-third-party = ["recorder"]
+# Bare `import recorder` and `import pump` in tests/ mean services/recorder.py and services/pump.py;
+# the top-level recorder/ and pump/ are Aurora's, tested as their own processes. Without this, ruff
+# files the old ones as first-party. Plan 5 of the Aurora port retires both, and this with them.
+known-third-party = ["recorder", "pump"]
 
 [tool.pytest.ini_options]
 # The vehicle's referee lives in its own repository, mounted here as a git submodule. The suite is

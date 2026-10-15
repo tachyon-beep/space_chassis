@@ -8,13 +8,15 @@ decides anything. Deciding that is the mission's first problem.
 
 Names are not identities the agents chose and not ranks: they are how one agent
 can refer to another, and how a stale lock or a half-finished job can be
-attributed to whoever left it. The roster is written where every agent can read
-it -- /work/roster.json -- because a fleet that cannot name its members cannot
-delegate to them.
+attributed to whoever left it. The roster is the operator's bookkeeping: it is
+written to operator/roster.json and into .env, which compose and the volume
+tooling read. Each agent is given its own name through its environment.
 
-Names are assigned once and then live in the volumes. Re-running this with --force
-renames the fleet on paper while the directories keep the old names, so it is
-refused unless asked for explicitly.
+Names are assigned once and then name the volume images. Re-running this with
+--force renames the fleet on paper while the images keep the old names, so it is
+refused unless asked for explicitly. Running it again without --force re-reads
+the existing roster and, when --env-file is given, writes its block into that
+file, so a fresh .env still names the fleet the images were made for.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import argparse
 import json
 import os
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -219,7 +222,41 @@ ROSTER_BEGIN = "# --- the fleet roster (generated: do not edit by hand) ---"
 ROSTER_END = "# --- end of the fleet roster ---"
 
 
+_TOKEN = re.compile(r"[a-z][a-z0-9_]{0,31}")
+
+
+def validate(roster: dict) -> dict:
+    """Refuse a roster that is not one this script could have drawn.
+
+    The roster is written into .env, which compose hands to every service, and its slugs name
+    volume images and mount points. A roster carried forward from the old layout lived in a volume
+    every agent could write, so nothing in it is trusted: the count is a positive whole number,
+    the agents are exactly agent_1..agent_N in order, every name and slug is the drawn alphabet
+    (lower-case letters, digits and underscores, starting with a letter), and no slug repeats.
+    Anything else -- a newline that would add a variable, a path that climbs out -- is refused.
+    """
+    count = roster.get("count") if isinstance(roster, dict) else None
+    agents = roster.get("agents") if isinstance(roster, dict) else None
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise SystemExit(f"roster refused: count {count!r} is not a positive whole number")
+    if not isinstance(agents, list) or len(agents) != count:
+        raise SystemExit(f"roster refused: count {count} does not match its agents")
+    seen = set()
+    for n, entry in enumerate(agents, start=1):
+        if not isinstance(entry, dict) or entry.get("agent") != f"agent_{n}":
+            raise SystemExit(f"roster refused: entry {n} is not agent_{n}")
+        for field in ("name", "slug"):
+            value = entry.get(field)
+            if not isinstance(value, str) or not _TOKEN.fullmatch(value):
+                raise SystemExit(f"roster refused: agent_{n} has an unusable {field} {value!r}")
+        if entry["slug"] in seen:
+            raise SystemExit(f"roster refused: slug {entry['slug']!r} appears twice")
+        seen.add(entry["slug"])
+    return roster
+
+
 def roster_env_text(roster: dict) -> str:
+    validate(roster)
     lines = [
         ROSTER_BEGIN,
         "# Drawn by scripts/roster.py from pools of animals, cars, flowers, colour",
@@ -257,9 +294,9 @@ def update_env_file(env_path: Path, roster: dict) -> None:
     env_path.write_text(existing, encoding="utf-8")
 
 
-def write_roster(roster: dict, work_dir: Path, env_path: Path | None) -> None:
-    work_dir.mkdir(parents=True, exist_ok=True)
-    (work_dir / ROSTER_JSON).write_text(json.dumps(roster, indent=2) + "\n", encoding="utf-8")
+def write_roster(roster: dict, roster_dir: Path, env_path: Path | None) -> None:
+    roster_dir.mkdir(parents=True, exist_ok=True)
+    (roster_dir / ROSTER_JSON).write_text(json.dumps(roster, indent=2) + "\n", encoding="utf-8")
     if env_path is not None:
         update_env_file(env_path, roster)
 
@@ -287,10 +324,11 @@ def main(argv: list[str] | None = None) -> int:
         "--seed", type=int, default=None, help="draw deterministically from this seed"
     )
     parser.add_argument(
-        "--work-dir",
-        default=os.environ.get("WORK_DIR", "./volumes/work"),
-        help="where roster.json is written for the agents to read",
+        "--roster-dir",
+        default=os.environ.get("ROSTER_DIR", "./operator"),
+        help="where roster.json is written: the operator's directory, not a volume",
     )
+    parser.add_argument("--work-dir", default=None, help="deprecated: use --roster-dir")
     parser.add_argument(
         "--env-file",
         default="./.env",
@@ -303,20 +341,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="re-draw even if a roster exists")
     args = parser.parse_args(argv)
 
-    work_dir = Path(args.work_dir)
-    existing = work_dir / ROSTER_JSON
+    if args.work_dir is not None:
+        print("--work-dir is deprecated: the roster lives in --roster-dir now", file=sys.stderr)
+        args.roster_dir = args.work_dir
+    roster_dir = Path(args.roster_dir)
+    existing = roster_dir / ROSTER_JSON
+    env_path = Path(args.env_file) if args.env_file else None
 
     if args.show or (existing.exists() and not args.force and args.seed is None):
         if not existing.exists():
             print(f"no roster at {existing}", file=sys.stderr)
             return 1
-        roster = json.loads(existing.read_text(encoding="utf-8"))
+        roster = validate(json.loads(existing.read_text(encoding="utf-8")))
+        if env_path is not None and not args.show:
+            update_env_file(env_path, roster)
         print_roster(roster, args.json)
         return 0
 
     roster = build(args.count, args.seed)
-    env_path = Path(args.env_file) if args.env_file else None
-    write_roster(roster, work_dir, env_path)
+    write_roster(roster, roster_dir, env_path)
     print_roster(roster, args.json)
     if env_path is not None:
         print(f"\nwrote {env_path}")

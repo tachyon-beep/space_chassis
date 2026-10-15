@@ -78,6 +78,7 @@ def test_the_status_reader_reports_from_the_record(tmp_path, monkeypatch):
     import status as status_module  # noqa: PLC0415 -- imported after the env is set
 
     monkeypatch.setattr(status_module, "VOLUMES", root)
+    monkeypatch.setattr(status_module, "ROSTER_PATH", root / "work" / "roster.json")
     names = status_module.roster()
     # Two views, because a directory is named by the agent's slug while a person
     # asks about the service. Neither carries a rank.
