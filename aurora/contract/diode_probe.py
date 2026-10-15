@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import os
 import sys
@@ -48,6 +49,10 @@ class Probe:
     timeout: float = 120.0
     checks: list[Check] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # Diagnostics only: when set, every submit appends one JSON line here (the batch's sha256, the
+    # monotonic clock either side of the replace, and the inode it left), so a missing result can be
+    # placed on one timeline with the vehicle's claim. Unset, nothing is written and nothing changes.
+    trace: Path | None = None
 
     # -- paths --------------------------------------------------------------
     @property
@@ -102,8 +107,27 @@ class Probe:
             payload["variables"] = variables
         self.console.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.console.with_suffix(".probe.tmp")
-        tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        text = json.dumps(payload, indent=2) + "\n"
+        tmp.write_text(text, encoding="utf-8")
+        before = time.monotonic_ns()
         os.replace(tmp, self.console)
+        after = time.monotonic_ns()
+        if self.trace is not None:
+            try:
+                inode = self.console.stat().st_ino
+            except OSError:
+                inode = None
+            line = {
+                "event": "submit",
+                "monotonic_ns_before": before,
+                "monotonic_ns_after": after,
+                "wall": time.time(),
+                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "inode": inode,
+                "commands": [repr(command) for command in commands],
+            }
+            with open(self.trace, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(line) + "\n")
 
     def read_console(self) -> dict:
         raw = read_bounded(self.console, 2_000_000)
@@ -395,6 +419,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--list", action="store_true", help="list the agents the diode serves and stop"
     )
+    parser.add_argument(
+        "--trace", type=Path, default=None, help="diagnostics: append each submit's timing here"
+    )
     args = parser.parse_args(argv)
 
     if args.list:
@@ -419,7 +446,7 @@ def main(argv: list[str] | None = None) -> int:
         slug = candidates[0]
         print(f"[probe] no --slug given; using {slug!r}")
 
-    return Probe(args.diode_dir, slug, args.poll_seconds, args.timeout).run()
+    return Probe(args.diode_dir, slug, args.poll_seconds, args.timeout, trace=args.trace).run()
 
 
 if __name__ == "__main__":
