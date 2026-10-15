@@ -13,7 +13,7 @@ before trusting any line here.** The stream files (`chassis/snapshot.md`, `vehic
 | vehicle | `vehicle/` = `space_vehicle` `f75420c` with its history; tier 1 of `#39` included | `git log vehicle/` |
 | chassis | `aurora/`; the Aurora port (plans 1–6, 8) complete; plan 7 Phases A and B rebased onto `aurora/` (branch `aurora/phase-b-adoption-lqkn7e`) | `chassis/snapshot.md` |
 | what the chassis runs | vehicle `dd79e76` through its pins; the image bakes `vehicle/` at build time | `aurora/tests/test_vehicle_reconciliation.py` |
-| CI | none at the root yet (D6 decided) | `.github/` absent |
+| CI | root CI (D6): `.github/workflows/ci.yml` runs lint, the aurora suite and the vehicle referee on 3.12 and 3.13 on every pull request and push to `main`; `live.yml` builds and runs the smoke stack on demand | `.github/workflows/` |
 | `aurora-port`, `vehicle-adoption`, `wip/sv-recorder-opus-20261008` | `aurora-port` is merged into `main`; the other two are parked | `git branch -r` |
 
 ## The vehicle
@@ -45,9 +45,17 @@ already landed; `wip/local-state` holds the latest completeness report, filigree
 |---|---|
 | Phase B's merge | its PR's `required` check |
 | Phase B's full and live gates; tier-1 adoption; Option B's qualification; `#23`'s first test | Phase B: its merge above; all: CI (D6) and an environment that can build the image |
-| branch protection | root CI green first (D20) |
+| branch protection | nothing: applied on `main` by John on 2026-10-15 (D20), requiring the `required` check |
 | any paid run | the bounded episode's acceptance; then the three stages in D22 |
 | nothing else | — |
+
+## Known gaps in CI
+
+| gap | why | closes when |
+|---|---|---|
+| `vehicle/tests/test_vehicle_config.py::test_a_sub_tick_effect_lands_where_a_short_tick_would_have_put_it` is deselected in `ci.yml` (not skipped in the test) | it needs more than 13 GB; a hosted runner has 16 GB shared with the other workers | the vehicle line makes it fit (D6: a smaller horizon or a streamed comparison) and the `--deselect` line is removed |
+| the aurora suite is not held to zero skips | two tests skip by design (`aurora/tests/test_doc_claims.py`) | — |
+| the live smoke stack is not a required check | it builds the image and proves the world, not a change | run `live.yml` by hand before any adoption merge |
 
 ## Decisions since the last status
 
