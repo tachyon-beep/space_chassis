@@ -26,7 +26,9 @@ def _archives(directory, count, *, prefix="session_recovery_", size=10, start=10
     os.makedirs(directory, exist_ok=True)
     names = []
     for n in range(count):
-        name = f"{prefix}{start + n}.json"
+        # The chassis stamps its archives %Y%m%d_%H%M%S_%f; the watchdog with time_ns().
+        stamp = f"20261009_000000_{start + n:06d}" if prefix != "session_recovery_" else start + n
+        name = f"{prefix}{stamp}.json"
         path = os.path.join(directory, name)
         with open(path, "wb") as f:
             f.write(b"x" * size)
@@ -67,7 +69,7 @@ def test_prune_never_touches_notes_symlinks_or_other_files(tmp_path, monkeypatch
     repo_at(tmp_path)
     monkeypatch.setattr(watchdog, "ARCHIVE_KEEP", 1)
     tombstones = tmp_path / "tombstones"
-    _archives(tombstones, 3, prefix="session_")
+    real = _archives(tombstones, 3, prefix="session_")
     kept = [
         "recovery_note.txt",
         "synthetic_note.txt",
@@ -75,16 +77,21 @@ def test_prune_never_touches_notes_symlinks_or_other_files(tmp_path, monkeypatch
         "incarnation-1-2.txt",
         "corrupt_session_1.txt",
         "my_memory.json",
+        "session_index.json",
+        "session_notes.json",
     ]
     for name in kept:
         (tombstones / name).write_text("mine")
     outside = tmp_path / "outside.json"
     outside.write_text("not an archive")
-    (tombstones / "session_0.json").symlink_to(outside)
+    link = tombstones / "session_20261009_000000_999999.json"
+    link.symlink_to(outside)
     watchdog.prune_archives(str(tmp_path))
     for name in kept:
         assert (tombstones / name).exists(), name
-    assert (tombstones / "session_0.json").is_symlink() and outside.exists()
+    assert link.is_symlink() and outside.exists()
+    # The planted link, newest by its target's clock, did not take the one slot a real archive has.
+    assert (tombstones / real[-1]).exists()
 
 
 def test_a_tombstones_that_is_a_symlink_is_not_walked(tmp_path, monkeypatch):
@@ -130,3 +137,22 @@ def test_the_exit_43_path_is_pruned_too(tmp_path):
     recovery = watchdog.Recovery(str(tmp_path))
     recovery.restore("baseline", commit, "baseline_new", "exit 43", True)
     assert len(_listing(tmp_path / "tombstones")) == 20
+
+
+def test_a_fresh_restore_prunes_before_it_copies(tmp_path, monkeypatch):
+    # A /work full enough that the archive copy fails would end the ladder in a reseed; the prune
+    # must make its room before the copy, not after.
+    commit = repo_at(tmp_path)
+    tombstones = tmp_path / "tombstones"
+    _archives(tombstones, 25)
+    session(tmp_path)
+    at_copy = []
+    copy = watchdog.shutil.copyfile
+
+    def watched(source, destination):
+        at_copy.append(len(_listing(tombstones)))
+        return copy(source, destination)
+
+    monkeypatch.setattr(watchdog.shutil, "copyfile", watched)
+    watchdog.Recovery(str(tmp_path)).restore("baseline", commit, "elective", "test", True)
+    assert at_copy and at_copy[0] <= watchdog.ARCHIVE_KEEP

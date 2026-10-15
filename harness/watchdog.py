@@ -1,4 +1,3 @@
-import fnmatch
 import hashlib
 import json
 import signal
@@ -53,13 +52,18 @@ AGENT_LOG_MAX_BYTES = 2_000_000
 # into tombstones/ and the git directory, and the chassis writes one more on exit 43; /work is a
 # 1 GiB tmpfs that counts against the container's memory, and a full /work makes a restore fail
 # and the ladder end in a reseed, which loses this repository's tags as well. The newest
-# ARCHIVE_KEEP bodies per directory are kept within the byte budget; notes, incarnation messages
-# and anything else are never touched. The figures are yours to change.
+# ARCHIVE_KEEP bodies per directory are kept within the byte budget. Only the names the harness
+# itself gives its archives are pruned (the chassis stamps %Y%m%d_%H%M%S_%f, this file time_ns());
+# notes, incarnation messages and any other file are never touched. The figures are yours to change.
 ARCHIVE_KEEP = 20
 ARCHIVE_TOMBSTONE_BYTES = 128 * 1024 * 1024
 ARCHIVE_GIT_BYTES = 64 * 1024 * 1024
-TOMBSTONE_ARCHIVES = ("session_*.json", "corrupt_session_*.json")
-GIT_ARCHIVES = ("session_recovery_*.json",)
+TOMBSTONE_ARCHIVES = (
+    re.compile(r"session_\d{8}_\d{6}_\d{6}\.json"),
+    re.compile(r"corrupt_session_\d{8}_\d{6}_\d{6}\.json"),
+    re.compile(r"session_recovery_\d+\.json"),
+)
+GIT_ARCHIVES = (re.compile(r"session_recovery_\d+\.json"),)
 
 # The liveness signal. The transcript is written by the recorder onto the
 # transcripts volume, which this container does not mount, so its size here is
@@ -393,7 +397,7 @@ def _prune_directory(directory, patterns, budget, keep_newest):
         return 0
     found = []
     for name in names:
-        if not any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns):
+        if not any(pattern.fullmatch(name) for pattern in patterns):
             continue
         try:
             st = os.lstat(os.path.join(directory, name))
@@ -549,7 +553,9 @@ class Recovery:
                 reason += "; saved conversation unavailable"
         if fresh:
             # Pruned whenever the conversation starts fresh, including after exit 43, whose
-            # archive the chassis has already written.
+            # archive the chassis has already written: once first, to make room for the copy,
+            # and again after it, keeping the archive just made whatever its clock says.
+            prune_archives(self.work_dir)
             prune_archives(self.work_dir, keep_newest=self.fresh_session())
         session_path = os.path.join(self.work_dir, "session_context.json")
         pending_session = self.path + ".session"

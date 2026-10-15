@@ -1,19 +1,35 @@
-# Draft for John: one clause in `brief/WORLD.md`
+# Draft for John: archived conversations in `brief/WORLD.md`
 
-**Not shipped.** Spec §6: John approves brief text. The watchdog now bounds the archived
-conversations (plan 6, Task 5), which is a fact about the agent's world that the brief does not yet
-state. Nothing the brief says becomes false; it becomes incomplete.
+**Not shipped.** Spec §6 makes the brief text John's to approve.
 
-`brief/WORLD.md`, the "How a run ends" table, row 42, currently:
+The watchdog now bounds the archived conversations (plan 6, Task 5). That is a fact about the agent's world the brief does not yet state. Nothing the brief says becomes false, but it becomes incomplete. The pruning runs:
+- on `done` (exit 42);
+- on every restore that starts a fresh conversation: exit 43, and the ladder's `baseline_new` and `rescue_new` rungs;
+- once when the watchdog starts.
+
+## Proposed change
+
+`brief/WORLD.md`, "How a run ends", row 42, currently says:
 
 > the conversation is archived to `/work/tombstones/` and a fresh one starts, on `experimental`,
 > else `baseline`, else `rescue`, after a pause
 
 Proposed:
 
-> the conversation is archived to `/work/tombstones/` (the newest twenty archives are kept,
-> within 128 MiB; the figures are in your `watchdog.py`) and a fresh one starts, on
-> `experimental`, else `baseline`, else `rescue`, after a pause
+> the conversation is archived to `/work/tombstones/` and a fresh one starts, on `experimental`,
+> else `baseline`, else `rescue`, after a pause
 
-Source: `harness/watchdog.py` `ARCHIVE_KEEP`, `ARCHIVE_TOMBSTONE_BYTES`, `prune_archives`;
-`harness/tests/test_archive_pruning.py`.
+Unchanged, plus one paragraph after the table:
+
+> Archived conversations are bounded. Whenever a conversation starts fresh, the watchdog keeps the
+> newest twenty in `/work/tombstones/` (within 128 MiB) and in the git directory (within 64 MiB)
+> and deletes the older ones. It deletes only the names the harness gives its own archives:
+> `session_<date>_<time>_<micro>.json`, `corrupt_session_<date>_<time>_<micro>.json` and
+> `session_recovery_<n>.json`. Notes, the messages `done` leaves (`incarnation-*.txt`), and any
+> file you name yourself are never touched. A note may name an archive that has since been
+> deleted. The figures and the names are in your `watchdog.py`, and yours to change.
+
+## Sources
+
+- `harness/watchdog.py`: `ARCHIVE_KEEP`, `ARCHIVE_TOMBSTONE_BYTES`, `ARCHIVE_GIT_BYTES`, `TOMBSTONE_ARCHIVES`, `GIT_ARCHIVES`, `prune_archives`, and its calls in `Recovery.restore` and `run_watchdog`.
+- `harness/tests/test_archive_pruning.py`.
