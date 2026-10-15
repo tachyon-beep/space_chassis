@@ -1,14 +1,18 @@
 # Space Aurora — master governance and custody plan
 
-As of **2026-10-10 20:30 AEDT (09:30 UTC)**, `tachyon-beep/space_chassis` `aurora-port` @
-`1effa040d47fda5f6c919e1ddd45e9846ec0ffcc`. Verify against the current repositories,
+As of **2026-10-10 20:41 AEDT (09:41 UTC)**, `tachyon-beep/space_chassis` `aurora-port` @
+`613557528ffc42d4ea8d4ae0a3b3a2c453825ffa`. Verify against the current repositories,
 owner reports and decision evidence before relying on this baseline.
 
-**Current inventory verdicts:** AUR-GOV-02 v1 and AUR-GOV-03 v1.1 are **SUFFICIENT** for their
-bounded inventory tasks. Section 10 records the latest re-check; earlier states below are history.
+**Current report verdicts:** AUR-GOV-02 v1, AUR-GOV-03 v1.1 and AUR-GOV-07 v1 are
+**SUFFICIENT** for their bounded tasks. AUR-GOV-04 v1.2 requires **CORRECTIONS** to its
+`pending.json` contract comparison and gate-precedence framing. Section 13 records the latest
+review; earlier states are history.
 Programme-wide readiness and exclusive custody acceptance remain **NOT ISSUED**.
 **Delivery:** required validation ran; the full suite failed. Coordinator commit/publication is
 blocked by that concrete gate failure (section 12), not by the earlier testing-scope restriction.
+Section 13 separates report sufficiency/publication from commit-gate compliance and records the
+minimum operator decision needed. No documentation-only waiver has been granted.
 
 **Programme leadership is effective now.** John at **2026-10-10 08:48 UTC (19:48 AEDT)**:
 “I've told the space vehicle claude twins that you're taking over as lead - you can interact with
@@ -130,7 +134,7 @@ if the remaining work, risk, authority and next action are explicit. No elapsed 
 
 ## 4. Documentation task board
 
-All tasks were unclaimed at creation. The table retains initial states; section 8 records subsequent
+All tasks were unclaimed at creation. The table retains initial states; sections 8–13 record subsequent
 activity. Dependencies refer to reports, not completion of implementation. Tasks 09–12 concern a
 future exclusive custody transfer and do not delay current programme leadership or owner work.
 
@@ -517,3 +521,106 @@ Chassis owner for a bounded investigation, with Vehicle contribution if the fail
 interface. That is a proposed next action, not an implementation assignment from this task.
 AUR-GOV-04/07 remain claimed; AUR-GOV-06 remains waiting. No owner report, checkout, runtime,
 repository structure, main branch or custody status was changed to get around the gate.
+
+## 13. Interface and capability report review — 20:41 AEDT
+
+This is a read-only review of owner reports, with updates only to the two coordinator documents.
+No test, reproduction, instrumentation, build, cleanup, reset, staging, commit, push or owner
+message was performed for this review. The index was preserved. Existing coordinator staging
+therefore remains an earlier checkpoint; this review is a later working-tree edit.
+
+### Versions and publication
+
+| Report | Exact reviewed version | File SHA256 | Verdict |
+|---|---|---|---|
+| [AUR-GOV-04](chassis/records/2026-10-10-aur-gov-04-interface-report.md) | v1.2, `613557528ffc42d4ea8d4ae0a3b3a2c453825ffa`; includes v1.1 corrections and the stopped-reproduction receipt | `aef1d2644c18f4cf04df73242e9ef2c44085de8bffcf2ddfb4f8bae0d6464338` | **CORRECTIONS** |
+| [AUR-GOV-07](vehicle/records/2026-10-10-aur-gov-07-vehicle-capability-debt.md) | v1, `d82827f5740f3b39286f76466855cb17c26e0409` | `70dbd1654621aee22bf663f4f55d407c73ceb5430889cead751d5918a520d056` | **SUFFICIENT** |
+
+Live `git ls-remote --heads origin refs/heads/aurora-port` at 20:41 AEDT returned the full
+`613557528…` SHA. Both report commits are in that published history; the current report files
+match the reviewed versions. Publication is verified, but does not establish commit-gate
+compliance or make the coordinator documents durable. No hosted CI or live acceptance is claimed.
+
+### AUR-GOV-04: two bounded corrections
+
+**C4-1 — incorrect contract comparison, report line 81 and related decision at line 174.** The
+report says `pending.json` is absent from the contract's section 2 and proposes naming it there
+or moving it. In fact, `docs/diode-contract.md:35` expressly lists
+`<DIODE_DIR>/<slug>/pending.json` as the vehicle's own deferral queue. This is also present at
+the report's source baseline `1effa040`; it is not a subsequent contract change. The false
+absence claim creates an unnecessary cross-line decision and fails the reconciliation criterion.
+
+**Next owner/action:** Chassis Code supplies a bounded addendum correcting the row and withdrawing
+the absence-based decision. If it identifies a remaining difference between the contract's queue
+description and the vehicle's published-copy semantics, state that precise difference with source
+evidence and vehicle response; do not change the contract merely to resolve this review. Keep
+the separately established hidden-identity exposure on the old pin and its adoption dependency.
+The bridge routes this correction; this writer has not instructed the owner directly.
+
+**C4-2 — existing gate precedence framed as unresolved, report lines 162–171.** Practice
+expressly defers to AGENTS.md, so the existing whole-suite rule applies. The owner addendum
+should distinguish that established precedence from a request for new authority to create a
+documentation-only exception. Retain the candid validation disclosure; do not recast the old
+commits as compliant. The detailed interpretation and minimum operator decision are below.
+
+The rest of the report maps the interfaces, mounts, networks, credentials, hidden truth, exact
+adoption inputs and future clock/pause work sufficiently for this bounded report. Its latest
+v1.2 supersedes the earlier statement that a reproduction was running: it was stopped before
+execution, and no source was changed. #39 is a hypothesis for the failed probe; causation remains
+unproven and scheduler delay remains open. No finding here requires another test or a code fix.
+An independent read-only reviewer confirmed both corrections and the AUR-GOV-07 sufficiency
+verdict. No owner contact or additional testing was commissioned by that review.
+
+### AUR-GOV-07: sufficient, with evidence limits carried
+
+The report distinguishes **108/139 configured**, **52/139 advancing** and **no accepted physics**;
+it reports 195 unset scalars, 273 declared lint debts and strict exit 2 without calling that a
+pass. It maps WP01/WP08 residuals, M2–M5, #21 review dispositions, #39/#40, missing physical inputs
+and gates D/I/V/M/E to sources, owners and next actions. These meet section 4's report criteria.
+
+Read-only checks matched the stored `f12e522` readiness/build-order outputs in both Python lanes,
+the normal-lint receipt, and `docs/completion.md` at `64fc58c`. Corpus comparison showed no YAML,
+domain or `plant.md` change across the cited baselines; the inspected later `plant.py` change
+hardens corpus enumeration errors, not the readiness calculation. No measurement was rerun.
+The remaining review, CI and stress claims remain owner-attributed receipts at their stated
+cut-offs, not independent reruns or fresh acceptance of #21. The owner's session alias mapping
+is now explicitly self-attributed in the report; that does not resolve every AUR-GOV-01 identity.
+
+The report calls its scratch copies durable, but they remain local ignored evidence, with no
+durable archive established by this review. AUR-GOV-06 must preserve or index them with that
+limitation. Its phrase that the chassis “runs” `dd79e76` is accepted only as the named recorded
+gitlink baseline: the actual preserved working checkout remains `8c6f71d`, and no running stack
+was inspected. Configured/advancing counts do not describe that older pinned product. The #39
+explanation remains a hypothesis for the coordinator failure, not proof of its cause.
+
+### Commit-gate compliance is a separate decision
+
+The Chassis owner discloses at report lines 162–165 that governance commits used the **root
+suite (569) and ruff, not the whole suite**. Lines 207–212 attribute a root run, started after
+20:34:49 and finished before 20:36:58 AEDT, to commits `d82827f` and `f99d0d3`, and disclose **no
+tests for the addendum commit**. The bridge likewise reports addenda without new tests. These
+are attributed receipts; this review ran no tests and does not invent checks for any commit.
+The v1.2 receipt establishes that the contemplated coordinator reproduction never ran, so the
+reported root run did not overlap such a reproduction.
+
+There is no unresolved precedence question in the written rules: `AGENTS.md:44–48` requires
+the whole suite before committing, and `chassis/practice.md:3–5` expressly names `AGENTS.md`
+as authoritative. Its root-suite-after-staging and ruff requirements at lines 28–32 do not waive
+the whole-suite requirement. Neither document states a documentation-only exception. The
+disclosed root-only report gates therefore did not satisfy the whole-suite rule; the no-test
+addendum disclosure also departs from the practice gate. Publication and content sufficiency do
+not retrospectively approve those departures. The coordinator's full-suite failure remains open.
+
+**Minimum operator decision for coordinator-document durability:** John must either explicitly
+authorise a narrow documentation-only exception or revise the applicable gate for these two
+named coordinator files while retaining the failed receipt; or retain the current rule, leaving
+publication blocked until separately authorised diagnosis/remediation and the required successful
+validation. Emmy recommends a prospective, explicit decision, not an inferred or retroactive
+waiver. This review neither grants that exception nor authorises another run. Clarifying practice
+wording is subsequent line-owned work, not an edit made here.
+
+**Task consequences:** AUR-GOV-04 is CORRECTIONS with its existing claimant; AUR-GOV-07 is
+SUFFICIENT. AUR-GOV-02/03 remain SUFFICIENT. AUR-GOV-06 remains WAITING, unclaimed, for the
+corrected interface input and the separately required assignment; AUR-GOV-08 still waits for
+04/05. AUR-GOV-01 identity reconciliation and all readiness/offline/custody gates remain open.
+No new implementation, shutdown, custody acceptance or product acceptance is implied.

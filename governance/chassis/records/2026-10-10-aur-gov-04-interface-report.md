@@ -210,3 +210,20 @@ test, so it may have overlapped the start of the coordinator's reproduction and 
 the coordinator should weigh its timing accordingly. This addendum's commit ran no tests, so as not
 to overlap the reproduction (a documentation-only change; a departure from `practice.md`'s
 root-suite gate, recorded here).
+
+---
+
+## Addendum v1.2 — the coordinator's final diagnostic receipt (recorded at Emmy's request)
+
+**Receipt:** the coordinator **stopped before executing** the reproduction mentioned in v1.1. No
+test run and no source change occurred under it. The existing test sends the console's stdout and
+stderr to `/dev/null` and records no submit or claim timestamps, so result timestamps alone cannot
+tell a dropped command from a delayed one.
+
+**Standing position:** #39 remains the leading hypothesis; **causation is unproven**; scheduler
+delay remains an open alternative. **The full-suite gate stays unresolved**: the failure is neither
+waived nor explained.
+
+**What a future diagnosis would need** (not authorised by this report request; no instrumentation
+is started): the console's output retained; per-batch identity timestamps at submit, claim read,
+claim replace and result publish; and the window directory retained after the run.
