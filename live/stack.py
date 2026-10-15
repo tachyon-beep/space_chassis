@@ -10,8 +10,7 @@ The model key is a dummy. Compose lets the shell's environment beat --env-file, 
 call here runs with an allowlisted environment: whatever the operator's shell exports, no key and
 no upstream reaches the smoke recorders.
 
-It builds and runs its own image tags, SMOKE_IMAGE and, with the vehicle as its window,
-SMOKE_VEHICLE_IMAGE, so the operator's `space-chassis-agent` and `space-chassis-vehicle` are never
+It builds and runs its own image tag, SMOKE_IMAGE, so the operator's `space-chassis-agent` is never
 rebuilt from a working tree, and it puts back whatever console seed the operator's prepare_host.sh
 left (the build needs one from .env.example). The scratch directories are plain host directories
 the containers write as uid 1000, the image's agent: on a host whose user is another uid, the first
@@ -41,21 +40,12 @@ import volume_images  # noqa: E402
 
 ALLOWED_VARIABLES = ("PATH", "HOME", "USER", "LANG", "XDG_RUNTIME_DIR")
 SMOKE_IMAGE = "space-chassis-agent:smoke"
-# The vehicle's own image (Dockerfile.agent's `vehicle` stage): the agents' carries nothing of it.
-SMOKE_VEHICLE_IMAGE = "space-chassis-vehicle:smoke"
 DECLARED_AGENTS = 10
 CONSOLE_SEED = REPO / "llm_console_seed.json"
 DOCKER_TIMEOUT_SECONDS = 120
 BUILD_TIMEOUT_SECONDS = 3600
 STUB_PORT = 8199
 DUMMY_KEY = "sk-smoke-dummy"
-# The window's two implementations: the contract fixture, or the vehicle itself.
-WINDOWS = ("diode", "vehicle")
-# The vehicle checkpoints every 50 ticks; at the operator's 5 s poll that is minutes per check.
-VEHICLE_SMOKE_POLL = "0.2"
-# A seed no window has any reason to contain, so live/test_vehicle.py can look for it in every file
-# an agent can read: the world's identity belongs in the window root's .executive.json alone.
-SMOKE_VEHICLE_SEED = "8675309"
 
 
 def allowed_environment(extra: dict | None = None) -> dict:
@@ -88,21 +78,11 @@ class SmokeStack:
         recorder_overrides: dict[int, dict] | None = None,
         root: Path | None = None,
         runner=subprocess.run,
-        window: str = "diode",
     ) -> None:
-        if window not in WINDOWS:
-            raise ValueError(f"window must be one of {WINDOWS}, not {window!r}")
         self.agents = agents
         self.recorder_overrides = recorder_overrides or {}
-        self.window = window
-        # A vehicle stack is its own project and scratch root, so it can run beside the fixture's.
-        suffix = "" if window == "diode" else f"_{window}"
-        self.project = f"space_chassis_smoke_{os.getpid()}{suffix}"
-        self.root = (
-            Path(root)
-            if root is not None
-            else REPO / f".smoke-{os.getpid()}{suffix.replace('_', '-')}"
-        )
+        self.project = f"space_chassis_smoke_{os.getpid()}"
+        self.root = Path(root) if root is not None else REPO / f".smoke-{os.getpid()}"
         self._runner = runner
         self._torn_down = False
         # Override files added after `up` by recreate(), kept on every later compose call.
@@ -176,26 +156,14 @@ class SmokeStack:
             if overrides:
                 lines.append("    environment:")
                 lines += [f'      {key}: "{value}"' for key, value in overrides.items()]
-        if self.window == "diode":
-            lines += [
-                "  diode:",
-                f"    image: {SMOKE_IMAGE}",
-                '    entrypoint: ["python", "/opt/fake/fake_diode.py"]',
-                "    environment:",
-                f"      AGENT_SLUGS: {','.join(self.slugs)}",
-                "    volumes:",
-                "      - ./contract/fake_diode.py:/opt/fake/fake_diode.py:ro",
-            ]
-        else:
-            # The vehicle serves VEHICLE_SLUGS, which compose fills from smoke.env's FLEET_SLUGS.
-            lines += [
-                "  vehicle:",
-                f"    image: {SMOKE_VEHICLE_IMAGE}",
-                "    environment:",
-                f'      DIODE_POLL_SECONDS: "{VEHICLE_SMOKE_POLL}"',
-                f'      VEHICLE_SEED: "{SMOKE_VEHICLE_SEED}"',
-            ]
         lines += [
+            "  diode:",
+            f"    image: {SMOKE_IMAGE}",
+            '    entrypoint: ["python", "/opt/fake/fake_diode.py"]',
+            "    environment:",
+            f"      AGENT_SLUGS: {','.join(self.slugs)}",
+            "    volumes:",
+            "      - ./contract/fake_diode.py:/opt/fake/fake_diode.py:ro",
             "  fleet_monitor:",
             f"    image: {SMOKE_IMAGE}",
             "    environment:",
@@ -228,7 +196,7 @@ class SmokeStack:
             "--profile",
             "fleet",
             "--profile",
-            self.window,
+            "diode",
             *args,
         ]
 
@@ -271,9 +239,7 @@ class SmokeStack:
                     ".env.example",
                 ]
             )
-            # The vehicle is in its own profile and image: built only by name, and only when it serves.
-            vehicle = ("vehicle",) if self.window == "vehicle" else ()
-            self.compose("build", "agent_1", *vehicle, timeout=BUILD_TIMEOUT_SECONDS)
+            self.compose("build", "agent_1", timeout=BUILD_TIMEOUT_SECONDS)
         finally:
             if kept is None:
                 CONSOLE_SEED.unlink(missing_ok=True)
@@ -284,7 +250,7 @@ class SmokeStack:
         services = ["stub"]
         services += [f"recorder_{n}" for n in range(1, self.agents + 1)]
         services += [f"agent_{n}" for n in range(1, self.agents + 1)]
-        services += [self.window, "fleet_monitor", "review"]
+        services += ["diode", "fleet_monitor", "review"]
         self.compose("up", "-d", *services)
 
     def recreate(self, service: str, environment: dict[str, str]) -> None:
