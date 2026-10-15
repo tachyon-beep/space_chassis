@@ -744,7 +744,9 @@ def test_the_build_order_is_the_ticks_own_gap_list():
     assert {state.id for state in buckets["ready"]} == advanced, sorted(
         {state.id for state in buckets["ready"]} ^ advanced
     )
-    assert sum(len(rows) for rows in buckets.values()) == 139
+    # 139 -> 145: comms `transmitter_on`, `amp_dissipation_w`, `recorder_play`, `link_ok`,
+    # `playback_rate`, `delivered_bits` (the quiet-coast task model).
+    assert sum(len(rows) for rows in buckets.values()) == 145
 
     # Every blocked state is filed under what its *root* owes, and the root is the state an
     # implementer should open. The sentinel's sequencing is deliberately not part of the chain: it
@@ -816,7 +818,9 @@ def test_the_build_order_is_the_ticks_own_gap_list():
     # tier that selects `none` — so what blocks it is the ladder's rung-to-class map, a *value* the
     # thresholds do not carry, rather than the domain code the rule bucket was asking it for.
         # 52 -> 53 ready and 45 -> 44 rule: `orbital_state` coasts under `cislunar_point_masses`.
-        ) == (53, 27, 15, 44), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
+        # 53 -> 61 ready, 27 -> 26 value, 44 -> 43 rule: the comms task model (`tx_power` and
+        # `recorder` advance, and six new states land ready).
+        ) == (61, 26, 15, 43), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
 
 
 def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
@@ -853,8 +857,9 @@ def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
         for node in {s.node for s in world.states if s.node != "internal"}
         if len(world.states_on(node)) > 1
     }
-    # 11 -> 10 in round 70, with the source regulator off the fuel cell's node.
-    assert len(crowded) == 10, sorted(crowded)
+    # 11 -> 10 in round 70, with the source regulator off the fuel cell's node; 10 -> 11 with
+    # comms `ground_received` (link_ok, playback_rate, delivered_bits).
+    assert len(crowded) == 11, sorted(crowded)
 
     # No blocked state is filed under a state that lives on a node with no value key.
     offenders = [
@@ -4974,7 +4979,7 @@ def test_the_linter_refuses_a_multi_state_node_with_no_declared_order(tmp_path):
     definition = copy_definition(tmp_path / "vehicle")
     path = definition / "coupling.yaml"
     text = path.read_text()
-    anchor = "    state_order: [tx_power, link_snr]\n"
+    anchor = "    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_snr]\n"
     assert anchor in text, "the fixture no longer matches the `link` node"
     path.write_text(text.replace(anchor, "", 1))
 
@@ -8506,6 +8511,7 @@ def test_a_crowded_node_is_read_through_the_state_the_edge_names():
         "attitude",
         "link_snr",
         "orbital_state",
+        "playback_rate",
         "radiator_rejection_w",
         "tx_power",
     ], sorted(e.reads for e in world.edges if e.reads)
@@ -10067,7 +10073,9 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 135 -> 136 in round 40, with the avionics bay's heat rate: the one heated zone whose 360 W no
     # state carried, and the ingredient the loop's collected load was missing.
     # 136 -> 138 in round 41, with the two loops' collected loads: the sums that ingredient fed.
-    assert sum(len(rows) for rows in buckets.values()) == 139
+    # 139 -> 145: comms `transmitter_on`, `amp_dissipation_w`, `recorder_play`, `link_ok`,
+    # `playback_rate`, `delivered_bits` (the quiet-coast task model).
+    assert sum(len(rows) for rows in buckets.values()) == 145
 
     # `ready` means what it says: only the classes the reference plant can actually advance.
     # It is no longer only the plant's two integrators — round 20 taught it to evaluate an
@@ -10140,7 +10148,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 37 -> 38 in round 72: `E-WATER-RAD`'s driver was a crowded node with no name for the state it
     # reads, and naming it (`radiator_rejection_w`) made the coolant's discharge computable.
     # Post-ejection P00 and active CMC DAP give two more commanded modes a sourced initial.
-    assert len(buckets["ready"]) == 53
+    assert len(buckets["ready"]) == 61  # 53 -> 61: the comms task model
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -10184,7 +10192,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # blocks it is the ladder's rung-to-class map — a declaration the thresholds do not carry —
     # rather than the domain code this bucket was asking it for.
     # 45 -> 44 with `orbital_state`, the first `dynamics` state with a rule the plant carries.
-    assert len(buckets["rule"]) == 44, "just under a third of the vehicle is domain code"
+    # 44 -> 43 with the comms task model: `recorder` advances as a stock on `data_recorder`.
+    assert len(buckets["rule"]) == 43, "just under a third of the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -10221,7 +10230,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # `none`, so what it owes is the rung-to-class map rather than the comparator that reads it.
     # The RCS per-thruster pulse floor became an honest owed value when the LM command time
     # stopped being applied globally, moving one state here from the rule bucket.
-    assert len(buckets["value"]) == 27
+    # 27 -> 26 with the comms task model: `tx_power` no longer owes `command_value.selects`.
+    assert len(buckets["value"]) == 26
     # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
@@ -10280,7 +10290,12 @@ def test_the_plant_advances_a_node_s_states_in_the_order_the_node_declares(tmp_p
         )
     # And the two independent nodes still get a frozen order, which is the tiebreak rather than a
     # declaration — the plant must not read "independent" as "whatever the file said".
-    assert [s.id for s in world.states_on("link")] == ["tx_power", "link_snr"]
+    assert [s.id for s in world.states_on("link")] == [
+        "transmitter_on",
+        "tx_power",
+        "amp_dissipation_w",
+        "link_snr",
+    ]
     assert [s.id for s in world.states_on("engine_main")] == sorted(
         ["aps_state", "dps_state", "sps_state"]
     )
@@ -11362,7 +11377,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "139 states, by what blocks them" in result.stdout
+    assert "145 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -12530,7 +12545,8 @@ def test_every_stock_declares_where_it_starts():
     plant = _plant()
     world = plant.load_world(VEHICLE)
     stocks = [s for s in world.states if s.method == "stock"]
-    assert len(stocks) == 25, f"{len(stocks)} stocks"
+    # 25 -> 26: comms `delivered_bits` (the recorder was already a stock).
+    assert len(stocks) == 26, f"{len(stocks)} stocks"
 
     seeded = plant.initial_values(world)
     # **The map a tick starts from is no longer only what the integrators seed**, and this test is
@@ -12560,7 +12576,8 @@ def test_every_stock_declares_where_it_starts():
     # the remainder of the cabin's total now — so they are not part of the six. 24 -> 25 when the
     # helium charge landed from the Operational Data Book's loading table (round 13), which is the
     # last stock in the corpus whose `initial` was owed to a document nobody had opened.
-    assert len(declared) == 25, f"{len(declared)} stocks declare a numeric initial"
+    # 25 -> 26: comms `delivered_bits` starts at zero.
+    assert len(declared) == 26, f"{len(declared)} stocks declare a numeric initial"
     on_nodes = {k: v for k, v in seeded_integrators.items() if k != "internal"}
     # 10 -> 12 with `prop_main` and `prop_rcs`: the two stocks whose `initial` was owed because
     # nothing said which tanks the nodes were. Both carry their loads now. **The six cabin gases
@@ -12599,7 +12616,9 @@ def test_every_stock_declares_where_it_starts():
     # while `telemetry_rate` and `antenna_selection` are sentinel states and seed under their ids
     # alone.
     # P00 computer mode and CMC-owned RCS mode each add a seeded state key.
-    assert len(on_nodes) == 75, f"{len(on_nodes)} node keys carry a value"
+    # 75 -> 79 with the comms task model: `transmitter_on` on `link`, `recorder` on its own
+    # node (id and node alias), and `delivered_bits` on `ground_received`.
+    assert len(on_nodes) == 79, f"{len(on_nodes)} node keys carry a value"
     # And the map a tick actually starts from is that seed plus the declared arithmetic, so the
     # resolved states are a strict superset and every one of them is `algebraic`.
     assert seeded_integrators.keys() < seeded.keys(), "the resolution added nothing to the seed"
@@ -12661,7 +12680,9 @@ def test_every_stock_declares_where_it_starts():
         "bias_accumulator",
         "sensor_bus_errors",
         "frame_loss",
-        "recorder",
+        # `recorder` left the sentinel for `data_recorder` with the comms task model, and the
+        # playback switch beside it is seeded here instead.
+        "recorder_play",
         "pulse_residual",
         "impulse_total",
         "gyro_bias",
@@ -12717,6 +12738,8 @@ def test_every_stock_declares_where_it_starts():
         # Round 81's, and it is the profile's other half — the link mode the rate travels on.
         "sband_low",
         "idle",
+        # The comms task model's playback switch, stopped at the episode's start (chosen).
+        "off",
     }
     assert seeded["internal"]["o2_supply_pressure_psi"] == 900.0
     assert seeded["internal"]["suit_loop_flow_cfm"] == 35.0
@@ -13171,7 +13194,7 @@ def test_every_field_a_command_declares_is_validated(tmp_path):
             assert set(map(str, allowed)) <= phases, where
             assert (verb.get("gate") or {}).get("kind") == "preference", where
             assert str(verb.get("help") or "").strip(), where
-    assert verbs == 58, f"{verbs} verbs"
+    assert verbs == 59, f"{verbs} verbs"  # 58 -> 59: comms `play_recorder`
 
     for old, new, expect in (
         ("execution_class: declarative", "execution_class: defered", "execution_class"),
@@ -13232,7 +13255,7 @@ def test_a_command_cannot_be_grouped_under_a_domain_of_its_own(tmp_path):
                     placeholder,
                 )
             seen += 1
-    assert seen == 58, f"{seen} verbs"
+    assert seen == 59, f"{seen} verbs"  # 58 -> 59: comms `play_recorder`
 
     # Both spellings of a domain are legitimate — `PREFIX_DOMAIN` exists so a reference may be
     # qualified by the directory or by the channel prefix, and the corpus uses both.
@@ -15066,7 +15089,7 @@ def test_every_command_edge_lands_where_a_state_says_a_command_writes():
     # The four that were silent, named, because a future round that adds a fifth mover here should
     # have to say which state it is moving.
     assert written["instrumentation"] == ["avionics.instrumentation_power"]
-    assert written["link"] == ["comms.link_snr", "comms.tx_power"]
+    assert written["link"] == ["comms.link_snr", "comms.tx_power", "comms.transmitter_on"]
     assert written["nav_state"] == ["gnc.nav_solution"]
     assert written["structure_config"] == ["structure.pyro_fired"]
 
@@ -15152,7 +15175,7 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     scalar = [e for e in edges if e.sensitivity.get("value") not in (None, "UNCONFIGURED")]
     tables = [e for e in edges if e.sensitivity.get("regimes")]
     assert len(tables) == 8, f"the regime edges changed: {[e.id for e in tables]}"
-    assert len(scalar) + len(tables) == 69
+    assert len(scalar) + len(tables) == 70  # 69 -> 70: comms `E-REC-GND`
     ready = subprocess.run(
         [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--readiness"],
         capture_output=True,
@@ -15161,7 +15184,7 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     )
     assert ready.returncode == 0, ready.stderr
     found = re.search(r"edges with a sensitivity\s+(\d+) / (\d+)", ready.stdout)
-    assert (int(found.group(1)), int(found.group(2))) == (69, len(edges)), found.group(0)
+    assert (int(found.group(1)), int(found.group(2))) == (70, len(edges)), found.group(0)
 
 
 def test_a_verb_that_starts_a_state_is_declared_rather_than_described(tmp_path):
@@ -15269,10 +15292,10 @@ def test_interlocks_is_a_list_or_the_sentinel_and_nothing_else(tmp_path):
         for verb in (yaml.safe_load(path.read_text()) or {}).get("commands") or []:
             verbs[str(verb["verb"])] = verb
 
-    assert len(verbs) == 58, len(verbs)
+    assert len(verbs) == 59, len(verbs)  # 58 -> 59: comms `play_recorder`
     sentinel = sorted(v for v, s in verbs.items() if s.get("interlocks") == "none")
     guarded = sorted(v for v, s in verbs.items() if isinstance(s.get("interlocks"), list))
-    assert len(sentinel) == 23, sentinel
+    assert len(sentinel) == 24, sentinel  # + play_recorder
     assert len(guarded) == 35, guarded
     assert not [v for v, s in verbs.items() if isinstance(s.get("interlocks"), str) and v not in sentinel]
     for name in guarded:
@@ -15930,9 +15953,11 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     # (`comms.antenna_selection`) is a state that exists and declares the same verb — so the command
     # stages it and leaves `link_snr` to the rule. The other five `computed` effects name
     # `UNCONFIGURED`, which is the honest answer for an input nobody has declared.
-    assert len(applied) == 14, applied
+    # 14 -> 16 and 7 -> 6 with the comms task model: `play_recorder` is new, and
+    # `set_power_amplifier` applies now that `transmitter_on` is the input it selects.
+    assert len(applied) == 16, applied
     assert "select_antenna" in applied
-    assert len(owed) == 7, sorted(owed)
+    assert len(owed) == 6, sorted(owed)
     # Every refusal names the field it is owed and says what would close it, which is the plant's
     # contract for a value it does not have.
     for verb, sentence in sorted(owed.items()):
@@ -15943,7 +15968,6 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
         "select_nav_source",
         "set_coolant_pump",
         "set_instrumentation_mode",
-        "set_power_amplifier",
         "set_telemetry_profile",
     ], sorted(owed)
 
@@ -16134,16 +16158,19 @@ def test_a_computed_effect_names_the_input_the_command_changes(tmp_path):
                 )
     assert len(computed) == 6, sorted(computed)
     resolved = {k: v for k, v in computed.items() if v[1] != "UNCONFIGURED"}
-    assert sorted(resolved) == ["comms.link_snr <- select_antenna"], resolved
+    assert sorted(resolved) == [
+        "comms.link_snr <- select_antenna",
+        "comms.tx_power <- set_power_amplifier",
+    ], resolved
     assert resolved["comms.link_snr <- select_antenna"][1] == "antenna_selection"
     # The two halves agree, which is what the check enforces and what makes the effect performable.
     assert "command:select_antenna" in [
         str(m) for m in states["comms.antenna_selection"]["moved_by"]
     ]
-    # The five that owe name no state, and the thing the false claim named is not a channel.
+    # The four that owe name no state, and the thing the false claim named is not a channel.
+    # (Five until `transmitter_on` became `set_power_amplifier`'s input for `tx_power`.)
     assert {k for k, v in computed.items() if v[1] == "UNCONFIGURED"} == {
         "comms.link_snr <- point_hga",
-        "comms.tx_power <- set_power_amplifier",
         "avionics.instrumentation_power <- set_instrumentation_mode",
         "gnc.nav_solution <- load_state_vector",
         "gnc.nav_solution <- select_nav_source",
@@ -16244,9 +16271,9 @@ def test_a_commanded_state_is_guarded_by_a_dwell_and_the_executive_reads_it(tmp_
         if state.method == "discrete"
         and any(str(m).startswith("command:") for m in state.spec.get("moved_by") or [])
     ]
-    assert len(commanded) == 16, [s.id for s in commanded]
+    assert len(commanded) == 18, [s.id for s in commanded]  # + transmitter_on, recorder_play
     guarded = [s for s in commanded if s.spec.get("dwell")]
-    assert len(guarded) == 15, [s.id for s in commanded if not s.spec.get("dwell")]
+    assert len(guarded) == 17, [s.id for s in commanded if not s.spec.get("dwell")]
     # The one that is not is one-way, and that is the exemption rather than a gap.
     assert [s.id for s in commanded if not s.spec.get("dwell")] == ["pyro_fired"]
     assert all(s.spec.get("one_way") for s in commanded if not s.spec.get("dwell"))
@@ -17554,7 +17581,7 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     result = run_linter(definition)
     assert result.returncode == 1, result.stdout[-900:]
     assert "states 'twelve nodes carry more than one state'" in result.stdout, result.stdout[-900:]
-    assert "this vehicle has 10 multi-state nodes" in result.stdout, result.stdout[-900:]
+    assert "this vehicle has 11 multi-state nodes" in result.stdout, result.stdout[-900:]
 
     # And the sentinel form, which is the other noun and the other claim.
     other = copy_definition(fixture_dir(tmp_path, "stale-sentinel"))
@@ -17602,8 +17629,9 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
         "multi-state nodes": _cv.MULTI_STATE_NODE_FIGURES,
         "states on the sentinel": _cv.SENTINEL_STATE_FIGURES,
     }
-    # 11 -> 10 in round 70, with the source regulator off the fuel cell's node.
-    expected = {"multi-state nodes": 10, "states on the sentinel": 59}
+    # 11 -> 10 in round 70, with the source regulator off the fuel cell's node; 10 -> 11 with
+    # comms `ground_received`.
+    expected = {"multi-state nodes": 11, "states on the sentinel": 59}
     for tool in sorted((VEHICLE / "tools").glob("*.py")):
         tree = _ast.parse(tool.read_text())
         for node in _ast.walk(tree):
@@ -17654,13 +17682,13 @@ def test_the_linter_refuses_a_node_count_three_files_state_differently(tmp_path)
     definition = copy_definition(fixture_dir(tmp_path, "stale-nodes-in-contract"))
     path = definition / "plant.md"
     text = path.read_text()
-    old = "The derived order is 59 nodes"
+    old = "The derived order is 61 nodes"
     assert old in text, "the fixture no longer matches plant.md's tick-order sentence"
     path.write_text(text.replace(old, "The derived order is 40 nodes", 1))
     result = run_linter(definition)
     assert result.returncode == 1
     assert "states '40 nodes'" in result.stdout, result.stdout[-900:]
-    assert "the schedule the linter derives for this vehicle is 59 nodes" in result.stdout
+    assert "the schedule the linter derives for this vehicle is 61 nodes" in result.stdout
 
     # A tool that is not the one the reader was written for, and the other spelling of the claim.
     other = copy_definition(fixture_dir(tmp_path, "stale-nodes-in-tool"))
@@ -17683,7 +17711,7 @@ def test_the_linter_refuses_a_node_count_three_files_state_differently(tmp_path)
     order = copy_definition(fixture_dir(tmp_path, "stale-node-tick-order"))
     path = order / "plant.md"
     text = path.read_text()
-    anchor = "The derived order is 59 nodes and `check_vehicle.py` reports its tail on every"
+    anchor = "The derived order is 61 nodes and `check_vehicle.py` reports its tail on every"
     assert anchor in text, "the fixture no longer matches plant.md's tick-order sentence"
     path.write_text(
         text.replace(anchor, "The derived order is a 40-node tick order and `check_vehicle.py`", 1)
@@ -19699,7 +19727,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # states the effect path owns through a one-way event.
     # 45 -> 48 in round 80, and this is the largest single move a *value* round has made: three
     # commanded modes the launch checklist publishes a position for, which the hold then carries.
-    assert len(advanced) == 53, sorted(advanced)
+    # 53 -> 61: the comms task model.
+    assert len(advanced) == 61, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares.
     assert values["cabin_heat_csm"] == 733.0
@@ -19839,7 +19868,7 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
     # And the debt states both figures, because a number in prose with no reader is the next round's
     # finding — this is that reader.
     entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
-    assert "142 published points" in entry and "71 are *derived*" in entry
+    assert "142 published points" in entry and "72 are *derived*" in entry
 
 
 def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
@@ -19891,8 +19920,9 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
         _cv.load(VEHICLE / "channels.yaml", _cv.Report()),
     ), report)
     counts = _cv.CHANNEL_DERIVATION_COUNTS
-    assert counts["same"] == 64, counts
-    assert counts["derived"] == 71, counts
+    # 64/71 -> 63/72: `comm.recorder_fill_pct` reads a recorder counted in bits now.
+    assert counts["same"] == 63, counts
+    assert counts["derived"] == 72, counts
     assert counts["total"] == 135, counts
     assert not [r for r in report.refusals if "channels read from a state" in r], report.refusals
     doc = _cv.CHANNEL_DERIVATION_FIGURES.search(_cv.inspect.getdoc(_cv.check_channel_derivations) or "")
@@ -19949,10 +19979,11 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     # 63 -> 64 in round 32: `eclss.o2_supply_pressure_psi` moved from the node-sourced set to the
     # state-sourced one, where its unit is its source's. 134 -> 135 in round 61, when the total was
     # given a reader and the sentence it was read from turned out to be the stale copy.
-    assert "only 64 have the state's own unit" in entry
+    # 64 -> 63: `comm.recorder_fill_pct` is derived from a recorder counted in bits.
+    assert "only 63 have the state's own unit" in entry
     assert "of the 135 channels read from a state" in entry
-    assert "The other 71 are *derived*" in entry
-    assert "15 of the 71 now carry an evaluable `derivation`" in entry
+    assert "The other 72 are *derived*" in entry
+    assert "15 of the 72 now carry an evaluable `derivation`" in entry
 
 
 def test_the_frame_publishes_a_derived_channel_at_this_tick_s_own_readings():
@@ -21045,13 +21076,13 @@ def test_the_mechanical_conversions_land_on_the_declarations_that_sized_them():
     # The nine, by the registry's own count of evaluable derivations.
     lint = run_linter(VEHICLE)
     assert lint.returncode == 0, lint.stdout[-900:]
-    assert "15 of the 71 now carry an evaluable `derivation`" in lint.stdout
+    assert "15 of the 72 now carry an evaluable `derivation`" in lint.stdout
     entry = next(
         d
         for d in yaml.safe_load((VEHICLE / "presentation.yaml").read_text())["open_debts"]
         if "frame publishes channel ids now" in d
     )
-    assert "15 of the 71 now carry an evaluable `derivation`" in entry
+    assert "15 of the 72 now carry an evaluable `derivation`" in entry
     assert "0 of the prose rows declare in their own `owed` field" in entry
 
 
@@ -21853,11 +21884,12 @@ def test_the_tick_can_read_what_the_build_order_promises():
     assert set(resolved) <= advanced, sorted(set(resolved) - advanced)
 
     # The figures this rests on, so a round that moves them has to say so here.
-    assert len(world.states) == 139
+    assert len(world.states) == 145  # 139 -> 145: the comms task model
     # 38 -> 41 in round 75: the three event-moved states, held by the tick and moved by the effect.
     # 41 -> 45 in round 76 and 45 -> 48 in round 80: the seven positions `mission.yaml#launch_state`
     # now declares, the last three of them read out of the launch checklist.
-    assert len(ready) == 53 and len(advanced) == 53
+    # 53 -> 61: the comms task model.
+    assert len(ready) == 61 and len(advanced) == 61
 
 
 # ---------------------------------------------------------------------------------------------
