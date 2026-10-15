@@ -31,24 +31,20 @@ before trusting any line here.** The stream files (`chassis/snapshot.md`, `vehic
 
 The full picture and the plan: [`docs/vehicle-completion/`](../docs/vehicle-completion/README.md).
 
-## Work that exists only on John's machine
+## Work that existed only on John's machine
 
-| what | where | goes to (D11) |
-|---|---|---|
-| `#39` Option B | commit `7a87eb82`, branch `codex/39-take-by-rename`, no upstream | `wip/vehicle/39-option-b` |
-| `#23` clock seam, candidate 3a | uncommitted worktree `/home/john/space_vehicle_worktrees/23-clock-seam` | `wip/vehicle/23-clock-seam` |
-| Phase B increments P, R2c | `refs/preserve/phase-b-*` | `wip/aurora/phase-b` |
-| tier-1 brief wording v5 | `.scratch/tier1-brief-draft/` | with the tier-1 adoption |
-| the chassis lane's evidence | `refs/preserve/chassis-lane-evidence-2026-10-14` | `aurora/`'s records where small |
-
-Approved (D18); waits for a session on his machine to push them.
+Pushed to 17 `wip/` branches on 2026-10-15 (D18). Inventory and disposition:
+[`records/2026-10-15-wip-branch-inventory.md`](records/2026-10-15-wip-branch-inventory.md).
+`#39` Option B with `#23` and the probe diagnostics are re-applied as draft PRs; Phase B (plan 7)
+conflicts with the restructure and waits on the chassis line; the September and WP01 branches had
+already landed; `wip/local-state` holds the latest completeness report, filigree export and brief v5.
 
 ## What is blocked, and on whom
 
 | item | blocked on |
 |---|---|
-| everything in the table above | a session on John's machine (approved, D18) |
-| Phase B's full and live gates; tier-1 adoption; Option B's qualification; `#23`'s first test | the push above, then CI (D6) and an environment that can build the image |
+| Phase B's rebase onto `aurora/` | the chassis line (inventory record above) |
+| Phase B's full and live gates; tier-1 adoption; Option B's qualification; `#23`'s first test | Phase B: its rebase above; all: CI (D6) and an environment that can build the image |
 | branch protection | root CI green first (D20) |
 | any paid run | the bounded episode's acceptance; then the three stages in D22 |
 | nothing else | — |
