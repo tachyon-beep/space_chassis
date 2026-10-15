@@ -114,6 +114,17 @@ state:
         activated before launch and rated at 29 +- 2 V each, so the bus is up before the mission
         clock starts and the converter regulates around what they are already making
     tau_s: UNCONFIGURED
+    evidence_question: >-
+      WP02 E-5 (docs/evidence/wp02-electrical.md). **The Apollo CSM has no source converter to
+      take a time constant from**: the fuel cells connect to the main buses through motor switches
+      and their terminal voltage falls with load (AOH SM2A-03-Block II-(1) pp. 2.6-2, 2.6-25,
+      2.6-38). The only figure in reach is electrical_diode.md:248's reference-design target,
+      "regulation transient <10 ms", which is a settling bound for hardware the vehicle does not
+      carry and is under one 20 ms tick. Owed to the operator as a model decision, not a value:
+      (a) replace this lag with the algebraic terminal relation V = E0 - R I on `fc_[n]` (E0
+      32.30 V, R 0.1008 ohm, both derived), or (b) keep a converter and take its tau from a
+      source for a converter. The slow effect Apollo does describe -- voltage recovering as the
+      stack's skin temperature follows the load (p. 2.6-25) -- has no published time constant
     note: >-
       Converter regulation lags its setpoint. electrical_diode.md:248 gives a 1.2 kW
       converter with a >=94 % efficiency but no time constant — and its 24-32 V envelope is
@@ -152,6 +163,15 @@ state:
     method: algebraic
     unit: J
     derate_curve: UNCONFIGURED
+    evidence_question: >-
+      WP02 E-6. What fraction of the CSM entry batteries' 40 Ah is deliverable as a function of
+      pack temperature? Searched: AOH section 2.6, the J-mission EPS handout, TN D-6976 (battery
+      experience report; its entry-battery curves, figs. 4-6, are graphical and not about
+      temperature) and the Apollo 10 consumables analysis. What is published is a rated
+      *minimum* of 40 Ah over a 50-110 F qualified ambient, planned as 40 Ah in flight and 45 Ah
+      postlanding -- a flat floor inside the qualification, and nothing outside it, which is the
+      region the crisis value of E-PLATE-BAT is about. Next source: the CSM/LM Operational Data
+      Book volume I EPS battery pages (not text-extractable from here)
     provenance:
       basis: UNCONFIGURED
       note: >-
@@ -269,6 +289,13 @@ state:
     method: lag
     unit: degC
     initial: UNCONFIGURED
+    evidence_question: >-
+      WP02 E-7. The CSM entry batteries are passively cooled in the CM ("active thermal control
+      was not required because of the mild thermal environment of the CM cabin", TN D-6976
+      p. 5) and qualified for 50-110 F ambient (AOH p. 2.6-17), which bounds the initial at
+      10-43.3 C and gives no value: no CSM battery temperature telemetry or pack thermal mass was
+      found. Both the initial and tau_s need the pack's mass, specific heat and mounting
+      conductance, which is WP02's thermal-aggregation question, not an electrical one
     initial_note: >-
       the pack's temperature at MET 0, owed with its time constant and for the same reason:
       `thermal_diode.md:965` declares every thermal constant unspecified, this state's `tau_s`
@@ -309,6 +336,15 @@ state:
         argument: state
         maps:
           auto: UNCONFIGURED
+        evidence_question: >-
+          WP02 E-8. Apollo's MAIN BUS TIE switches (BAT A/C, BAT B/C) tie the *batteries* to the
+          main buses through motor switches S1 and S2 (AOH p. 2.6-3/4, Fig. 2.6-1 note; J-mission
+          handout p. 2.6-3); section 2.6 describes no direct main-bus-A-to-B tie at all. So this
+          A-B tie and its `auto` have no Apollo article to take a mapping from, and the AUTO
+          position the real switch has is not described in any text reached. A model decision for
+          the operator: keep the A-B tie as the corpus's reference-design `TIE_AB`
+          (electrical_diode.md:252) and say what `auto` means, or re-model the tie as Apollo's
+          battery-to-main-bus tie
         why: >-
           `open` and `closed` are the identity. `auto` is not a position at all: it hands the
           decision to the service, "which closes only when the two buses are within 1 V and no
@@ -375,6 +411,13 @@ state:
     hysteresis: {assert: 26.5, clear: 27.2, dwell_ms: 500}
     band_on: power.dc_bus_a_v
     band_value: UNCONFIGURED
+    evidence_question: >-
+      WP02 E-9. Not a value a source can give: Apollo shed load by crew procedure, not by an
+      automatic ladder. What the sources do give is the envelope the ladder sits in: the DC
+      undervoltage caution at 26.25 V (AOH p. 2.6-5; TN D-7609 p. 8), sustained operation
+      26.5-30.0 V and limits 26.5-31.0 V (J-mission handout p. 2.6-26), and "use batts only when
+      main bus volts < 24.5" in the emergency power-down (Apollo 15 CSM Systems Checklist
+      EMER/1-7). The rung-to-class map remains the decision coupling.yaml#open_debts names
     note: >-
       The ladder's position, and the one band of the four in profiles.yaml that the position
       itself latches on: the top tier, `bus_a_undervoltage` — assert 26.5 V, clear 27.2 V. The
@@ -463,6 +506,52 @@ components:
     provenance:
       basis: historical
       source: "TN D-7142: three modules of 563-1,420 W each at 27-31 V dc"
+    # WP02 electrical evidence (docs/evidence/wp02-electrical.md, E-1 to E-3). The cell is
+    # wired straight to the main buses through motor switches: Apollo had no source regulator, and
+    # "the application and removal of fuel cell loads causes the terminal voltage to decrease and
+    # increase, respectively" (AOH SM2A-03-Block II-(1) p. 2.6-25). These three fields are the
+    # published envelope that sentence describes and the source impedance it implies.
+    normal_power_w: [400, 1420]
+    terminal_v_at_normal_power: [31, 27]
+    normal_envelope_provenance:
+      basis: historical
+      source: >-
+        Apollo Operations Handbook SM2A-03-Block II-(1), section 2.6 (CSM 106 and subs; basic
+        15 Apr 1969, changed 15 Oct 1969) p. 2.6-2: each power plant "normally supplies 400 to 1420
+        watts at 31 to 27 vdc (at fuel cell terminals)" -
+        https://www.ibiblio.org/apollo/ApolloProjectOnline/Documents/SMA2A-03-BLOCK%20II%20Volume%201%2019691015/aoh-v1-2-06-eps.pdf
+        - and the same 400-1420 W in the J-mission EPS handout (North American Rockwell, 1 Oct
+        1971, CSM 112-114) p. 2.6-2
+      note: >-
+        the voltage range is written high-to-low against a power range written low-to-high, which
+        pairs the ends: 31 V at 400 W and 27 V at 1,420 W. That pairing is the one reading the
+        derived impedance below rests on. The 563 W lower figure in `provenance.source` is TN
+        D-7142's and SP-5115's (p. 29); the AOH and the J-mission handout both say 400 W
+    source_resistance_ohm: 0.1008
+    open_circuit_intercept_v: 32.30
+    source_resistance_provenance:
+      basis: derived
+      relation: >-
+        the secant of the cell's terminal characteristic across its published normal envelope:
+        I_low = 400 W / 31 V = 12.903 A, I_high = 1420 W / 27 V = 52.593 A, so
+        R = (31 - 27) / (52.593 - 12.903) = 0.10078 ohm, and the open-circuit intercept of that
+        line is E0 = 31 + 0.10078 x 12.903 = 32.30 V. Linear in current between the envelope ends;
+        outside them it is an extrapolation and a rule must not use it there
+      note: >-
+        **what this is not**: a polarization curve. No text-extractable primary source reached gives
+        terminal volts at a stated current (the Apollo 14 CSM Systems Data Book lists a "FUEL CELL
+        PERFORMANCE - VACUUM" chart whose data is graphical only). The secant is the impedance a
+        bus solve needs; the curvature it omits is owed with that chart. Per bus: fuel cells 1 and 2
+        in parallel on main bus A present 0.0504 ohm, fuel cell 3 alone on main bus B 0.1008 ohm
+    normal_bus: csm_bus_a
+    normal_bus_provenance:
+      basis: historical
+      source: >-
+        TN D-7609 (Apollo Experience Report: CSM Electrical Power Distribution Subsystem, Mar 1974)
+        p. 5: "the normal configurations were with fuel cells 1 and 2 on main bus A and with fuel
+        cell 3 on main bus B"; Apollo 15 Mission Report section 6.2: "fuel cells 1 and 2 were placed
+        on main bus A and fuel cell 3 on main bus B". The AOH (p. 2.6-2) gives the switchable set:
+        fuel cell 1 to bus A, fuel cell 2 to A and B, fuel cell 3 to B
   - id: fc_2
     kind: flow
     class: source
@@ -472,6 +561,14 @@ components:
     provenance:
       basis: historical
       source: "as fc_1"
+    normal_power_w: [400, 1420]
+    terminal_v_at_normal_power: [31, 27]
+    normal_envelope_provenance: {basis: historical, source: "as fc_1"}
+    source_resistance_ohm: 0.1008
+    open_circuit_intercept_v: 32.30
+    source_resistance_provenance: {basis: derived, relation: "as fc_1: the secant of the AOH p. 2.6-2 normal envelope"}
+    normal_bus: csm_bus_a
+    normal_bus_provenance: {basis: historical, source: "as fc_1 (TN D-7609 p. 5; Apollo 15 Mission Report 6.2); the AOH allows it on either bus (p. 2.6-2), and the flown normal was bus A"}
   - id: fc_3
     kind: flow
     class: source
@@ -481,6 +578,14 @@ components:
     provenance:
       basis: historical
       source: "as fc_1"
+    normal_power_w: [400, 1420]
+    terminal_v_at_normal_power: [31, 27]
+    normal_envelope_provenance: {basis: historical, source: "as fc_1"}
+    source_resistance_ohm: 0.1008
+    open_circuit_intercept_v: 32.30
+    source_resistance_provenance: {basis: derived, relation: "as fc_1: the secant of the AOH p. 2.6-2 normal envelope"}
+    normal_bus: csm_bus_b
+    normal_bus_provenance: {basis: historical, source: "as fc_1 (TN D-7609 p. 5; Apollo 15 Mission Report 6.2)"}
   - id: battery_csm_1
     kind: stock
     class: storage
@@ -491,6 +596,31 @@ components:
     provenance:
       basis: historical
       source: "NR and PSR: 3 x 40 Ah entry batteries, 20 cells, 37.2 V open circuit, 27 V minimum loaded"
+    # WP02 electrical evidence (docs/evidence/wp02-electrical.md, E-4). The published electrical
+    # points, kept as the two handbooks print them because they disagree on the loaded point.
+    cells: 20
+    open_circuit_v: 37.2
+    loaded_points:
+      - {source: "AOH SM2A-03-Block II-(1) p. 2.6-17 (CSM 106 and subs)", v: 29, a: 35, v_min: 27}
+      - {source: "J-mission EPS handout, 1 Oct 1971, p. 2.6-19 (CSM 112-114)", v: 28, a: 25, v_min: 27, open_circuit_v: 37.1}
+    qualified_ambient_f: [50, 110]
+    capacity_planning_ah: {in_flight: 40, postlanding: 45}
+    electrical_provenance:
+      basis: historical
+      source: >-
+        AOH SM2A-03-Block II-(1) pp. 2.6-16/17: "rated at 40-ampere hours (AH) minimum", open circuit
+        37.2 V, 29 V at 35 A, 27 V minimum, ambient 50-110 F, 45 AH after a full recharge for
+        postlanding; J-mission EPS handout (https://www.ibiblio.org/apollo/Documents/J%20Mission%20Electrical%20Power%20System%20Oct%201971.pdf)
+        pp. 2.6-18/19: 20 silver oxide-zinc cells, 40 Ah minimum (25 A for 60 min), 37.1 V open
+        circuit, 28 V nominal / 27 V minimum at 25 A, 50-110 F; Apollo 10 consumables analysis
+        (MSC, 9 May 1969) Table 8-I p. 40: 40 Ah each until splashdown, then 45 Ah
+      note: >-
+        TN D-6976 (Apollo Experience Report: Battery Subsystem, Sep 1972) Table I lists the entry
+        battery at **29 V nominal** and p. 3 states "40 A-h (1160 W-h each)"; this component's
+        `v_nominal` is 28, so `load_budget.csm_battery_energy_wh` (3 x 40 x 28 = 3,360 Wh) is 3.4 %
+        below the 3,480 Wh the experience report's own figure gives. Recorded, not changed: the
+        28 is the J-mission handout's loaded figure and the choice between them is the energy
+        basis WP04 owes with the derate curve
   - id: battery_csm_2
     kind: stock
     class: storage
