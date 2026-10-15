@@ -1157,3 +1157,71 @@ corrected broad driver passes independent review, the coordinator may make a **s
 P full-rerun grant** under Emmy's delegation. This diagnostic is not full qualification or
 automatic permission to rerun. No R/build/live run, new writer, host/security-setting change,
 commit, merge or required-test waiver is authorised.
+
+## 21. DIAG-01 pre-test stop, verified release and bounded correction review — 2026-10-11 11:54 AEDT
+
+**Current slot: FREE / RELEASED. No renewed diagnostic or broad gate is granted.** Parent Emmy
+reported the existing owner's early stop and authorised this bounded verification/review without
+a new user decision. The explicit release is
+`.scratch/phase-b-diag-P-019mkP/RECEIPT-arm1-stop.md`, SHA256
+`ccbdb7ba3d8cc6141fc3416fa412015268595390a0ec030dad811731afa06427`.
+It states: “The chassis releases the SPACE-20261011-P-DIAG-01 reservation.”
+
+The original supervisor admitted the arm at **11:45:07 AEDT**, then queried the bare unit name,
+which addressed a nonexistent `.service` rather than the live `.scope`. It never wrote the
+go-file. Its terminal receipt at **11:45:57 AEDT** records `supervision=ABORTED`, `ran=false`,
+`pytest_rc=null`, no outcomes, and cleanup not yet verified. The later owner release receipt
+records the launcher ending after its go-wait and subsequent cleanup. These are distinct events:
+the original failed supervisor receipt is preserved, not rewritten into successful cleanup.
+Neither test arm ran; this is **not a pytest attempt or result**. The original full failure also
+remains unchanged. The launcher recorded inherited SIGINT ignored without modifying arm 1.
+
+Independent host inspection at approximately **11:53 AEDT** confirms
+`space-chassis-pdiag-arm1-1791679505.scope` is `LoadState=not-found`, `ActiveState=inactive`,
+with empty ControlGroup and absent cgroup directory. No matching launcher, diagnostic driver,
+pytest, worker or helper was found, and the active Space scope and Compose-project lists were
+empty with successful queries. The go-file and arm 2 directory are absent. Adoption index and
+tracked files still match exact P `af671d04908817e914668750b7cd4f6f74034bf4`; vehicle remains
+clean at `f44399645fb2633e695a5d758cb5a41f43fb848c`. Test-file SHA256 remains
+`3b917de30861c432c467d92d6a75b1faf7b31cd0e62626dfde095997110c4a53`.
+Capacity was **41.3 GiB available**, CPU busy **13.6%**, load **2.86/2.66/2.96**.
+Capacity is sufficient; supervision correctness is the remaining blocker.
+
+### Exact correction reviewed, but renewal held
+
+Preserved as-run supervisor `diag-r1-as-run.py` SHA256:
+`02d8ca4929202014a6c042ee0741c7a8169dc03c8a549f8d05d317a51e16e520`.
+Corrected, unrun `diag.py` SHA256:
+`4a8d2d45ad40aae64a4b56474b815b45c64657030217aaef7d1dc62a0e3d5ced`.
+Unchanged `launch.py` SHA256:
+`91a813dc8563ce50489e5619e32a23f9f8dfc468571bc1bedfbc0ef66b2c0ccd`.
+
+The diff correctly uses `<unit>.scope` for show, stop and kill; its end check no longer treats
+an unknown ActiveState as ended, and explicitly recognises a collected, not-found scope.
+The launcher keeps the causal arm difference limited to restoring SIGINT. However, this
+coordinator and the independent read-only reviewer find **two concrete remaining blockers**:
+
+1. **P1 — Exceptions skip cleanup.** `diag.py:382` can raise when a process exits between the
+   cgroup listing and `/proc` reads. There is no post-launch `finally` guaranteeing cleanup.
+   A stop-command timeout at line 409 likewise bypasses escalation. The existing owner should
+   tolerate vanished process samples and ensure bounded owned-scope cleanup/escalation runs
+   on post-launch errors, including failed/timed-out stop commands.
+2. **P1 — Monitor errors are missed at admission/completion boundaries.** Lines 364–375 release
+   the go-file after any first heartbeat, even if that sample has an abort or inactive scope.
+   After the driver exits, monitor errors arriving before/during `watcher.join` are not merged
+   into the final supervision verdict. Require a healthy active first sample and no pending
+   abort before release; merge final monitor failures after joining before determining result.
+
+Isolated in-memory control-flow checks (fake processes, no driver or pytest execution) confirmed
+that a preexisting first-sample abort still writes the go-file, and a disappearing-process error
+escapes the loop without reaching subsequent cleanup. The final-monitor-result issue is a
+static finding. These are bounded corrections to the existing scratch supervisor, not new
+framework work. The existing owner retains the pen; no product or test edits are authorised.
+
+The fixed script currently accepts only `arm1`/`arm2`, and `arm1/` already exists. A **fresh
+evidence parent with byte-identical reviewed scripts** avoids overwriting it without changing
+arm semantics; do not merely pass unsupported `arm1b` or reuse/delete old evidence. Return
+the minimally corrected supervisor/hash for bounded review, then a fresh diagnostic grant can
+be considered with renewed capacity. All section 20 identity, two-arm, timeout, resource,
+monitoring and explicit cleanup/release conditions remain requirements. No new writer, owner
+message, test launch, broad rerun, R/build/live grant or host/security change occurred here.

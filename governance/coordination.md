@@ -108,7 +108,7 @@ does not qualify P; the owner attributes its SIGINT timeout to the gate driver, 
 P remains materialised and R/R2 preserved. No retry, new selection, R/build/live or automatic
 handoff is granted. Any further test run requires a separate grant.
 
-**CURRENT SLOT: RESERVED FOR CHASSIS DIAGNOSTICS — SPACE-20261011-P-DIAG-01, 11:39 AEDT
+**HISTORICAL DIAGNOSTIC RESERVATION — SPACE-20261011-P-DIAG-01, 11:39 AEDT
 (master §20).** Emmy authorises the existing owner `[8a7d49]` to perform one sequential
 old/corrected-driver comparison of the unchanged SIGINT/checkpoint test on exact P/vehicle,
 with independent supervision closing the reviewed drivers' safety/reporting gaps. No test has
@@ -120,6 +120,16 @@ deadline per arm, unique evidence and explicit cleanup/release are mandatory. Br
 held pending focused causal evidence and independent review of driver monitoring/result/cleanup
 corrections. No R/build/live grant, product/test edit or new writer. See §20 for exact hashes,
 node, ordered selection and stop conditions. Parent alone relays the owner's message.
+
+**CURRENT SLOT: FREE / RELEASED — 11:54 AEDT (master §21).** DIAG-01 stopped before its
+go-file; neither test ran, and no pytest attempt/result is counted. The owner's explicit
+`RECEIPT-arm1-stop.md` release is supported by independent scope/process cleanup checks.
+P, vehicle, test and failed evidence remain preserved. The exact `.scope` correction is sound,
+but renewal is held for two bounded supervisor fixes: guarantee cleanup/escalation after
+post-launch errors, and honour monitor aborts both before go and after final join. Capacity is
+available; no new user decision or framework work is needed. Existing owner only; parent
+browser route only. Corrected hash review precedes any renewed diagnostic grant. No broad
+rerun, R/build/live run or new writer is authorised.
 
 | channel | for |
 |---|---|
