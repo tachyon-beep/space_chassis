@@ -1,0 +1,2 @@
+{"mem_available_mib": 36209, "load1": 5.17, "cpu_busy_pct": 25.0, "elapsed_s": 0.0, "memory_current": 5365760, "procs": 1, "oom_kill": 0}
+{"mem_available_mib": 36196, "load1": 5.16, "cpu_busy_pct": 21.1, "elapsed_s": 5.0, "memory_current": 3059712, "procs": 1, "oom_kill": 0}

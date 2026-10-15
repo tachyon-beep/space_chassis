@@ -1,0 +1,27 @@
+{
+  "supervisor_exit": 3,
+  "abort": [
+    "Abort: deadline 4 s passed",
+    "cleanup attempt raised KeyboardInterrupt: injected: interrupted during cleanup; cleanup continued"
+  ],
+  "unit": "space-vehicle-b-k17-interrupt-during-cleanup-cb2f5c811ef4.service",
+  "owned": true,
+  "go": true,
+  "samples": 1,
+  "terminal": {
+    "token": "cb2f5c811ef4452699c19ae18316f11e",
+    "service_result": "success",
+    "exit_code": "killed",
+    "exit_status": "TERM",
+    "memory_peak": 5881856,
+    "oom": 0,
+    "oom_kill": 0,
+    "cgroup_read_problem": null
+  },
+  "post_identity": {
+    "head": "f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f",
+    "diff_sha256": "0a00336feb10dcd5c8839893cabafbdc5cbea20474f918d76dc1e0eca3f2d01d"
+  },
+  "counts": null,
+  "released": true
+}

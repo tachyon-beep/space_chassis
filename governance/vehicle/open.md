@@ -1,15 +1,24 @@
 # Vehicle — open items, risks and next steps
 
-As of **2026-10-10**, `tachyon-beep/space_vehicle` main @ `64fc58c`. GitHub issues are the delivery
+As of **2026-10-14**, `tachyon-beep/space_vehicle` main @ `f75420c` (local remote-tracking ref, not re-fetched). GitHub issues are the delivery
 status of record; this is the line's working view. **Verify against the issues before trusting it.**
+
+**Kind of work (John, 2026-10-12).** Every package is labelled **hardening** (continuity, robustness,
+process) or **extension** (new simulated behaviour). Since 2026-09-21 every package has been hardening;
+a real tick still advances **50 of 139** states, with 273 declared debts. John's direction: keep
+pushing the continuity milestone (WP08, M1) first.
 
 ## In flight
 
 | item | state | next |
 |---|---|---|
-| #21 WP08.3 resume | branch `codex/wp08-resume` @ `45f4267`, pushed (`06f08a3` + fix rounds 1–5, `records/2026-10-10-wp08-3-review-fixes{,-2,-3,-4,-5}.md`); the round-5 confirmation approved; residuals #40 | per-commit suites and gate both lanes at `45f4267` → PR → CI → merge → post merge SHA on chassis filigree `space_chassis-93010ff54e` (unblocks chassis Phase B) |
+| #21 WP08.3 resume | **merged** 2026-10-10: PR #41, `f44399645fb2633e695a5d758cb5a41f43fb848c` (tree = tested `45f4267`); hosted CI green; SHA posted on `space_chassis-93010ff54e` comment 41 | chassis Phase B (adoption) |
+| #39 claim race (**hardening**) | Tier 1 **merged** 2026-10-11 (PR #43, `f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f`). **Option B committed locally, UNQUALIFIED / UNPUBLISHED** under Governance MASTER §37: `7a87eb82cfef55dcc74248df41720883587ca7af` (parent `f75420c`, tree `ccc2782e…`), branch `codex/39-take-by-rename`, no upstream. G-2 package final (manifest `4956e7ae…`, reviews r1–r6 in `.scratch/wp01-handoff/diag-contract-probe/reviews/`) | **G312s on authorisation hold (MASTER §39; grant revoked unused): awaits John's explicit approval, then a new allocation.** G312s → G312p → G313s → G313p, each by a separate Governance allocation; final evidence review; John's publication approval; then chassis adoption with `CONTRACT-PACKAGE-B.md`. #42 separate |
+| #23 WP08.5 clock seam (**hardening**) | **Design settled 2026-10-12** after three review rounds (simulation, determinism, systems, Codex; all approve with changes, folded in): `.scratch/wp08-23/DESIGN.md` sha256 `4e8d0d6a…`, reviews in `.scratch/wp08-23/reviews/`. John's choices: never-ahead cycles, static files every `N`, lag per cycle, descriptive flags, interim 30 s lag backstop (exit 4), 3,000 ring slots (~5 min). Record format v3. Chassis delta specified (§7) | **implementation review-complete (static) 2026-10-12:** candidate 3a on `codex/23-clock-seam` from `7a87eb82` (worktree moved 2026-10-14 to `/home/john/space_vehicle_worktrees/23-clock-seam`, uncommitted), diff `.scratch/wp08-23/candidate-3a/23-candidate-3a.diff` sha256 `9de5a0dd…`, 9 files +3,518/−367, referee 537 → 564; implementation reviews c0–c3 (Codex, determinism, systems) all approve; **no test has run** — every test still to be seen failing/passing under a slot; allocation requests: `records/2026-10-12-23-clock-seam-slot-request.md`; Governance slot needed for every test run and for the `measure_clock` feasibility run (§8) before the chassis adopts m=1, k=5, 3,000 slots, 10 windows |
 
-## Next by dependency (WP08, M1)
+**Lane status and durability, 2026-10-14:** [records/2026-10-14-vehicle-lane-status.md](records/2026-10-14-vehicle-lane-status.md): what was archived (`records/2026-10-14-lane-archive/`), what stays in `/tmp` and how to recreate it, and four questions for John.
+
+## Next by dependency (WP08, M1) — all **hardening**
 
 | child | issue | depends on | note |
 |---|---|---|---|
@@ -21,7 +30,7 @@ status of record; this is the line's working view. **Verify against the issues b
 | 11 phase from tick | #29 | — (3 for restart) | |
 | 12 MET result stamps, idempotent re-publication | #30 | 4 | makes re-publication an exact-name lookup |
 
-Then M2 (WP02, WP03 evidence — not started), M3 (WP04–WP07, WP09–WP11), M4 (WP12), M5 (WP13). The
+Then the **extension** milestones: M2 (WP02, WP03 evidence — not started), M3 (WP04–WP07, WP09–WP11), M4 (WP12), M5 (WP13). The
 first integrated run at `m = 1` with ten windows is feasible since WP08.6 (#24).
 
 ## Open issues outside WP08

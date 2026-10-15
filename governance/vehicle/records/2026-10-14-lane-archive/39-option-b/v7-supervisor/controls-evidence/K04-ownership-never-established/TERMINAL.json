@@ -1,0 +1,10 @@
+{
+  "token": "b3fb43c157544f5d9e5dc8bf7917b14b",
+  "service_result": "success",
+  "exit_code": "killed",
+  "exit_status": "TERM",
+  "memory_peak": 5758976,
+  "oom": 0,
+  "oom_kill": 0,
+  "cgroup_read_problem": null
+}

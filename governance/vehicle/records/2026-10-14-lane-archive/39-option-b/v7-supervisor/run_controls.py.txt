@@ -1,0 +1,310 @@
+"""Failure-injection controls for supervise.py v6 (standard library only; run with /usr/bin/python3).
+
+Usage: python3 run_controls.py controls.json
+
+**Bounds.** The suite has an explicit wall clock, `suite_deadline_s`, and a separate bounded recovery,
+`recovery_deadline_s`, both from `controls.json`:
+- each control's supervisor timeout is its own declared maximum, capped at the suite time remaining
+  **less `post_control_reserve_s`**. The reserve keeps that control's post-run checks (a stop after a
+  timeout, the unit and process proofs, ending its decoy) inside the suite budget, and every one of
+  those steps is itself capped at the suite deadline. **Recovery therefore starts by
+  `suite_deadline_s`**, and ends by `suite_deadline_s + recovery_deadline_s`, before the outer cutoff;
+- a control is not started unless at least `min_control_s + post_control_reserve_s` remain;
+- the outer bound is systemd: the proposal runs this harness as a transient user service with
+  `RuntimeMaxSec = suite + recovery + 60` and `KillMode=control-group`. That covers every process the
+  harness owns: the supervisors it runs, and the decoy process. Units it starts (control payloads,
+  decoy units) carry their own `RuntimeMaxSec`, of 120 s at most.
+
+**Ownership.** Every unit this suite can create has a name known before it is created:
+- control units start with `space-vehicle-b-k`;
+- decoy units are named `space-decoy-<suite token>-<n>`, recorded **before** `systemd-run` is called.
+
+A decoy whose start was interrupted is therefore still owned, discovered by name, and stopped.
+
+**Each control:**
+1. It sets up its decoy, if any.
+2. It runs the supervisor.
+3. It checks the outcome by cause.
+4. It proves cleanup independently:
+   - `show` succeeds and reports not-found;
+   - no unit carries the control's prefix (a failed listing is unknown, never "none");
+   - the recorded cgroup is absent;
+   - no own-user process carries the run's token. An unreadable process is cleared only by proof that
+     it started before this control's supervisor did.
+5. It removes the decoy, in `finally`.
+
+The suite ends at the first control that:
+- leaves anything behind;
+- exits 4;
+- times out;
+- raises;
+- cannot fit in the remaining budget.
+
+**Recovery and final proof.** Recovery runs at the end of every suite, whether it passed or failed,
+within `recovery_deadline_s`, every command capped at the time remaining. It stops every unit with a
+control prefix and every decoy unit with this suite's token, kills the decoy process, and proves by a
+successful listing that none remains. The suite passes only if every control passed and this proof
+holds. K03's exit 4 is expected and leaves no supervisor receipt: **the slot is released only by the
+owner's explicit receipt, after this proof and the coordinator's verification.**
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+import uuid
+from pathlib import Path
+
+CONTROL_PREFIX = "space-vehicle-b-k"
+
+
+def sh(argv: list[str], timeout: float) -> subprocess.CompletedProcess | None:
+    if timeout <= 0:
+        return None
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def ticks_now() -> int:
+    return int(float(Path("/proc/uptime").read_text().split()[0]) * os.sysconf("SC_CLK_TCK"))
+
+
+def units_with(prefix: str, timeout: float) -> list[str] | None:
+    """Loaded units whose name starts with `prefix`, or `None` when that cannot be known (never read as "none")."""
+    listed = sh(["systemctl", "--user", "list-units", "--all", "--plain", "--no-legend", "--no-pager"], timeout)
+    if listed is None or listed.returncode != 0:
+        return None
+    return [line.split()[0] for line in listed.stdout.splitlines() if line.split() and line.split()[0].startswith(prefix)]
+
+
+def unit_gone(unit: str, timeout: float) -> tuple[bool, str]:
+    shown = sh(["systemctl", "--user", "show", unit, "-p", "LoadState", "-p", "ActiveState"], timeout)
+    if shown is None or shown.returncode != 0:
+        return False, "lookup failed"
+    state = dict(line.split("=", 1) for line in shown.stdout.splitlines() if "=" in line)
+    return state.get("LoadState") == "not-found", str(state)
+
+
+def token_holders(token: str, before_ticks: int) -> list[str]:
+    uid, held = os.getuid(), []
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            if proc.stat().st_uid != uid:
+                continue
+        except FileNotFoundError:
+            continue
+        for name in ("cmdline", "environ"):
+            try:
+                data = (proc / name).read_bytes()
+            except FileNotFoundError:
+                break
+            except OSError as exc:
+                try:
+                    if int((proc / "stat").read_text().rsplit(")", 1)[1].split()[19]) < before_ticks:
+                        break  # started before this control's supervisor: cannot hold its token
+                except FileNotFoundError:
+                    break
+                except (OSError, ValueError, IndexError):
+                    pass
+                held.append(f"{proc.name}: unknown ({exc})")
+                break
+            if token.encode() in data:
+                held.append(proc.name)
+                break
+    return held
+
+
+def stop_unit(unit: str, by: float) -> None:
+    sh(["systemctl", "--user", "stop", unit], min(40, by - time.monotonic()))
+    sh(["systemctl", "--user", "reset-failed", unit], min(10, by - time.monotonic()))
+
+
+class Suite:
+    def __init__(self, plan: dict, here: Path) -> None:
+        self.plan, self.here = plan, here
+        self.token = uuid.uuid4().hex[:12]
+        self.decoy_units: list[str] = []
+        self.decoy_procs: list[subprocess.Popen] = []
+        self.results: list[dict] = []
+
+    def start_decoy(self, kind: str) -> None:
+        if kind == "process":
+            proc = subprocess.Popen(["/usr/bin/python3", "-c", "import time; time.sleep(120)", "pytest-decoy"], cwd=self.here,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.decoy_procs.append(proc)
+            time.sleep(0.5)
+            return
+        unit = f"space-decoy-{self.token}-{len(self.decoy_units) + 1}.service"
+        self.decoy_units.append(unit)  # owned before it is created: an interrupted start is still found and stopped
+        started = sh(["systemd-run", "--user", f"--unit={unit}", "-p", "RuntimeMaxSec=120", "/usr/bin/sleep", "120"], 15)
+        if started is None or started.returncode != 0:
+            raise RuntimeError(f"the decoy unit {unit} could not be started")
+        time.sleep(0.5)
+
+    def end_decoys(self, by: float) -> bool:
+        ok = True
+        for proc in self.decoy_procs:
+            try:
+                proc.kill()
+                proc.wait(timeout=max(0.1, min(10, by - time.monotonic())))
+            except BaseException:  # noqa: BLE001 - unknown is not gone
+                ok = False
+        self.decoy_procs = [p for p in self.decoy_procs if p.poll() is None]
+        for unit in self.decoy_units:
+            stop_unit(unit, by)
+        left = units_with(f"space-decoy-{self.token}-", max(0.0, min(15, by - time.monotonic())))
+        return ok and not self.decoy_procs and left == []
+
+    def run(self) -> bool:
+        suite_by = time.monotonic() + self.plan["suite_deadline_s"]
+        ok_all = True
+        for control in self.plan["controls"]:
+            remaining = suite_by - time.monotonic()
+            needed = self.plan["min_control_s"] + self.plan["post_control_reserve_s"]
+            if remaining < needed:
+                self.results.append({"stopped": f"{remaining:.0f} s left in the suite budget, below {needed} s; "
+                                                f"{control['name']} and later controls not started"})
+                return False
+            spec = json.loads(Path(control["spec"]).read_text())
+            try:
+                if control.get("decoy"):
+                    self.start_decoy(control["decoy"])
+                row, stop = self.run_one(control, spec, suite_by)
+            except BaseException as exc:  # noqa: BLE001 - recovery, below, stops what it owns
+                self.results.append({"stopped": f"control {control['name']} raised {type(exc).__name__}: {exc}"})
+                return False
+            finally:
+                decoys_ok = self.end_decoys(min(suite_by, time.monotonic() + 30))
+            row["checks"]["decoys_gone"] = decoys_ok
+            row["passed"] = row["passed"] and decoys_ok
+            self.results.append(row)
+            print(json.dumps(row), flush=True)
+            ok_all &= row["passed"]
+            if stop or not decoys_ok:
+                self.results.append({"stopped": f"after {control['name']}: {stop or 'a decoy was left behind'}; no further control runs"})
+                if control is not self.plan["controls"][-1] or row["exit"] == "timeout" or not decoys_ok:
+                    ok_all = False
+                break
+        return ok_all
+
+    def run_one(self, control: dict, spec: dict, suite_by: float) -> tuple[dict, str | None]:
+        evidence = Path(spec["evidence_dir"])
+        declared = (spec["admission_deadline_s"] + spec["setup_deadline_s"] + 5 + spec["deadline_s"] + spec["runtime_margin_s"]
+                    + spec["oom_settle_s"] + spec["terminal_wait_s"] + spec["stop_timeout_s"] + spec["cleanup_deadline_s"] + 60)
+        timeout = min(declared, suite_by - time.monotonic() - self.plan["post_control_reserve_s"])
+        before = ticks_now()
+        started = time.monotonic()
+        try:
+            run = subprocess.run(["/usr/bin/python3", str(self.here / "supervise.py"), control["spec"]], capture_output=True, text=True,
+                                 timeout=timeout)
+            code: int | str = run.returncode
+        except subprocess.TimeoutExpired:
+            code = "timeout"
+        events = []
+        log = evidence / "supervisor.log"
+        try:
+            for line in log.read_text(errors="replace").splitlines() if log.exists() else []:
+                try:
+                    events.append(json.loads(line))
+                except ValueError:
+                    continue
+        except OSError:
+            events = []
+        first = next((e for e in events if e.get("event") == "start"), {})
+        token, unit = first.get("token", ""), first.get("unit", "")
+        cgroup = next((e.get("cgroup") for e in events if e.get("event") == "owned"), None)
+        def cap(seconds: float) -> float:  # every post-run step stays inside the suite budget
+            return max(0.0, min(seconds, suite_by - time.monotonic()))
+
+        check_by = min(suite_by, time.monotonic() + 60)
+        if code == "timeout":
+            for name in [unit] + (units_with(spec["unit_prefix"], cap(15)) or []):
+                if name:
+                    stop_unit(name, check_by)
+        left = units_with(spec["unit_prefix"], cap(15))
+        if unit:
+            gone, state = unit_gone(unit, cap(15))
+            gone = gone and left == []
+        else:
+            gone, state = left == [], "no unit logged"
+        state = f"{state}; units with the prefix: {left} (None means unknown)"
+        held = token_holders(token, before) if token else []
+        cgroup_gone = cgroup is None or not Path(cgroup).exists()
+        try:
+            summary = json.loads((evidence / "summary.json").read_text())
+        except (OSError, ValueError):
+            summary = {}
+        expect = control["expect"]
+        checks = {"exit": code == expect["exit"], "release": (evidence / "RELEASE.txt").exists() == expect["release"],
+                  "unit_gone": gone, "cgroup_gone": cgroup_gone, "no_token_processes": not held}
+        aborts = " | ".join(summary.get("abort", []))
+        for needle in expect.get("abort_contains", []):
+            checks[f"abort~{needle}"] = needle in aborts
+        for key, want in expect.get("summary", {}).items():
+            checks[f"summary.{key}"] = summary.get(key) == want
+        for key, want in expect.get("terminal", {}).items():
+            checks[f"terminal.{key}"] = (summary.get("terminal") or {}).get(key) == want
+        for path, want in expect.get("json", {}).items():
+            name, key = path.split(":")
+            try:
+                got = json.loads((evidence / name).read_text()).get(key)
+            except (OSError, ValueError):
+                got = "<absent>"
+            checks[path] = got == want
+        for name in expect.get("present", []):
+            checks[f"present:{name}"] = (evidence / name).exists()
+        for name in expect.get("absent", []):
+            checks[f"absent:{name}"] = not (evidence / name).exists()
+        row = {"control": control["name"], "passed": all(checks.values()), "exit": code, "checks": checks, "unit": unit,
+               "unit_state": state, "token_holders": held, "elapsed_s": round(time.monotonic() - started, 1)}
+        stop = None
+        if code in (4, "timeout") or not (gone and cgroup_gone and not held):
+            stop = f"exit {code}, unit gone {gone}, cgroup gone {cgroup_gone}, token holders {held}"
+        return row, stop
+
+    def recover(self) -> dict:
+        """Bounded recovery and the final proof, run at the end of every suite."""
+        by = time.monotonic() + self.plan["recovery_deadline_s"]
+        for prefix in (CONTROL_PREFIX, f"space-decoy-{self.token}-"):
+            for name in units_with(prefix, max(0.0, min(15, by - time.monotonic()))) or []:
+                stop_unit(name, by)
+        decoys_ok = self.end_decoys(by)
+        controls_left = units_with(CONTROL_PREFIX, max(0.0, min(15, by - time.monotonic())))
+        decoys_left = units_with(f"space-decoy-{self.token}-", max(0.0, min(15, by - time.monotonic())))
+        proof = {
+            "control_units_left": controls_left, "decoy_units_left": decoys_left, "decoy_processes_ended": decoys_ok,
+            "within_recovery_deadline": time.monotonic() <= by,
+        }
+        proof["proven_clean"] = controls_left == [] and decoys_left == [] and decoys_ok and proof["within_recovery_deadline"]
+        return proof
+
+
+def main() -> int:
+    plan = json.loads(Path(sys.argv[1]).read_text())
+    suite = Suite(plan, Path(__file__).resolve().parent)
+    ok, proof = False, {"proven_clean": False}
+    try:
+        ok = suite.run()
+    except BaseException as exc:  # noqa: BLE001 - recovery always runs
+        suite.results.append({"stopped": f"the harness raised {type(exc).__name__}: {exc}"})
+    finally:
+        try:
+            proof = suite.recover()
+        except BaseException as exc:  # noqa: BLE001 - an unproven recovery fails the suite
+            proof = {"proven_clean": False, "error": f"{type(exc).__name__}: {exc}"}
+        passed = ok and proof.get("proven_clean", False)
+        Path(plan["summary"]).parent.mkdir(parents=True, exist_ok=True)
+        Path(plan["summary"]).write_text(json.dumps({"passed": passed, "suite_token": suite.token, "final_proof": proof,
+                                                     "results": suite.results}, indent=2) + "\n")
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

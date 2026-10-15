@@ -1,0 +1,6 @@
+pre-launch checks start 2026-10-11T12:48:37.341775228Z grant SPACE-20261011-B-V7-K1
+identity ok: manifest, proposal, head, diff, tree b447955f, fresh evidence, unit unused
+admission 12:48:39Z mem=36.16GiB busy=21.2% load1=5.11 matched=[] unclassified=[] space_units=[] space_containers=[] units_rc=0 docker_rc=0
+admission ok; launching at 2026-10-11T12:48:39.461102951Z
+Running as unit: space-vehicle-b-suite-k1.service; invocation ID: 0eb412ca87ef44aaad5fc21f4c8e8885
+systemd-run exit 0 at 2026-10-11T12:48:39.489839453Z

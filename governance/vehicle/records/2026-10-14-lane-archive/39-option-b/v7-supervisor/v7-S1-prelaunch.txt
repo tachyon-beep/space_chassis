@@ -1,0 +1,6 @@
+pre-launch checks start 2026-10-11T13:15:46.057258644Z grant SPACE-20261011-B-V7-S1-01
+identity ok: manifest+26, proposal, spec 6bcb9af0, supervisor, head, diff, tree b447955f, evidence/log absent, unit unused
+admission 13:15:48Z mem=37.75GiB busy=22.2% load1=5.73 matched=[] unclassified=[] space_units=[] space_containers=[] units_rc=0 docker_rc=0
+admission ok; launching at 2026-10-11T13:15:48.192091778Z
+Running as unit: space-vehicle-b-supervisor-s1-1.service; invocation ID: c121704d83e94f61ba9029f63cf0a11c
+systemd-run exit 0 at 2026-10-11T13:15:48.211020630Z

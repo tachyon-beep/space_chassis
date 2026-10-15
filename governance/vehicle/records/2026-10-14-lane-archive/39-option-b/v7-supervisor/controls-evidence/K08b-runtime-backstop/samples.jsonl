@@ -1,0 +1,9 @@
+{"mem_available_mib": 35890, "load1": 5.07, "cpu_busy_pct": 27.8, "elapsed_s": 0.0, "memory_current": 5361664, "procs": 1, "oom_kill": 0}
+{"mem_available_mib": 36075, "load1": 5.06, "cpu_busy_pct": 21.1, "elapsed_s": 5.0, "memory_current": 3063808, "procs": 1, "oom_kill": 0}
+{"mem_available_mib": 36099, "load1": 5.06, "cpu_busy_pct": 20.3, "elapsed_s": 10.0, "memory_current": 3063808, "procs": 1, "oom_kill": 0}
+{"mem_available_mib": 35980, "load1": 5.05, "cpu_busy_pct": 21.9, "elapsed_s": 15.0, "memory_current": 3063808, "procs": 1, "oom_kill": 0}
+{"mem_available_mib": 35938, "load1": 5.05, "cpu_busy_pct": 23.2, "elapsed_s": 20.0, "memory_current": 3063808, "procs": 1, "oom_kill": 0}
+{"mem_available_mib": 35995, "load1": 5.04, "cpu_busy_pct": 21.3, "elapsed_s": 25.0, "memory_current": 3063808, "procs": 1, "oom_kill": 0}
+{"mem_available_mib": 35679, "load1": 5.04, "cpu_busy_pct": 23.6, "elapsed_s": 30.0, "memory_current": 3063808, "procs": 1, "oom_kill": 0}
+{"mem_available_mib": 35924, "load1": 5.04, "cpu_busy_pct": 22.0, "elapsed_s": 35.0, "memory_current": 3063808, "procs": 1, "oom_kill": 0}
+{"mem_available_mib": 35859, "load1": 5.11, "cpu_busy_pct": 19.6, "elapsed_s": 40.0, "memory_current": 3063808, "procs": 1, "oom_kill": 0}

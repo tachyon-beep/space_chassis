@@ -1,0 +1,411 @@
+{
+  "passed": true,
+  "suite_token": "e05e427583dd",
+  "final_proof": {
+    "control_units_left": [],
+    "decoy_units_left": [],
+    "decoy_processes_ended": true,
+    "within_recovery_deadline": true,
+    "proven_clean": true
+  },
+  "results": [
+    {
+      "control": "K00-success",
+      "passed": true,
+      "exit": 0,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "summary.owned": true,
+        "summary.go": true,
+        "terminal.service_result": true,
+        "terminal.exit_status": true,
+        "terminal.oom_kill": true,
+        "READY.json:sigint_ignored_after_restore": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k00-success-98a9b4394d20.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 8.3
+    },
+    {
+      "control": "K01-interrupt-after-launch",
+      "passed": true,
+      "exit": 3,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~KeyboardInterrupt": true,
+        "abort~injected: interrupted right after launch": true,
+        "summary.go": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k01-interrupt-after-launch-30221f3c49a1.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 2.2
+    },
+    {
+      "control": "K02-report-raises",
+      "passed": true,
+      "exit": 3,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "absent:summary.json": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k02-report-raises-cb65f73977ab.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 8.3
+    },
+    {
+      "control": "K04-ownership-never-established",
+      "passed": true,
+      "exit": 3,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~setup deadline 30 s passed before ownership": true,
+        "summary.owned": true,
+        "summary.go": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k04-ownership-never-established-b3fb43c15754.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 32.3
+    },
+    {
+      "control": "K05-caps-mismatch",
+      "passed": true,
+      "exit": 3,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~caps did not read back": true,
+        "summary.owned": true,
+        "summary.go": true,
+        "absent:samples.jsonl": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k05-caps-mismatch-9a36ff34bee3.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 2.3
+    },
+    {
+      "control": "K06-pre-go-unhealthy",
+      "passed": true,
+      "exit": 3,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~pre-GO health": true,
+        "abort~MemAvailable 0 MiB": true,
+        "summary.go": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k06-pre-go-unhealthy-5b3dfd22cab8.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 3.4
+    },
+    {
+      "control": "K07-go-never",
+      "passed": true,
+      "exit": 3,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~GO withheld": true,
+        "summary.go": true,
+        "terminal.exit_status": true,
+        "present:NO-GO.json": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k07-go-never-05f5c0da3225.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 37.6
+    },
+    {
+      "control": "K08-deadline",
+      "passed": true,
+      "exit": 3,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~deadline 6 s passed": true,
+        "summary.go": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k08-deadline-ccf04215316a.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 9.4
+    },
+    {
+      "control": "K08b-runtime-backstop",
+      "passed": true,
+      "exit": 3,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~SERVICE_RESULT=timeout": true,
+        "terminal.service_result": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k08b-runtime-backstop-871349bb1352.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 48.4
+    },
+    {
+      "control": "K09-oom",
+      "passed": true,
+      "exit": 3,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~oom": true,
+        "terminal.service_result": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k09-oom-a8d39ec86a2a.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 8.4
+    },
+    {
+      "control": "K10-terminal-missing",
+      "passed": true,
+      "exit": 3,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~no terminal record from the unit's ExecStopPost": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k10-terminal-missing-73293a1995d8.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 8.3
+    },
+    {
+      "control": "K11-identity-changes-post",
+      "passed": true,
+      "exit": 3,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~the candidate changed during the run": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k11-identity-changes-post-c1dd87edc03b.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 8.3
+    },
+    {
+      "control": "K12-sigint-ignored-inherited",
+      "passed": true,
+      "exit": 0,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "terminal.service_result": true,
+        "terminal.exit_status": true,
+        "READY.json:sigint_ignored_inherited": true,
+        "READY.json:sigint_ignored_after_restore": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k12-sigint-ignored-inherited-44f6e0ec0def.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 8.3
+    },
+    {
+      "control": "K13a-admission-process-decoy",
+      "passed": true,
+      "exit": 2,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~Space workload running": true,
+        "abort~pytest-decoy": true,
+        "absent:payload.out": true,
+        "absent:READY.json": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k13a-admission-process-decoy-1cd131d9f8d6.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 2.1
+    },
+    {
+      "control": "K13b-admission-unit-decoy",
+      "passed": true,
+      "exit": 2,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~Space unit present": true,
+        "abort~space-decoy-": true,
+        "absent:payload.out": true,
+        "absent:READY.json": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k13b-admission-unit-decoy-329c327ee019.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 2.1
+    },
+    {
+      "control": "K14-admission-identity-mismatch",
+      "passed": true,
+      "exit": 2,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~diff_sha256": true,
+        "absent:payload.out": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k14-admission-identity-mismatch-473a332af32f.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 2.1
+    },
+    {
+      "control": "K15-stop-fails-once",
+      "passed": true,
+      "exit": 3,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~injected: systemctl stop failed": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k15-stop-fails-once-f6c88a626e14.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 33.9
+    },
+    {
+      "control": "K16-descendant-outlives-main",
+      "passed": true,
+      "exit": 3,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~SERVICE_RESULT=timeout": true,
+        "terminal.service_result": true,
+        "terminal.exit_code": true,
+        "terminal.exit_status": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k16-descendant-outlives-main-1303127cdd3a.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 48.4
+    },
+    {
+      "control": "K17-interrupt-during-cleanup",
+      "passed": true,
+      "exit": 3,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~deadline 4 s passed": true,
+        "abort~cleanup attempt raised KeyboardInterrupt": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k17-interrupt-during-cleanup-cb2f5c811ef4.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 7.9
+    },
+    {
+      "control": "K03-cleanup-proof-unknown",
+      "passed": true,
+      "exit": 4,
+      "checks": {
+        "exit": true,
+        "release": true,
+        "unit_gone": true,
+        "cgroup_gone": true,
+        "no_token_processes": true,
+        "abort~the unit's state is unknown": true,
+        "abort~cannot be read": true,
+        "decoys_gone": true
+      },
+      "unit": "space-vehicle-b-k03-cleanup-proof-unknown-823249964711.service",
+      "unit_state": "{'LoadState': 'not-found', 'ActiveState': 'inactive'}; units with the prefix: [] (None means unknown)",
+      "token_holders": [],
+      "elapsed_s": 68.5
+    },
+    {
+      "stopped": "after K03-cleanup-proof-unknown: exit 4, unit gone True, cgroup gone True, token holders []; no further control runs"
+    }
+  ]
+}

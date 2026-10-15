@@ -1,0 +1,72 @@
+"""Launcher for one Space Vehicle bounded selection, v3: the main process of a transient systemd service.
+
+Run by systemd as `/usr/bin/python3 launch.py EVIDENCE TOKEN GO_TIMEOUT_S INJECT -- PAYLOAD...`
+(standard library only). systemd owns its life: the deadline (`RuntimeMaxSec`), the kill of every
+descendant (`KillMode=control-group`), OOM attribution (`OOMPolicy=stop` → `Result=oom-kill`), the
+working directory, `Nice=19` and the environment. This launcher only:
+
+1. **Records the signals and restores them.** It writes SIGINT's disposition as it arrived
+   (`/proc/self/status` `SigIgn`), sets SIGINT and SIGTERM to `SIG_DFL` explicitly, and records it
+   again, in `READY.json`. The supervisor refuses GO unless SIGINT is not ignored after restoration.
+2. **Waits, bounded, for GO.** At most `GO_TIMEOUT_S` for `EVIDENCE/GO`; otherwise it exits 98 having
+   run nothing.
+3. **Execs the payload.** `os.execv` replaces this process, so systemd's `ExecMainStatus` is the
+   payload's own exit status and the restored dispositions carry into it unchanged.
+
+`INJECT` is a failure-injection point for the supervisor's controls, or `none`. The only one used
+here is `sigint_ignored_inherited`, which ignores SIGINT before the first record, to show that the
+restoration undoes an inherited ignore.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import signal
+import sys
+import time
+from pathlib import Path
+
+
+def sigint_ignored() -> bool | None:
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("SigIgn:"):
+                return bool(int(line.split()[1], 16) & (1 << (signal.SIGINT - 1)))
+    except OSError:
+        return None
+    return None
+
+
+def write_json(path: Path, data: dict) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    os.replace(tmp, path)
+
+
+def main() -> int:
+    evidence, token, go_timeout, inject = sys.argv[1:5]
+    if sys.argv[5] != "--" or len(sys.argv) < 7:
+        return 97
+    payload = sys.argv[6:]
+    evidence_dir = Path(evidence)
+    if inject == "sigint_ignored_inherited":
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    inherited = sigint_ignored()
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    write_json(evidence_dir / "READY.json", {
+        "token": token, "pid": os.getpid(), "sigint_ignored_inherited": inherited, "sigint_ignored_after_restore": sigint_ignored(),
+    })
+    deadline = time.monotonic() + float(go_timeout)
+    while not (evidence_dir / "GO").exists():
+        if time.monotonic() > deadline:
+            write_json(evidence_dir / "NO-GO.json", {"token": token, "reason": f"no GO within {go_timeout} s; nothing ran"})
+            return 98
+        time.sleep(0.1)
+    os.execv(payload[0], payload)
+    return 96  # not reached
+
+
+if __name__ == "__main__":
+    sys.exit(main())

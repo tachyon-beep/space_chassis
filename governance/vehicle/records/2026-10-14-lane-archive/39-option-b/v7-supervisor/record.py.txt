@@ -1,0 +1,54 @@
+"""The terminal recorder for one Space Vehicle bounded selection, v4: the unit's `ExecStopPost=`.
+
+Run by systemd as `/usr/bin/python3 record.py EVIDENCE TOKEN` after the unit's processes have
+stopped, for **every** way a run ends: a normal exit, a timeout, an OOM kill, or a stop. systemd
+hands it the final outcome in `SERVICE_RESULT`, `EXIT_CODE` and `EXIT_STATUS`. It still runs inside
+the unit's cgroup, so it reads `memory.peak` and `memory.events` there.
+
+It writes `TERMINAL.json` atomically, carrying the run's token. The supervisor's terminal checks
+read this file, so they depend neither on the unit staying loaded nor on the supervisor being alive
+when the run ends. Standard library only.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def main() -> int:
+    evidence, token = Path(sys.argv[1]), sys.argv[2]
+    cgroup = None
+    try:
+        for line in Path("/proc/self/cgroup").read_text().splitlines():
+            if line.startswith("0::"):
+                cgroup = Path("/sys/fs/cgroup" + line[3:])
+    except OSError:
+        cgroup = None
+    peak, events, problem = None, {}, None
+    try:
+        if cgroup is not None:
+            peak = int((cgroup / "memory.peak").read_text())
+            events = {k: int(v) for k, v in (line.split() for line in (cgroup / "memory.events").read_text().splitlines())}
+    except (OSError, ValueError) as exc:
+        problem = f"{type(exc).__name__}: {exc}"
+    record = {
+        "token": token,
+        "service_result": os.environ.get("SERVICE_RESULT"),
+        "exit_code": os.environ.get("EXIT_CODE"),
+        "exit_status": os.environ.get("EXIT_STATUS"),
+        "memory_peak": peak,
+        "oom": events.get("oom"),
+        "oom_kill": events.get("oom_kill"),
+        "cgroup_read_problem": problem,
+    }
+    tmp = evidence / "TERMINAL.json.tmp"
+    tmp.write_text(json.dumps(record, indent=2) + "\n")
+    os.replace(tmp, evidence / "TERMINAL.json")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
