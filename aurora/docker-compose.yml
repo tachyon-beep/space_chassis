@@ -1922,6 +1922,8 @@ services:
       context: .
       dockerfile: Dockerfile.agent
       target: vehicle
+      additional_contexts:
+        vehicle_src: ../vehicle
     restart: unless-stopped
     profiles: ["vehicle"]
     network_mode: none

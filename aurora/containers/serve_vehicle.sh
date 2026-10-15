@@ -1,7 +1,7 @@
 #!/bin/sh
 # The vehicle's half of the window, as a service.
 #
-# `docs/deep_research/vehicle/tools/console.py` is the loop this container runs. It reads the vehicle
+# `vehicle/tools/console.py` (the repository's vehicle stream) is the loop this container runs. It reads the vehicle
 # configuration baked at /opt/vehicle, writes the six files of the window into the per-agent diode
 # directory, and advances telemetry on its own -- which is the whole of what `contract/diode_probe.py`
 # checks, and the reason this service exists rather than the fleet being pointed at the fixture

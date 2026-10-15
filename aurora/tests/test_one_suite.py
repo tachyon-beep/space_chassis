@@ -12,13 +12,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+# The repository root, where the one suite's configuration lives, and this stream's root.
+ROOT = Path(__file__).resolve().parents[2]
+AURORA = Path(__file__).resolve().parents[1]
 SUITES = [
-    "tests",
-    "harness/tests",
-    "recorder/tests",
-    "pump/tests",
-    "docs/deep_research/vehicle/tests",
+    "aurora/tests",
+    "aurora/harness/tests",
+    "aurora/recorder/tests",
+    "aurora/pump/tests",
+    "vehicle/tests",
 ]
 PLUGIN = """
 import json, os, sys
@@ -35,7 +37,7 @@ def pytest_collection_finish(session):
 def _collect(*paths, env=None):
     result = subprocess.run(
         # addopts already carries -q; a second -q prints per-file counts, not node IDs.
-        # The vehicle submodule carries its own pytest config; one rootdir and one config make the
+        # The vehicle stream carries its own pytest config; one rootdir and one config make the
         # node IDs of a directory collected alone comparable with the merged run's.
         [
             sys.executable,
@@ -110,11 +112,11 @@ def test_each_bare_module_name_resolves_to_its_own_directory(tmp_path):
         "common": "services/common.py",
     }
     for name, relative in expected.items():
-        assert found.get(name) == str(ROOT / relative), (name, found.get(name))
+        assert found.get(name) == str(AURORA / relative), (name, found.get(name))
 
 
 def test_the_shared_hostile_inputs_are_identical():
     # In one process the first `import hostile_inputs` wins, so the two copies must not drift.
-    recorder_copy = (ROOT / "recorder" / "tests" / "hostile_inputs.py").read_bytes()
-    pump_copy = (ROOT / "pump" / "tests" / "hostile_inputs.py").read_bytes()
+    recorder_copy = (AURORA / "recorder" / "tests" / "hostile_inputs.py").read_bytes()
+    pump_copy = (AURORA / "pump" / "tests" / "hostile_inputs.py").read_bytes()
     assert recorder_copy == pump_copy

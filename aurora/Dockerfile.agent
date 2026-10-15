@@ -102,14 +102,19 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # ---------------------------------------------------------------------------------------------------
 # **The vehicle's image, and only the vehicle's** (`docker compose --profile vehicle build`).
 #
-# `docs/deep_research/vehicle/` is the configuration the reference console serves, baked rather than
+# `vehicle/` (the repository's vehicle stream) is the configuration the reference console serves, baked rather than
 # mounted so the thing serving the window cannot be edited by anything reading it. It is in this
 # stage alone because an agent that could read it could read every fault policy and failure chain
 # and run `console.py --plan` to print the mission's fault schedule: John, 2026-10-10, "we don't want
 # any risk of information sharing". The stage is the base plus the vehicle and its service script,
 # so the vehicle runs on the same Python and libc as the base it was built with.
+#
+# The build context is `aurora/`, which holds nothing of the vehicle. The vehicle arrives as the named
+# build context `vehicle_src` (compose's `additional_contexts`, or `docker build --build-context
+# vehicle_src=../vehicle`), so only this stage can name it and the agents' context never contains it.
+# It cannot share the stage's own name: BuildKit reads `--from=vehicle` here as a cycle.
 FROM base AS vehicle
-COPY --chown=agent:agent docs/deep_research/vehicle/ /opt/vehicle/
+COPY --from=vehicle_src --chown=agent:agent . /opt/vehicle/
 # The console loop, as a service: a script rather than a compose `command:` because the container is
 # read-only and the loop needs no shell features (see its own header).
 COPY --chmod=0755 containers/serve_vehicle.sh /usr/local/bin/serve_vehicle.sh

@@ -30,7 +30,7 @@
 schema_version: 1
 contract: docs/diode-contract.md
 contract_status: frozen
-contract_probe: contract/diode_probe.py
+contract_probe: aurora/contract/diode_probe.py
 
 # --------------------------------------------------------------------------------------
 # The epistemic layers. The contract names three; the registry declares four kinds, and the

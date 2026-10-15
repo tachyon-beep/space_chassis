@@ -11,7 +11,10 @@ import re
 import subprocess
 from pathlib import Path
 
+# This stream's root (`aurora/`), where the retired runtime lived, and the repository's root, whose
+# whole tracked tree the guard reads.
 ROOT = Path(__file__).resolve().parent.parent
+REPO = ROOT.parent
 
 RETIRED_PATHS = [
     "services/chassis.py",
@@ -33,24 +36,26 @@ BANNED = re.compile(
 
 NEGATIVE = re.compile(r"\bassert\b.*\bnot in\b")
 
-# Permanent: history and text that is not ours to rewrite yet.
+# Permanent: history and text that is not ours to rewrite yet. Paths are repository-relative.
 PERMANENT = (
-    "tests/test_retired.py",  # this file names what it bans
-    "docs/superpowers/",  # the specs and plans: the record of how the port was made
+    "aurora/tests/test_retired.py",  # this file names what it bans
+    "aurora/docs/superpowers/",  # the specs and plans: the record of how the port was made
+    "aurora/docs/plans/",  # the pre-port programme plans: history, as superpowers/ is
     "docs/deep_research/",  # the frozen corpus (CLAUDE.md: its map is integration/)
     "governance/",  # the two lines' decision logs and records: history, kept as it was written
+    "vehicle/",  # the vehicle stream: its own history and law, never the chassis's runtime
 )
 
 
 def _tracked(*paths):
     result = subprocess.run(
-        ["git", "ls-files", "--", *paths], cwd=ROOT, capture_output=True, text=True, check=True
+        ["git", "ls-files", "--", *paths], cwd=REPO, capture_output=True, text=True, check=True
     )
     return result.stdout.split()
 
 
 def test_the_old_runtime_is_gone():
-    assert _tracked(*RETIRED_PATHS) == []
+    assert _tracked(*(f"aurora/{path}" for path in RETIRED_PATHS)) == []
 
 
 def test_nothing_still_refers_to_the_old_runtime():
@@ -58,13 +63,13 @@ def test_nothing_still_refers_to_the_old_runtime():
     for name in _tracked():
         if name.startswith(PERMANENT):
             continue
-        path = ROOT / name
+        path = REPO / name
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for number, line in enumerate(text.splitlines(), 1):
             # A test that asserts something is absent has to name it.
-            if name.startswith("tests/") and NEGATIVE.search(line):
+            if name.startswith("aurora/tests/") and NEGATIVE.search(line):
                 continue
             if BANNED.search(line):
                 found.append(f"{name}:{number}: {line.strip()[:120]}")

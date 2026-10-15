@@ -1065,8 +1065,10 @@ def test_a_kind_added_to_the_table_reaches_every_subcommand(tmp_path, monkeypatc
 
 
 def test_volumes_and_images_stay_out_of_git_and_the_image_build_context() -> None:
-    for name in (".gitignore", ".dockerignore"):
-        lines = (ROOT / name).read_text(encoding="utf-8").splitlines()
+    # The repository's .gitignore is at its root; the build context's .dockerignore is this stream's.
+    for path in (ROOT.parent / ".gitignore", ROOT / ".dockerignore"):
+        name = path.name
+        lines = path.read_text(encoding="utf-8").splitlines()
         assert "volumes/" in lines, name
         assert "volume-images/" in lines, name
 

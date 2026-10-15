@@ -1,25 +1,25 @@
 """The vehicle's referee moved to its own repository; these are the assertions that could not.
 
-`docs/deep_research/vehicle` is a git submodule of the vehicle's own repository now
-(`CRITERION-4-PLAN.md`, option A). The ~311 fixture-breaking tests went with it — they copy the
+The vehicle is the repository's `vehicle/` stream (it was a git submodule of its own repository,
+`CRITERION-4-PLAN.md` option A, until the three-stream restructure absorbed it). The ~311 fixture-breaking tests went with it — they copy the
 vehicle folder into a temp directory and break one thing, and the linter must not read anything
 outside that folder, so they belong where the folder lives.
 
-What stays here is the residue: the assertions about files that are *space_chassis's* and that the
+What stays here is the residue: the assertions about files outside `vehicle/` and that the
 vehicle's suite is not allowed to reach for.
 
   * the frozen corpus (`docs/deep_research/*.md`) — the vehicle must not read it, and a test that
     checks the vehicle agrees with a citation has to stand on this side;
-  * `contract/diode_probe.py`, the operator side's instrument;
+  * `aurora/contract/diode_probe.py`, the operator side's instrument;
   * the reconciliation README, whose rows are assertions about this repository's files;
   * `docker-compose.yml`, `Dockerfile.agent`, `.dockerignore` and `containers/serve_vehicle.sh` —
     how the vehicle is *served*, which is this repository's business.
 
 The harness below is a copy rather than an import, deliberately: importing the vehicle's test module
-would make this suite depend on the submodule's internal shape, and the linter-must-not-read-outside
+would make this suite depend on the vehicle suite's internal shape, and the linter-must-not-read-outside
 rule exists precisely to keep the two halves apart.
 
-Run it with the submodule checked out: `git submodule update --init` then `python3 -m pytest -q`.
+Run it from the repository root: `python3 -m pytest -q`.
 """
 
 from __future__ import annotations
@@ -40,8 +40,11 @@ import yaml
 
 pytest.importorskip("yaml")
 
-REPO = Path(__file__).resolve().parents[1]
-VEHICLE = REPO / "docs" / "deep_research" / "vehicle"
+# The repository root (the corpus, the contract, the vehicle) and this stream's root (`aurora/`: the
+# compose file, the Dockerfile, the probe, the serve script).
+REPO = Path(__file__).resolve().parents[2]
+AURORA = Path(__file__).resolve().parents[1]
+VEHICLE = REPO / "vehicle"
 LINTER = VEHICLE / "tools" / "check_vehicle.py"
 FILES = (
     "vehicle.yaml",
@@ -165,7 +168,7 @@ def _docker_ignores(relative: str) -> str | None:
     """
     verdict = None
     parts = Path(relative).parts
-    for raw in (REPO / ".dockerignore").read_text().splitlines():
+    for raw in (AURORA / ".dockerignore").read_text().splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -174,7 +177,7 @@ def _docker_ignores(relative: str) -> str | None:
         if not pattern:
             continue
         # A pattern matches the path itself or any directory above it: `docs/` excludes everything
-        # under `docs`, and `!docs/deep_research/vehicle/` is the only way back in.
+        # under `docs`.
         candidates = ["/".join(parts[: i + 1]) for i in range(len(parts))]
         if any(
             fnmatch.fnmatchcase(candidate, pattern)
@@ -242,7 +245,7 @@ def test_the_vehicle_passes_the_contract_probe(tmp_path):
         probe = subprocess.run(
             [
                 sys.executable,
-                str(REPO / "contract" / "diode_probe.py"),
+                str(AURORA / "contract" / "diode_probe.py"),
                 "--diode-dir",
                 str(diode),
                 "--slug",
@@ -476,22 +479,27 @@ def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
     """
     import os
 
-    compose = yaml.safe_load((REPO / "docker-compose.yml").read_text())
+    compose = yaml.safe_load((AURORA / "docker-compose.yml").read_text())
     assert "vehicle" in compose["services"], "the vehicle has no service to run it"
     service = compose["services"]["vehicle"]
     reference = compose["services"]["diode"]
 
-    # **The image can carry it.** Both halves are needed and neither is sufficient: `!docs/...` in
-    # the ignore file, and a `COPY` that names the same path. A build that fails is better than a
-    # service that runs without a vehicle, but only if somebody runs it.
-    assert _docker_ignores("docs/deep_research/vehicle/tools/console.py") != "excluded", (
-        "`.dockerignore` keeps the vehicle out of the build context, so the image's COPY fails"
+    # **The image can carry it.** Both halves are needed and neither is sufficient: the vehicle
+    # stream handed to the build as the named context `vehicle_src`, and a `COPY --from` that names it.
+    # The agents' context (`aurora/`) holds nothing of the vehicle or the corpus. A build that fails
+    # is better than a service that runs without a vehicle, but only if somebody runs it.
+    contexts = service["build"].get("additional_contexts", {})
+    assert (AURORA / contexts.get("vehicle_src", "<none>")).resolve() == VEHICLE, (
+        "the vehicle's build has no `vehicle_src` context, so the image's COPY fails"
     )
-    assert _docker_ignores("docs/deep_research/integration/review-findings.md") == "excluded", (
-        "the rest of the corpus is evidence, not runtime, and does not belong in an image"
+    assert not (AURORA / "vehicle").exists() and not (AURORA / "docs" / "deep_research").exists(), (
+        "the corpus and the vehicle are outside the agents' build context"
     )
-    dockerfile = (REPO / "Dockerfile.agent").read_text()
-    assert "COPY --chown=agent:agent docs/deep_research/vehicle/ /opt/vehicle/" in dockerfile
+    assert _docker_ignores("docs/design.md") == "excluded", (
+        "this stream's design record is prose, not runtime, and does not belong in an image"
+    )
+    dockerfile = (AURORA / "Dockerfile.agent").read_text()
+    assert "COPY --from=vehicle_src --chown=agent:agent . /opt/vehicle/" in dockerfile
     assert "containers/serve_vehicle.sh /usr/local/bin/serve_vehicle.sh" in dockerfile
     # The vehicle runs an image of its own, whose entrypoint is the serve script; the fixture models
     # nothing and runs the agents' image, which carries nothing of the vehicle (John, 2026-10-10).
@@ -575,7 +583,7 @@ def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
         FLEET_10_SLUG="scabious",
     )
     process = subprocess.Popen(
-        ["sh", str(REPO / "containers" / "serve_vehicle.sh")],
+        ["sh", str(AURORA / "containers" / "serve_vehicle.sh")],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -618,7 +626,7 @@ def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
     env["VEHICLE_SLUGS"] = "pelican"
     started = time.time()
     served = subprocess.run(
-        ["sh", str(REPO / "containers" / "serve_vehicle.sh")],
+        ["sh", str(AURORA / "containers" / "serve_vehicle.sh")],
         capture_output=True,
         text=True,
         env=env,
@@ -667,7 +675,7 @@ def test_the_reconciliation_readme_states_the_vehicle_suite_s_test_count():
     referee states how many tests it holds. That sentence is a claim about the vehicle — and the
     reader of it cannot live in the vehicle, because the reconciliation README is one directory away
     and the vehicle's suite may not read outside its own folder. So this is the residue's job: count
-    the tests in the submodule's referee and hold the sentence to it. It said one hundred
+    the tests in the vehicle stream's referee and hold the sentence to it. It said one hundred
     twenty-six while the file held a hundred and thirty-four once, and it was wrong for eight
     rounds; the number is derived here rather than repeated, so adding a test and forgetting the
     sentence fails here rather than in a reader's estimate of the folder.

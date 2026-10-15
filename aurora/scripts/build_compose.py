@@ -309,6 +309,7 @@ def _vehicle() -> str:
         "  vehicle:\n"
         f"    image: {VEHICLE_IMAGE}\n"
         "    build:\n      context: .\n      dockerfile: Dockerfile.agent\n      target: vehicle\n"
+        "      additional_contexts:\n        vehicle_src: ../vehicle\n"
         "    restart: unless-stopped\n"
         '    profiles: ["vehicle"]\n'
         "    network_mode: none\n"

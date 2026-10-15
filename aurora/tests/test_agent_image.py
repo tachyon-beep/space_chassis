@@ -226,14 +226,19 @@ def _base_sources(text=None):
     return sorted(s for _flags, paths, _dest in _stage_copies(base) for s in paths)
 
 
+def _base_flags(text=None):
+    base = _stages(text)[0][2]
+    return sorted(f for flags, _paths, _dest in _stage_copies(base) for f in flags)
+
+
 def test_instruction_keywords_are_read_case_insensitively():
     # Docker reads a lower-case `copy` as COPY: a guard that does not would pass this leak.
     leaked = DOCKERFILE.replace(
         "FROM base AS vehicle",
-        "copy docs/deep_research/vehicle/ /opt/leak/\nFROM base AS vehicle",
+        "copy --from=vehicle_src . /opt/leak/\nFROM base AS vehicle",
         1,
     )
-    assert "docs/deep_research/vehicle/" in _base_sources(leaked)
+    assert "--from=vehicle_src" in _base_flags(leaked)
     added = DOCKERFILE.replace(
         "FROM base AS vehicle", "Add docs/ /opt/leak/\nFROM base AS vehicle", 1
     )
@@ -246,6 +251,9 @@ def test_the_base_stage_copies_exactly_its_allow_list():
     assert sources == BASE_COPY_SOURCES
     assert not {".", "docs/", "containers/"} & set(sources)
     assert not [line for line in base if "/opt/vehicle" in line or "serve_vehicle" in line]
+    # The vehicle is a named build context (compose's `additional_contexts`), outside `aurora/`:
+    # only the vehicle stage may name it.
+    assert not [flag for flag in _base_flags() if flag.startswith("--from")]
     # COPY is not the only way into a stage: no ADD, and no build-time bind of the context.
     assert not [line for line in base if line.startswith("ADD ") or "--mount" in line]
 
@@ -255,7 +263,7 @@ def test_the_vehicle_stage_adds_the_vehicle_and_its_entrypoint_only():
     assert name == "vehicle"
     copies = _stage_copies(instructions)
     assert copies == [
-        (["--chown=agent:agent"], ["docs/deep_research/vehicle/"], "/opt/vehicle/"),
+        (["--from=vehicle_src", "--chown=agent:agent"], ["."], "/opt/vehicle/"),
         (["--chmod=0755"], ["containers/serve_vehicle.sh"], "/usr/local/bin/serve_vehicle.sh"),
     ], copies
     assert 'ENTRYPOINT ["/usr/local/bin/serve_vehicle.sh"]' in instructions
@@ -263,6 +271,8 @@ def test_the_vehicle_stage_adds_the_vehicle_and_its_entrypoint_only():
 
 def test_governance_never_reaches_an_image():
     # governance/ holds the design reasoning and the vehicle's records: the fleet must never see it.
+    # It is outside the build context (`aurora/`) altogether; the ignore line guards a widened one.
+    assert not (REPO / "governance").exists()
     ignored = (REPO / ".dockerignore").read_text(encoding="utf-8").splitlines()
     assert "governance/" in ignored
     assert "governance" not in DOCKERFILE
