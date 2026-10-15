@@ -16,6 +16,15 @@ review; a vehicle record cannot unilaterally alter the frozen diode contract.
 | Profile-driven runtime optimisation and replay budget feasibility | Vehicle maintainer; operator for target changes | WP12 performance acceptance |
 | Exact release/adoption and campaign protocol | Operator with vehicle/chassis maintainers | WP13 adoption; experiment trials |
 
-These are unresolved design questions, not extra product features. Link each
+Records: [0001](0001-shared-executive.md) — one executive owns the physical world; windows are
+ingress and evidence views (accepted 2026-10-09; chassis review pending).
+[0002](0002-mission-clock-and-continuity.md) — the mission clock, private checkpoints and restart
+continuity (accepted 2026-10-09: the operator's choices A–F, K, L(b) — `m = 1`, `k = 5`, a 30 s
+lag ceiling, no catch-up burst, shed-dilate-stop, freeze on downtime, MET-as-UTC stamps; the maintainer items G–J,
+K's mechanics, L(a), M, and the encoder swap accepted under the owner's
+delegation; chassis review pending. WP08's children are named in
+it and `tools/measure_clock.py` reads its figures).
+
+The table lists design questions, not extra product features. Link each
 record from its public work package. The roadmap can proceed through research
 and design while dependent implementation waits for the required decision.
