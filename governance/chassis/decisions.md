@@ -43,6 +43,6 @@ each costs if wrong (`docs/superpowers/ledgers/`).
 | 2026-10-09 | The vehicle runs with no network (`network_mode: none`). Its deployment belongs to the chassis; the vehicle states its needs. | John, carried out by the vehicle line | `0ccc4cc`; spec §8 |
 | 2026-10-09 | The operator journal stays append-only; only the derived `fleet.jsonl` rotates. | coordinator, after a security review | `cbac94f`; `plan-6-ledger.md` |
 | 2026-10-09 | The vehicle's 40G `/state` image is allocated whether or not the vehicle profile runs. | coordinator | `plan-7-ledger.md`; `.env.example` |
-| 2026-10-10 | Pin the agent image's Python base by digest. Relayed by the Space Vehicle session, and flagged to John for veto. | John (relayed) | `044b5c5` on `vehicle-adoption` |
+| 2026-10-10 | Pin the agent image's Python base by digest. Relayed by the Space Vehicle session, and flagged to John for veto. | John (relayed) | `044b5c5` on `vehicle-adoption` (`e055e73` after the plan-8 rebase) |
 | 2026-10-10 | A Phase B dry run against vehicle `06f08a3`, on a local branch only, with `vehicle-adoption` kept parked. Both Space Vehicle sessions agreed. | coordinator | filigree `space_chassis-93010ff54e` comment 40 |
 | 2026-10-10 | **Separate images: the agents' image carries nothing of the vehicle** ("yes absolutely, we don't want any risk of information sharing"). | John | plan 8 (`docs/superpowers/plans/2026-10-10-aurora-port-8-image-split.md`); `d7a1172`, `4cb4ede`, `6e5370d` |
