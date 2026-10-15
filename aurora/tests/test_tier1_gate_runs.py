@@ -1,39 +1,47 @@
-"""#39 tier 1, the chassis's evidence: the q1–q3 re-run, and ≥ 30 gate runs with instrumented early returns.
+"""#39, the chassis's evidence: the q1–q3 re-run, and ≥ 30 gate runs with instrumented early returns.
 
 **What was measured before.** On 2026-10-10 the chassis ran `test_the_vehicle_passes_the_contract_probe`
 ten times in each of three modes against vehicle `8c6f71d`: q1 untraced (0/10 failed), q2 with the
 console under an audit hook (`tests/trace_console.py`; 1/10), q3 with that and the probe's own submit
 trace (2/10). All three losses were ERASED batches, each renamed over by a quiet cycle's rewrite
 (`governance/vehicle/records/2026-10-14-lane-archive/39-option-b/CHECKPOINT.md`, checkpoint 2). Tier 1
-(vehicle `f75420c`, adopted in `docs/diode-contract.md` §2.2) stops a quiet cycle from writing at all.
-John's acceptance for it includes "≥ 30 gate runs with instrumented early returns"
-(`governance/vehicle/decisions.md`, 2026-10-11), and D8 asks for such runs as a test, not as a slot.
+(vehicle `f75420c`) stopped a quiet cycle from writing at all, and option B (PR #9) stopped every
+claim from writing over a file: the console is taken aside by a rename, and the emptied console is put
+back by a link that never replaces one (`docs/diode-contract.md` §2.2). John's acceptance for tier 1
+includes "≥ 30 gate runs with instrumented early returns" (`governance/vehicle/decisions.md`,
+2026-10-11), and D8 qualifies option B by the same runs, written as a test.
 
 **What a run is here.** One unchanged `contract/diode_probe.py` walk of one window, as the gate's test
-makes it. To be fast enough for CI, each mode starts one vehicle executive serving ten windows and walks
-all ten at once, one probe per window, so the three modes are thirty gate runs in well under a minute.
-Ten windows on one executive is a harder schedule than the gate's one: every cycle claims and publishes
-for all ten, which widens the gap between a console's clearing and its results.
+makes it, against the executive started the way `containers/serve_vehicle.sh` starts it (its clock,
+ring, scenario, seed and a private state directory). To be fast enough for CI, each mode starts one
+executive serving ten windows and walks all ten at once, one probe per window, so the three modes are
+thirty gate runs in well under a minute. Ten windows on one executive is a harder schedule than the
+gate's one: every cycle claims and publishes for all ten, which widens the gap between a console's
+clearing and its results.
 
 **Instrumented early returns.** The probe's `wait_for_results` returns as soon as it has counted
 enough new files, and a file is new if it was not there before the check. So a check can count a
-previous batch's late result and return before its own batch is claimed or answered; the probe's next
-submit then lands over that batch, or inside its claim. That is the residual the tier-1 memo says the
-unchanged probe can reach (`governance/vehicle/records/2026-10-11-39-claim-race-decision-memo.md`, tier
-1). Each run's probe is a subclass that changes nothing it does and records:
+previous batch's late result and return before its own batch is claimed or answered, and the probe's
+next submit then lands over that batch (`governance/vehicle/records/2026-10-11-39-claim-race-decision-memo.md`,
+tier 1). Each run's probe is a subclass that changes nothing it does and records:
 
 * every early return: a wait that counted a result belonging to another batch;
 * for every submit, whether the console it replaced still held an unclaimed batch.
 
-**What must hold.** Every batch each probe submitted is answered, unless the instruments show it was
-exposed: replaced while still unclaimed, or itself put in place over an unclaimed one. A batch lost
-with neither is the erasure tier 1 removed, and fails the test. Every probe check that failed must
-follow an early return in its run. After the probes stop, each window's console must keep its inode
-and mtime while the executive goes on cycling, and in the traced modes the console must have renamed
-over `console.json` no more often than there was something to claim. The run's record goes to
-`TIER1_GATE_EVIDENCE/<mode>-<ns>/<mode>.json` when that is set, and every failure message carries it.
-`TIER1_GATE_VEHICLE` points the runs at another vehicle checkout: at the pre-tier-1 vehicle
-(`8c6f71d`, this repository's `596f364:vehicle`) the quiet-console and rename-count assertions fail.
+**What must hold.** Under option B a claim takes whatever is at `console.json` when it renames it, so
+the only way a batch can go unanswered is to be replaced before it is taken (the contract: "Replacing
+a batch before it is taken supersedes it"). So every batch each probe submitted is answered, unless the
+next submit replaced it while the console still showed it unclaimed; a batch lost otherwise fails the
+test. Every probe check that failed must follow an early return in its run. After the probes stop,
+each window's console must keep its inode and mtime while the executive goes on cycling (a console
+with nothing to claim is left as it is). In the traced modes the console must never be renamed over
+(`console_replace`), every claim is a take of `console.json` (`console_take`), there is at most one
+take per submitted batch and at least one per batch that was not superseded, and the emptied console
+is put back by a link (`console_link`) no more often than there was a take or an absent console.
+
+The run's record goes to `TIER1_GATE_EVIDENCE/<mode>-<ns>/<mode>.json` when that is set, and every
+failure message carries it. `TIER1_GATE_VEHICLE` points the runs at another vehicle checkout; it must
+take the clock flags (`f75420c` and earlier do not, so they cannot be run here any more).
 """
 
 from __future__ import annotations
@@ -54,13 +62,25 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 AURORA = Path(__file__).resolve().parents[1]
-# TIER1_GATE_VEHICLE points the runs at another vehicle checkout (a pre-tier-1 one, to see them fail).
 VEHICLE = Path(os.environ.get("TIER1_GATE_VEHICLE") or REPO / "vehicle")
 MODES = ("q1", "q2", "q3")
 WINDOWS = 10
 RUNS = WINDOWS * len(MODES)
-CYCLE = 0.05
 PUBLISHED = ("console.json", "state.json", "HELP.md", "pending.json")
+# How the stack serves the vehicle (`containers/serve_vehicle.sh`, its defaults): the clock (#23, which
+# replaced `--poll`) at m = 1, k = 5, N = 50, the ring, the scenario and the seed, and a private state
+# directory, so the claim's take is made durable as it is in the stack.
+SERVED = {
+    "--scenario": "nominal",
+    "--seed": "0",
+    "--ring-slots": "3000",
+    "--multiplier": "1",
+    "--cycle-ticks": "5",
+    "--checkpoint-ticks": "50",
+    "--cycles": "0",
+}
+# One cycle at those settings: k ticks at the vehicle's 50 Hz, at m = 1.
+CYCLE = 5 / 50
 # Each probe check that reads results, by the index of the submit it waits on. Only these can
 # be failed by counting a result from another batch.
 CHECK_SUBMIT = {
@@ -95,6 +115,8 @@ class InstrumentedProbe(diode_probe.Probe):
         return any(name.endswith(f"_{self.slug}_{safe_name(c)}.txt") for c in commands)
 
     def submit(self, commands: list, variables: dict | None = None) -> None:
+        # An absent console (a claim's take, before the emptied one is put back) reads as `{}`:
+        # nothing unclaimed is there to replace.
         held = self.read_console().get("commands")
         self.submits.append(
             {
@@ -120,10 +142,30 @@ class InstrumentedProbe(diode_probe.Probe):
         return new
 
 
+def test_the_runs_serve_the_vehicle_the_way_the_stack_does():
+    """The flags above are the serve script's own defaults, so the runs judge the stack's window."""
+    script = (AURORA / "containers" / "serve_vehicle.sh").read_text(encoding="utf-8")
+    defaults = {
+        "--scenario": "VEHICLE_SCENARIO",
+        "--seed": "VEHICLE_SEED",
+        "--ring-slots": "VEHICLE_RING_SLOTS",
+        "--multiplier": "VEHICLE_MULTIPLIER",
+        "--cycle-ticks": "VEHICLE_CYCLE_TICKS",
+        "--checkpoint-ticks": "VEHICLE_CHECKPOINT_TICKS",
+    }
+    for flag, variable in defaults.items():
+        assert f'{flag} "${variable}"' in script, flag
+        assert f': "${{{variable}:={SERVED[flag]}}}"' in script, (flag, SERVED[flag])
+    assert "--cycles 0" in script and '--state-dir "$VEHICLE_STATE_DIR"' in script
+
+
 def start_executive(mode: str, evidence: Path, slugs: list[str]) -> subprocess.Popen:
-    console = [str(VEHICLE / "tools" / "console.py"), "--diode-dir", str(evidence / "diode")]
-    console += ["--poll", str(CYCLE)]
+    console = [str(VEHICLE / "tools" / "console.py"), "--dir", str(VEHICLE)]
+    console += ["--diode-dir", str(evidence / "diode"), "--state-dir", str(evidence / "state")]
+    for flag, value in SERVED.items():
+        console += [flag, value]
     for slug in slugs:
+        (evidence / "diode" / slug).mkdir(parents=True, exist_ok=True)
         console += ["--slug", slug]
     if mode in ("q2", "q3"):
         console = [
@@ -139,8 +181,11 @@ def start_executive(mode: str, evidence: Path, slugs: list[str]) -> subprocess.P
     )
 
 
-def stamp(path: Path) -> tuple[int, int]:
-    status = os.stat(path)
+def stamp(path: Path) -> tuple[int, int] | None:
+    try:
+        status = os.stat(path)
+    except FileNotFoundError:
+        return None
     return status.st_ino, status.st_mtime_ns
 
 
@@ -206,8 +251,12 @@ def test_tier_1_holds_over_gate_runs_with_instrumented_early_returns(mode, tmp_p
         # Quiet cycles write nothing: the consoles stay put while the executive keeps cycling.
         consoles = {slug: stamp(diode / slug / "console.json") for slug in slugs}
         states = {slug: stamp(diode / slug / "state.json") for slug in slugs}
-        time.sleep(40 * CYCLE)
-        moved = [slug for slug in slugs if stamp(diode / slug / "console.json") != consoles[slug]]
+        time.sleep(20 * CYCLE)
+        moved = [
+            slug
+            for slug in slugs
+            if consoles[slug] is None or stamp(diode / slug / "console.json") != consoles[slug]
+        ]
         cycled = [slug for slug in slugs if stamp(diode / slug / "state.json") != states[slug]]
         assert executive.poll() is None, "the executive stopped"
     finally:
@@ -223,14 +272,12 @@ def test_tier_1_holds_over_gate_runs_with_instrumented_early_returns(mode, tmp_p
         for index, submit in enumerate(probe.submits):
             if any(probe.owns(index, name) for name in results):
                 continue
-            superseded = (
-                index + 1 < len(probe.submits) and probe.submits[index + 1]["over_unclaimed"]
-            )
             lost.append(
                 {
                     "submit": index,
                     "commands": [repr(c) for c in submit["commands"]],
-                    "exposed": superseded or submit["over_unclaimed"],
+                    "superseded": index + 1 < len(probe.submits)
+                    and probe.submits[index + 1]["over_unclaimed"],
                 }
             )
         failed = [check.name for check in probe.checks if check.passed is False]
@@ -259,22 +306,25 @@ def test_tier_1_holds_over_gate_runs_with_instrumented_early_returns(mode, tmp_p
             for line in (evidence / "console-trace.jsonl").read_text().splitlines()
             if line.strip()
         ]
-    replaces = sum(1 for event in trace if event["event"] == "console_replace")
-    opens = sum(1 for event in trace if event["event"] == "console_open")
+    count = {
+        kind: sum(1 for event in trace if event["event"] == kind)
+        for kind in ("console_open", "console_take", "console_link", "console_replace")
+    }
     submits = sum(len(probes[slug].submits) for slug in slugs)
+    flagged = sum(run["submits_over_unclaimed"] for run in runs)
     record = {
         "mode": mode,
         "runs": runs,
         "consoles_moved_while_quiet": moved,
         "windows_cycled_while_watched": len(cycled),
-        "console_trace": {"opens": opens, "replaces": replaces, "submits": submits},
+        "console_trace": {**count, "submits": submits, "submits_over_unclaimed": flagged},
     }
     (evidence / f"{mode}.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     where = f"\n{json.dumps(record, indent=1)[-6000:]}\n(evidence: {evidence})"
 
     assert len(runs) == WINDOWS, where
-    assert [run for run in runs if [x for x in run["lost"] if not x["exposed"]]] == [], (
-        "a batch was lost that no probe instrument explains: the erasure tier 1 removed" + where
+    assert [run for run in runs if [x for x in run["lost"] if not x["superseded"]]] == [], (
+        "a batch went unanswered that was never replaced before its take" + where
     )
     assert [run for run in runs if run["unexplained_failures"]] == [], where
     assert len(cycled) == WINDOWS, (
@@ -282,12 +332,12 @@ def test_tier_1_holds_over_gate_runs_with_instrumented_early_returns(mode, tmp_p
     )
     assert moved == [], "a console with nothing to claim was rewritten" + where
     if mode in ("q2", "q3"):
-        assert opens > replaces, "the tracer saw nothing" + where
-        # One publication per window at start, and at most one claim per submitted batch.
-        assert replaces <= WINDOWS + submits, (
-            "the console renamed over console.json more often than there was something to claim"
-            + where
-        )
+        assert count["console_open"] > 0, "the tracer saw nothing" + where
+        assert count["console_replace"] == 0, "a claim renamed over console.json" + where
+        # Each submitted batch is taken at most once; only a batch replaced before its take is not.
+        assert submits - flagged <= count["console_take"] <= submits, where
+        # The emptied console goes back once per take, plus each window's first publication.
+        assert count["console_link"] <= count["console_take"] + WINDOWS, where
 
 
 def test_the_instrument_counts_a_previous_batch_s_late_result_as_an_early_return(tmp_path):
