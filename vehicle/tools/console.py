@@ -3757,7 +3757,7 @@ class Executive:
                     try:
                         # Never a console while a resume's recovery waits (#39, option B): it would read as present
                         # and hide the ended boot's take, the only copy of the map; the recovery puts it back.
-                        window.repair(console=window.recovering is None)
+                        window.repair(console=window.recovering is None and not window.recover_owed)
                     except Exception as again:  # noqa: BLE001 - recorded, like the absence
                         self._record_failure(window, "prepare", again, tick)
                     finally:
@@ -4955,6 +4955,11 @@ class Window:
         # ended boot's take it keeps for the retry (or `[None]`). The window claims and adopts nothing
         # until the recovery is done.
         self.recovering: list[str | None] | None = None
+        # A resume's map recovery that never started, because the window failed before it read its takes
+        # (an `output/` an agent replaced, a listing that failed): the ended boot, kept so the claim starts
+        # the recovery before any sweep, which would otherwise retire that boot's take unread.
+        self.recover_owed = False
+        self.recover_from: str | None = None
         # **The slow cadence** (#23, design §1 and §7): whether this window's next publication rewrites
         # its generated `HELP.md` and `README.md` and reconciles its ring with a scan of `telemetry/` —
         # on a segment's first cycle (a new `Window` is one), after a repair, and on the cycle after the
@@ -5141,6 +5146,8 @@ class Window:
         """
         root = self._handles().root
         durable = self.executive.journal is not None
+        if self.recover_owed:
+            self.recover_map(root, self.recover_from)
         if self.recovering is not None and not self._finish_recovery(root, durable):
             return []
         if not self.swept and not self._sweep(root, durable):
@@ -5402,6 +5409,7 @@ class Window:
             if numbered:
                 evidence = max(numbered)[1]
         self.recovering = [evidence]
+        self.recover_owed, self.recover_from = False, None
         self._finish_recovery(root, durable)
 
     def _finish_recovery(self, root: int, durable: bool) -> bool:
@@ -6200,6 +6208,8 @@ def _resume(
     republished: list[dict[str, Any]] = []
     for window in executive.windows.values():
         window.variables_known = False
+        # Owed until `recover_map` has read the window's takes: a failure before that leaves it for the claim.
+        window.recover_owed, window.recover_from = True, prev_boot
         try:
             try:
                 handles = window.open_handles()

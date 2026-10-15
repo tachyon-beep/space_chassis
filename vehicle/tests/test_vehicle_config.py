@@ -23275,6 +23275,52 @@ def test_a_resume_whose_sweep_cannot_be_made_durable_recovers_the_map_later_thro
     resumed.close()
 
 
+def test_a_resume_that_fails_before_reading_a_windows_takes_recovers_the_map_at_the_claim_not_the_sweep(tmp_path, monkeypatch):
+    """#39, option B: a window the resume could not read keeps the ended boot's take for the claim.
+
+    The vehicle is killed holding a take with map A, the console absent. At the resume the window's
+    listing fails, so its recovery never started. Before this, the window was left as if recovered and
+    the first claim's sweep retired the ended boot's take unread: A was gone and the console came back
+    empty. The recovery is now owed to the window, and the claim starts it before any sweep: A is
+    adopted, the console is put back showing it, and the take is retired.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = _boot(console, world, diode, state)
+    alpha = diode / "alpha"
+    recorded_run(executive, diode, {}, 2, snapshot_at=2)
+    submit(alpha, ["zzz_lost"], {"map": "A"})
+
+    def killed(self, *args, **kwargs):
+        raise _Killed
+
+    monkeypatch.setattr(console.Window, "_republish", killed)
+    with pytest.raises(_Killed):
+        executive.cycle()
+    monkeypatch.undo()
+    with contextlib.suppress(Exception):
+        executive.close()
+    window_dir = os.path.realpath(alpha)
+    real_listdir, failing = os.listdir, [True]
+
+    def listdir(path="."):
+        if failing[0] and isinstance(path, int) and os.path.realpath(f"/proc/self/fd/{path}") == window_dir:
+            raise OSError(errno.EIO, "injected")
+        return real_listdir(path)
+
+    monkeypatch.setattr(os, "listdir", listdir)
+    resumed, _ = resume_from(console, checkpoint, world, diode, state)
+    window = resumed.windows["alpha"]
+    takes = [name for name in real_listdir(alpha) if name.startswith(console.TAKE_PREFIX)]
+    assert len(takes) == 1 and window.recover_owed and window.recovering is None and not window.variables_known
+    failing[0] = False
+    resumed.cycle()
+    assert not window.recover_owed and window.recovering is None and window.variables == {"map": "A"}
+    assert json.loads((alpha / "console.json").read_text()) == {"commands": [], "variables": {"map": "A"}}
+    assert not (alpha / takes[0]).exists() and results_of(alpha) == []
+    resumed.close()
+
+
 def test_the_boot_marker_is_written_by_a_serving_start_and_its_name_cannot_be_a_journal(tmp_path, capsys):
     """#39, option B: the state directory names the boot that serves it, and the name is reserved.
 
