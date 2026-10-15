@@ -1,16 +1,22 @@
 # Vehicle — open items, risks and next steps
 
-As of **2026-10-10**, `tachyon-beep/space_vehicle` main @ `64fc58c`. GitHub issues are the delivery
+As of **2026-10-12**, `tachyon-beep/space_vehicle` main @ `f75420c`. GitHub issues are the delivery
 status of record; this is the line's working view. **Verify against the issues before trusting it.**
+
+**Kind of work (John, 2026-10-12).** Every package is labelled **hardening** (continuity, robustness,
+process) or **extension** (new simulated behaviour). Since 2026-09-21 every package has been hardening;
+a real tick still advances **50 of 139** states, with 273 declared debts. John's direction: keep
+pushing the continuity milestone (WP08, M1) first.
 
 ## In flight
 
 | item | state | next |
 |---|---|---|
 | #21 WP08.3 resume | **merged** 2026-10-10: PR #41, `f44399645fb2633e695a5d758cb5a41f43fb848c` (tree = tested `45f4267`); hosted CI green; SHA posted on `space_chassis-93010ff54e` comment 41 | chassis Phase B (adoption) |
-| #39 claim race / chassis contract-probe failure | **Tier 1 MERGED 2026-10-11:** PR #43 → `main` `f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f` (tree = tested `7ac9791`); gate 542 passed / 0 skipped both lanes; hosted CI green; Codex approved; merge SHA and pins on filigree `space_chassis-93010ff54e` comment 42; contract/brief/fixture proposal sent to the chassis (`.scratch/wp01-handoff/diag-contract-probe/t1-contract-proposal.md`). Shared slot released 20:11. **Option B** (take by rename, republish only if absent): design approved after five Codex rounds (`39-design-B.md` + B2–B5; reviews in `reviews/`) | chassis: adopt `f75420c` + the contract proposal, re-run q1–q3, ≥ 30 gate runs; vehicle: option B code on a branch from `f75420c` → frozen diff → review → gates (slot by grant) → PR. #42 (gates reopen after a mapless resume) separate; **Option B code drafted** on `codex/39-take-by-rename` from `f75420c` (uncommitted; worktree `$SP/b-39-ca87a9`), ruff clean, untested. **Shared test slot REQUESTED (not taken):** iterative bounded selections for option B (the claim/resume/new tests, 3.12, `-n 2`, `nice -n 19`, a few minutes each), then the full two-lane gate (~60 min serial) on the frozen candidate |
+| #39 claim race (**hardening**) | Tier 1 **merged** 2026-10-11 (PR #43, `f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f`). **Option B committed locally, UNQUALIFIED / UNPUBLISHED** under Governance MASTER §37: `7a87eb82cfef55dcc74248df41720883587ca7af` (parent `f75420c`, tree `ccc2782e…`), branch `codex/39-take-by-rename`, no upstream. G-2 package final (manifest `4956e7ae…`, reviews r1–r6 in `.scratch/wp01-handoff/diag-contract-probe/reviews/`) | G312s → G312p → G313s → G313p, each by a separate Governance allocation; final evidence review; John's publication approval; then chassis adoption with `CONTRACT-PACKAGE-B.md`. #42 separate |
+| #23 WP08.5 clock seam (**hardening**) | design started 2026-10-12 (no code; no slot); retires `--poll` and requires `m`, `k`, `N` — a chassis interface delta | design sections with John, then independent design review, then implementation |
 
-## Next by dependency (WP08, M1)
+## Next by dependency (WP08, M1) — all **hardening**
 
 | child | issue | depends on | note |
 |---|---|---|---|
@@ -22,7 +28,7 @@ status of record; this is the line's working view. **Verify against the issues b
 | 11 phase from tick | #29 | — (3 for restart) | |
 | 12 MET result stamps, idempotent re-publication | #30 | 4 | makes re-publication an exact-name lookup |
 
-Then M2 (WP02, WP03 evidence — not started), M3 (WP04–WP07, WP09–WP11), M4 (WP12), M5 (WP13). The
+Then the **extension** milestones: M2 (WP02, WP03 evidence — not started), M3 (WP04–WP07, WP09–WP11), M4 (WP12), M5 (WP13). The
 first integrated run at `m = 1` with ten windows is feasible since WP08.6 (#24).
 
 ## Open issues outside WP08
