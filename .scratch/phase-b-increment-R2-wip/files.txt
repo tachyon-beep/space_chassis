@@ -1,0 +1,6 @@
+live/conftest.py
+live/stack.py
+live/test_containment.py
+live/test_vehicle.py
+scripts/verify_containment.sh
+tests/test_live_stack.py

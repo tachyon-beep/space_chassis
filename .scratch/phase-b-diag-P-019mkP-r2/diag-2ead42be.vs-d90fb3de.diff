@@ -1,0 +1,106 @@
+--- diag-d90fb3de.py	2026-10-11 11:57:52.479496608 +1100
++++ diag.py	2026-10-11 12:04:54.817666416 +1100
+@@ -203,6 +203,57 @@
+     return infos
+ 
+ 
++def record_failure(supervision: list, error: BaseException) -> None:
++    """Best-effort reporting of a failure after the launch: it never raises, so the cleanup that
++    follows it always runs. The verdict entry is kept even when the receipt cannot be written."""
++    try:
++        reason = f"supervisor error after the launch: {type(error).__name__}: {error}"
++    except BaseException:  # noqa: BLE001 - an error whose text cannot be made is still an error
++        reason = "supervisor error after the launch: (undescribable)"
++    try:
++        supervision.append(reason)
++    except BaseException:  # noqa: BLE001, S110 - nothing here may stop the cleanup
++        pass
++    try:
++        note("supervisor-error", error=reason)
++    except BaseException:  # noqa: BLE001, S110 - the receipt is best-effort; the cleanup is not
++        pass
++
++
++def terminate_scope(steps: list) -> bool:
++    """Stop the owned scope, then SIGKILL it, each bounded, unless its end is positively verified
++    first. True only when the unit reads not-found, inactive or failed; an unanswered or failed
++    lookup is never an end, so it escalates, and an end never verified returns False."""
++
++    def ended() -> bool:
++        state = unit_state()
++        return state.get("LoadState") == "not-found" or state.get("ActiveState") in ("inactive", "failed")
++
++    def wait_for_end(seconds: float) -> bool:
++        deadline = time.monotonic() + seconds
++        while time.monotonic() < deadline:
++            if ended():
++                return True
++            time.sleep(0.5)
++        return ended()
++
++    if ended():
++        return True
++    try:
++        stopped = run(["systemctl", "--user", "stop", SCOPE], timeout=40)
++        steps.append({"stop_rc": stopped.returncode, "stderr": stopped.stderr.strip()})
++    except (subprocess.TimeoutExpired, OSError) as error:
++        steps.append({"stop_error": f"{type(error).__name__}: {error}"})
++    if wait_for_end(15):
++        return True
++    try:
++        killed = run(["systemctl", "--user", "kill", "--signal=SIGKILL", SCOPE], timeout=20)
++        steps.append({"sigkill_rc": killed.returncode})
++    except (subprocess.TimeoutExpired, OSError) as error:
++        steps.append({"sigkill_error": f"{type(error).__name__}: {error}"})
++    return wait_for_end(15)
++
++
+ def cgroup_procs(cgroup: str) -> list[str] | None:
+     """The scope's processes; None when unreadable (never taken as zero)."""
+     try:
+@@ -426,33 +477,14 @@
+             time.sleep(1)
+ 
+ except BaseException as error:  # noqa: BLE001 - any failure after the launch still cleans up
+-    supervision.append(f"supervisor error after the launch: {type(error).__name__}: {error}")
+-    note("supervisor-error", error=f"{type(error).__name__}: {error}")
++    record_failure(supervision, error)
+ 
+ # Cleanup: bounded, and verified from the unit and its cgroup, never assumed.
+ cleanup = {"steps": []}
+ if cgroup is None:
+     # The scope never came up: release nothing, but find it if it exists.
+     cgroup = unit_state().get("ControlGroup") or None
+-state = unit_state()
+-if not (state.get("ActiveState") == "inactive" or state.get("LoadState") == "not-found"):
+-    try:
+-        stopped = run(["systemctl", "--user", "stop", SCOPE], timeout=40)
+-        cleanup["steps"].append({"stop_rc": stopped.returncode, "stderr": stopped.stderr.strip()})
+-    except (subprocess.TimeoutExpired, OSError) as error:
+-        cleanup["steps"].append({"stop_error": f"{type(error).__name__}: {error}"})
+-    deadline = time.monotonic() + 15
+-    while unit_state().get("ActiveState") == "active" and time.monotonic() < deadline:
+-        time.sleep(0.5)
+-    if unit_state().get("ActiveState") == "active":
+-        try:
+-            killed = run(["systemctl", "--user", "kill", "--signal=SIGKILL", SCOPE], timeout=20)
+-            cleanup["steps"].append({"sigkill_rc": killed.returncode})
+-        except (subprocess.TimeoutExpired, OSError) as error:
+-            cleanup["steps"].append({"sigkill_error": f"{type(error).__name__}: {error}"})
+-        deadline = time.monotonic() + 15
+-        while unit_state().get("ActiveState") == "active" and time.monotonic() < deadline:
+-            time.sleep(0.5)
++cleanup["scope_terminated"] = terminate_scope(cleanup["steps"])
+ driver_rc = None
+ if driver is not None:
+     try:
+@@ -486,7 +518,8 @@
+ )
+ ended = final.get("LoadState") == "not-found" or final.get("ActiveState") in ("inactive", "failed")
+ cleanup["verified"] = (
+-    ended
++    cleanup["scope_terminated"]
++    and ended
+     and (cgroup_gone or procs_after == [] or (cgroup is None and final.get("LoadState") == "not-found"))
+     and not (watcher is not None and watcher.is_alive())
+     and not helpers

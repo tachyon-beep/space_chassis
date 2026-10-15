@@ -1,0 +1,1735 @@
+WARNING: failed to clean up stale arg0 temp dirs: Permission denied (os error 13)
+Reading additional input from stdin...
+OpenAI Codex v0.162.1
+--------
+workdir: /home/john/space_chassis
+model: gpt-6-astra
+provider: openai
+approval: on-request
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: detailed
+session id: 01a12abc-edee-7e01-883c-a5cc1adbfc49
+--------
+user
+Bounded, independent, read-only CLOSURE review of agent-facing brief text. Do not edit any file, run or collect tests, build, start containers, change git state (no checkout, fetch, submodule update, stash or add), or read any `.env` file. Reading files and `git show`/`git diff`/`git log` are fine.
+
+Repository /home/john/space_chassis. Frozen artifact under review:
+  .scratch/tier1-brief-draft/brief-wording-tier1-v5.md  sha256 74b44459de4e061908cb8c66b10e45d1226995a3cd96be7a31db35e1e1faba5b
+Verify the hash. It was produced from v4 (.scratch/tier1-brief-draft/brief-wording-tier1-v4.md, sha256 78d3453ebd66d24a68495909f45bec952b1ac385dab53526b221b2bf8fb8aada) by applying the five findings of your v4 review (.scratch/tier1-brief-draft/review-v4-astra.md, sha256 9c228ea27ede965650c0f2ca21a66976255dc5a606ecce7192dbe4f8835d3594). `diff` v4 against v5 to see exactly what changed.
+
+Scope is limited to two questions:
+1. Is each of the five v4 findings correctly resolved in v5 (state RESOLVED / PARTIAL / NOT RESOLVED for each, with the v5 line)? Note any place v5 deviates from your proposed wording and whether the deviation preserves the meaning.
+2. Do the resulting human-facing guarantees remain coherent across sections A (PROTOCOL.md 51-54), B (59-60), C (PROTOCOL.md 68), the new replacement for PROTOCOL.md 75-78, and D (brief-claims row) — no contradiction between them, and none with the vehicle code at f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f (read via `git -C docs/deep_research/vehicle show f75420c:tools/console.py`; the working tree is NOT at f75420c) or the adoption deployment (/home/john/space_chassis/.claude/worktrees/vehicle-adoption/containers/serve_vehicle.sh)? Raise only concrete defects introduced or left by the delta; do not re-open settled points without new evidence.
+
+Also confirm that section F still records V-1..V-3 as vehicle-owned coordination requirements (not resolved, not transferred), and that nothing implies Option B is implemented, tested, adopted or qualified.
+
+Output: one verdict line on that exact hash (APPROVE / APPROVE WITH CHANGES / REJECT), then the five finding statuses, then any concrete defects ranked Critical / Important / Minor with file:line evidence and exact replacement text, then one line each for coherence, F and Option B. Under 500 words.
+warning: Exceeded skills context budget. All skill descriptions were removed and 79 additional skills were not included in the model-visible skills list.
+hook: SessionStart
+hook: SessionStart
+hook: SessionStart Completed
+hook: SessionStart Completed
+codex
+I’ll verify the three hashes, compare v4 with v5, and check the changed guarantees against the pinned vehicle code and adoption entrypoint. I’ll keep the review read-only and within the stated scope.
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+/usr/bin/bash -lc 'rg -n "brief|tier1|wording|f75420|V-1" /home/john/.codex/memories/MEMORY.md' in /home/john/space_chassis
+ succeeded in 0ms:
+149:- A supplied review request without file reads, tool calls, findings, or a verdict is not review evidence. Inspect `git show 6f83685 --stat` and the cited packet/follow-up/brief before concluding. [Task 4]
+326:- Commit `7d8aa0f` preserves fenced blocks and compares their contents literally, supplies named-page `--rewrite`, uses root-only banner/tracker wording, and puts the recovered PNG under overwrite protection. Re-review confirmed byte-for-byte fence preservation and that a synthetic old-spacing case emits `FENCED BLOCK CHANGED` without writing files. [Task 1]
+383:- The later re-check verified that day-phase behavior is fixture-gated/OwnerPending, digest preimages are acyclic, behavior-distribution ownership aligns, close aggregation/`CommandSession`/Telemetry ports exist, and local-auth reissue was added. The remaining bounded defects are: specify all-skipped `Epoch`/`CohortPass` `SkipClockTreatment`; remove `DrawOrdinal`/`DecisionOrdinal` from fixed stream-identity rows; correct stale `(RunId, Epoch, ProducerIncarnation)` `OwnerInstanceKey` wording; and define actor identity for `NoDecision` rather than claiming `SampleRef` supplies it. [Task 2]
+492:- `./volumes` is bind-mounted state, so named-volume deletion is not a reset. For a corpus-only reset, archive after `docker compose --profile '*' down --remove-orphans`; Eurisko is baked into image/briefing, so use a run-specific build context, then `FLEET_COUNT=4 sh scripts/prepare_host.sh`. Verify actual corpus/briefing/protected index, semantic archive tables (`exchanges`, `messages`, `messages_fts`), and shared SQL/Redis/NATS/private-isolation probes. [Task 6]
+918:scope: Source-backed security-assurance documentation repair, AI/LLM risk wording, scoped Markdown commits, and local-only release integration; preserve the product-baseline versus deployment-record boundary.
+984:- when the user asked for omissions to be fixed -> trace claims to shipped implementation, schemas, evidence, and authoritative guidance, rather than rewording documentation alone. [Task 1]
+2069:- HTTP 422 on initial Composer input -> missing `client_request_id`; include it. Do not accept `passed` alone when a check is skipped: inspect `outcome_code`. If approved and executable wording conflict, clarify whether existing approved text must remain rather than looping through wording repairs. [Task 5]
+2349:- Symptom: a build and `systemctl active` look healthy but users still see stale behavior -> cause: startup probes can briefly cause socket refusal/502 and systemd does not prove served bytes -> fix: wait/retry and verify socket, HTTPS readiness, HTML/JS byte identity, and browser console. [Task 3]
+4527:- StaticPool, LandscapeDB.in_memory, verify_sqlite_tier1_pragmas, _maybe_serialize_shared_connection, sqlite3.OperationalError, cannot start a transaction within a transaction, TestStaticPoolConnectionSerialization, 6748c9b3a, elspeth-e02cf670eb
+
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+/usr/bin/bash -lc 'sha256sum .scratch/tier1-brief-draft/brief-wording-tier1-v5.md .scratch/tier1-brief-draft/brief-wording-tier1-v4.md .scratch/tier1-brief-draft/review-v4-astra.md
+ diff -u .scratch/tier1-brief-draft/brief-wording-tier1-v4.md .scratch/tier1-brief-draft/brief-wording-tier1-v5.md' in /home/john/space_chassis
+ exited 1 in 0ms:
+74b44459de4e061908cb8c66b10e45d1226995a3cd96be7a31db35e1e1faba5b  .scratch/tier1-brief-draft/brief-wording-tier1-v5.md
+78d3453ebd66d24a68495909f45bec952b1ac385dab53526b221b2bf8fb8aada  .scratch/tier1-brief-draft/brief-wording-tier1-v4.md
+9c228ea27ede965650c0f2ca21a66976255dc5a606ecce7192dbe4f8835d3594  .scratch/tier1-brief-draft/review-v4-astra.md
+--- .scratch/tier1-brief-draft/brief-wording-tier1-v4.md	2026-10-11 22:15:01.011436191 +1100
++++ .scratch/tier1-brief-draft/brief-wording-tier1-v5.md	2026-10-11 22:29:12.077716605 +1100
+@@ -1,4 +1,4 @@
+-# #39 tier 1: the brief wording, v4, the final draft for John's approval
++# #39 tier 1: the brief wording, v5, the final draft for John's approval
+ 
+ Chassis, session `session_019mkPNN5J3Atit9tUA6zrNY`, 2026-10-11. **Draft only.** No file in the tree has
+ changed, nothing is adopted, the vehicle pin is unchanged, and no test has run. John's approval of the
+@@ -7,10 +7,12 @@
+ **Lineage.**
+ - v2 `9e8b5192…` was reviewed (`review-v2-astra.md` `7236e195…`: APPROVE WITH CHANGES).
+ - v3 `b8249c9f…` applied that review.
+-- v4 corrects v3 on three points, at Emmy's request:
++- v4 `78d3453e…` corrected v3 on three points, at Emmy's request:
+   - result counting;
+   - putting the host-crash and journal limits beside the at-most-once claim;
+   - a reconciliation of every promised behaviour against the code.
++- v4 had one bounded delta review (`review-v4-astra.md` `9c228ea2…`): APPROVE WITH CHANGES, no Critical.
++- **v5 applies that review's five findings and nothing else. v5 has not been reviewed again.**
+ 
+ **Basis.**
+ - The vehicle's formal package `governance/vehicle/records/2026-10-11-39-tier1-adoption-package.md`
+@@ -32,10 +34,11 @@
+   holds nothing to claim when `commands` is exactly `[]` and it carries a
+   `variables` map, or carries no `variables` while the far side holds none.
+   Such a file is left untouched: nothing is written, and its `variables` map
+-  is taken as it stands. Anything else is claimed: a batch; a missing,
+-  unreadable or half-written file, or one that is not a JSON object; one with
+-  no `commands` list; one whose `variables` is not a map; or one with no
+-  `variables` while the far side holds a map.
++  is taken as it stands. Once the far side's checks let it take the file in,
++  anything else is claimed: a batch; a missing, unreadable or half-written
++  file, or one that is not a JSON object; one with no `commands` list; one
++  whose `variables` is present but not a map; or one with no `variables`
++  while the far side holds a map.
+ - **A command runs at most once, not exactly once.** The far side replaces
+   the file before it acts on any command in it, and acts on nothing in the
+   file until that replacement has succeeded. If the far side's process stops
+@@ -73,7 +76,7 @@
+   yours was taken or answered. Look for your batch's answers in `output/`.
+ ```
+ 
+-## C. `brief/PROTOCOL.md:68`, replaced (this removes "exactly one file")
++## C. `brief/PROTOCOL.md:68` and lines 75–78, replaced (this removes "exactly one file")
+ 
+ Current: "Every command produces exactly one file in `output/`:". Proposed:
+ 
+@@ -81,19 +84,31 @@
+ The far side answers in `output/`. Each answer is a file ending in a
+ `receipt:` line, whose `seq` numbers that answer for your window. Count
+ answers by `seq`, not by files. A deferred command is answered twice, when
+-it is accepted and again when it settles. An answer the far side could not
+-write at once is written later, and can then be written a second time with
+-the same `seq`; one it is owed for too long can be given up and never
+-written. A batch lost as described above has no answers at all:
++it is accepted and again when it settles. An answer that could not be
++published remains owed and may be written later. Retrying publication can
++create another file with the same `seq`. If more than 256 answers are owed
++to your window, the oldest is given up and may never be written. A batch
++lost as described above has no answers at all:
+ ```
+ 
+-The filename block and lines 75–80 that follow it stay true as they are: the name, refusals as files, and
+-failure and success sharing one shape.
++The filename block after line 68 stays as it is. **Lines 75–78 are replaced too.** They say "submission
++time", but the stamp is taken when the file is published (`write_result`, 4446–4449). And their "all produce
++one" promises a file for every command, which C withdraws. Proposed:
++
++```
++The filename carries the publication time, your window name, and the
++command. A refusal is answered the same way as a success: an unavailable
++verb, a rate-limited call and a successful command are all answers.
++**Failure and success are the same shape**, deliberately, so that the only
++way to know what happened is to read it.
++```
++
++Line 80 ("Nothing waits for you. Submit, and read later.") stays.
+ 
+ ## D. `docs/brief-claims.md`: a new row (the table has no intake row today)
+ 
+ ```
+-| The window replaces a console that holds something to claim with one whose `commands` is empty and `variables` kept, by a single rename, before acting on any of its commands; a console with nothing to claim (`commands` exactly `[]` with a `variables` map, or no `variables` while the window holds none) is not written and its map is taken. A command runs at most once, not exactly once: across a vehicle process crash by the rename alone; across a host crash only because the vehicle, run with `--state-dir`, keeps a journal and so `fsync`s a claimed batch's replacement before acting. The read and the rename are separate steps, so a file put in place between them, or one written in place and read half-written, is replaced unread with no answer; a cleared console does not show which file was claimed. Answers are counted by their receipt `seq`, not by files: a deferral is answered at acceptance and at settlement, an owed answer can be written twice with the same `seq` or given up | `docs/diode-contract.md` §2.2 as adopted from vehicle `f75420c` (PR #43); vehicle `tools/console.py`: `Window.claim` (`quiet`; the docstring's residual), `Window.claimed_console`, `read_ingress`, `write_json_atomic`, `Executive._ingest` (claim before validation; a claim that raises runs nothing), the cycle's durability order (the comment above `RecordRefused`), `Window.write_result` and `Window.receipt`, `republication` and `receipt_line`, `Executive.publish_obligations` and `Executive.owe` (`OBLIGATIONS_PER_WINDOW`), the deferral verdict in `Executive.validate`'s deferrable branch; adoption `containers/serve_vehicle.sh` (`--state-dir`); vehicle `tests/test_vehicle_config.py::test_what_counts_as_nothing_to_claim_is_decided_by_shape_alone_and_the_console_always_shows_the_map`, `::test_a_console_with_nothing_to_claim_is_never_rewritten_so_a_batch_put_in_place_during_its_read_is_not_erased`, `::test_a_resume_after_quiet_cycles_left_the_agent_s_console_in_place_adopts_its_map`; fixture `contract/fake_diode.py::AgentSide.consume` (future adoption requirement: implement the identical quiet rule and add its test before citing it as evidence) |
++| The window replaces a console that holds something to claim with one whose `commands` is empty and `variables` kept, by a single rename, before acting on any of its commands; a console with nothing to claim (`commands` exactly `[]` with a `variables` map, or no `variables` while the window holds none) is not written and its map is taken. A command runs at most once, not exactly once: across a vehicle process crash by the rename alone; across a host crash only because the vehicle, run with `--state-dir`, keeps a journal and so `fsync`s a claimed batch's replacement before acting. The read and rename are separate steps: a batch published between them can be erased unread and unanswered. An in-place write can instead be read partially and refused; its remaining bytes can land on the replaced inode, losing the intended batch. A cleared console does not show which file was claimed. Answers are counted by their receipt `seq`, not by files: a deferral is answered at acceptance and at settlement, an owed answer can be written twice with the same `seq`, and past 256 owed answers the oldest is given up | `docs/diode-contract.md` §2.2 as adopted from vehicle `f75420c` (PR #43); vehicle `tools/console.py`: `Window.claim` (`quiet`; the docstring's residual), `Window.claimed_console`, `read_ingress`, `write_json_atomic`, `Executive._ingest` (claim before validation; a claim that raises runs nothing), the cycle's durability order (the comment above `RecordRefused`), `Window.write_result` and `Window.receipt`, `republication` and `receipt_line`, `Executive.publish_obligations` and `Executive.owe` (`OBLIGATIONS_PER_WINDOW`), the deferral verdict in `Executive.validate`'s deferrable branch; adoption `containers/serve_vehicle.sh` (`--state-dir`); vehicle `tests/test_vehicle_config.py::test_what_counts_as_nothing_to_claim_is_decided_by_shape_alone_and_the_console_always_shows_the_map`, `::test_a_console_with_nothing_to_claim_is_never_rewritten_so_a_batch_put_in_place_during_its_read_is_not_erased`, `::test_a_resume_after_quiet_cycles_left_the_agent_s_console_in_place_adopts_its_map`; fixture `contract/fake_diode.py::AgentSide.consume` (future adoption requirement: implement the identical quiet rule and add its test before citing it as evidence) |
+ ```
+ 
+ ## E. Every promised behaviour, reconciled against `f75420c` and the adoption deployment
+@@ -104,8 +119,8 @@
+ | the claim is not atomic | `claim`: `read_ingress`, then a separate `write_json_atomic` (4340–4370); docstring "no rename can check…" | yes |
+ | nothing to claim | `quiet` (4348–4352), decided from types before the map is adopted | yes |
+ | a quiet file is untouched and its map taken | the map is adopted at 4355–4359, before `if quiet: return []` | yes |
+-| what is claimed | `payload is None`: missing, unreadable, invalid or non-object, rewritten and refused (4341–4343); no `commands` list, or a non-map or missing `variables` while the map is known: not quiet, so rewritten (4363–4370). A link or non-regular console already in place when the window is checked skips intake, with no rewrite (4220–4228); A does not list it | yes |
+-| acts on nothing until the replacement succeeds | `_ingest` calls `claim()` first (3536). A raise propagates to the cycle's `claim` failure and no verdict follows (3101–3104) | yes |
++| what is claimed | `payload is None`: missing, unreadable, invalid or non-object, rewritten and refused (4341–4343); no `commands` list, present non-map `variables`, or missing `variables` while the map is known: not quiet, so rewritten (4363–4370). A link or non-regular console already in place when the window is checked skips intake, with no rewrite (4220–4228); A does not list it | yes |
++| acts on nothing until the replacement succeeds | `_ingest` calls `claim()` first (3536). A raise propagates to the cycle's `claim` failure (3096–3105). No verdict from that newly claimed batch follows; an earlier deferral's settlement can still be published | yes |
+ | process crash: not run again | the rename is in place before any act; a restart reads the claimed file | yes |
+ | host crash: rests on the flush | `durable=commands not in (None, []) and journal is not None` (4369); with `sync_file` and `sync_dir`, the file and directory are `fsync`ed (454–466) | yes: `--state-dir` and no `--journal` give a per-boot journal (2846–2856; adoption `serve_vehicle.sh:90`). `aurora-port` HEAD's script passes neither, and there it would **not** hold |
+ | relies on the disk keeping the flush | not something the code can establish | an assumption about the storage, stated as one |
+@@ -114,10 +129,10 @@
+ | a quiet file is not rewritten, so a batch renamed in over it stays | `if quiet: return []` writes nothing; the vehicle test "…not_erased" | yes; no time for the next read is promised |
+ | the far side's cleared copy has nothing to claim | `claimed_console` (4380–4390) gives the known map, or no key while the map is unknown; both are quiet. A fresh window starts known and empty (4158–4163); a resume clears the map and re-adopts it from a readable console (5037–5046) | yes |
+ | a cleared console does not show which file was claimed | an erasing rewrite and a taking one write the same `claimed_console()` | yes |
+-| answers carry a receipt `seq` | `publish` writes `body + self.receipt(verdict)` (4492); `republication` adds `receipt_line` (2483–2488, 2491–2515) | yes |
++| answers carry a receipt `seq` | `publish` writes `body + self.receipt(verdict)` (4492); `republication` adds `receipt_line` (2483–2488, 2491–2516) | yes |
+ | a deferral is answered twice | acceptance verdict `deferred` (4019–4040); settlement in `_settle` (3584–3624) | yes |
+ | an owed answer is written later, possibly twice with the same `seq` | `_owe`/`owe` (3221–3245); `publish_obligations` writes what its bounded `results_on_disk` scan did not find (3247–3280) | yes |
+-| an owed answer can be given up | past `OBLIGATIONS_PER_WINDOW` (256), the oldest is given up and recorded as a failure (3233–3245) | yes |
++| an owed answer can be given up | past `OBLIGATIONS_PER_WINDOW` (256) owed answers, not after a time, the oldest is given up and recorded as a failure (3233–3245) | yes |
+ 
+ ## F. Coordination requirements: the vehicle's wording (tracked; not edited here)
+ 
+@@ -141,8 +156,9 @@
+ 1. **The disk flush is assumed to hold.** The host-crash half of at most once assumes the disk keeps what
+    was flushed. The window lives on a loop-mounted volume image, and nothing here verifies that a flush goes
+    through it to stable storage.
+-2. **The protection rests on the agent's own discipline.** One writer, publishing by rename, is what avoids
+-   the loss; the world does not enforce it.
++2. **The protection rests on the agent's own discipline.** Avoiding this loss requires one writer,
++   publication by rename, and waiting for the far side's cleared copy before replacing a claimable
++   submission. The world does not enforce that discipline.
+ 3. **There is no chassis evidence on `f75420c` yet.** The base is code reading and the vehicle's own tests
+    and gates. The q1–q3 re-run and the ≥30 gate runs need a slot grant. Nothing claims the losses have
+    stopped under load.
+
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+exec
+/usr/bin/bash -lc 'cat governance/README.md
+cat /home/john/space_chassis/.agents/skills/filigree-workflow/SKILL.md' in /home/john/space_chassis
+ succeeded in 0ms:
+# Governance
+
+As of **2026-10-10**, `tachyon-beep/space_chassis` `aurora-port` @ `1177d47`. Owned by the chassis
+line. **Verify against the code before trusting any line here.**
+
+This is the single place a new session, agent or person reads first, to learn:
+- what this project is;
+- who owns what;
+- what has been decided;
+- where each line of work stands.
+
+It is meant to become the single source of truth in time. Until it is, **the code, the issue
+trackers and the decision records it points to are authoritative wherever they disagree with it.**
+
+## One program, two project teams, one product
+
+**Space Aurora is one program building one product**: a fleet of self-modifying agents and the
+spacecraft they fly. Two project teams build it, of equal importance and working together in
+parallel; Emmy coordinates the program (John, 2026-10-10). This folder calls each project team a
+*line*. What divides is the work, never the product: every path, branch and task has exactly one
+owning team, there is no third team, and nothing is co-owned (John, 2026-10-10).
+
+**There are no shared tasks.** Every task has one lead team, and the lead sets the rule. Where the
+other team has to do the same thing on its side, it follows the lead's rule rather than setting its
+own (John, 2026-10-10).
+
+| project team (line) | what it builds | where it lives | governance |
+|---|---|---|---|
+| **space_chassis** | The AI chassis: the world the fleet of agents lives in. Aurora's harness per agent, the recorder, the pump, the operator services, the containers, the brief, and the vehicle's deployment. | this repository | `chassis/` |
+| **space_vehicle** | The mission simulator: one spacecraft behind per-agent windows. | `tachyon-beep/space_vehicle`, vendored here as `docs/deep_research/vehicle/` | `vehicle/` |
+
+The two lines' parts of the product meet at the window contract, `docs/diode-contract.md`, and at
+the deployment of the vehicle service. Each line describes its side in its own `interface.md`.
+
+## Ownership
+
+Every path and every piece of plumbing has exactly one owner. Anything not listed under the vehicle
+line is the chassis line's.
+
+| owner | owns |
+|---|---|
+| **vehicle line** | the `tachyon-beep/space_vehicle` repository (`docs/deep_research/vehicle/`) and its CI, including filigree `space_chassis-4d7a6afd1f` |
+| | the frozen corpus `docs/deep_research/*.md` and `docs/deep_research/integration/`, including the reconciliation rows' content |
+| | `docs/diode-contract.md`, which it implements; a change still needs the chassis to adopt it |
+| | the local `vehicle-standalone` branch |
+| | filigree issues labelled `side:vehicle` |
+| | `governance/vehicle/` |
+| **chassis line** | `harness/`, `recorder/`, `pump/`, `services/`, `scripts/` |
+| | `containers/`, `serve_vehicle.sh` included: the vehicle's deployment is the chassis's |
+| | `Dockerfile.agent`, `docker-compose.yml` and its generator, `live/` |
+| | `tests/`, including `test_vehicle_reconciliation.py`, the chassis's referee of what it deploys |
+| | `contract/` (the probe and the fixture) and `brief/` |
+| | `docs/design.md`, `docs/brief-claims.md`, `docs/superpowers/` |
+| | the root documents (`CLAUDE.md`, `AGENTS.md`, `README.md`, `.env.example`) and `vendor/` |
+| | this repository's CI, and the filigree tracker itself with every issue not labelled `side:vehicle` |
+| | the submodule pointer, the reconciliation pins and every adoption commit |
+| | the paused SV branch `wip/sv-recorder-opus-20261008` |
+| | `governance/README.md`, `governance/coordination.md`, `governance/chassis/` |
+
+## What each line folder holds
+
+| file | what | changes |
+|---|---|---|
+| `snapshot.md` | where the line stands now: repo, branch, SHA, merged and in-flight work, measures | every merge |
+| `decisions.md` | the decision log: what, who (John, or a session under his delegation), when, where recorded | append-only |
+| `practice.md` | how the line is worked: constraints, how work lands, gates, reviewers | when practice changes |
+| `interface.md` | what the line offers the other line and needs from it | when the boundary moves |
+| `open.md` | in-flight items, next steps, open issues, risks, questions for John | every merge or decision |
+| `records/` | historical records worth keeping (design notes, review reports, handoff packages), dated and never edited | append-only, optional |
+
+## Maintenance rules
+
+1. Every file starts with **"As of <date>, <repo> @ <sha>"** and a "verify against the code" note.
+2. Every fact carries a pointer (file:line, issue, PR, commit, ADR), never a paraphrase with no
+   source.
+3. The owning line updates its files **in the same change** that merges work or records a decision.
+   A snapshot older than the last merge is stale and says so.
+4. Decisions are appended, never rewritten. A reversal is a new dated entry that points back.
+5. **Nothing here may reach a fleet agent.** `governance/` is in `.dockerignore`, and no image COPYs
+   it. It holds design reasoning the agents must not see.
+6. A line proposes an edit to the other line's file through the shared filigree issue or a message.
+   The owner decides and writes it.
+7. Paths to session scratch (`/tmp/…`, `.scratch/`) are not durable. Copy what must survive into
+   `records/`.
+8. **Commits:** this folder lives in the chassis repository, so the chassis line commits it. The
+   vehicle line writes `governance/vehicle/` directly, and the chassis commits it verbatim, never
+   editing it, on its next commit to `aurora-port`, or sooner on request
+   (`coordination.md`).
+9. `tests/test_retired.py` exempts `governance/`, because the decision logs record history.
+---
+name: filigree-workflow
+description: >
+  This skill should be used when the user asks to "track work", "create an issue",
+  "find something to work on", "what should I work on next", "triage bugs", "close
+  an issue", "check what's blocked", "plan a milestone", "review sprint progress",
+  "coordinate agents", or when working in a project that uses filigree for issue
+  tracking. Provides workflow patterns, team coordination protocols, and operational
+  guidance for the filigree issue tracker.
+---
+
+# Filigree Workflow
+
+Filigree is an agent-native issue tracker that stores its data locally in the
+project. This skill is procedural knowledge for using it well — as a solo agent
+or in a multi-agent swarm. Prefer the `mcp__filigree__*` tools when available;
+fall back to the `filigree` CLI. `filigree --help`, `filigree <verb> --help`
+and the MCP tool schemas are the authoritative catalogues.
+
+## Core Workflow
+
+```
+filigree session-context                            → ready / in-progress / critical path
+filigree ready                                      → find available work (no blockers)
+filigree show <issue-id>                            → read requirements and context
+filigree start-work <issue-id> --assignee <name>    → atomically claim + transition into its working status
+[do the work, commit code]
+filigree close <issue-id> --reason="summary of what was done"
+```
+
+Or skip the search entirely with `filigree start-next-work --assignee <name>`
+to grab the highest-priority **startable** issue.
+
+Always close with a `--reason` — it becomes audit trail for the next agent, and
+add a comment before any handoff. The next agent has no memory of this
+conversation.
+
+## Claim Atomically
+
+`start-work` / `start-next-work` (CLI) and `work_start` / `work_start_next`
+(MCP) claim the issue *and* transition it into its working status in one DB
+transaction, with optimistic locking on the assignee. Never chain a claim with
+a separate status update — that two-step form races other agents. If someone
+else already owns it, the call fails with `code: CONFLICT` (CLI exit 1, like
+every error — branch on `code`); retry against different work.
+
+> **Ready ≠ startable.** The working status is type-specific (tasks →
+> `in_progress`, features → `building`). Bugs start at `triage`, which has no
+> single-hop transition into work — they walk `triage → confirmed → fixing`. So
+> a triage bug is *ready* but not directly *startable*: `start-work` on one
+> returns `INVALID_TRANSITION` naming the next status, and `start-next-work`
+> skips it. `ready` items carry a `startable` flag (and a `next_action` hint
+> when false). Pass `--advance` (CLI) / `advance=true` (MCP) to walk the soft
+> transitions automatically.
+
+## Guidance Sheets
+
+Load these when facing a specific challenge rather than reading upfront:
+
+- **`references/commands.md`** — the commands and MCP verbs reached for most,
+  the P0–P4 priority scale, `--actor` attribution, file records and scan
+  findings, cross-product entity bindings, quick decision guide
+- **`references/workflow-patterns.md`** — triage flows, sprint planning,
+  dependency management, bug lifecycle, event history, archiving
+- **`references/team-coordination.md`** — multi-agent swarm protocols, handoff
+  conventions, claiming strategies, status update patterns
+- **`references/observations.md`** — the ambient-note scratchpad: when a note
+  is right, when the thing is task scope instead, triage and promotion
+- **`references/error-codes.md`** — response envelopes, the complete
+  `ErrorCode` set, and what to do about `INVALID_TRANSITION`,
+  `SCHEMA_MISMATCH` and `CONFLICT`
+- **`examples/sprint-plan.json`** — complete create-plan input template with
+  cross-phase dependencies
+
+exec
+/usr/bin/bash -lc 'nl -ba .scratch/tier1-brief-draft/brief-wording-tier1-v5.md
+nl -ba .scratch/tier1-brief-draft/review-v4-astra.md' in /home/john/space_chassis
+ succeeded in 0ms:
+     1	# #39 tier 1: the brief wording, v5, the final draft for John's approval
+     2	
+     3	Chassis, session `session_019mkPNN5J3Atit9tUA6zrNY`, 2026-10-11. **Draft only.** No file in the tree has
+     4	changed, nothing is adopted, the vehicle pin is unchanged, and no test has run. John's approval of the
+     5	wording is reserved.
+     6	
+     7	**Lineage.**
+     8	- v2 `9e8b5192…` was reviewed (`review-v2-astra.md` `7236e195…`: APPROVE WITH CHANGES).
+     9	- v3 `b8249c9f…` applied that review.
+    10	- v4 `78d3453e…` corrected v3 on three points, at Emmy's request:
+    11	  - result counting;
+    12	  - putting the host-crash and journal limits beside the at-most-once claim;
+    13	  - a reconciliation of every promised behaviour against the code.
+    14	- v4 had one bounded delta review (`review-v4-astra.md` `9c228ea2…`): APPROVE WITH CHANGES, no Critical.
+    15	- **v5 applies that review's five findings and nothing else. v5 has not been reviewed again.**
+    16	
+    17	**Basis.**
+    18	- The vehicle's formal package `governance/vehicle/records/2026-10-11-39-tier1-adoption-package.md`
+    19	  (`483d47de…`).
+    20	- Vehicle `f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f` (PR #43), read with `git show`. Line numbers below are
+    21	  in `tools/console.py` at that commit.
+    22	- The deployment the text lands on, the adoption worktree's `containers/serve_vehicle.sh`, which passes
+    23	  `--state-dir`.
+    24	
+    25	## A. `brief/PROTOCOL.md` lines 51–54, replaced by two bullets
+    26	
+    27	```
+    28	- **Intake is destructive, and the claim is not atomic.** Each pass, the far
+    29	  side reads the file. If it holds something to claim, the far side then
+    30	  replaces it with a copy whose `commands` is empty and whose `variables` are
+    31	  kept. The replacement is a single rename, so you never read a half-rewritten
+    32	  file. But the read and the rename are two separate steps, and nothing ties
+    33	  the file the rename replaces to the file that was read (see below). A file
+    34	  holds nothing to claim when `commands` is exactly `[]` and it carries a
+    35	  `variables` map, or carries no `variables` while the far side holds none.
+    36	  Such a file is left untouched: nothing is written, and its `variables` map
+    37	  is taken as it stands. Once the far side's checks let it take the file in,
+    38	  anything else is claimed: a batch; a missing, unreadable or half-written
+    39	  file, or one that is not a JSON object; one with no `commands` list; one
+    40	  whose `variables` is present but not a map; or one with no `variables`
+    41	  while the far side holds a map.
+    42	- **A command runs at most once, not exactly once.** The far side replaces
+    43	  the file before it acts on any command in it, and acts on nothing in the
+    44	  file until that replacement has succeeded. If the far side's process stops
+    45	  part-way through a batch, the file it finds when it starts again is the
+    46	  replacement, so that batch is not run again. If the whole machine stops,
+    47	  this rests on the replacement having reached the disk: this far side keeps
+    48	  a record, flushes a claimed batch's replacement to disk before acting on
+    49	  it, and relies on the disk keeping what it was told to flush. A far side
+    50	  that kept no record would not flush it, and a crash of the machine could
+    51	  then undo the claim. A batch can also run less than once. It can be lost
+    52	  before it is claimed (below). And when the far side stops part-way, what it
+    53	  had not yet recorded of a claimed batch is lost and never answered. Writing
+    54	  the same command again submits it again.
+    55	```
+    56	
+    57	## B. Lines 59–60, replaced (the next-pass promise withdrawn)
+    58	
+    59	```
+    60	- **A batch you put in place can be lost while an earlier file is being
+    61	  claimed.** Between the far side's read and its rename, whatever you put in
+    62	  place is replaced unread. Its batch runs nothing, and nothing answers or
+    63	  records it. The file you then see shows `commands` empty, exactly as if
+    64	  your batch had been taken. That holds whether you renamed your file in or
+    65	  wrote it in place. A pass that reads a file holding nothing to claim does
+    66	  not rewrite it, so a batch renamed in over such a file is not lost this
+    67	  way: it stays until the far side next reads the file, and is claimed then
+    68	  if it is still there. Nothing says when that next read comes. Writing in
+    69	  place has no such protection: the far side can read the file half-written,
+    70	  refuse it and replace it, and the rest of your write then lands on a file
+    71	  that is no longer there. So keep to one writer, and publish each file
+    72	  whole, through a temporary file and a rename. After you put in place
+    73	  anything that holds something to claim, replace the file again, with
+    74	  anything at all, only once the far side's cleared copy has appeared. Even
+    75	  then, a cleared console shows only that some file was claimed, not that
+    76	  yours was taken or answered. Look for your batch's answers in `output/`.
+    77	```
+    78	
+    79	## C. `brief/PROTOCOL.md:68` and lines 75–78, replaced (this removes "exactly one file")
+    80	
+    81	Current: "Every command produces exactly one file in `output/`:". Proposed:
+    82	
+    83	```
+    84	The far side answers in `output/`. Each answer is a file ending in a
+    85	`receipt:` line, whose `seq` numbers that answer for your window. Count
+    86	answers by `seq`, not by files. A deferred command is answered twice, when
+    87	it is accepted and again when it settles. An answer that could not be
+    88	published remains owed and may be written later. Retrying publication can
+    89	create another file with the same `seq`. If more than 256 answers are owed
+    90	to your window, the oldest is given up and may never be written. A batch
+    91	lost as described above has no answers at all:
+    92	```
+    93	
+    94	The filename block after line 68 stays as it is. **Lines 75–78 are replaced too.** They say "submission
+    95	time", but the stamp is taken when the file is published (`write_result`, 4446–4449). And their "all produce
+    96	one" promises a file for every command, which C withdraws. Proposed:
+    97	
+    98	```
+    99	The filename carries the publication time, your window name, and the
+   100	command. A refusal is answered the same way as a success: an unavailable
+   101	verb, a rate-limited call and a successful command are all answers.
+   102	**Failure and success are the same shape**, deliberately, so that the only
+   103	way to know what happened is to read it.
+   104	```
+   105	
+   106	Line 80 ("Nothing waits for you. Submit, and read later.") stays.
+   107	
+   108	## D. `docs/brief-claims.md`: a new row (the table has no intake row today)
+   109	
+   110	```
+   111	| The window replaces a console that holds something to claim with one whose `commands` is empty and `variables` kept, by a single rename, before acting on any of its commands; a console with nothing to claim (`commands` exactly `[]` with a `variables` map, or no `variables` while the window holds none) is not written and its map is taken. A command runs at most once, not exactly once: across a vehicle process crash by the rename alone; across a host crash only because the vehicle, run with `--state-dir`, keeps a journal and so `fsync`s a claimed batch's replacement before acting. The read and rename are separate steps: a batch published between them can be erased unread and unanswered. An in-place write can instead be read partially and refused; its remaining bytes can land on the replaced inode, losing the intended batch. A cleared console does not show which file was claimed. Answers are counted by their receipt `seq`, not by files: a deferral is answered at acceptance and at settlement, an owed answer can be written twice with the same `seq`, and past 256 owed answers the oldest is given up | `docs/diode-contract.md` §2.2 as adopted from vehicle `f75420c` (PR #43); vehicle `tools/console.py`: `Window.claim` (`quiet`; the docstring's residual), `Window.claimed_console`, `read_ingress`, `write_json_atomic`, `Executive._ingest` (claim before validation; a claim that raises runs nothing), the cycle's durability order (the comment above `RecordRefused`), `Window.write_result` and `Window.receipt`, `republication` and `receipt_line`, `Executive.publish_obligations` and `Executive.owe` (`OBLIGATIONS_PER_WINDOW`), the deferral verdict in `Executive.validate`'s deferrable branch; adoption `containers/serve_vehicle.sh` (`--state-dir`); vehicle `tests/test_vehicle_config.py::test_what_counts_as_nothing_to_claim_is_decided_by_shape_alone_and_the_console_always_shows_the_map`, `::test_a_console_with_nothing_to_claim_is_never_rewritten_so_a_batch_put_in_place_during_its_read_is_not_erased`, `::test_a_resume_after_quiet_cycles_left_the_agent_s_console_in_place_adopts_its_map`; fixture `contract/fake_diode.py::AgentSide.consume` (future adoption requirement: implement the identical quiet rule and add its test before citing it as evidence) |
+   112	```
+   113	
+   114	## E. Every promised behaviour, reconciled against `f75420c` and the adoption deployment
+   115	
+   116	| text says | the code at `f75420c` | holds in the adoption? |
+   117	|---|---|---|
+   118	| the replacement is a single rename and is never read half-written | `write_json_atomic`: `O_EXCL` temporary file, then `os.replace` (431–466) | yes |
+   119	| the claim is not atomic | `claim`: `read_ingress`, then a separate `write_json_atomic` (4340–4370); docstring "no rename can check…" | yes |
+   120	| nothing to claim | `quiet` (4348–4352), decided from types before the map is adopted | yes |
+   121	| a quiet file is untouched and its map taken | the map is adopted at 4355–4359, before `if quiet: return []` | yes |
+   122	| what is claimed | `payload is None`: missing, unreadable, invalid or non-object, rewritten and refused (4341–4343); no `commands` list, present non-map `variables`, or missing `variables` while the map is known: not quiet, so rewritten (4363–4370). A link or non-regular console already in place when the window is checked skips intake, with no rewrite (4220–4228); A does not list it | yes |
+   123	| acts on nothing until the replacement succeeds | `_ingest` calls `claim()` first (3536). A raise propagates to the cycle's `claim` failure (3096–3105). No verdict from that newly claimed batch follows; an earlier deferral's settlement can still be published | yes |
+   124	| process crash: not run again | the rename is in place before any act; a restart reads the claimed file | yes |
+   125	| host crash: rests on the flush | `durable=commands not in (None, []) and journal is not None` (4369); with `sync_file` and `sync_dir`, the file and directory are `fsync`ed (454–466) | yes: `--state-dir` and no `--journal` give a per-boot journal (2846–2856; adoption `serve_vehicle.sh:90`). `aurora-port` HEAD's script passes neither, and there it would **not** hold |
+   126	| relies on the disk keeping the flush | not something the code can establish | an assumption about the storage, stated as one |
+   127	| what was not yet recorded is lost and never answered | durability order: claim `fsync`, then the tick row `fsync`, **before** any result (comment at 1132–1138). A stop before the row loses the cycle's decisions, and no result for them has been written | yes |
+   128	| the lost batch: unread, unanswered, unrecorded; renamed in or written in place | the docstring's residual (4335–4338). A replaced inode is gone, whether it was renamed in or written in place | yes |
+   129	| a quiet file is not rewritten, so a batch renamed in over it stays | `if quiet: return []` writes nothing; the vehicle test "…not_erased" | yes; no time for the next read is promised |
+   130	| the far side's cleared copy has nothing to claim | `claimed_console` (4380–4390) gives the known map, or no key while the map is unknown; both are quiet. A fresh window starts known and empty (4158–4163); a resume clears the map and re-adopts it from a readable console (5037–5046) | yes |
+   131	| a cleared console does not show which file was claimed | an erasing rewrite and a taking one write the same `claimed_console()` | yes |
+   132	| answers carry a receipt `seq` | `publish` writes `body + self.receipt(verdict)` (4492); `republication` adds `receipt_line` (2483–2488, 2491–2516) | yes |
+   133	| a deferral is answered twice | acceptance verdict `deferred` (4019–4040); settlement in `_settle` (3584–3624) | yes |
+   134	| an owed answer is written later, possibly twice with the same `seq` | `_owe`/`owe` (3221–3245); `publish_obligations` writes what its bounded `results_on_disk` scan did not find (3247–3280) | yes |
+   135	| an owed answer can be given up | past `OBLIGATIONS_PER_WINDOW` (256) owed answers, not after a time, the oldest is given up and recorded as a failure (3233–3245) | yes |
+   136	
+   137	## F. Coordination requirements: the vehicle's wording (tracked; not edited here)
+   138	
+   139	The vehicle line leads `docs/diode-contract.md`. This draft does not edit it and does not widen adoption
+   140	beyond the formal package. Three inconsistencies between the package's contract text and what the brief now
+   141	says (and the code does) are raised with the vehicle line through Governance.
+   142	
+   143	| # | contract text (package §2.2 / current §2.3) | the inconsistency | requested of the vehicle line |
+   144	|---|---|---|---|
+   145	| V-1 | §2.2 bullet 1: "**Intake is destructive and atomic.**" | Only the rewrite (rename) is atomic. The read-and-claim is not, and the same package's bullet 2 states the race. | Qualify it, for example: "the rewrite is atomic; the read-and-claim is not". |
+   146	| V-2 | §2.2 bullet 2: "A batch is claimed at the window's next read." | This is unconditional. It is true only for a file not replaced during a claiming rewrite. | Make it conditional, the way the residual sentence already does. |
+   147	| V-3 | §2.3: "Every command produces exactly one file" | A deferral produces two answers. An owed answer can be written twice, or given up. A lost batch has none. This predates tier 1. | Restate it as answers counted by receipt, with those cases named. |
+   148	
+   149	Optional, not a requirement: §2.1's "reliable transport".
+   150	
+   151	Until V-1 to V-3 are settled, the brief is deliberately more precise than the contract sentence it cites,
+   152	and the D row cites the code alongside §2.2. Adopting tier 1 as packaged does not depend on them.
+   153	
+   154	## G. Limitations, for John
+   155	
+   156	1. **The disk flush is assumed to hold.** The host-crash half of at most once assumes the disk keeps what
+   157	   was flushed. The window lives on a loop-mounted volume image, and nothing here verifies that a flush goes
+   158	   through it to stable storage.
+   159	2. **The protection rests on the agent's own discipline.** Avoiding this loss requires one writer,
+   160	   publication by rename, and waiting for the far side's cleared copy before replacing a claimable
+   161	   submission. The world does not enforce that discipline.
+   162	3. **There is no chassis evidence on `f75420c` yet.** The base is code reading and the vehicle's own tests
+   163	   and gates. The q1–q3 re-run and the ≥30 gate runs need a slot grant. Nothing claims the losses have
+   164	   stopped under load.
+   165	4. **This text lands with the rest of the increment or after it.** That means the pin to `f75420c`,
+   166	   contract §2.2, and the fixture's quiet rule with its test. At `f443996` the quiet promise is false, and
+   167	   without the fixture rule it is false for the fixture window. If adoption comes before R2c's build and
+   168	   live gate, the accepted drivers need rebinding to the changed `tests/test_vehicle_config.py`.
+   169	5. **The fixture is outside "this far side".** `contract/fake_diode.py` keeps no record and flushes
+   170	   nothing. The brief's host-crash sentence describes the vehicle as deployed, not the fixture.
+   171	6. **Option B is not mentioned.** It is not implemented, tested, adopted or qualified.
+     1	APPROVE WITH CHANGES
+     2	
+     3	Hashes verified: v4 and review-v2 match exactly; v3 and the adoption package match the supplied prefixes. **Draft** = [brief-wording-tier1-v4.md](/home/john/space_chassis/.scratch/tier1-brief-draft/brief-wording-tier1-v4.md); **V** = `tools/console.py@f75420c`, read using `git show`.
+     4	
+     5	No Critical findings.
+     6	
+     7	1. **Important — D conflates an erased batch with a refused partial console.** Draft:96 says a file “read half-written” is replaced “unread with no answer.” The malformed content actually read receives a `console_unreadable` refusal (V:4341–4343, 3537–3548). The completed intended batch can disappear unanswered. Replace that clause with:
+     8	
+     9	   > The read and rename are separate steps: a batch published between them can be erased unread and unanswered. An in-place write can instead be read partially and refused; its remaining bytes can land on the replaced inode, losing the intended batch.
+    10	
+    11	2. **Important — C’s delivery wording and endorsement of the retained paragraph remain too strong.** Draft:84–87 initially guarantees later publication; abandonment depends on exceeding **256 outstanding answers**, not elapsed time (V:3233–3245). Replace those sentences with:
+    12	
+    13	   > An answer that could not be published remains owed and may be written later. Retrying publication can create another file with the same `seq`. If more than 256 answers are owed to your window, the oldest is given up and may never be written.
+    14	
+    15	   Draft:90–91 also endorses `brief/PROTOCOL.md:75–78`, retaining “all produce one” despite abandonment. Its “submission time” is actually publication time (V:4446–4449). Replace that paragraph with:
+    16	
+    17	   > The filename carries the publication time, your window name, and the command. Published refusals and successes share the same shape; read the contents to learn what happened.
+    18	
+    19	3. **Minor — the v2 census qualification is still incomplete.** Draft:35 says “Anything else is claimed,” although preceding window checks can prevent intake (V:4220–4228, 3074–3091). Replace it with:
+    20	
+    21	   > Once the window’s checks permit intake, every other shape takes the rewrite path:
+    22	
+    23	   At Draft:107, replace “a non-map or missing `variables` while the map is known” with:
+    24	
+    25	   > present non-map `variables`, or missing `variables` while the map is known
+    26	
+    27	4. **Minor — G abbreviates away an essential discipline.** Draft:144–145 credits one writer plus rename alone with avoiding loss, although B correctly also requires waiting. Replace with:
+    28	
+    29	   > Avoiding this loss requires one writer, publication by rename, and waiting for the far side’s cleared copy before replacing a claimable submission. The world does not enforce that discipline.
+    30	
+    31	5. **Minor — two reconciliation details need precision.** Draft:117’s `2491–2515` omits the actual receipt append; replace with `2491–2516`. Draft:108’s “no verdict follows” should be:
+    32	
+    33	   > No verdict from that newly claimed batch follows; an earlier deferral’s settlement can still be published.
+    34	
+    35	   Evidence: V:3096–3105, 3536.
+    36	
+    37	Check 1 — **PARTIAL:** the main v2 defects are addressed; the census qualification and result wording need the corrections above.
+    38	
+    39	Check 2 — **SUPPORTED WITH CHANGES:** both answer-publication paths append receipt `seq`; acceptance and settlement have distinct receipts; duplicate publication and abandonment exist. C’s retained paragraph still overpromises files.
+    40	
+    41	Check 3 — **PASS, within stated assumptions:** claim fsync → tick-row fsync → results (V:4369, 3124–3136). Adoption script:90 supplies `--state-dir`; current script:109–117 does not. No duplicate execution or answer preceding its durable decision was found in the inspected paths.
+    42	
+    43	Check 4 — **PASS:** B specifies one writer, rename, waiting for the far side’s copy, ambiguous claim identity, and no next-read deadline.
+    44	
+    45	Check 5 — **PASS WITH MINOR CORRECTIONS:** cited symbols and all three tests exist; fix finding 5.
+    46	
+    47	Check 6 — **PASS:** V-1–V-3 identify real inconsistencies; F reserves vehicle ownership and adds no adoption prerequisite.
+    48	
+    49	Check 7 — **PASS:** G explicitly disclaims Option B implementation, testing, adoption and qualification.
+    50	
+    51	No edits, tests or collection, builds, containers, git mutations, or `.env` reads occurred.
+    52	
+
+exec
+/usr/bin/bash -lc "git -C docs/deep_research/vehicle show f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f:tools/console.py | nl -ba | sed -n '3080,3130p;3200,3290p;3520,3565p;4005,4050p;4145,4240p;4300,4505p'
+nl -ba .claude/worktrees/vehicle-adoption/containers/serve_vehicle.sh | sed -n '65,105p'
+nl -ba brief/PROTOCOL.md | sed -n '45,85p'" in /home/john/space_chassis
+ succeeded in 0ms:
+  3080	                    # preparation: `prepare` wrote `pending.json` at tick 0 (addendum B7).
+  3081	                    self._record_failure(window, "check", exc, tick)
+  3082	                    try:
+  3083	                        window.repair()
+  3084	                    except Exception as again:  # noqa: BLE001 - recorded, like the absence
+  3085	                        self._record_failure(window, "prepare", again, tick)
+  3086	                    finally:
+  3087	                        window.close_handles()
+  3088	                    continue
+  3089	                except Exception as exc:  # noqa: BLE001 - the window's directory is the window's
+  3090	                    self._record_failure(window, "check", exc, tick)
+  3091	                    continue
+  3092	                healthy.append(window)
+  3093	                # The verdicts are made into the cycle's own list, so those made before an internal
+  3094	                # fault are kept — recorded and published — rather than dropped with a local list
+  3095	                # (child 4's review finding 7).
+  3096	                verdicts[window.slug] = []
+  3097	                try:
+  3098	                    self._settle(window, verdicts[window.slug])
+  3099	                except Exception as exc:  # noqa: BLE001 - the window's, not the tick's
+  3100	                    self._record_failure(window, "settle", exc, tick)
+  3101	            for window in healthy:
+  3102	                try:
+  3103	                    self._ingest(window, verdicts[window.slug])
+  3104	                except Exception as exc:  # noqa: BLE001 - the window's, not the tick's
+  3105	                    self._record_failure(window, "claim", exc, tick)
+  3106	            for window in healthy:
+  3107	                for verdict in verdicts.get(window.slug, []):
+  3108	                    if verdict.effect is not None:
+  3109	                        effects.append(verdict.effect)
+  3110	                        applied.append(verdict)
+  3111	
+  3112	            before = self.truth
+  3113	            # The link is computed on the stepped truth *before* the tick is committed: a state the
+  3114	            # compare-point refuses (plant.UncomparableState) leaves the executive at its last
+  3115	            # consistent tick — truth, tick and lineage together — rather than half-advanced.
+  3116	            # `advance` is replay's too (`replay_record`): the one path from a tick to the next.
+  3117	            after, digest, link = advance(self.world, before, self.lineage_head, effects, self.dt)
+  3118	            self.truth = after
+  3119	            for verdict in applied:
+  3120	                verdict.body += self._report_effect(verdict, before, self.truth)
+  3121	            self.tick += 1
+  3122	            self.lineage_head = link
+  3123	            self.lineage.append(self.lineage_head)
+  3124	            # **The record before anything of the cycle is published** (ADR 0002 J rules 1–3): the
+  3125	            # tick row, with every window's published-tick mark, appended and `fsync`ed. A record that
+  3126	            # cannot be made durable raises `RecordUnwritable` here, and nothing below runs.
+  3127	            self._record_cycle(tick, digest, effects, verdicts, healthy, before_windows)
+  3128	            self._write_root_record(tick)
+  3129	
+  3130	            written: list[Path] = []
+  3200	                # The event is advisory, and a failure to append it is the record left as it was
+  3201	                # (`append_or_restore`) — unless the record could not be restored, which stops the run
+  3202	                # (J2): the next cycle's row would follow a fragment.
+  3203	                try:
+  3204	                    append_journal_line(
+  3205	                        self.journal,
+  3206	                        {
+  3207	                            "event": "checkpoint_failed", "wall": utc_now().isoformat(), "boot_id": self.boot_id,
+  3208	                            "world_id": self.world_id, "tick": self.tick, "occasion": occasion,
+  3209	                            "consecutive": self.checkpoint_failures, "error": f"{type(exc).__name__}: {exc}",
+  3210	                        },
+  3211	                        dir_fd=self.journal_dir_fd,
+  3212	                    )
+  3213	                except RecordUnwritable:
+  3214	                    raise
+  3215	                except Exception:  # noqa: BLE001 - advisory, and the append left the record as it was
+  3216	                    pass
+  3217	            return False
+  3218	        self.checkpoint_failures = 0
+  3219	        return True
+  3220	
+  3221	    def _owe(self, window: Window, verdicts: list[Verdict]) -> None:
+  3222	        """Owe a window the results of verdicts whose publication failed (addendum B4), as the record holds them."""
+  3223	        for entry in receipt_entries(sorted(verdicts, key=lambda v: v.receipt)):
+  3224	            verdict = next(v for v in verdicts if v.local == entry["local"])
+  3225	            self.owe({**entry, "tick": verdict.tick, "world_id": self.world_id, "boot_id": self.boot_id})
+  3226	
+  3227	    def owe(self, entry: dict[str, Any]) -> None:
+  3228	        """Add one obligation unless the window is already owed that receipt; past the bound, give up the oldest, recorded."""
+  3229	        key = (entry["window"], entry["local"])
+  3230	        if any((held["window"], held["local"]) == key for held in self.obligations):
+  3231	            return
+  3232	        self.obligations.append(entry)
+  3233	        mine = [held for held in self.obligations if held["window"] == entry["window"]]
+  3234	        if len(mine) > OBLIGATIONS_PER_WINDOW:
+  3235	            oldest = mine[0]
+  3236	            self.obligations.remove(oldest)
+  3237	            self._record_failure_named(
+  3238	                oldest["window"],
+  3239	                "obligation",
+  3240	                RuntimeError(
+  3241	                    f"window receipt {oldest['local']} (tick {oldest['tick']}) is given up unwritten: the window is owed more "
+  3242	                    f"than {OBLIGATIONS_PER_WINDOW} results it could not be written"
+  3243	                ),
+  3244	                self.tick,
+  3245	            )
+  3246	
+  3247	    def publish_obligations(self, window: Window) -> list[dict[str, Any]]:
+  3248	        """Write what a window is owed, once each: skip a result already on disk (`results_on_disk`), write the rest.
+  3249	
+  3250	        **An obligation leaves the list only behind the durability barrier** (review F2, ruling R2): with a
+  3251	        record, every result it settles — written now (`write_result` `fsync`s the file) or found already
+  3252	        on disk (whose file is `fsync`ed here) — is settled only once the `output/` directory has been
+  3253	        `fsync`ed after them all. A failure anywhere before that leaves every one of them owed, and the
+  3254	        next attempt finds what did reach the disk by its receipt line. Without a record nothing is made
+  3255	        durable and nothing waits. Returns what happened to each: `written` (with the file name) or
+  3256	        `on disk`.
+  3257	        """
+  3258	        mine = [entry for entry in self.obligations if entry["window"] == window.slug]
+  3259	        if not mine:
+  3260	            return []
+  3261	        output = window._handles().output
+  3262	        durable = self.journal is not None
+  3263	        scan = results_on_disk(output, window.slug, mine)
+  3264	        report: list[dict[str, Any]] = []
+  3265	        for entry in mine:
+  3266	            outcome: dict[str, Any] = {"window": window.slug, "local": entry["local"], "tick": entry["tick"]}
+  3267	            if entry["local"] in scan.found:
+  3268	                outcome["result"] = "on disk"
+  3269	                if durable:
+  3270	                    _fsync_file(output, scan.names[entry["local"]])
+  3271	            else:
+  3272	                command, text = republication(entry)
+  3273	                outcome["result"], outcome["file"] = "written", window.write_result(command, text).name
+  3274	            report.append(outcome)
+  3275	        if durable:
+  3276	            os.fsync(output)
+  3277	        for entry in mine:
+  3278	            self.obligations.remove(entry)
+  3279	        if scan.exhausted:
+  3280	            report.append({"window": window.slug, "scan": f"stopped after {scan.examined} entries and {scan.read} bytes; anything not found was written"})
+  3281	        return report
+  3282	
+  3283	    def _record_failure(self, window: Window, stage: str, exc: BaseException, tick: int) -> None:
+  3284	        """Isolation: the failure is counted and recorded, on stderr and here, and the tick goes on without the window."""
+  3285	        self._record_failure_named(window.slug, stage, exc, tick)
+  3286	
+  3287	    def _record_failure_named(self, name: str, stage: str, exc: BaseException, tick: int) -> None:
+  3288	        """`_record_failure` for a window's slug, or for `.executive.json` at the stage `root_record`."""
+  3289	        entry = {
+  3290	            "tick": tick,
+  3520	        fails is counted, named on stderr and in `failures` under the stage `root_record` with the
+  3521	        record's name where a window's slug goes, and the next cycle writes it again.
+  3522	        """
+  3523	        try:
+  3524	            write_json_atomic(RECORD_FILE, self.root_record(), dir_fd=self.diode_fd)
+  3525	        except Exception as exc:  # noqa: BLE001 - the record's failure, recorded, not the tick's
+  3526	            self._record_failure_named(RECORD_FILE, "root_record", exc, tick)
+  3527	
+  3528	    # -- ingress ------------------------------------------------------------------------------
+  3529	    def _verdict(self, window: Window, command: str, state: str, body: str, **extra: Any) -> Verdict:
+  3530	        self.receipt += 1
+  3531	        window.receipts += 1
+  3532	        return Verdict(command, state, body, self.receipt, window.receipts, self.tick, window.slug, **extra)
+  3533	
+  3534	    def _ingest(self, window: Window, verdicts: list[Verdict]) -> list[Verdict]:
+  3535	        """Claim one window's console and validate what it held, in order, into `verdicts` (the cycle's list)."""
+  3536	        claimed = window.claim()
+  3537	        if isinstance(claimed, str):
+  3538	            verdicts.append(
+  3539	                self._verdict(
+  3540	                    window,
+  3541	                    "console_unreadable",
+  3542	                    "refused",
+  3543	                    f"refused: {claimed}. The console has been claimed — commands emptied, "
+  3544	                    "variables preserved — so this is one refusal and not one per cycle; rewrite "
+  3545	                    "the whole file to submit again.\n",
+  3546	                )
+  3547	            )
+  3548	            return verdicts
+  3549	        if claimed and not all(isinstance(item, str) for item in claimed):
+  3550	            # "One malformed element refuses the whole batch. If any element of `commands` is not a
+  3551	            # string, none of it runs, and exactly one result file records that. Partial execution
+  3552	            # of a malformed batch is worse than none."
+  3553	            kinds = ", ".join(sorted({type(item).__name__ for item in claimed}))
+  3554	            verdicts.append(
+  3555	                self._verdict(
+  3556	                    window,
+  3557	                    "malformed_batch",
+  3558	                    "refused",
+  3559	                    "refused: the whole batch. It contained a non-string element "
+  3560	                    f"({kinds}), so none of its {len(claimed)} command(s) ran. Exactly one result "
+  3561	                    "records this, which is the contract's requirement and not a convenience: "
+  3562	                    "partial execution of a malformed batch is worse than none.\n",
+  3563	                )
+  3564	            )
+  3565	            return verdicts
+  4005	            return verdict
+  4006	
+  4007	        verdict = self._verdict(window, command, "accepted", "", verb=verb, arguments=arguments)
+  4008	
+  4009	        if row["deferrable"] and settling is None:
+  4010	            # §9 check 9's whole content is *when* the re-check happens — "a deferred command is
+  4011	            # re-checked when it is due, not when it was scheduled" — and the contract is equally
+  4012	            # clear that the result arrives later. So the deferral is a live queue entry in ticks,
+  4013	            # and `_settle` runs the whole chain again when it is due. It is counted as accepted
+  4014	            # once, here; its settlement is the same command reporting.
+  4015	            window.accepted += 1
+  4016	            due = self.tick + 1
+  4017	            # The parse, not the line: a deferral is queued, checkpointed and recorded as its verb, its
+  4018	            # schema-checked arguments and the command they spell (child 4's review finding 4).
+  4019	            window.deferred.append(
+  4020	                {
+  4021	                    "verb": verb,
+  4022	                    "command": canonical_command(verb, arguments),
+  4023	                    "arguments": dict(arguments),
+  4024	                    "accepted_tick": self.tick,
+  4025	                    "due_tick": due,
+  4026	                    "maximum_queue_age_s": spec.get("maximum_queue_age_s"),
+  4027	                    "receipt": verdict.local,
+  4028	                }
+  4029	            )
+  4030	            verdict.state = "deferred"
+  4031	            verdict.body = (
+  4032	                f"accepted: {verb!r} deferrable. Recorded at tick {self.tick}, due at tick {due}; "
+  4033	                "it will be re-checked against the phase, its gate, its interlocks, its dwell and "
+  4034	                "its conflict domain when it is due rather than now (contract §9 check 9), and it "
+  4035	                f"expires if it is still waiting after {spec.get('maximum_queue_age_s')} s of "
+  4036	                "simulated time (V-02's `EXPIRED`). The result arrives as its own file when it "
+  4037	                "settles, because a command that takes longer than one cycle reports when it is "
+  4038	                "done.\n"
+  4039	            )
+  4040	            return verdict
+  4041	
+  4042	        for domain in domains:
+  4043	            self.claimed.setdefault(domain, verdict)
+  4044	        if settling is not None:
+  4045	            verdict.state = "settled"
+  4046	            verdict.settled = True
+  4047	            age = (self.tick - int(settling.get("accepted_tick", self.tick))) * self.dt
+  4048	            verdict.body = (
+  4049	                f"settled: {verb!r} at tick {self.tick}, {age:.1f} s after acceptance at tick "
+  4050	                f"{settling.get('accepted_tick')}, re-checked against the phase, its gate, its "
+  4145	        self.output = "output"
+  4146	        self.telemetry = "telemetry"
+  4147	        self.state = "state.json"
+  4148	        self.help_file = "HELP.md"
+  4149	        self.readme = "README.md"
+  4150	        self.pending = "pending.json"
+  4151	        self.handles: Handles | None = None
+  4152	        # **Preserved, verbatim.** The contract: `variables` is "a flat map of gate settings the
+  4153	        # vehicle chooses to honour. Persistent — the vehicle never clears it", and the claim rewrites
+  4154	        # the console "with commands emptied and variables preserved". So this is exactly the object
+  4155	        # the agent last wrote (replace, not merge — bounded by construction, because it came from a
+  4156	        # file of at most `MAX_READ_BYTES` and the rewrite is no larger), and what the vehicle
+  4157	        # *honours* of it is computed from it each cycle by `honoured()`.
+  4158	        self.variables: dict[str, Any] = {}
+  4159	        # Whether `variables` is the map the agent last wrote. A resume does not have it — ADR 0002 G
+  4160	        # keeps it out of the checkpoint, in the agent's own console — until it reads a console that
+  4161	        # carries one; while it is unknown the gates are at their defaults and no rewrite of the
+  4162	        # console invents a map (child 3).
+  4163	        self.variables_known = True
+  4164	        # The frame number the record's mark for this cycle named, so a publication that fails before
+  4165	        # its frame still consumes it (design note S16); `None` when this cycle did not mark the window.
+  4166	        self.marked_seq: int | None = None
+  4167	        # `honoured()`'s answer for the current preserved map, computed once per cycle after the
+  4168	        # claim and invalidated when the map is replaced.
+  4169	        self._honoured: tuple[dict[str, bool], int] | None = None
+  4170	        self.deferred: list[dict[str, Any]] = []
+  4171	        # Outstanding arm tokens, by event, bound to this window. Never read back from a file.
+  4172	        self.arms: dict[str, str] = {}
+  4173	        self.seq = 0
+  4174	        self.receipts = 0
+  4175	        # The newest tick a frame or mirror of this window has been allowed to describe: set once the
+  4176	        # cycle's record, which carries it, is durable (ADR 0002 J rule 2), and `None` until the
+  4177	        # window first publishes. `checkpoint.capture_state` saves it.
+  4178	        self.published_tick: int | None = None
+  4179	        # The window-local receipts of the results this cycle's publication has written so far; the
+  4180	        # executive empties it before each publication and notes it after (ADR 0002 J rule 3).
+  4181	        self.landed: list[int] = []
+  4182	        self.boot_id = uuid.uuid4().hex
+  4183	        self.started = utc_now()
+  4184	        self.accepted = 0
+  4185	
+  4186	    # -- the directory ----------------------------------------------------------------------
+  4187	    def open_handles(self) -> Handles:
+  4188	        """Open the window's directory and its two subdirectories, following no link, and check the files.
+  4189	
+  4190	        `alpha/telemetry -> ../bravo/telemetry` let alpha's ring prune bravo's frames; `alpha/output
+  4191	        -> <anywhere>` wrote result files outside the diode directory. The three directories are opened
+  4192	        `O_DIRECTORY | O_NOFOLLOW` relative to the diode handle and to each other — a link is `ELOOP`
+  4193	        and a file where a directory should be is `ENOTDIR`, and either is this window's failure for
+  4194	        the cycle, with no write — and the five files are `lstat`ed through the directory handle:
+  4195	        regular where they exist, never a link. The handles are what every operation of the cycle
+  4196	        then uses, which is what makes the check more than a check.
+  4197	        """
+  4198	        self.close_handles()
+  4199	
+  4200	        def opened(name: str, dir_fd: int) -> int:
+  4201	            where = name if dir_fd == self.executive.diode_fd else f"{self.slug}/{name}"
+  4202	            try:
+  4203	                return open_directory(name, dir_fd=dir_fd)
+  4204	            except FileNotFoundError as exc:
+  4205	                raise WindowAbsent(
+  4206	                    f"{where} is absent (ENOENT); the window is re-prepared for the next cycle"
+  4207	                ) from exc
+  4208	            except OSError as exc:
+  4209	                code = errno.errorcode.get(exc.errno or 0, type(exc).__name__)
+  4210	                raise RuntimeError(
+  4211	                    f"{where}: {code} ({exc.strerror}); a window is a directory of regular files and "
+  4212	                    "directories, and the vehicle follows no link an agent plants"
+  4213	                ) from exc
+  4214	
+  4215	        root = opened(self.slug, self.executive.diode_fd)
+  4216	        output = telemetry = None
+  4217	        try:
+  4218	            output = opened(self.output, root)
+  4219	            telemetry = opened(self.telemetry, root)
+  4220	            for name in self.FILES:
+  4221	                try:
+  4222	                    info = os.lstat(name, dir_fd=root)
+  4223	                except FileNotFoundError:
+  4224	                    continue
+  4225	                if stat.S_ISLNK(info.st_mode):
+  4226	                    raise RuntimeError(f"{self.slug}/{name} is a symlink, and the vehicle follows none")
+  4227	                if not stat.S_ISREG(info.st_mode):
+  4228	                    raise RuntimeError(f"{self.slug}/{name} is not a regular file")
+  4229	        except BaseException:
+  4230	            for fd in (root, output, telemetry):
+  4231	                if fd is not None:
+  4232	                    with contextlib.suppress(OSError):
+  4233	                        os.close(fd)
+  4234	            raise
+  4235	        self.handles = Handles(root, output, telemetry)
+  4236	        return self.handles
+  4237	
+  4238	    def close_handles(self) -> None:
+  4239	        if self.handles is not None:
+  4240	            self.handles.close()
+  4300	                os.lstat(self.console, dir_fd=root)
+  4301	            except FileNotFoundError:
+  4302	                write_json_atomic(self.console, self.claimed_console(), dir_fd=root)
+  4303	        finally:
+  4304	            os.close(root)
+  4305	
+  4306	    # -- the claim --------------------------------------------------------------------------
+  4307	    def claim(self) -> list[Any] | str:
+  4308	        """Read the console and clear it, *before* acting on anything.
+  4309	
+  4310	        The contract is unambiguous about the order: "**Intake is destructive and atomic.** Each
+  4311	        cycle the vehicle reads the file, then rewrites it with `commands` emptied and `variables`
+  4312	        preserved... **Clear before you act.**" So the rewrite happens here and the commands are
+  4313	        returned for the executive to validate afterwards. A console that is not one — absent, a
+  4314	        link, not a regular file, oversized, invalid, not an object — is *also* claimed, with the
+  4315	        previous variables, and the reason is returned instead of a batch for the one refusal result
+  4316	        (ADR 0001).
+  4317	
+  4318	        **Preserved verbatim; honoured separately.** `variables` is "persistent — the vehicle never
+  4319	        clears it": the object the agent wrote becomes the preserved map as written (replace, not
+  4320	        merge; a payload without a `variables` object keeps the previous map), and it is bounded by
+  4321	        construction because it came from a file of at most `MAX_READ_BYTES`. What the vehicle acts
+  4322	        on is `honoured()`'s business, computed from the preserved map once per cycle, after the
+  4323	        claim, and never raising on any JSON value.
+  4324	
+  4325	        **A console with nothing to claim is not rewritten (#39).** The rewrite is a read followed by
+  4326	        an `os.replace`, and no rename can check that the file it replaces is the file it read: a batch
+  4327	        the agent put in place between the two was renamed over, unread — no result, no record. The
+  4328	        claim ran on every cycle, the ~20 a second with nothing in them included, and every erased
+  4329	        batch the chassis's contract probe caught was a quiet cycle's. So a console that is an object
+  4330	        whose `commands` is exactly `[]` and that already shows the map — its own `variables` object,
+  4331	        which is adopted, or no `variables` key while the window has no map to show — is left as it
+  4332	        is: nothing written, nothing erased. A console that is not one, that has no `commands` key,
+  4333	        or that leaves out `variables` while the window knows a map, is rewritten as before, so the
+  4334	        file always shows the preserved map. **Residual:** every rewrite that remains — of a console
+  4335	        that held a batch, of one that is not a console, of a bare one while the window knows a map —
+  4336	        still erases a file the agent put in place between its read and its rewrite; the contract
+  4337	        says so (John, 2026-10-11, tier 1), and the take that closes it is the next package.
+  4338	        """
+  4339	        root = self._handles().root
+  4340	        payload, problem = read_ingress(self.console, dir_fd=root)
+  4341	        if payload is None:
+  4342	            write_json_atomic(self.console, self.claimed_console(), dir_fd=root, durable=self.executive.journal is not None)
+  4343	            return str(problem)
+  4344	        commands = payload.get("commands")
+  4345	        variables = payload.get("variables")
+  4346	        # Decided before the map is adopted, and from `isinstance` alone, so no JSON value can make it
+  4347	        # raise: an exception here would leave the window unclaimed every cycle.
+  4348	        quiet = (
+  4349	            isinstance(commands, list)
+  4350	            and not commands
+  4351	            and (isinstance(variables, dict) or ("variables" not in payload and not self.variables_known))
+  4352	        )
+  4353	        # Replace, not merge: the object the agent wrote *is* the preserved map. A file with no
+  4354	        # `variables` object keeps the previous one, which is what "never clears it" means.
+  4355	        if isinstance(variables, dict):
+  4356	            self.variables = variables
+  4357	            self.variables_known = True
+  4358	            self._honoured = None
+  4359	        if quiet:
+  4360	            return []
+  4361	        # A claim that takes a batch is made durable — the file and the directory — before the record
+  4362	        # says it was answered: a crash must not bring the commands back to run twice (child 4's review
+  4363	        # finding 6). An empty claim is a quiet cycle's and costs no `fsync`; without a record nothing
+  4364	        # relies on the claim being durable, and nothing is `fsync`ed.
+  4365	        write_json_atomic(
+  4366	            self.console,
+  4367	            self.claimed_console(),
+  4368	            dir_fd=root,
+  4369	            durable=commands not in (None, []) and self.executive.journal is not None,
+  4370	        )
+  4371	        if commands is None:
+  4372	            return []
+  4373	        if not isinstance(commands, list):
+  4374	            return (
+  4375	                f"console.json's `commands` is a JSON {type(commands).__name__}, not a list, so "
+  4376	                "there is no batch here to run"
+  4377	            )
+  4378	        return commands
+  4379	
+  4380	    def claimed_console(self) -> dict[str, Any]:
+  4381	        """What the claim rewrites the console to: commands emptied, the preserved `variables` — when known.
+  4382	
+  4383	        A resumed window whose console could not be read has no map to preserve (ADR 0002 G keeps it
+  4384	        out of the checkpoint); its claim leaves the `variables` key out rather than writing `{}`,
+  4385	        which would read as "the vehicle cleared it", and the window honours the defaults until the
+  4386	        agent writes a console that carries one. The mid-run claim is this same rule with a known map.
+  4387	        """
+  4388	        if not self.variables_known:
+  4389	            return {"commands": []}
+  4390	        return {"commands": [], "variables": self.variables}
+  4391	
+  4392	    def honoured(self) -> tuple[dict[str, bool], int]:
+  4393	        """What the vehicle honours of the preserved map: the published gates, and the allowance.
+  4394	
+  4395	        **Preserved is not honoured.** The map is the agent's and is kept verbatim; what the vehicle
+  4396	        acts on is computed from it here, every cycle, and nothing in it can raise: a name is a gate
+  4397	        only where the registry publishes one by that (instantiated) name and its value is a bool —
+  4398	        anything else is treated as absent, so the gate stays at its default; `allowance` is honoured
+  4399	        only as a non-negative integer, clamped to the operator's ceiling (§9 check 8: a preference
+  4400	        may lower, never raise) — anything else leaves the ceiling in force. `{"allowance": "lots"}`
+  4401	        was a `ValueError` in every tick's publication before this split.
+  4402	        """
+  4403	        if self._honoured is not None:
+  4404	            return self._honoured
+  4405	        gates: dict[str, bool] = {}
+  4406	        allowance = DEFAULT_ALLOWANCE
+  4407	        for name, value in self.variables.items():
+  4408	            key = str(name)
+  4409	            if key == "allowance":
+  4410	                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+  4411	                    allowance = min(value, DEFAULT_ALLOWANCE)
+  4412	            elif key in self.executive.gate_names and isinstance(value, bool):
+  4413	                gates[key] = value
+  4414	        self._honoured = (gates, allowance)
+  4415	        return self._honoured
+  4416	
+  4417	    @property
+  4418	    def allowance(self) -> int:
+  4419	        return self.honoured()[1]
+  4420	
+  4421	    def closed_gates(self) -> set[str]:
+  4422	        return {name for name, value in self.honoured()[0].items() if not value}
+  4423	
+  4424	    def capability(self, *, closed: bool = True) -> list[dict[str, Any]]:
+  4425	        """The capability snapshot as this window sees it: its own closed gates, the operator's trips.
+  4426	
+  4427	        With `closed=False` the window's gates are left out, for the per-command gate check: the
+  4428	        snapshot closes a *verb* when any instantiation is closed, and a command is gated by its own.
+  4429	        """
+  4430	        return capability_snapshot(
+  4431	            self.executive.world,
+  4432	            phase=self.executive.phase,
+  4433	            closed_gates=self.closed_gates() if closed else set(),
+  4434	            tripped_interlocks=self.executive.tripped,
+  4435	        )
+  4436	
+  4437	    # -- results ----------------------------------------------------------------------------
+  4438	    def write_result(self, command: str, body: str) -> Path:
+  4439	        """One file per command, refusals included, and nothing ever overwritten.
+  4440	
+  4441	        The name is `<stamp>_<slug>_<sanitised command>.txt`, made with `os.link` relative to the
+  4442	        `output/` handle, which fails rather than replaces: a filename collision inside one
+  4443	        microsecond is possible when a batch repeats a command, and the contract forbids
+  4444	        overwriting — so the second one gets a suffix rather than replacing the first.
+  4445	        """
+  4446	        output = self._handles().output
+  4447	        moment = utc_now()
+  4448	        base = f"{stamp(moment)}_{self.slug}_{sanitise(command)}"
+  4449	        name = f"{base}.txt"
+  4450	        counter = 1
+  4451	        while True:
+  4452	            try:
+  4453	                write_text_atomic(name, body, dir_fd=output, noclobber=True, sync_file=self.executive.journal is not None)
+  4454	                return self.root / self.output / name
+  4455	            except FileExistsError:
+  4456	                name = f"{base}_{counter}.txt"
+  4457	                counter += 1
+  4458	
+  4459	    def receipt(self, verdict: Verdict) -> str:
+  4460	        """The block every result ends with: where in the one world this result was decided.
+  4461	
+  4462	        `seq` is this window's own count of results, so a window learns how many results it has
+  4463	        been given and not how many the world has; the world and the tick are shared facts.
+  4464	        """
+  4465	        offset_us = verdict.effect.offset_us if verdict.effect is not None else 0
+  4466	        return (
+  4467	            f"receipt: world={self.executive.world_id} seq={verdict.local} window={self.slug} "
+  4468	            f"tick={verdict.tick} offset_us={offset_us} state={verdict.state}\n"
+  4469	        )
+  4470	
+  4471	    # -- publication ------------------------------------------------------------------------
+  4472	    def publish(self, verdicts: list[Verdict]) -> list[Path]:
+  4473	        """Results, one frame, `state.json`, `HELP.md`, `README.md` and `pending.json`. Every cycle.
+  4474	
+  4475	        `state.json` is rewritten "whether or not anything was submitted", which is what makes the
+  4476	        probe's `check_state_is_a_mirror` meaningful. The generated files are rewritten from the
+  4477	        cached text for the same reason: a hand-edit lasts until the next cycle. The window-local
+  4478	        receipts of its results are appended to `landed` — and named in the record's `results_written`
+  4479	        note (ADR 0002 J rule 3) — only once their files and `output/` are durable; a publication that
+  4480	        fails before that leaves them owed (review F2), and the window's next publication finds what did
+  4481	        reach the disk by its receipt line.
+  4482	        """
+  4483	        root = self._handles().root
+  4484	        written = []
+  4485	        # What the window is owed from earlier cycles first, so a failure here leaves this cycle's
+  4486	        # results owed too rather than written ahead of older ones (addendum B4).
+  4487	        for outcome in self.executive.publish_obligations(self):
+  4488	            if "file" in outcome:
+  4489	                written.append(self.root / self.output / outcome["file"])
+  4490	        made: list[int] = []
+  4491	        for verdict in sorted(verdicts, key=lambda v: v.receipt):
+  4492	            written.append(self.write_result(verdict.command, verdict.body + self.receipt(verdict)))
+  4493	            made.append(verdict.local)
+  4494	        if made and self.executive.journal is not None:
+  4495	            # Each result file was `fsync`ed as it was made; the directory makes their names durable, and
+  4496	            # only then are they landed — noted, and not owed (child 4's review finding 6; review F2 and
+  4497	            # ruling R2: a directory `fsync` that fails leaves every one of them owed and none noted).
+  4498	            # With no record nothing relies on it, and nothing is `fsync`ed.
+  4499	            os.fsync(self._handles().output)
+  4500	            self.landed.extend(made)
+  4501	            self.executive._note_window_results(self)
+  4502	        else:
+  4503	            self.landed.extend(made)
+  4504	        # The frame first, so the mirror's ring accounting describes the directory as it is: the old
+  4505	        # console wrote the mirror before the frame and its `newest_seq` ran one behind the ring.
+    65	SLUGS=""
+    66	for slug in $(printf '%s' "${VEHICLE_SLUGS:-}" | tr ',' ' '); do
+    67	    # The roster's own alphabet (scripts/roster.py): a name that is not one path component never
+    68	    # reaches the vehicle.
+    69	    case "$slug" in
+    70	        [a-z]*) ;;
+    71	        *) echo "VEHICLE_SLUGS names '$slug', which is not a roster slug" >&2; exit 2 ;;
+    72	    esac
+    73	    case "$slug" in
+    74	        *[!a-z0-9_]*) echo "VEHICLE_SLUGS names '$slug', which is not a roster slug" >&2; exit 2 ;;
+    75	    esac
+    76	    if [ "${#slug}" -gt 32 ]; then
+    77	        echo "VEHICLE_SLUGS names '$slug', which is not a roster slug" >&2
+    78	        exit 2
+    79	    fi
+    80	    case " $SLUGS " in
+    81	        *" $slug "*) continue ;;
+    82	    esac
+    83	    SLUGS="$SLUGS $slug"
+    84	done
+    85	[ -n "$SLUGS" ] || SLUGS=" vehicle"
+    86	
+    87	set -- \
+    88	    --dir "$VEHICLE_DIR" \
+    89	    --diode-dir "$DIODE_DIR" \
+    90	    --state-dir "$VEHICLE_STATE_DIR" \
+    91	    --scenario "$VEHICLE_SCENARIO" \
+    92	    --seed "$VEHICLE_SEED" \
+    93	    --ring-slots "$VEHICLE_RING_SLOTS" \
+    94	    --poll "$DIODE_POLL_SECONDS" \
+    95	    --cycles 0
+    96	for slug in $SLUGS; do
+    97	    # The window directory, created here rather than left to the console, so a missing mount point
+    98	    # fails for a reason that names it.
+    99	    mkdir -p "$DIODE_DIR/$slug"
+   100	    set -- "$@" --slug "$slug"
+   101	done
+   102	
+   103	echo "[vehicle] serving$SLUGS into $DIODE_DIR, state in $VEHICLE_STATE_DIR" >&2
+   104	exec python3 "$VEHICLE_DIR/tools/console.py" "$@"
+    45	```
+    46	
+    47	- `commands` is a list of lines. Each is a verb, a space, and its arguments —
+    48	  how the far side splits it is its business, not yours.
+    49	- `variables` is a flat map of gate settings. The far side publishes which
+    50	  gates exist and what they open. It persists: the far side does not clear it.
+    51	- **Intake is destructive and atomic.** Each pass, the far side reads the file
+    52	  and rewrites it with `commands` emptied and `variables` kept. A command
+    53	  therefore runs *at most once*. You can tell a submitted batch from a pending
+    54	  one by watching `commands` return to empty.
+    55	- **One bad element refuses the whole batch.** If any element of `commands` is
+    56	  not a string, none of it runs, and one result file records that. Partial
+    57	  execution of a malformed batch would be worse than none, and the far side
+    58	  will not do it.
+    59	- A batch you write while a pass is in progress is not consumed by that pass.
+    60	  It runs on the next one.
+    61	
+    62	Write the file whole, not in pieces: a reader that catches it half-written sees
+    63	a broken batch and refuses it. This is the one place where how you write
+    64	matters as much as what you write.
+    65	
+    66	### Reading
+    67	
+    68	Every command produces exactly one file in `output/`:
+    69	
+    70	```
+    71	20260912T021345_123456Z_<name>_diode_set_mode_standby.txt
+    72	└──────── timestamp ────────┘ └agent┘ └──── the command ────┘
+    73	```
+    74	
+    75	The name carries the submission time, who submitted it, and the command. A
+    76	refusal is a file too: an unavailable verb, a rate-limited call and a
+    77	successful command all produce one. **Failure and success are the same shape**,
+    78	deliberately, so that the only way to know what happened is to read it.
+    79	
+    80	Nothing waits for you. Submit, and read later.
+    81	
+    82	### What the far side publishes
+    83	
+    84	Rewritten every pass, whether or not you asked for anything, and never read
+    85	back as input:
+
+**Inspecting truncated code**
+codex
+All three hashes match. The diff addresses each of the five findings; I’m checking that the revised refusal and publication wording preserves their meaning and matches the pinned code.
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+/usr/bin/bash -lc "nl -ba .scratch/tier1-brief-draft/review-v4-astra.md | sed -n '27,55p'
+git -C docs/deep_research/vehicle show f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f:tools/console.py | nl -ba | sed -n '2480,2518p;3070,3115p;3220,3285p;3530,3555p;4210,4235p;4310,4392p'" in /home/john/space_chassis
+ succeeded in 0ms:
+    27	4. **Minor — G abbreviates away an essential discipline.** Draft:144–145 credits one writer plus rename alone with avoiding loss, although B correctly also requires waiting. Replace with:
+    28	
+    29	   > Avoiding this loss requires one writer, publication by rename, and waiting for the far side’s cleared copy before replacing a claimable submission. The world does not enforce that discipline.
+    30	
+    31	5. **Minor — two reconciliation details need precision.** Draft:117’s `2491–2515` omits the actual receipt append; replace with `2491–2516`. Draft:108’s “no verdict follows” should be:
+    32	
+    33	   > No verdict from that newly claimed batch follows; an earlier deferral’s settlement can still be published.
+    34	
+    35	   Evidence: V:3096–3105, 3536.
+    36	
+    37	Check 1 — **PARTIAL:** the main v2 defects are addressed; the census qualification and result wording need the corrections above.
+    38	
+    39	Check 2 — **SUPPORTED WITH CHANGES:** both answer-publication paths append receipt `seq`; acceptance and settlement have distinct receipts; duplicate publication and abandonment exist. C’s retained paragraph still overpromises files.
+    40	
+    41	Check 3 — **PASS, within stated assumptions:** claim fsync → tick-row fsync → results (V:4369, 3124–3136). Adoption script:90 supplies `--state-dir`; current script:109–117 does not. No duplicate execution or answer preceding its durable decision was found in the inspected paths.
+    42	
+    43	Check 4 — **PASS:** B specifies one writer, rename, waiting for the far side’s copy, ambiguous claim identity, and no next-read deadline.
+    44	
+    45	Check 5 — **PASS WITH MINOR CORRECTIONS:** cited symbols and all three tests exist; fix finding 5.
+    46	
+    47	Check 6 — **PASS:** V-1–V-3 identify real inconsistencies; F reserves vehicle ownership and adds no adoption prerequisite.
+    48	
+    49	Check 7 — **PASS:** G explicitly disclaims Option B implementation, testing, adoption and qualification.
+    50	
+    51	No edits, tests or collection, builds, containers, git mutations, or `.env` reads occurred.
+    52	
+  2480	    return unwritten
+  2481	
+  2482	
+  2483	def receipt_line(entry: dict[str, Any]) -> str:
+  2484	    """The receipt block a result for a recorded verdict ends with — `Window.receipt`'s line, from the record."""
+  2485	    return (
+  2486	        f"receipt: world={entry['world_id']} seq={entry['local']} window={entry['window']} "
+  2487	        f"tick={entry['tick']} offset_us={entry['offset_us']} state={entry['state']}\n"
+  2488	    )
+  2489	
+  2490	
+  2491	def republication(entry: dict[str, Any]) -> tuple[str, str]:
+  2492	    """`(command, text)` of the one result an owed verdict gets: the recorded body and its receipt block.
+  2493	
+  2494	    A body recorded whole is the result the window would have had. One the record cut (past
+  2495	    `RECORD_TEXT_BYTES`) says so, with the whole's length and SHA-256; one recorded fingerprint-only
+  2496	    (past the window's budget that cycle) cannot be reproduced and says that, with both fingerprints
+  2497	    — still one result for one command, as the contract requires.
+  2498	    """
+  2499	    if entry.get("fingerprint_only") is True:
+  2500	        command = str(entry["verb"])
+  2501	        body = (
+  2502	            f"{entry['state']}: the vehicle decided this command (window receipt {entry['local']}) at tick {entry['tick']} and "
+  2503	            "restarted before its result was written; that cycle this window's results passed the record's budget, so only the "
+  2504	            f"fingerprints were kept: the command was {entry['command_bytes']} bytes, SHA-256 {entry['command_sha256']}, and "
+  2505	            f"its result {entry['body_bytes']} bytes, SHA-256 {entry['body_sha256']}. The result's text cannot be reproduced; "
+  2506	            "this file is its one result.\n"
+  2507	        )
+  2508	    else:
+  2509	        command, body = str(entry["command"]), str(entry["body"])
+  2510	        if "body_sha256" in entry:
+  2511	            body += (
+  2512	                ("" if body.endswith("\n") else "\n")
+  2513	                + f"[the vehicle restarted before this result was written; it was recorded to {RECORD_TEXT_BYTES} bytes and is cut "
+  2514	                f"here: the whole was {entry['body_bytes']} bytes, SHA-256 {entry['body_sha256']}]\n"
+  2515	            )
+  2516	    return command, body + receipt_line(entry)
+  2517	
+  2518	
+  3070	            # relative to those handles.** A check-then-act — `is_symlink()` then a write by path —
+  3071	            # leaves the gap between the two to an agent that swaps `output/` for a link inside it;
+  3072	            # a handle has no gap: a link swapped in before the open is `ELOOP`, one swapped in
+  3073	            # after it is not where the handle points.
+  3074	            for window in order:
+  3075	                try:
+  3076	                    window.open_handles()
+  3077	                except WindowAbsent as exc:
+  3078	                    # A dark tick, then back: the directory is made again (handle-relative, following
+  3079	                    # no link) and served next cycle with the identity the executive kept. Repair, not
+  3080	                    # preparation: `prepare` wrote `pending.json` at tick 0 (addendum B7).
+  3081	                    self._record_failure(window, "check", exc, tick)
+  3082	                    try:
+  3083	                        window.repair()
+  3084	                    except Exception as again:  # noqa: BLE001 - recorded, like the absence
+  3085	                        self._record_failure(window, "prepare", again, tick)
+  3086	                    finally:
+  3087	                        window.close_handles()
+  3088	                    continue
+  3089	                except Exception as exc:  # noqa: BLE001 - the window's directory is the window's
+  3090	                    self._record_failure(window, "check", exc, tick)
+  3091	                    continue
+  3092	                healthy.append(window)
+  3093	                # The verdicts are made into the cycle's own list, so those made before an internal
+  3094	                # fault are kept — recorded and published — rather than dropped with a local list
+  3095	                # (child 4's review finding 7).
+  3096	                verdicts[window.slug] = []
+  3097	                try:
+  3098	                    self._settle(window, verdicts[window.slug])
+  3099	                except Exception as exc:  # noqa: BLE001 - the window's, not the tick's
+  3100	                    self._record_failure(window, "settle", exc, tick)
+  3101	            for window in healthy:
+  3102	                try:
+  3103	                    self._ingest(window, verdicts[window.slug])
+  3104	                except Exception as exc:  # noqa: BLE001 - the window's, not the tick's
+  3105	                    self._record_failure(window, "claim", exc, tick)
+  3106	            for window in healthy:
+  3107	                for verdict in verdicts.get(window.slug, []):
+  3108	                    if verdict.effect is not None:
+  3109	                        effects.append(verdict.effect)
+  3110	                        applied.append(verdict)
+  3111	
+  3112	            before = self.truth
+  3113	            # The link is computed on the stepped truth *before* the tick is committed: a state the
+  3114	            # compare-point refuses (plant.UncomparableState) leaves the executive at its last
+  3115	            # consistent tick — truth, tick and lineage together — rather than half-advanced.
+  3220	
+  3221	    def _owe(self, window: Window, verdicts: list[Verdict]) -> None:
+  3222	        """Owe a window the results of verdicts whose publication failed (addendum B4), as the record holds them."""
+  3223	        for entry in receipt_entries(sorted(verdicts, key=lambda v: v.receipt)):
+  3224	            verdict = next(v for v in verdicts if v.local == entry["local"])
+  3225	            self.owe({**entry, "tick": verdict.tick, "world_id": self.world_id, "boot_id": self.boot_id})
+  3226	
+  3227	    def owe(self, entry: dict[str, Any]) -> None:
+  3228	        """Add one obligation unless the window is already owed that receipt; past the bound, give up the oldest, recorded."""
+  3229	        key = (entry["window"], entry["local"])
+  3230	        if any((held["window"], held["local"]) == key for held in self.obligations):
+  3231	            return
+  3232	        self.obligations.append(entry)
+  3233	        mine = [held for held in self.obligations if held["window"] == entry["window"]]
+  3234	        if len(mine) > OBLIGATIONS_PER_WINDOW:
+  3235	            oldest = mine[0]
+  3236	            self.obligations.remove(oldest)
+  3237	            self._record_failure_named(
+  3238	                oldest["window"],
+  3239	                "obligation",
+  3240	                RuntimeError(
+  3241	                    f"window receipt {oldest['local']} (tick {oldest['tick']}) is given up unwritten: the window is owed more "
+  3242	                    f"than {OBLIGATIONS_PER_WINDOW} results it could not be written"
+  3243	                ),
+  3244	                self.tick,
+  3245	            )
+  3246	
+  3247	    def publish_obligations(self, window: Window) -> list[dict[str, Any]]:
+  3248	        """Write what a window is owed, once each: skip a result already on disk (`results_on_disk`), write the rest.
+  3249	
+  3250	        **An obligation leaves the list only behind the durability barrier** (review F2, ruling R2): with a
+  3251	        record, every result it settles — written now (`write_result` `fsync`s the file) or found already
+  3252	        on disk (whose file is `fsync`ed here) — is settled only once the `output/` directory has been
+  3253	        `fsync`ed after them all. A failure anywhere before that leaves every one of them owed, and the
+  3254	        next attempt finds what did reach the disk by its receipt line. Without a record nothing is made
+  3255	        durable and nothing waits. Returns what happened to each: `written` (with the file name) or
+  3256	        `on disk`.
+  3257	        """
+  3258	        mine = [entry for entry in self.obligations if entry["window"] == window.slug]
+  3259	        if not mine:
+  3260	            return []
+  3261	        output = window._handles().output
+  3262	        durable = self.journal is not None
+  3263	        scan = results_on_disk(output, window.slug, mine)
+  3264	        report: list[dict[str, Any]] = []
+  3265	        for entry in mine:
+  3266	            outcome: dict[str, Any] = {"window": window.slug, "local": entry["local"], "tick": entry["tick"]}
+  3267	            if entry["local"] in scan.found:
+  3268	                outcome["result"] = "on disk"
+  3269	                if durable:
+  3270	                    _fsync_file(output, scan.names[entry["local"]])
+  3271	            else:
+  3272	                command, text = republication(entry)
+  3273	                outcome["result"], outcome["file"] = "written", window.write_result(command, text).name
+  3274	            report.append(outcome)
+  3275	        if durable:
+  3276	            os.fsync(output)
+  3277	        for entry in mine:
+  3278	            self.obligations.remove(entry)
+  3279	        if scan.exhausted:
+  3280	            report.append({"window": window.slug, "scan": f"stopped after {scan.examined} entries and {scan.read} bytes; anything not found was written"})
+  3281	        return report
+  3282	
+  3283	    def _record_failure(self, window: Window, stage: str, exc: BaseException, tick: int) -> None:
+  3284	        """Isolation: the failure is counted and recorded, on stderr and here, and the tick goes on without the window."""
+  3285	        self._record_failure_named(window.slug, stage, exc, tick)
+  3530	        self.receipt += 1
+  3531	        window.receipts += 1
+  3532	        return Verdict(command, state, body, self.receipt, window.receipts, self.tick, window.slug, **extra)
+  3533	
+  3534	    def _ingest(self, window: Window, verdicts: list[Verdict]) -> list[Verdict]:
+  3535	        """Claim one window's console and validate what it held, in order, into `verdicts` (the cycle's list)."""
+  3536	        claimed = window.claim()
+  3537	        if isinstance(claimed, str):
+  3538	            verdicts.append(
+  3539	                self._verdict(
+  3540	                    window,
+  3541	                    "console_unreadable",
+  3542	                    "refused",
+  3543	                    f"refused: {claimed}. The console has been claimed — commands emptied, "
+  3544	                    "variables preserved — so this is one refusal and not one per cycle; rewrite "
+  3545	                    "the whole file to submit again.\n",
+  3546	                )
+  3547	            )
+  3548	            return verdicts
+  3549	        if claimed and not all(isinstance(item, str) for item in claimed):
+  3550	            # "One malformed element refuses the whole batch. If any element of `commands` is not a
+  3551	            # string, none of it runs, and exactly one result file records that. Partial execution
+  3552	            # of a malformed batch is worse than none."
+  3553	            kinds = ", ".join(sorted({type(item).__name__ for item in claimed}))
+  3554	            verdicts.append(
+  3555	                self._verdict(
+  4210	                raise RuntimeError(
+  4211	                    f"{where}: {code} ({exc.strerror}); a window is a directory of regular files and "
+  4212	                    "directories, and the vehicle follows no link an agent plants"
+  4213	                ) from exc
+  4214	
+  4215	        root = opened(self.slug, self.executive.diode_fd)
+  4216	        output = telemetry = None
+  4217	        try:
+  4218	            output = opened(self.output, root)
+  4219	            telemetry = opened(self.telemetry, root)
+  4220	            for name in self.FILES:
+  4221	                try:
+  4222	                    info = os.lstat(name, dir_fd=root)
+  4223	                except FileNotFoundError:
+  4224	                    continue
+  4225	                if stat.S_ISLNK(info.st_mode):
+  4226	                    raise RuntimeError(f"{self.slug}/{name} is a symlink, and the vehicle follows none")
+  4227	                if not stat.S_ISREG(info.st_mode):
+  4228	                    raise RuntimeError(f"{self.slug}/{name} is not a regular file")
+  4229	        except BaseException:
+  4230	            for fd in (root, output, telemetry):
+  4231	                if fd is not None:
+  4232	                    with contextlib.suppress(OSError):
+  4233	                        os.close(fd)
+  4234	            raise
+  4235	        self.handles = Handles(root, output, telemetry)
+  4310	        The contract is unambiguous about the order: "**Intake is destructive and atomic.** Each
+  4311	        cycle the vehicle reads the file, then rewrites it with `commands` emptied and `variables`
+  4312	        preserved... **Clear before you act.**" So the rewrite happens here and the commands are
+  4313	        returned for the executive to validate afterwards. A console that is not one — absent, a
+  4314	        link, not a regular file, oversized, invalid, not an object — is *also* claimed, with the
+  4315	        previous variables, and the reason is returned instead of a batch for the one refusal result
+  4316	        (ADR 0001).
+  4317	
+  4318	        **Preserved verbatim; honoured separately.** `variables` is "persistent — the vehicle never
+  4319	        clears it": the object the agent wrote becomes the preserved map as written (replace, not
+  4320	        merge; a payload without a `variables` object keeps the previous map), and it is bounded by
+  4321	        construction because it came from a file of at most `MAX_READ_BYTES`. What the vehicle acts
+  4322	        on is `honoured()`'s business, computed from the preserved map once per cycle, after the
+  4323	        claim, and never raising on any JSON value.
+  4324	
+  4325	        **A console with nothing to claim is not rewritten (#39).** The rewrite is a read followed by
+  4326	        an `os.replace`, and no rename can check that the file it replaces is the file it read: a batch
+  4327	        the agent put in place between the two was renamed over, unread — no result, no record. The
+  4328	        claim ran on every cycle, the ~20 a second with nothing in them included, and every erased
+  4329	        batch the chassis's contract probe caught was a quiet cycle's. So a console that is an object
+  4330	        whose `commands` is exactly `[]` and that already shows the map — its own `variables` object,
+  4331	        which is adopted, or no `variables` key while the window has no map to show — is left as it
+  4332	        is: nothing written, nothing erased. A console that is not one, that has no `commands` key,
+  4333	        or that leaves out `variables` while the window knows a map, is rewritten as before, so the
+  4334	        file always shows the preserved map. **Residual:** every rewrite that remains — of a console
+  4335	        that held a batch, of one that is not a console, of a bare one while the window knows a map —
+  4336	        still erases a file the agent put in place between its read and its rewrite; the contract
+  4337	        says so (John, 2026-10-11, tier 1), and the take that closes it is the next package.
+  4338	        """
+  4339	        root = self._handles().root
+  4340	        payload, problem = read_ingress(self.console, dir_fd=root)
+  4341	        if payload is None:
+  4342	            write_json_atomic(self.console, self.claimed_console(), dir_fd=root, durable=self.executive.journal is not None)
+  4343	            return str(problem)
+  4344	        commands = payload.get("commands")
+  4345	        variables = payload.get("variables")
+  4346	        # Decided before the map is adopted, and from `isinstance` alone, so no JSON value can make it
+  4347	        # raise: an exception here would leave the window unclaimed every cycle.
+  4348	        quiet = (
+  4349	            isinstance(commands, list)
+  4350	            and not commands
+  4351	            and (isinstance(variables, dict) or ("variables" not in payload and not self.variables_known))
+  4352	        )
+  4353	        # Replace, not merge: the object the agent wrote *is* the preserved map. A file with no
+  4354	        # `variables` object keeps the previous one, which is what "never clears it" means.
+  4355	        if isinstance(variables, dict):
+  4356	            self.variables = variables
+  4357	            self.variables_known = True
+  4358	            self._honoured = None
+  4359	        if quiet:
+  4360	            return []
+  4361	        # A claim that takes a batch is made durable — the file and the directory — before the record
+  4362	        # says it was answered: a crash must not bring the commands back to run twice (child 4's review
+  4363	        # finding 6). An empty claim is a quiet cycle's and costs no `fsync`; without a record nothing
+  4364	        # relies on the claim being durable, and nothing is `fsync`ed.
+  4365	        write_json_atomic(
+  4366	            self.console,
+  4367	            self.claimed_console(),
+  4368	            dir_fd=root,
+  4369	            durable=commands not in (None, []) and self.executive.journal is not None,
+  4370	        )
+  4371	        if commands is None:
+  4372	            return []
+  4373	        if not isinstance(commands, list):
+  4374	            return (
+  4375	                f"console.json's `commands` is a JSON {type(commands).__name__}, not a list, so "
+  4376	                "there is no batch here to run"
+  4377	            )
+  4378	        return commands
+  4379	
+  4380	    def claimed_console(self) -> dict[str, Any]:
+  4381	        """What the claim rewrites the console to: commands emptied, the preserved `variables` — when known.
+  4382	
+  4383	        A resumed window whose console could not be read has no map to preserve (ADR 0002 G keeps it
+  4384	        out of the checkpoint); its claim leaves the `variables` key out rather than writing `{}`,
+  4385	        which would read as "the vehicle cleared it", and the window honours the defaults until the
+  4386	        agent writes a console that carries one. The mid-run claim is this same rule with a known map.
+  4387	        """
+  4388	        if not self.variables_known:
+  4389	            return {"commands": []}
+  4390	        return {"commands": [], "variables": self.variables}
+  4391	
+  4392	    def honoured(self) -> tuple[dict[str, bool], int]:
+
+**Finalizing citation references**
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+/usr/bin/bash -lc "git -C docs/deep_research/vehicle show f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f:tools/console.py | nl -ba | sed -n '431,470p;2840,2862p;3120,3143p;3584,3626p;4017,4044p'
+git -C docs/deep_research/vehicle show f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f:tools/console.py | rg -n 'OBLIGATIONS_PER_WINDOW ='" in /home/john/space_chassis
+ succeeded in 0ms:
+   431	    `.state.json.<pid>.tmp` would otherwise have been written through), and `os.replace` with the
+   432	    same handle renames *over* a link rather than through it, so a link planted at the target becomes
+   433	    a regular file and the thing it pointed at is untouched. With `noclobber`, the final name is made
+   434	    with `os.link`, which fails `EEXIST` rather than replacing anything — a result file is never
+   435	    overwritten, and the caller picks another name. With `sync_file` the temporary is `fsync`ed before
+   436	    it takes its name, and with `sync_dir` the directory is `fsync`ed after, so the name is durable too
+   437	    (ADR 0002 J, child 4's review finding 6: a claim and a result the record relies on are disk facts).
+   438	    """
+   439	    name = os.fspath(path)
+   440	    opened: int | None = None
+   441	    if dir_fd is None:
+   442	        target = Path(name)
+   443	        opened = dir_fd = os.open(target.parent if str(target.parent) else ".", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+   444	        name = target.name
+   445	    try:
+   446	        temporary = f".{name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+   447	        fd = os.open(
+   448	            temporary,
+   449	            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+   450	            0o644,
+   451	            dir_fd=dir_fd,
+   452	        )
+   453	        try:
+   454	            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+   455	                handle.write(text)
+   456	                if sync_file:
+   457	                    handle.flush()
+   458	                    os.fsync(handle.fileno())
+   459	            if noclobber:
+   460	                os.link(temporary, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+   461	                os.unlink(temporary, dir_fd=dir_fd)
+   462	            else:
+   463	                os.replace(temporary, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+   464	            if sync_dir:
+   465	                os.fsync(dir_fd)
+   466	        except BaseException:
+   467	            with contextlib.suppress(OSError):
+   468	                os.unlink(temporary, dir_fd=dir_fd)
+   469	            raise
+   470	    finally:
+  2840	        # caller that passes a path alone has it checked and opened here, once, by the same helper
+  2841	        # (third review) — nothing resolves it again.
+  2842	        self.state_dir: Path | None = None
+  2843	        self.state_fd: int | None = None
+  2844	        # The journal's directory, opened once and held: every row is appended relative to it.
+  2845	        self.journal_dir_fd: int | None = None
+  2846	        if state_dir is not None:
+  2847	            if state_fd is None:
+  2848	                opened, canonical, problem = open_private_dir(state_dir, self.diode_dir)
+  2849	                if problem is not None or opened is None or canonical is None:
+  2850	                    raise ValueError(problem)
+  2851	                self.state_fd, self.state_dir = opened, canonical
+  2852	            else:
+  2853	                self.state_fd, self.state_dir = os.dup(state_fd), Path(state_dir)
+  2854	            if journal is None:
+  2855	                journal = journal_segment_path(self.state_dir, self.boot_id)
+  2856	                self.journal_dir_fd = os.dup(self.state_fd)
+  2857	        self.phase = phase
+  2858	        # Live interlock state the *operator* has asserted, and the default is nothing tripped. A
+  2859	        # declared interlock is a guard evaluated when a command arrives, not a standing condition;
+  2860	        # a tripped one refuses by name before the unevaluated rule gets to speak.
+  2861	        self.tripped = set(tripped_interlocks or ())
+  2862	        self.scenario = scenario
+  3120	                verdict.body += self._report_effect(verdict, before, self.truth)
+  3121	            self.tick += 1
+  3122	            self.lineage_head = link
+  3123	            self.lineage.append(self.lineage_head)
+  3124	            # **The record before anything of the cycle is published** (ADR 0002 J rules 1–3): the
+  3125	            # tick row, with every window's published-tick mark, appended and `fsync`ed. A record that
+  3126	            # cannot be made durable raises `RecordUnwritable` here, and nothing below runs.
+  3127	            self._record_cycle(tick, digest, effects, verdicts, healthy, before_windows)
+  3128	            self._write_root_record(tick)
+  3129	
+  3130	            written: list[Path] = []
+  3131	            for window in healthy:
+  3132	                # Rule 3's second half is inside `publish`: each window's results, made durable, then its
+  3133	                # note, then its frame and mirror (child 4's review finding 6).
+  3134	                window.landed = []
+  3135	                try:
+  3136	                    written.extend(window.publish(verdicts.get(window.slug, [])))
+  3137	                except RecordUnwritable:
+  3138	                    raise
+  3139	                except Exception as exc:  # noqa: BLE001 - the window's, not the tick's
+  3140	                    self._record_failure(window, "publish", exc, tick)
+  3141	                    self._owe(window, [v for v in verdicts.get(window.slug, []) if v.local not in window.landed])
+  3142	                    # The record marked this frame number as written (J (ii)); a publication that failed
+  3143	                    # before the frame consumes it anyway, as a replay through the mark does, so a live
+  3584	    def _settle(self, window: Window, verdicts: list[Verdict]) -> list[Verdict]:
+  3585	        """Run every deferral of this window that has come due, and give each its own result.
+  3586	
+  3587	        A due command is **revalidated** through the whole chain — phase, gate, interlocks,
+  3588	        arguments, dwell, conflict — at the moment of effect, which is §9 check 9 and the reason the
+  3589	        acceptance-time answer is not reused; its conflict domain is claimed *here*, at settlement,
+  3590	        and not at acceptance. It **expires** if it has waited longer than its own
+  3591	        `maximum_queue_age_s`, in simulated seconds: `(tick - accepted_tick) * dt`, so the poll
+  3592	        interval no longer decides whether a command's intent has gone stale. And it **reports in a
+  3593	        file of its own**, because a command that takes longer than one cycle reports when it is done.
+  3594	        Each due entry leaves the queue as it is taken, and its verdict goes into `verdicts` (the
+  3595	        cycle's list), so an internal fault part-way leaves neither a settled entry queued nor a
+  3596	        settlement unrecorded (child 4's review finding 7). The entry is the parsed command (finding 4).
+  3597	        """
+  3598	        for entry in list(window.deferred):
+  3599	            if self.tick < int(entry.get("due_tick", 0)):
+  3600	                continue
+  3601	            window.deferred = [queued for queued in window.deferred if queued is not entry]
+  3602	            verb = str(entry.get("verb"))
+  3603	            command = str(entry.get("command", verb))
+  3604	            accepted_tick = int(entry.get("accepted_tick", self.tick))
+  3605	            age = (self.tick - accepted_tick) * self.dt
+  3606	            limit = entry.get("maximum_queue_age_s")
+  3607	            if isinstance(limit, (int, float)) and age > float(limit):
+  3608	                verdicts.append(
+  3609	                    self._verdict(
+  3610	                        window,
+  3611	                        command,
+  3612	                        "refused",
+  3613	                        f"refused: EXPIRED. {verb!r} was accepted at tick {accepted_tick} and has "
+  3614	                        f"waited {age:.1f} s of simulated time, past its own maximum_queue_age_s of "
+  3615	                        f"{limit:g}. V-02 makes `EXPIRED` a refusal reached from REVALIDATING, so "
+  3616	                        "the command is re-checked when it is due and it is *this* check that fires "
+  3617	                        "first — a command whose intent has gone stale is declined rather than run "
+  3618	                        "late.\n",
+  3619	                        verb=verb,
+  3620	                        settled=True,
+  3621	                    )
+  3622	                )
+  3623	                continue
+  3624	            verdicts.append(self.validate(window, command, settling=entry))
+  3625	        return verdicts
+  3626	
+  4017	            # The parse, not the line: a deferral is queued, checkpointed and recorded as its verb, its
+  4018	            # schema-checked arguments and the command they spell (child 4's review finding 4).
+  4019	            window.deferred.append(
+  4020	                {
+  4021	                    "verb": verb,
+  4022	                    "command": canonical_command(verb, arguments),
+  4023	                    "arguments": dict(arguments),
+  4024	                    "accepted_tick": self.tick,
+  4025	                    "due_tick": due,
+  4026	                    "maximum_queue_age_s": spec.get("maximum_queue_age_s"),
+  4027	                    "receipt": verdict.local,
+  4028	                }
+  4029	            )
+  4030	            verdict.state = "deferred"
+  4031	            verdict.body = (
+  4032	                f"accepted: {verb!r} deferrable. Recorded at tick {self.tick}, due at tick {due}; "
+  4033	                "it will be re-checked against the phase, its gate, its interlocks, its dwell and "
+  4034	                "its conflict domain when it is due rather than now (contract §9 check 9), and it "
+  4035	                f"expires if it is still waiting after {spec.get('maximum_queue_age_s')} s of "
+  4036	                "simulated time (V-02's `EXPIRED`). The result arrives as its own file when it "
+  4037	                "settles, because a command that takes longer than one cycle reports when it is "
+  4038	                "done.\n"
+  4039	            )
+  4040	            return verdict
+  4041	
+  4042	        for domain in domains:
+  4043	            self.claimed.setdefault(domain, verdict)
+  4044	        if settling is not None:
+346:OBLIGATIONS_PER_WINDOW = 256
+
+codex
+APPROVE — `74b44459de4e061908cb8c66b10e45d1226995a3cd96be7a31db35e1e1faba5b` (SHA-256 verified).
+
+References below use **v5** = [brief-wording-tier1-v5.md](/home/john/space_chassis/.scratch/tier1-brief-draft/brief-wording-tier1-v5.md). Both supplied predecessor/review hashes also match; v4→v5 diff inspected.
+
+1. **RESOLVED — erased batch versus partial refusal** (v5:111). D adopts the proposed distinction verbatim: the intervening batch can disappear unanswered; partially read content can receive a refusal.
+2. **RESOLVED — publication guarantees and retained paragraph** (v5:87–90, 99–103). Delivery wording matches the proposal: publication is conditional, retries can duplicate `seq`, and abandonment follows exceeding 256 owed answers. The replacement paragraph differs from the proposed wording by retaining refusal examples and “Failure and success are the same shape.” This preserves the meaning: it removes “all produce one,” uses publication time, and does not override C’s delivery limits.
+3. **RESOLVED — intake qualification and variables census** (v5:37–41, 122). “Once the far side’s checks let it take the file in” paraphrases “Once the window’s checks permit intake”; the meaning is preserved. “Anything else is claimed” remains subject to A’s replacement-success condition. Present non-map variables and missing variables while a map is known are correctly distinguished.
+4. **RESOLVED — required writer discipline** (v5:159–161). The proposed wording is adopted, including waiting for the cleared copy before replacing a claimable submission.
+5. **RESOLVED — reconciliation precision** (v5:123, 132). The receipt citation now includes line 2516, and the claim-failure statement correctly allows publication of an earlier deferral’s settlement.
+
+**Concrete defects:** None introduced or left unresolved by this delta; no Critical, Important or Minor findings, and no replacement text required.
+
+**Coherence:** PASS — A, B, C, the replacement for PROTOCOL.md:75–78, and D agree within their stated assumptions. Pinned `tools/console.py@f75420c` supports the distinctions and publication limits; adoption [serve_vehicle.sh:90](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/containers/serve_vehicle.sh:90) supplies `--state-dir`, supporting the journal-dependent durability wording.
+
+**F:** PASS — v5:139–152 retains V-1..V-3 as outstanding vehicle-owned coordination requirements, neither resolved nor transferred.
+
+**Option B:** PASS — v5:171 explicitly disclaims implementation, testing, adoption and qualification; nothing elsewhere reverses that disclaimer.
+
+Read-only source review only: no edits, tests or collection, builds, containers, git mutations, or `.env` reads.
+tokens used
+43,906
+APPROVE — `74b44459de4e061908cb8c66b10e45d1226995a3cd96be7a31db35e1e1faba5b` (SHA-256 verified).
+
+References below use **v5** = [brief-wording-tier1-v5.md](/home/john/space_chassis/.scratch/tier1-brief-draft/brief-wording-tier1-v5.md). Both supplied predecessor/review hashes also match; v4→v5 diff inspected.
+
+1. **RESOLVED — erased batch versus partial refusal** (v5:111). D adopts the proposed distinction verbatim: the intervening batch can disappear unanswered; partially read content can receive a refusal.
+2. **RESOLVED — publication guarantees and retained paragraph** (v5:87–90, 99–103). Delivery wording matches the proposal: publication is conditional, retries can duplicate `seq`, and abandonment follows exceeding 256 owed answers. The replacement paragraph differs from the proposed wording by retaining refusal examples and “Failure and success are the same shape.” This preserves the meaning: it removes “all produce one,” uses publication time, and does not override C’s delivery limits.
+3. **RESOLVED — intake qualification and variables census** (v5:37–41, 122). “Once the far side’s checks let it take the file in” paraphrases “Once the window’s checks permit intake”; the meaning is preserved. “Anything else is claimed” remains subject to A’s replacement-success condition. Present non-map variables and missing variables while a map is known are correctly distinguished.
+4. **RESOLVED — required writer discipline** (v5:159–161). The proposed wording is adopted, including waiting for the cleared copy before replacing a claimable submission.
+5. **RESOLVED — reconciliation precision** (v5:123, 132). The receipt citation now includes line 2516, and the claim-failure statement correctly allows publication of an earlier deferral’s settlement.
+
+**Concrete defects:** None introduced or left unresolved by this delta; no Critical, Important or Minor findings, and no replacement text required.
+
+**Coherence:** PASS — A, B, C, the replacement for PROTOCOL.md:75–78, and D agree within their stated assumptions. Pinned `tools/console.py@f75420c` supports the distinctions and publication limits; adoption [serve_vehicle.sh:90](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/containers/serve_vehicle.sh:90) supplies `--state-dir`, supporting the journal-dependent durability wording.
+
+**F:** PASS — v5:139–152 retains V-1..V-3 as outstanding vehicle-owned coordination requirements, neither resolved nor transferred.
+
+**Option B:** PASS — v5:171 explicitly disclaims implementation, testing, adoption and qualification; nothing elsewhere reverses that disclaimer.
+
+Read-only source review only: no edits, tests or collection, builds, containers, git mutations, or `.env` reads.

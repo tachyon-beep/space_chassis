@@ -1,0 +1,649 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 0974d59..01949b4 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -37,7 +37,7 @@ docker compose --profile fleet config -q    # the topology parses
+ sh scripts/prepare_host.sh                  # roster, .env, and the bounded volume images
+ python3 scripts/status.py --verbose         # one line per agent, from the record
+ sh scripts/verify_containment.sh --all      # safety claims vs. a running stack
+-python3 -m pytest live -q                   # the smoke stack: three agents, a stub model; the fastest end-to-end proof
++systemd-run --user --scope -p CPUQuota=35% -p MemoryMax=1G nice -n 19 python3 -m pytest live -q   # the smoke stacks, one at a time, inside their capped scope; the fastest end-to-end proof
+ ```
+ 
+ One `pytest` collects every suite: the operator side and the assertions about this repository's own
+diff --git a/CLAUDE.md b/CLAUDE.md
+index aff60fd..b7b542a 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -12,7 +12,7 @@ python3 -m pytest harness/tests -q                     # one suite: the Aurora h
+ python3 -m pytest recorder/tests -q                    # the recorder and the spend caps
+ python3 -m pytest pump/tests -q                        # the pump
+ python3 -m pytest docs/deep_research/vehicle/tests/test_vehicle_config.py -q   # the vehicle's referee
+-python3 -m pytest live -q                              # the live run: builds the image and runs the smoke stack; minutes
++systemd-run --user --scope -p CPUQuota=35% -p MemoryMax=1G nice -n 19 python3 -m pytest live -q   # the live run, inside its capped scope: builds the images and runs the smoke stacks one at a time; minutes
+ 
+ uvx ruff check . --no-cache                            # ruff is not installed here; uvx fetches it
+ uvx ruff format --check . --no-cache
+diff --git a/README.md b/README.md
+index 0390ee8..9efba60 100644
+--- a/README.md
++++ b/README.md
+@@ -202,13 +202,25 @@ The smoke stack brings up three agents and their recorders, answers them from a
+ stub model that replies on cue instead of a real one, and mounts the contract
+ fixture as the window, on scratch directories with a dummy key and its own
+ compose project. It costs nothing. A second stack runs the same fleet with the
+-vehicle as the window (`live/test_vehicle.py`); both are up while it runs, six
+-agents and their services, so it wants a host with room for them:
++vehicle as the window (`live/test_vehicle.py`); it replaces the first. One smoke
++stack at a time: a stack holds a lock every checkout of this user shares from
++its start to its `down`, and refuses to start while another smoke project is
++running. Every container the run starts is capped by the kernel -- each stack
++service (`CAPS` in `live/stack.py`: CPUs, and memory with no swap past it, read
++back from each container's cgroup before any test runs) and the containment
++check's image sweep -- and the live run refuses to start a stack outside a
++capped user scope, which holds pytest and the docker clients:
+ 
+ ```sh
+-python3 -m pytest live -q
++systemd-run --user --scope -p CPUQuota=35% -p MemoryMax=1G nice -n 19 python3 -m pytest live -q
+ ```
+ 
++Together that is 4.95 CPUs and 13.25 GiB of the live run's 5 CPUs and 14 GiB
++(Governance, 2026-10-11). Not capped: the docker daemon's own work, which the
++remainder is left for, and the image builds. The builds run one at a time;
++Docker's default builder runs their steps inside the daemon, and this harness
++sets no limit on them.
++
+ It builds the image, runs the containment and acceptance checks against the
+ running stack — no route out, the binds, the caps, a `done`, a reseed — and
+ tears it down. It takes a few minutes, and it is the fastest way to see whether
+diff --git a/live/conftest.py b/live/conftest.py
+index 0dfc138..c0b5d1f 100644
+--- a/live/conftest.py
++++ b/live/conftest.py
+@@ -5,7 +5,8 @@ agent_3's recorder is capped at four requests an hour, so it is refused on its f
+ the run in the watchdog's pause loop (spec 9.7); agent_1 and agent_2 run on the stub at its normal
+ pace. The stack starts once, every test reads and drives it, and the finalizer copies each
+ service's log to .scratch/live-evidence/ before `down()` removes the scratch root, so a failed run
+-leaves its evidence behind.
++leaves its evidence behind. The vehicle's stack replaces the fixture's (one stack at a time), and the
++fixture's evidence is kept then.
+ 
+ This directory is not in `testpaths`: a bare `pytest -q` never starts a container.
+ """
+@@ -18,7 +19,20 @@ import pytest
+ sys.path.insert(0, str(Path(__file__).resolve().parent))
+ 
+ from probes import postgres_answers  # noqa: E402
+-from stack import REPO, SmokeStack, wait_for  # noqa: E402
++from stack import (  # noqa: E402
++    CAPS,
++    HOST_CPUS,
++    HOST_MEMORY,
++    HOST_SCOPE_COMMAND,
++    REPO,
++    STACK_CPUS,
++    STACK_MEMORY,
++    SmokeStack,
++    cgroup_limits,
++    memory_bytes,
++    own_cgroup,
++    wait_for,
++)
+ 
+ EVIDENCE = REPO / ".scratch" / "live-evidence"
+ START_SECONDS = 300
+@@ -26,8 +40,38 @@ TRANSCRIPT_HEAD_BYTES = 2 << 20
+ 
+ 
+ def pytest_collection_modifyitems(items):
+-    """Containment first: it describes the stack as it started, before any test breaks an agent."""
+-    items.sort(key=lambda item: 0 if item.path.name == "test_containment.py" else 1)
++    """Containment first: it describes the stack as it started, before any test breaks an agent.
++    The vehicle's last: its stack replaces the fixture's (one stack at a time), so every test of
++    the fixture's stack runs before it goes."""
++    order = {"test_containment.py": 0, "test_vehicle.py": 2}
++    items.sort(key=lambda item: order.get(item.path.name, 1))
++
++
++# The stacks this session started. Starting one takes down any other first, keeping its evidence:
++# Governance's budget (2026-10-11) is one smoke stack at a time, and SmokeStack.start refuses to
++# start beside another smoke project anyway.
++_UP: list[SmokeStack] = []
++
++
++def _only(smoke: SmokeStack) -> None:
++    for other in _UP:
++        try:
++            if (other.root / "override.yml").exists():
++                _keep_evidence(other)
++        finally:
++            other.down()
++    _UP[:] = [smoke]
++
++
++def _assert_inside_the_host_scope() -> None:
++    """pytest and the docker clients it runs are the host side of the live run's budget: this
++    process must be in a cgroup that caps them, read from the kernel, not taken on trust."""
++    cpus, memory, _ = cgroup_limits(own_cgroup())
++    inside = 0 < cpus <= HOST_CPUS + 1e-9 and 0 < memory <= HOST_MEMORY
++    assert inside, (
++        f"the live run must be inside a capped user scope (this one: {cpus} CPUs, {memory} bytes); "
++        f"run it as: {HOST_SCOPE_COMMAND}"
++    )
+ 
+ 
+ def _keep_evidence(smoke: SmokeStack) -> None:
+@@ -53,7 +97,25 @@ def _keep_evidence(smoke: SmokeStack) -> None:
+     (evidence / "ps.txt").write_text(ps.stdout + ps.stderr, encoding="utf-8")
+ 
+ 
++def _assert_within_budget(smoke: SmokeStack) -> None:
++    """What the kernel enforces, read from each container's cgroup, not what compose was asked:
++    every service capped, no swap past its memory, its cap the one assigned, the sum in budget."""
++    caps = smoke.enforced_caps()
++    for service, (cpus, memory, swap) in caps.items():
++        kind = service.rsplit("_", 1)[0] if service[-1].isdigit() else service
++        kind = "window" if kind in ("diode", "vehicle") else kind
++        want_cpus, want_memory = CAPS[kind]
++        want_bytes = memory_bytes(want_memory)
++        assert cpus == float(want_cpus), f"{service} enforces {cpus} CPUs, not {want_cpus}"
++        assert memory == want_bytes, f"{service} enforces {memory} bytes, not {want_memory}"
++        assert swap == 0, f"{service} may swap {swap} bytes past its memory limit"
++    assert sum(c for c, _, _ in caps.values()) <= STACK_CPUS + 1e-9, caps
++    assert sum(m for _, m, _ in caps.values()) <= STACK_MEMORY, caps
++
++
+ def _started(smoke: SmokeStack) -> None:
++    _assert_inside_the_host_scope()
++    _only(smoke)
+     smoke.start()
+     for n in range(1, smoke.agents + 1):
+         agent = f"agent_{n}"
+@@ -69,6 +131,7 @@ def _started(smoke: SmokeStack) -> None:
+             every=2,
+             what=f"agent_{n}'s postgres",
+         )
++    _assert_within_budget(smoke)
+ 
+ 
+ @pytest.fixture(scope="session")
+diff --git a/live/stack.py b/live/stack.py
+index 47466aa..ad09338 100644
+--- a/live/stack.py
++++ b/live/stack.py
+@@ -26,6 +26,7 @@ timeout, so a wedged daemon fails a test instead of hanging the suite.
+ from __future__ import annotations
+ 
+ import atexit
++import fcntl
+ import json
+ import os
+ import shutil
+@@ -57,6 +58,66 @@ VEHICLE_SMOKE_POLL = "0.2"
+ # an agent can read: the world's identity belongs in the window root's .executive.json alone.
+ SMOKE_VEHICLE_SEED = "8675309"
+ 
++# The live run's budget (Governance, 2026-10-11): one smoke stack at a time, inside 5 CPUs and
++# 14 GiB in all, overhead included. What is enforced, each by the kernel:
++# - every container the stack starts: `cpus`, and `mem_limit` with `memswap_limit` equal to it, so
++#   nothing swaps past it (tmpfs pages are charged to the container too). The sum is STACK_CPUS and
++#   STACK_MEMORY; tests/test_live_stack.py holds the rendered config to it, and live/conftest.py
++#   reads every running container's cgroup back before a test runs;
++# - the containment check's throwaway image sweep (scripts/verify_containment.sh), one at a time
++#   beside the stack: SWEEP_CPUS and SWEEP_MEMORY;
++# - pytest and the docker clients: the user scope the run must be inside (HOST_CPUS, HOST_MEMORY;
++#   live/conftest.py refuses to start a stack outside one).
++# What is left (BUDGET minus those) is a reserve for the docker daemon's own work, which no client
++# can cap: it is not enforced. Agents keep the operator's 3g; their CPU is 0.75.
++CAPS = {
++    "agent": ("0.75", "3g"),
++    "recorder": ("0.2", "512m"),
++    "window": ("1.0", "512m"),
++    "stub": ("0.2", "256m"),
++    "fleet_monitor": ("0.1", "256m"),
++    "review": ("0.25", "512m"),
++}
++STACK_CPUS = 4.4
++STACK_MEMORY = 12 << 30
++SWEEP_CPUS, SWEEP_MEMORY = "0.2", "256m"
++HOST_CPUS = 0.35
++HOST_MEMORY = 1 << 30
++BUDGET_CPUS = 5.0
++BUDGET_MEMORY = 14 << 30
++HOST_SCOPE_COMMAND = "systemd-run --user --scope -p CPUQuota=35% -p MemoryMax=1G nice -n 19 python3 -m pytest live -q"
++# One stack at a time: a lock every checkout and session of this user shares, held from start() to
++# down(), and a refusal to start beside any smoke project already running on the daemon.
++SMOKE_PROJECT_PREFIX = "space_chassis_smoke_"
++SMOKE_LOCK = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "space_chassis_smoke.lock"
++# Where docker's systemd cgroup driver puts a container: system.slice/docker-<id>.scope.
++DOCKER_CGROUPS = Path("/sys/fs/cgroup/system.slice")
++
++
++def memory_bytes(text: str) -> int:
++    """A compose memory value as bytes: `512m`, `3g`."""
++    return int(text[:-1]) << {"m": 20, "g": 30}[text[-1]]
++
++
++def cgroup_limits(directory: Path) -> tuple[float, int, int | None]:
++    """A cgroup v2 directory's CPUs, memory and swap limits; -1 where unlimited, None where absent."""
++
++    def number(text: str) -> int:
++        return -1 if text.strip() == "max" else int(text)
++
++    quota, period = (directory / "cpu.max").read_text().split()
++    cpus = -1.0 if quota == "max" else int(quota) / int(period)
++    memory = number((directory / "memory.max").read_text())
++    swap_file = directory / "memory.swap.max"
++    swap = number(swap_file.read_text()) if swap_file.exists() else None
++    return cpus, memory, swap
++
++
++def own_cgroup() -> Path:
++    """This process's cgroup v2 directory."""
++    line = Path("/proc/self/cgroup").read_text().strip().splitlines()[0]
++    return Path("/sys/fs/cgroup" + line.split("::", 1)[1])
++
+ 
+ def allowed_environment(extra: dict | None = None) -> dict:
+     """The process environment docker runs with: an allowlist, never the operator's whole shell."""
+@@ -69,6 +130,12 @@ def allowed_environment(extra: dict | None = None) -> dict:
+     return env
+ 
+ 
++def _capped(kind: str) -> list[str]:
++    """A service's caps, as override lines: its CPUs, and its memory with no swap past it."""
++    cpus, memory = CAPS[kind]
++    return [f'    cpus: "{cpus}"', f"    mem_limit: {memory}", f"    memswap_limit: {memory}"]
++
++
+ def wait_for(predicate, *, timeout: float, every: float = 1.0, what: str):
+     """Poll predicate until it returns something truthy; raise naming what was awaited."""
+     deadline = time.monotonic() + timeout
+@@ -89,15 +156,16 @@ class SmokeStack:
+         root: Path | None = None,
+         runner=subprocess.run,
+         window: str = "diode",
++        lock: Path | None = None,
+     ) -> None:
+         if window not in WINDOWS:
+             raise ValueError(f"window must be one of {WINDOWS}, not {window!r}")
+         self.agents = agents
+         self.recorder_overrides = recorder_overrides or {}
+         self.window = window
+-        # A vehicle stack is its own project and scratch root, so it can run beside the fixture's.
++        # A vehicle stack is its own project and scratch root; it never runs beside the fixture's.
+         suffix = "" if window == "diode" else f"_{window}"
+-        self.project = f"space_chassis_smoke_{os.getpid()}{suffix}"
++        self.project = f"{SMOKE_PROJECT_PREFIX}{os.getpid()}{suffix}"
+         self.root = (
+             Path(root)
+             if root is not None
+@@ -105,6 +173,8 @@ class SmokeStack:
+         )
+         self._runner = runner
+         self._torn_down = False
++        self.lock = Path(lock) if lock is not None else SMOKE_LOCK
++        self._lock_fd: int | None = None
+         # Override files added after `up` by recreate(), kept on every later compose call.
+         self.overrides: list[Path] = []
+         atexit.register(self.down)
+@@ -155,6 +225,7 @@ class SmokeStack:
+             "services:",
+             "  stub:",
+             f"    image: {SMOKE_IMAGE}",
++            *_capped("stub"),
+             '    entrypoint: ["python", "/opt/live/stub_llm.py"]',
+             "    environment:",
+             f'      VERIFY_STUB_PORT: "{STUB_PORT}"',
+@@ -170,8 +241,9 @@ class SmokeStack:
+             '    security_opt: ["no-new-privileges:true"]',
+         ]
+         for n in range(1, self.agents + 1):
+-            lines += [f"  agent_{n}:", f"    image: {SMOKE_IMAGE}"]
++            lines += [f"  agent_{n}:", f"    image: {SMOKE_IMAGE}", *_capped("agent")]
+             lines += [f"  recorder_{n}:", f"    image: {SMOKE_IMAGE}", "    depends_on: [stub]"]
++            lines += _capped("recorder")
+             overrides = self.recorder_overrides.get(n)
+             if overrides:
+                 lines.append("    environment:")
+@@ -180,6 +252,7 @@ class SmokeStack:
+             lines += [
+                 "  diode:",
+                 f"    image: {SMOKE_IMAGE}",
++                *_capped("window"),
+                 '    entrypoint: ["python", "/opt/fake/fake_diode.py"]',
+                 "    environment:",
+                 f"      AGENT_SLUGS: {','.join(self.slugs)}",
+@@ -191,6 +264,7 @@ class SmokeStack:
+             lines += [
+                 "  vehicle:",
+                 f"    image: {SMOKE_VEHICLE_IMAGE}",
++                *_capped("window"),
+                 "    environment:",
+                 f'      DIODE_POLL_SECONDS: "{VEHICLE_SMOKE_POLL}"',
+                 f'      VEHICLE_SEED: "{SMOKE_VEHICLE_SEED}"',
+@@ -198,12 +272,14 @@ class SmokeStack:
+         lines += [
+             "  fleet_monitor:",
+             f"    image: {SMOKE_IMAGE}",
++            *_capped("fleet_monitor"),
+             "    environment:",
+             f"      AGENT_SLUGS: {','.join(self.slugs)}",
+             '      MONITOR_INTERVAL_SECONDS: "5"',
+             '      QUIET_SECONDS: "20"',
+             "  review:",
+             f"    image: {SMOKE_IMAGE}",
++            *_capped("review"),
+             "    ports: !reset []",
+             "    environment:",
+             f"      AGENT_SLUGS: {','.join(self.slugs)}",
+@@ -271,9 +347,12 @@ class SmokeStack:
+                     ".env.example",
+                 ]
+             )
+-            # The vehicle is in its own profile and image: built only by name, and only when it serves.
+-            vehicle = ("vehicle",) if self.window == "vehicle" else ()
+-            self.compose("build", "agent_1", *vehicle, timeout=BUILD_TIMEOUT_SECONDS)
++            # The vehicle is in its own profile and image: built only by name, and only when it
++            # serves. One build at a time (Governance, 2026-10-11): compose builds the services it
++            # is given in parallel, so each is its own call.
++            self.compose("build", "agent_1", timeout=BUILD_TIMEOUT_SECONDS)
++            if self.window == "vehicle":
++                self.compose("build", "vehicle", timeout=BUILD_TIMEOUT_SECONDS)
+         finally:
+             if kept is None:
+                 CONSOLE_SEED.unlink(missing_ok=True)
+@@ -281,11 +360,7 @@ class SmokeStack:
+                 CONSOLE_SEED.write_bytes(kept)
+ 
+     def up(self) -> None:
+-        services = ["stub"]
+-        services += [f"recorder_{n}" for n in range(1, self.agents + 1)]
+-        services += [f"agent_{n}" for n in range(1, self.agents + 1)]
+-        services += [self.window, "fleet_monitor", "review"]
+-        self.compose("up", "-d", *services)
++        self.compose("up", "-d", *self.services())
+ 
+     def recreate(self, service: str, environment: dict[str, str]) -> None:
+         """Recreate one running service alone, with its environment changed and nothing else."""
+@@ -301,10 +376,62 @@ class SmokeStack:
+             self.overrides.append(path)
+         self.compose("up", "-d", "--force-recreate", "--no-deps", service)
+ 
++    def others_running(self) -> list[str]:
++        """Every other smoke project with a container up on this daemon."""
++        label = "com.docker.compose.project"
++        template = f'{{{{.Label "{label}"}}}}'
++        result = self.run(["docker", "ps", "--filter", f"label={label}", "--format", template])
++        running = {line.strip() for line in result.stdout.splitlines()}
++        return sorted(
++            p for p in running if p.startswith(SMOKE_PROJECT_PREFIX) and p != self.project
++        )
++
++    def services(self) -> list[str]:
++        services = ["stub"]
++        services += [f"recorder_{n}" for n in range(1, self.agents + 1)]
++        services += [f"agent_{n}" for n in range(1, self.agents + 1)]
++        return services + [self.window, "fleet_monitor", "review"]
++
++    def enforced_caps(self) -> dict[str, tuple[float, int, int | None]]:
++        """What the kernel enforces on each running service: its container's own cgroup (v2), read
++        from the host side, so nothing inside the container is trusted or needs to answer."""
++        caps = {}
++        for service in self.services():
++            short = self.container_id(service)
++            assert short, f"{service} has no container"
++            full = self.run(["docker", "inspect", "-f", "{{.Id}}", short]).stdout.strip()
++            scope = DOCKER_CGROUPS / f"docker-{full}.scope"
++            assert scope.is_dir(), f"{service}'s cgroup is not at {scope}"
++            caps[service] = cgroup_limits(scope)
++        return caps
++
++    def _hold_the_lock(self) -> None:
++        fd = os.open(self.lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
++        try:
++            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            os.close(fd)
++            raise RuntimeError(f"one smoke stack at a time: another holds {self.lock}") from None
++        self._lock_fd = fd
++
++    def _release_the_lock(self) -> None:
++        if self._lock_fd is not None:
++            os.close(self._lock_fd)
++            self._lock_fd = None
++
++    def _refuse_beside_another(self) -> None:
++        others = self.others_running()
++        if others:
++            raise RuntimeError(f"one smoke stack at a time: {', '.join(others)} is running")
++
+     def start(self) -> None:
++        self._hold_the_lock()
+         try:
++            self._refuse_beside_another()
+             self.prepare()
+             self.build()
++            # Again after the build: a stack started meanwhile by anything not holding the lock.
++            self._refuse_beside_another()
+             self.up()
+         except BaseException:
+             self.down()
+@@ -345,9 +472,12 @@ class SmokeStack:
+         self._write_cue(n, {"stop": True})
+ 
+     def down(self) -> None:
+-        if self._torn_down:
+-            return
+-        if (self.root / "override.yml").exists():
+-            self.compose("down", "-v", "--remove-orphans", "--timeout", "5", check=False)
+-        self._torn_down = True
+-        shutil.rmtree(self.root, ignore_errors=True)
++        try:
++            if self._torn_down:
++                return
++            if (self.root / "override.yml").exists():
++                self.compose("down", "-v", "--remove-orphans", "--timeout", "5", check=False)
++            self._torn_down = True
++            shutil.rmtree(self.root, ignore_errors=True)
++        finally:
++            self._release_the_lock()
+diff --git a/scripts/verify_containment.sh b/scripts/verify_containment.sh
+index 8c826b8..f99acff 100755
+--- a/scripts/verify_containment.sh
++++ b/scripts/verify_containment.sh
+@@ -257,7 +257,7 @@ else:
+     sweep=""
+     swept=1
+     if [ -n "$image" ]; then
+-        sweep=$(docker run --rm --network none --user 0 --entrypoint find "$image" / -xdev \( -path /usr/local/bin/entrypoint.sh -o -path /opt/vehicle -o -name serve_vehicle.sh -o -name mission.yaml -o -name vehicle.yaml -o -name coupling.yaml -o -name plant.md -o -name fault_policy.yaml \) -print 2>/dev/null)
++        sweep=$(docker run --rm --network none --cpus 0.2 --memory 256m --memory-swap 256m --user 0 --entrypoint find "$image" / -xdev \( -path /usr/local/bin/entrypoint.sh -o -path /opt/vehicle -o -name serve_vehicle.sh -o -name mission.yaml -o -name vehicle.yaml -o -name coupling.yaml -o -name plant.md -o -name fault_policy.yaml \) -print 2>/dev/null)
+         swept=$?
+     fi
+     if [ "$swept" -ne 0 ]; then
+diff --git a/tests/test_live_stack.py b/tests/test_live_stack.py
+index e47c474..ad05b7d 100644
+--- a/tests/test_live_stack.py
++++ b/tests/test_live_stack.py
+@@ -137,7 +137,9 @@ def test_every_compose_call_names_the_smoke_project_and_env_file(stack):
+ 
+ def test_the_orchestrator_tears_down_even_when_setup_fails(tmp_path):
+     runner = Runner(fail_on="build")
+-    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=runner)
++    smoke = stack_module.SmokeStack(
++        3, root=tmp_path / "smoke", runner=runner, lock=tmp_path / "lock"
++    )
+     with pytest.raises(subprocess.CalledProcessError):
+         smoke.start()
+     assert any("down" in argv for argv, _ in runner.calls)
+@@ -361,10 +363,168 @@ def test_the_smoke_build_builds_the_vehicle_s_image_only_when_it_is_the_window(t
+         calls = [argv for argv, _ in runner.calls if "build" in argv]
+         return [argv[argv.index("build") + 1 :] for argv in calls]
+ 
+-    assert builds("vehicle") == [["agent_1", "vehicle"]]
++    # One build at a time (Governance, 2026-10-11): compose builds the services one call names in
++    # parallel, so the vehicle's image is its own call, after the agents'.
++    assert builds("vehicle") == [["agent_1"], ["vehicle"]]
+     assert builds("diode") == [["agent_1"]]
+ 
+ 
++@pytest.mark.parametrize("window", stack_module.WINDOWS)
++def test_every_service_the_smoke_stack_starts_is_capped_and_the_sum_is_in_budget(tmp_path, window):
++    """Needs docker on the host, like `docker compose config -q` in CLAUDE.md: absent, it fails.
++    The caps compose resolves from the base and the override together, for what `up` starts."""
++    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", window=window)
++    smoke._torn_down = True
++    smoke.prepare()
++    result = smoke.compose("config", "--format", "json", check=False)
++    assert result.returncode == 0, result.stderr
++    services = json.loads(result.stdout)["services"]
++    cpus = memory = 0
++    for name in smoke.services():
++        service = services[name]
++        assert float(service["cpus"]) > 0, name
++        assert int(service["mem_limit"]) > 0, name
++        assert service["memswap_limit"] == service["mem_limit"], f"{name} may swap past its cap"
++        cpus += float(service["cpus"])
++        memory += int(service["mem_limit"])
++    assert cpus <= stack_module.STACK_CPUS + 1e-9, cpus
++    assert memory <= stack_module.STACK_MEMORY, memory
++    # Inside Governance's 5 CPUs and 14 GiB with the other enforced shares -- the containment
++    # check's image sweep and the host side's user scope -- and a reserve left for the daemon.
++    sweep_cpus = float(stack_module.SWEEP_CPUS)
++    sweep_memory = stack_module.memory_bytes(stack_module.SWEEP_MEMORY)
++    enforced_cpus = stack_module.STACK_CPUS + sweep_cpus + stack_module.HOST_CPUS
++    enforced_memory = stack_module.STACK_MEMORY + sweep_memory + stack_module.HOST_MEMORY
++    assert enforced_cpus < stack_module.BUDGET_CPUS, enforced_cpus
++    assert enforced_memory < stack_module.BUDGET_MEMORY, enforced_memory
++
++
++def test_the_containment_check_s_image_sweep_runs_under_the_sweep_caps():
++    text = (ROOT / "scripts" / "verify_containment.sh").read_text(encoding="utf-8")
++    sweep = next(line for line in text.splitlines() if "--entrypoint find" in line)
++    memory = stack_module.SWEEP_MEMORY
++    caps = f"--cpus {stack_module.SWEEP_CPUS} --memory {memory} --memory-swap {memory}"
++    assert caps in sweep, sweep
++
++
++def test_the_live_run_s_scope_command_caps_what_the_conftest_requires():
++    command = stack_module.HOST_SCOPE_COMMAND
++    assert f"CPUQuota={round(stack_module.HOST_CPUS * 100)}%" in command
++    assert f"MemoryMax={stack_module.HOST_MEMORY >> 30}G" in command
++    assert command.endswith("python3 -m pytest live -q")
++    readme = (ROOT / "README.md").read_text(encoding="utf-8")
++    assert command in readme and command in (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
++
++
++def test_cgroup_limits_reads_cpus_memory_and_swap(tmp_path):
++    (tmp_path / "cpu.max").write_text("75000 100000\n")
++    (tmp_path / "memory.max").write_text("3221225472\n")
++    (tmp_path / "memory.swap.max").write_text("0\n")
++    assert stack_module.cgroup_limits(tmp_path) == (0.75, 3 << 30, 0)
++    (tmp_path / "cpu.max").write_text("max 100000\n")
++    (tmp_path / "memory.max").write_text("max\n")
++    (tmp_path / "memory.swap.max").unlink()
++    assert stack_module.cgroup_limits(tmp_path) == (-1.0, -1, None)
++
++
++def test_the_guard_asks_the_daemon_with_a_template_it_can_execute(tmp_path):
++    """Needs docker on the host. `.Labels` is a string in `docker ps --format`; `.Label` is the
++    lookup. Run against every container the daemon has, so a template error cannot hide behind an
++    empty listing."""
++    runner = Runner()
++    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=runner)
++    smoke._torn_down = True
++    smoke.others_running()
++    argv = runner.calls[-1][0]
++    template = '{{.Label "com.docker.compose.project"}}'
++    assert argv == [
++        "docker",
++        "ps",
++        "--filter",
++        "label=com.docker.compose.project",
++        "--format",
++        template,
++    ]
++    result = subprocess.run(
++        ["docker", "ps", "--all", "--format", template],
++        capture_output=True,
++        text=True,
++        timeout=60,
++    )
++    assert result.returncode == 0, result.stderr
++
++
++def test_a_second_stack_waits_for_the_first_s_lock(tmp_path):
++    lock = tmp_path / "lock"
++    first = stack_module.SmokeStack(3, root=tmp_path / "one", runner=Runner(), lock=lock)
++    second = stack_module.SmokeStack(3, root=tmp_path / "two", runner=Runner(), lock=lock)
++    first._hold_the_lock()
++    with pytest.raises(RuntimeError, match="one smoke stack at a time: another holds"):
++        second.start()
++    first.down()
++    second.start()
++    assert second._lock_fd is not None
++    second.down()
++    assert second._lock_fd is None
++
++
++def test_the_guard_looks_again_after_the_build(tmp_path):
++    class Late(Runner):
++        looks = 0
++
++        def __call__(self, argv, **kwargs):
++            if argv[:2] == ["docker", "ps"]:
++                self.calls.append((argv, kwargs))
++                Late.looks += 1
++                running = "" if Late.looks == 1 else "space_chassis_smoke_2\n"
++                return subprocess.CompletedProcess(argv, 0, stdout=running, stderr="")
++            return super().__call__(argv, **kwargs)
++
++    runner = Late()
++    smoke = stack_module.SmokeStack(
++        3, root=tmp_path / "smoke", runner=runner, lock=tmp_path / "lock"
++    )
++    with pytest.raises(RuntimeError, match="space_chassis_smoke_2 is running"):
++        smoke.start()
++    assert any("build" in argv for argv, _ in runner.calls)
++    assert not any("up" in argv for argv, _ in runner.calls)
++    assert smoke._lock_fd is None
++
++
++def test_a_stack_will_not_start_beside_another_smoke_stack(tmp_path):
++    class Busy(Runner):
++        def __call__(self, argv, **kwargs):
++            if argv[:2] == ["docker", "ps"]:
++                self.calls.append((argv, kwargs))
++                running = "space_chassis_smoke_1_vehicle\nspace-chassis\n"
++                return subprocess.CompletedProcess(argv, 0, stdout=running, stderr="")
++            return super().__call__(argv, **kwargs)
++
++    runner = Busy()
++    smoke = stack_module.SmokeStack(
++        3, root=tmp_path / "smoke", runner=runner, lock=tmp_path / "lock"
++    )
++    smoke._torn_down = True
++    with pytest.raises(
++        RuntimeError, match="one smoke stack at a time: space_chassis_smoke_1_vehicle"
++    ):
++        smoke.start()
++    assert not any("build" in argv or "up" in argv for argv, _ in runner.calls)
++
++
++def test_a_stack_ignores_its_own_project_and_the_operator_s(tmp_path):
++    class Own(Runner):
++        def __call__(self, argv, **kwargs):
++            if argv[:2] == ["docker", "ps"]:
++                running = f"{smoke.project}\nspace-chassis\n"
++                return subprocess.CompletedProcess(argv, 0, stdout=running, stderr="")
++            return super().__call__(argv, **kwargs)
++
++    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=Own())
++    smoke._torn_down = True
++    assert smoke.others_running() == []
++
++
+ def test_a_vehicle_stack_has_its_own_project_and_root(tmp_path):
+     diode = stack_module.SmokeStack(3, runner=Runner())
+     vehicle = stack_module.SmokeStack(3, runner=Runner(), window="vehicle")

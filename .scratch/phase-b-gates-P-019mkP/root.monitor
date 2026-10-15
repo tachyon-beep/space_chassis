@@ -1,0 +1,6 @@
+2026-10-11T10:51:27+11:00 mem=41879MiB load1=2.73 busy=17% scope-procs=5 scope-mem=153292800
+2026-10-11T10:51:32+11:00 mem=42840MiB load1=2.83 busy=22% scope-procs=7 scope-mem=269840384
+2026-10-11T10:51:37+11:00 mem=41689MiB load1=2.92 busy=18% scope-procs=5 scope-mem=274165760
+2026-10-11T10:51:42+11:00 mem=41634MiB load1=3.01 busy=17% scope-procs=5 scope-mem=260509696
+2026-10-11T10:51:47+11:00 mem=41677MiB load1=3.09 busy=17% scope-procs=5 scope-mem=296980480
+2026-10-11T10:51:52+11:00 mem=41728MiB load1=3.08 busy=18% scope-procs=7 scope-mem=213000192

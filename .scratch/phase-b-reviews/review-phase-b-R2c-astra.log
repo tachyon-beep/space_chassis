@@ -1,0 +1,1133 @@
+WARNING: failed to clean up stale arg0 temp dirs: Permission denied (os error 13)
+OpenAI Codex v0.162.1
+--------
+workdir: /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+model: gpt-6-astra
+provider: openai
+approval: on-request
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: detailed
+session id: 01a128cc-13b0-7922-80ba-cb0d72becca7
+--------
+user
+Confirmation review of R2c (repository /home/john/space_chassis/.claude/worktrees/vehicle-adoption; vehicle f44399645fb2633e695a5d758cb5a41f43fb848c). R2c tree 148a31c4951e43c1cdafdf30c15b029dc7e104a8 follows R2b (3500987ce968254dee66be2a1b5ac5ab734181bd). Delta: `git diff 3500987ce968254dee66be2a1b5ac5ab734181bd 148a31c4951e43c1cdafdf30c15b029dc7e104a8` (saved /home/john/space_chassis/.scratch/phase-b-R2c.vs-R2b.diff, sha256 240b78d1160b4f06cffa157482cf1815263c43962ee5097f7c351cb64fdd633a; 130 lines, live/stack.py and tests/test_live_stack.py only). Whole increment over qualified P (af671d04908817e914668750b7cd4f6f74034bf4): /home/john/space_chassis/.scratch/phase-b-R2c.vs-P.diff (sha256 ef4954a10801391576de6b3da7cb1ba2d5c32f0e13bd89e57d19ab69b28518ae). Read from git objects; the staged index equals R2c.
+
+STRICTLY READ-ONLY: no edits, no git state changes, no builds, containers or test runs. Never read a file named .env.
+
+R2b's confirmation reviews (both "land after fixes") found: run_group used PIPEs and communicate(), which waits for EOF on both pipes before the post-exit killpg, so a background straggler holding the pipes finished (and acted) before it was killed; the straggler test therefore failed every run. Astra asked to fix the code, not hide it by redirecting the test's output; Astra also asked for a readiness handshake and a check that the child actually ended in the timeout test.
+
+R2c: run_group now sends stdout/stderr to temporary files, waits only for the leader (`process.wait(timeout)`), and in a `finally` SIGKILLs the whole process group and reaps the leader on every path (normal exit, timeout, any exception), then returns the captured output. Both group tests now use a child that writes its pid and a ready file and holds the group's stdout/stderr open, wait for readiness, and assert the child is gone (or a zombie) within a bound and never acts; the finished-group test also asserts the wait ended promptly (< 1.5 s). An owner control run of the real run_group (no pytest, no docker) gave: timeout case — TimeoutExpired, child started, child not alive after, did not act; finished case — returned after 0.06 s, rc 0, output "started", child not alive after, did not act.
+
+Judge with file:line evidence: is the defect fixed in the code; any new defect (file handles, text mode with TemporaryFile, KeyboardInterrupt during wait, double wait, killpg after the group is gone, PGID reuse, output size, TimeoutExpired carrying no output); are the tests sound and non-flaky; any assertion weakened; anything out of scope. Report: one-line verdict (land / land after fixes / do not land); Critical / Important / Minor; under ~350 words.
+
+warning: Exceeded skills context budget. All skill descriptions were removed and 77 additional skills were not included in the model-visible skills list.
+hook: SessionStart
+hook: SessionStart
+hook: SessionStart Completed
+hook: SessionStart Completed
+codex
+I’ll inspect R2c and its delta from R2b directly from git objects, focusing on process cleanup and the two tests. I won’t run tests or change repository state.
+
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+/usr/bin/bash -lc "rg -n 'R2b|R2c|run_group|vehicle-adoption' /home/john/.codex/memories/MEMORY.md" in /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+ exited 1 in 0ms:
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+/usr/bin/bash -lc 'git rev-parse --show-toplevel && git diff 3500987ce968254dee66be2a1b5ac5ab734181bd 148a31c4951e43c1cdafdf30c15b029dc7e104a8 -- live/stack.py tests/test_live_stack.py' in /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+ succeeded in 0ms:
+/home/john/space_chassis/.claude/worktrees/vehicle-adoption
+diff --git a/live/stack.py b/live/stack.py
+index f3af7d0..53a7862 100644
+--- a/live/stack.py
++++ b/live/stack.py
+@@ -34,6 +34,7 @@ import shutil
+ import signal
+ import subprocess
+ import sys
++import tempfile
+ import time
+ from pathlib import Path
+ 
+@@ -164,28 +165,23 @@ def _capped(kind: str) -> list[str]:
+ 
+ def run_group(argv: list[str], *, env: dict, cwd, timeout: float) -> subprocess.CompletedProcess:
+     """Run argv as the leader of its own process group, and kill the whole group -- every
+-    descendant, a subshell waiting on a lock included -- when it times out or anything else
+-    interrupts the wait, so nothing it started can act after the caller has moved on."""
+-    process = subprocess.Popen(
+-        argv,
+-        cwd=cwd,
+-        env=env,
+-        stdout=subprocess.PIPE,
+-        stderr=subprocess.PIPE,
+-        text=True,
+-        start_new_session=True,
+-    )
+-    try:
+-        out, err = process.communicate(timeout=timeout)
+-    except BaseException:
+-        with contextlib.suppress(ProcessLookupError):
+-            os.killpg(process.pid, signal.SIGKILL)
+-        process.communicate()
+-        raise
+-    # The leader has exited; anything it left in its group goes with it.
+-    with contextlib.suppress(ProcessLookupError):
+-        os.killpg(process.pid, signal.SIGKILL)
+-    return subprocess.CompletedProcess(argv, process.returncode, out, err)
++    descendant, a subshell waiting on a lock included -- as soon as the leader exits, times out,
++    or anything else interrupts the wait, so nothing it started can act after the caller has
++    moved on. Output goes to files, not pipes: a straggler holding a pipe open would otherwise
++    keep the wait going until it had finished, and the kill would come after it acted."""
++    with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
++        process = subprocess.Popen(
++            argv, cwd=cwd, env=env, stdout=out, stderr=err, text=True, start_new_session=True
++        )
++        try:
++            returncode = process.wait(timeout=timeout)
++        finally:
++            with contextlib.suppress(ProcessLookupError):
++                os.killpg(process.pid, signal.SIGKILL)
++            process.wait()
++        out.seek(0)
++        err.seek(0)
++        return subprocess.CompletedProcess(argv, returncode, out.read(), err.read())
+ 
+ 
+ def wait_for(predicate, *, timeout: float, every: float = 1.0, what: str):
+diff --git a/tests/test_live_stack.py b/tests/test_live_stack.py
+index 2626151..0a86824 100644
+--- a/tests/test_live_stack.py
++++ b/tests/test_live_stack.py
+@@ -682,29 +682,55 @@ def test_the_vehicle_override_parses_against_the_base_compose(vehicle_stack):
+     assert vehicle["environment"]["VEHICLE_SLUGS"] == "agent_1,agent_2,agent_3"
+ 
+ 
++def _ended(pidfile, seconds: float = 5.0) -> bool:
++    """The process whose pid the child wrote is gone (or a zombie), within a bound."""
++    pid = int(pidfile.read_text())
++    deadline = time.monotonic() + seconds
++    while time.monotonic() < deadline:
++        try:
++            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
++        except OSError:
++            return True
++        if state == "Z":
++            return True
++        time.sleep(0.05)
++    return False
++
++
++def _child(tmp_path) -> tuple[str, Path, Path, Path]:
++    """A background child that says it started (its pid), then acts two seconds later; it
++    keeps the group's stdout and stderr open, as a real straggler would."""
++    ready, pidfile, late = tmp_path / "ready", tmp_path / "pid", tmp_path / "late"
++    child = f"sh -c 'echo $$ > {pidfile}; touch {ready}; sleep 2; touch {late}' &"
++    return child, ready, pidfile, late
++
++
+ def test_a_timed_out_group_leaves_nothing_behind_that_can_act_later(tmp_path):
+     """The containment check's timeout must not leave a waiting subshell to launch a sweep after
+     the test has moved on: run_group kills the whole process group."""
+-    late = tmp_path / "late"
+-    script = f"(sleep 2; touch {late}) & sleep 30"
++    child, ready, pidfile, late = _child(tmp_path)
++    script = f"{child} while [ ! -e {ready} ]; do sleep 0.05; done; sleep 30"
+     with pytest.raises(subprocess.TimeoutExpired):
+-        stack_module.run_group(
+-            ["sh", "-c", script], env=dict(os.environ), cwd=tmp_path, timeout=0.5
+-        )
+-    time.sleep(3)
++        stack_module.run_group(["sh", "-c", script], env=dict(os.environ), cwd=tmp_path, timeout=1)
++    assert ready.exists(), "the child never started, so this proves nothing"
++    assert _ended(pidfile), "the child outlived the timeout"
++    time.sleep(2.5)
+     assert not late.exists(), "a descendant outlived the timeout and acted"
+ 
+ 
+ def test_a_finished_group_s_stragglers_are_killed_too(tmp_path):
+-    late = tmp_path / "late"
++    """The leader exits while a child still holds its output open: the group is killed at the
++    leader's exit, not after the child has finished."""
++    child, ready, pidfile, late = _child(tmp_path)
++    script = f"{child} while [ ! -e {ready} ]; do sleep 0.05; done; echo started"
++    began = time.monotonic()
+     result = stack_module.run_group(
+-        ["sh", "-c", f"(sleep 2; touch {late}) & echo started"],
+-        env=dict(os.environ),
+-        cwd=tmp_path,
+-        timeout=10,
++        ["sh", "-c", script], env=dict(os.environ), cwd=tmp_path, timeout=10
+     )
++    assert time.monotonic() - began < 1.5, "the wait outlasted the leader"
+     assert result.returncode == 0 and result.stdout.strip() == "started"
+-    time.sleep(3)
++    assert _ended(pidfile), "the straggler outlived its leader"
++    time.sleep(2.5)
+     assert not late.exists(), "a straggler outlived its leader and acted"
+ 
+ 
+
+**Reviewing governance context**
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+exec
+/usr/bin/bash -lc "git show 148a31c4951e43c1cdafdf30c15b029dc7e104a8:live/stack.py | nl -ba | sed -n '1,270p'" in /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+exec
+/usr/bin/bash -lc "git show 148a31c4951e43c1cdafdf30c15b029dc7e104a8:tests/test_live_stack.py | nl -ba | sed -n '1,100p;650,790p'" in /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+ succeeded in 0ms:
+     1	"""The smoke stack: three agents, their recorders, a cued stub model and the fake diode.
+     2	
+     3	Everything it makes lives under one scratch root in the repository (.smoke-<pid>/, gitignored and
+     4	outside the build context): plain data/ directories standing in for the bounded volume images
+     5	(creating real images needs root, which stays the operator's), a cue directory for the stub, an
+     6	env file, and a compose override. Nothing under the real volumes/, operator/ or .env is read or
+     7	written, and the project name is its own, so it can never touch a running space-chassis stack.
+     8	
+     9	The model key is a dummy. Compose lets the shell's environment beat --env-file, so every docker
+    10	call here runs with an allowlisted environment: whatever the operator's shell exports, no key and
+    11	no upstream reaches the smoke recorders.
+    12	
+    13	It builds and runs its own image tags, SMOKE_IMAGE and, with the vehicle as its window,
+    14	SMOKE_VEHICLE_IMAGE, so the operator's `space-chassis-agent` and `space-chassis-vehicle` are never
+    15	rebuilt from a working tree, and it puts back whatever console seed the operator's prepare_host.sh
+    16	left (the build needs one from .env.example). The scratch directories are plain host directories
+    17	the containers write as uid 1000, the image's agent: on a host whose user is another uid, the first
+    18	symptom is the 60-second wait for a cue that is never claimed.
+    19	
+    20	start() prepares, builds and brings the stack up, and tears it down if any of that fails. down()
+    21	is idempotent and also registered with atexit, and it marks itself done only once compose has
+    22	returned, so a teardown interrupted by a second Ctrl-C is retried at exit. Every docker call has a
+    23	timeout, so a wedged daemon fails a test instead of hanging the suite.
+    24	"""
+    25	
+    26	from __future__ import annotations
+    27	
+    28	import atexit
+    29	import contextlib
+    30	import fcntl
+    31	import json
+    32	import os
+    33	import shutil
+    34	import signal
+    35	import subprocess
+    36	import sys
+    37	import tempfile
+    38	import time
+    39	from pathlib import Path
+    40	
+    41	REPO = Path(__file__).resolve().parent.parent
+    42	sys.path.insert(0, str(REPO / "scripts"))
+    43	
+    44	import volume_images  # noqa: E402
+    45	
+    46	ALLOWED_VARIABLES = ("PATH", "HOME", "USER", "LANG", "XDG_RUNTIME_DIR")
+    47	SMOKE_IMAGE = "space-chassis-agent:smoke"
+    48	# The vehicle's own image (Dockerfile.agent's `vehicle` stage): the agents' carries nothing of it.
+    49	SMOKE_VEHICLE_IMAGE = "space-chassis-vehicle:smoke"
+    50	DECLARED_AGENTS = 10
+    51	CONSOLE_SEED = REPO / "llm_console_seed.json"
+    52	DOCKER_TIMEOUT_SECONDS = 120
+    53	BUILD_TIMEOUT_SECONDS = 3600
+    54	STUB_PORT = 8199
+    55	DUMMY_KEY = "sk-smoke-dummy"
+    56	# The window's two implementations: the contract fixture, or the vehicle itself.
+    57	WINDOWS = ("diode", "vehicle")
+    58	# The vehicle checkpoints every 50 ticks; at the operator's 5 s poll that is minutes per check.
+    59	VEHICLE_SMOKE_POLL = "0.2"
+    60	# A seed no window has any reason to contain, so live/test_vehicle.py can look for it in every file
+    61	# an agent can read: the world's identity belongs in the window root's .executive.json alone.
+    62	SMOKE_VEHICLE_SEED = "8675309"
+    63	
+    64	# The live run's budget (Governance, 2026-10-11): one smoke stack at a time, inside 5 CPUs and
+    65	# 14 GiB in all, overhead included. What is enforced, each by the kernel:
+    66	# - every container the stack starts: `cpus`, and `mem_limit` with `memswap_limit` equal to it, so
+    67	#   nothing swaps past it (tmpfs pages are charged to the container too). The sum is STACK_CPUS and
+    68	#   STACK_MEMORY; tests/test_live_stack.py holds the rendered config to it, and live/conftest.py
+    69	#   reads every running container's cgroup back before a test runs;
+    70	# - the containment check's throwaway image sweep (scripts/verify_containment.sh), one at a time
+    71	#   beside the stack: SWEEP_CPUS and SWEEP_MEMORY;
+    72	# - pytest and the docker clients: the user scope the run must be inside (HOST_CPUS, HOST_MEMORY;
+    73	#   live/conftest.py refuses to start a stack outside one).
+    74	# What is left (BUDGET minus those) is a reserve for the docker daemon's own work, which no client
+    75	# can cap: it is not enforced. Agents keep the operator's 3g; their CPU is 0.75.
+    76	CAPS = {
+    77	    "agent": ("0.75", "3g"),
+    78	    "recorder": ("0.2", "512m"),
+    79	    "window": ("1.0", "512m"),
+    80	    "stub": ("0.2", "256m"),
+    81	    "fleet_monitor": ("0.1", "256m"),
+    82	    "review": ("0.25", "512m"),
+    83	}
+    84	STACK_CPUS = 4.4
+    85	STACK_MEMORY = 12 << 30
+    86	SWEEP_CPUS, SWEEP_MEMORY = "0.2", "256m"
+    87	HOST_CPUS = 0.35
+    88	HOST_MEMORY = 1 << 30
+    89	BUDGET_CPUS = 5.0
+    90	BUDGET_MEMORY = 14 << 30
+    91	HOST_SCOPE_COMMAND = "systemd-run --user --scope -p CPUQuota=35% -p MemoryMax=1G -p MemorySwapMax=0 nice -n 19 python3 -m pytest live -q"
+    92	# One stack at a time: a lock every checkout and session of this user shares, held from start() to
+    93	# down(), at one place derived from the user alone (never the environment, so two sessions cannot
+    94	# disagree on it); and a refusal to start beside any smoke project or containment sweep already
+    95	# running on the daemon.
+    96	SMOKE_PROJECT_PREFIX = "space_chassis_smoke_"
+    97	SMOKE_LOCK = Path(f"/run/user/{os.getuid()}") / "space_chassis_smoke.lock"
+    98	# scripts/verify_containment.sh labels its image sweep with this, valued SWEEP_LABEL: the stack's
+    99	# project when a live test runs it, so the stack's down() can remove a sweep a timeout orphaned.
+   100	SWEEP_LABEL = "space_chassis.sweep"
+   101	# Where docker's systemd cgroup driver puts a container: system.slice/docker-<id>.scope.
+   102	DOCKER_CGROUPS = Path("/sys/fs/cgroup/system.slice")
+   103	
+   104	
+   105	def memory_bytes(text: str) -> int:
+   106	    """A compose memory value as bytes: `512m`, `3g`."""
+   107	    return int(text[:-1]) << {"m": 20, "g": 30}[text[-1]]
+   108	
+   109	
+   110	def cgroup_limits(directory: Path) -> tuple[float, int, int | None]:
+   111	    """A cgroup v2 directory's CPUs, memory and swap limits; -1 where unlimited, None where absent."""
+   112	
+   113	    def number(text: str) -> int:
+   114	        return -1 if text.strip() == "max" else int(text)
+   115	
+   116	    quota, period = (directory / "cpu.max").read_text().split()
+   117	    cpus = -1.0 if quota == "max" else int(quota) / int(period)
+   118	    memory = number((directory / "memory.max").read_text())
+   119	    swap_file = directory / "memory.swap.max"
+   120	    swap = number(swap_file.read_text()) if swap_file.exists() else None
+   121	    return cpus, memory, swap
+   122	
+   123	
+   124	def own_cgroup() -> Path:
+   125	    """This process's cgroup v2 directory (the `0::` line; a host without one has no v2 path)."""
+   126	    for line in Path("/proc/self/cgroup").read_text().splitlines():
+   127	        if line.startswith("0::"):
+   128	            return Path("/sys/fs/cgroup" + line[3:])
+   129	    raise RuntimeError("this process is in no cgroup v2 hierarchy")
+   130	
+   131	
+   132	def effective_limits(
+   133	    directory: Path, root: Path = Path("/sys/fs/cgroup")
+   134	) -> tuple[float, int, int | None]:
+   135	    """The tightest CPUs, memory and swap limits on a cgroup and its ancestors below `root`: the
+   136	    kernel enforces each one on everything below it. -1 (swap: None) where nothing limits it."""
+   137	    cpus, memory, swap = -1.0, -1, None
+   138	    while directory != root and root in directory.parents:
+   139	        if (directory / "cpu.max").exists() and (directory / "memory.max").exists():
+   140	            here = cgroup_limits(directory)
+   141	            cpus = here[0] if cpus < 0 else (min(cpus, here[0]) if here[0] >= 0 else cpus)
+   142	            memory = here[1] if memory < 0 else (min(memory, here[1]) if here[1] >= 0 else memory)
+   143	            if here[2] is not None and here[2] >= 0:
+   144	                swap = here[2] if swap is None or swap < 0 else min(swap, here[2])
+   145	        directory = directory.parent
+   146	    return cpus, memory, swap
+   147	
+   148	
+   149	def allowed_environment(extra: dict | None = None) -> dict:
+   150	    """The process environment docker runs with: an allowlist, never the operator's whole shell."""
+   151	    env = {
+   152	        key: value
+   153	        for key, value in os.environ.items()
+   154	        if key in ALLOWED_VARIABLES or key.startswith("DOCKER_")
+   155	    }
+   156	    env.update(extra or {})
+   157	    return env
+   158	
+   159	
+   160	def _capped(kind: str) -> list[str]:
+   161	    """A service's caps, as override lines: its CPUs, and its memory with no swap past it."""
+   162	    cpus, memory = CAPS[kind]
+   163	    return [f'    cpus: "{cpus}"', f"    mem_limit: {memory}", f"    memswap_limit: {memory}"]
+   164	
+   165	
+   166	def run_group(argv: list[str], *, env: dict, cwd, timeout: float) -> subprocess.CompletedProcess:
+   167	    """Run argv as the leader of its own process group, and kill the whole group -- every
+   168	    descendant, a subshell waiting on a lock included -- as soon as the leader exits, times out,
+   169	    or anything else interrupts the wait, so nothing it started can act after the caller has
+   170	    moved on. Output goes to files, not pipes: a straggler holding a pipe open would otherwise
+   171	    keep the wait going until it had finished, and the kill would come after it acted."""
+   172	    with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
+   173	        process = subprocess.Popen(
+   174	            argv, cwd=cwd, env=env, stdout=out, stderr=err, text=True, start_new_session=True
+   175	        )
+   176	        try:
+   177	            returncode = process.wait(timeout=timeout)
+   178	        finally:
+   179	            with contextlib.suppress(ProcessLookupError):
+   180	                os.killpg(process.pid, signal.SIGKILL)
+   181	            process.wait()
+   182	        out.seek(0)
+   183	        err.seek(0)
+   184	        return subprocess.CompletedProcess(argv, returncode, out.read(), err.read())
+   185	
+   186	
+   187	def wait_for(predicate, *, timeout: float, every: float = 1.0, what: str):
+   188	    """Poll predicate until it returns something truthy; raise naming what was awaited."""
+   189	    deadline = time.monotonic() + timeout
+   190	    while True:
+   191	        value = predicate()
+   192	        if value:
+   193	            return value
+   194	        if time.monotonic() >= deadline:
+   195	            raise TimeoutError(f"waited {timeout}s for {what}")
+   196	        time.sleep(every)
+   197	
+   198	
+   199	class SmokeStack:
+   200	    def __init__(
+   201	        self,
+   202	        agents: int = 3,
+   203	        recorder_overrides: dict[int, dict] | None = None,
+   204	        root: Path | None = None,
+   205	        runner=subprocess.run,
+   206	        window: str = "diode",
+   207	        lock: Path | None = None,
+   208	    ) -> None:
+   209	        if window not in WINDOWS:
+   210	            raise ValueError(f"window must be one of {WINDOWS}, not {window!r}")
+   211	        self.agents = agents
+   212	        self.recorder_overrides = recorder_overrides or {}
+   213	        self.window = window
+   214	        # A vehicle stack is its own project and scratch root; it never runs beside the fixture's.
+   215	        suffix = "" if window == "diode" else f"_{window}"
+   216	        self.project = f"{SMOKE_PROJECT_PREFIX}{os.getpid()}{suffix}"
+   217	        self.root = (
+   218	            Path(root)
+   219	            if root is not None
+   220	            else REPO / f".smoke-{os.getpid()}{suffix.replace('_', '-')}"
+   221	        )
+   222	        self._runner = runner
+   223	        self._torn_down = False
+   224	        self.lock = Path(lock) if lock is not None else SMOKE_LOCK
+   225	        self._lock_fd: int | None = None
+   226	        # How long a teardown waits for a --rm removal in progress before calling it left behind.
+   227	        self.settle_seconds = 10.0
+   228	        # Override files added after `up` by recreate(), kept on every later compose call.
+   229	        self.overrides: list[Path] = []
+   230	        atexit.register(self.down)
+   231	
+   232	    @property
+   233	    def slugs(self) -> list[str]:
+   234	        return [f"agent_{n}" for n in range(1, self.agents + 1)]
+   235	
+   236	    @property
+   237	    def volumes(self) -> Path:
+   238	        return self.root / "volumes"
+   239	
+   240	    @property
+   241	    def cues(self) -> Path:
+   242	        return self.root / "cues"
+   243	
+   244	    # ---------------------------------------------------------------- files
+   245	
+   246	    def prepare(self) -> None:
+   247	        for name in volume_images.names(self.slugs):
+   248	            (self.volumes / name / "data").mkdir(parents=True, exist_ok=True)
+   249	        for slug in self.slugs:
+   250	            (self.volumes / "diode" / "data" / slug / "output").mkdir(parents=True, exist_ok=True)
+   251	        # The monitor and the review panel bind every agent the compose file declares, under its
+   252	        # default slug, and docker refuses a missing bind source: the absent agents' records are
+   253	        # empty directories.
+   254	        for n in range(self.agents + 1, DECLARED_AGENTS + 1):
+   255	            for kind in ("transcripts", "telemetry"):
+   256	                (self.volumes / f"{kind}_agent_{n}" / "data").mkdir(parents=True, exist_ok=True)
+   257	        self.cues.mkdir(parents=True, exist_ok=True)
+   258	        (self.root / "smoke.env").write_text(self.env_text(), encoding="utf-8")
+   259	        (self.root / "override.yml").write_text(self.override_text(), encoding="utf-8")
+   260	
+   261	    def env_text(self) -> str:
+   262	        return "".join(
+   263	            f"{key}={value}\n"
+   264	            for key, value in (
+   265	                ("OPENROUTER_API_KEY", DUMMY_KEY),
+   266	                ("LLM_BASE_URL", f"http://stub:{STUB_PORT}/v1"),
+   267	                ("LLM_API_KEY", "sk-stub"),
+   268	                ("SPACE_VOLUMES_DIR", str(self.volumes)),
+   269	                ("FLEET_SLUGS", ",".join(self.slugs)),
+   270	            )
+
+ succeeded in 0ms:
+     1	"""live/stack.py, offline: the files it writes and the docker calls it would make.
+     2	
+     3	A fake runner stands in for subprocess.run, so nothing here starts a container. The one real
+     4	docker call is `compose config -q`, which only parses the generated override against the base.
+     5	"""
+     6	
+     7	import json
+     8	import os
+     9	import subprocess
+    10	import sys
+    11	import time
+    12	from pathlib import Path
+    13	
+    14	import pytest
+    15	
+    16	ROOT = Path(__file__).resolve().parents[1]
+    17	sys.path.insert(0, str(ROOT / "live"))
+    18	
+    19	import stack as stack_module  # noqa: E402
+    20	
+    21	
+    22	class Runner:
+    23	    def __init__(self, fail_on: str | None = None):
+    24	        self.calls = []
+    25	        self.fail_on = fail_on
+    26	
+    27	    def __call__(self, argv, **kwargs):
+    28	        self.calls.append((argv, kwargs))
+    29	        if self.fail_on and self.fail_on in argv:
+    30	            raise subprocess.CalledProcessError(1, argv)
+    31	        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+    32	
+    33	
+    34	@pytest.fixture
+    35	def stack(tmp_path):
+    36	    runner = Runner()
+    37	    smoke = stack_module.SmokeStack(
+    38	        3, {3: {"RECORDER_HOURLY_MAX": "4"}}, root=tmp_path / "smoke", runner=runner
+    39	    )
+    40	    yield smoke, runner
+    41	    smoke._torn_down = True
+    42	
+    43	
+    44	def test_prepare_makes_every_bind_source_for_three_agents(stack):
+    45	    smoke, _ = stack
+    46	    smoke.prepare()
+    47	    sys.path.insert(0, str(ROOT / "scripts"))
+    48	    import volume_images  # noqa: PLC0415
+    49	
+    50	    for name in volume_images.names(["agent_1", "agent_2", "agent_3"]):
+    51	        assert (smoke.volumes / name / "data").is_dir(), name
+    52	    for slug in ("agent_1", "agent_2", "agent_3"):
+    53	        assert (smoke.volumes / "diode" / "data" / slug / "output").is_dir()
+    54	    assert smoke.cues.is_dir()
+    55	
+    56	
+    57	def test_the_smoke_env_file_carries_no_real_key_and_compose_is_pointed_at_it(stack):
+    58	    smoke, runner = stack
+    59	    smoke.prepare()
+    60	    env = dict(line.split("=", 1) for line in (smoke.root / "smoke.env").read_text().splitlines())
+    61	    assert env["OPENROUTER_API_KEY"] == "sk-smoke-dummy"
+    62	    assert env["LLM_BASE_URL"] == "http://stub:8199/v1"
+    63	    assert env["SPACE_VOLUMES_DIR"] == str(smoke.volumes)
+    64	    assert set(env) == {
+    65	        "OPENROUTER_API_KEY",
+    66	        "LLM_BASE_URL",
+    67	        "LLM_API_KEY",
+    68	        "SPACE_VOLUMES_DIR",
+    69	        "FLEET_SLUGS",
+    70	    }
+    71	    smoke.compose("ps")
+    72	    argv = runner.calls[-1][0]
+    73	    assert argv[argv.index("--env-file") + 1] == str(smoke.root / "smoke.env")
+    74	
+    75	
+    76	def test_compose_runs_with_an_allowlisted_environment_whatever_the_shell_exports(
+    77	    stack, monkeypatch
+    78	):
+    79	    smoke, runner = stack
+    80	    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-real-key-in-the-shell")
+    81	    monkeypatch.setenv("LLM_BASE_URL", "http://elsewhere/v1")
+    82	    monkeypatch.setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+    83	    smoke.prepare()
+    84	    smoke.compose("ps")
+    85	    env = runner.calls[-1][1]["env"]
+    86	    assert "OPENROUTER_API_KEY" not in env
+    87	    assert "LLM_BASE_URL" not in env
+    88	    assert env["DOCKER_HOST"] == "unix:///var/run/docker.sock"
+    89	    assert "PATH" in env
+    90	
+    91	
+    92	def test_the_override_points_each_recorder_at_the_stub_and_keeps_the_fake_diode_off_worknet(
+    93	    stack,
+    94	):
+    95	    smoke, _ = stack
+    96	    text = smoke.override_text()
+    97	    for n in (1, 2, 3):
+    98	        assert (
+    99	            f"  recorder_{n}:\n    image: {stack_module.SMOKE_IMAGE}\n    depends_on: [stub]"
+   100	            in text
+   650	
+   651	def test_the_containment_check_labels_its_sweep_with_the_stack_s_project(tmp_path):
+   652	    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=Runner())
+   653	    smoke._torn_down = True
+   654	    env = smoke.containment_environment()
+   655	    assert env["SWEEP_LABEL"] == smoke.project
+   656	    assert env["AGENTS"] == "agent_1 agent_2 agent_3"
+   657	    assert env["COMPOSE"] == " ".join(smoke.compose_command())
+   658	    text = (ROOT / "scripts" / "verify_containment.sh").read_text(encoding="utf-8")
+   659	    sweep = next(line for line in text.splitlines() if "space_chassis.sweep=" in line)
+   660	    assert f'--label "{stack_module.SWEEP_LABEL}=${{SWEEP_LABEL:-operator}}"' in sweep
+   661	
+   662	
+   663	def test_a_vehicle_stack_has_its_own_project_and_root(tmp_path):
+   664	    diode = stack_module.SmokeStack(3, runner=Runner())
+   665	    vehicle = stack_module.SmokeStack(3, runner=Runner(), window="vehicle")
+   666	    diode._torn_down = vehicle._torn_down = True
+   667	    assert vehicle.project != diode.project and vehicle.project.endswith("_vehicle")
+   668	    assert vehicle.root != diode.root
+   669	
+   670	
+   671	def test_the_vehicle_override_parses_against_the_base_compose(vehicle_stack):
+   672	    """Needs docker on the host, like `docker compose config -q` in CLAUDE.md: absent, it fails."""
+   673	    smoke, _ = vehicle_stack
+   674	    smoke.prepare()
+   675	    real = stack_module.SmokeStack(3, root=smoke.root, window="vehicle")
+   676	    real._torn_down = True
+   677	    result = real.compose("config", "--format", "json", check=False)
+   678	    assert result.returncode == 0, result.stderr
+   679	    vehicle = json.loads(result.stdout)["services"]["vehicle"]
+   680	    assert vehicle["image"] == stack_module.SMOKE_VEHICLE_IMAGE
+   681	    assert vehicle["build"]["target"] == "vehicle"
+   682	    assert vehicle["environment"]["VEHICLE_SLUGS"] == "agent_1,agent_2,agent_3"
+   683	
+   684	
+   685	def _ended(pidfile, seconds: float = 5.0) -> bool:
+   686	    """The process whose pid the child wrote is gone (or a zombie), within a bound."""
+   687	    pid = int(pidfile.read_text())
+   688	    deadline = time.monotonic() + seconds
+   689	    while time.monotonic() < deadline:
+   690	        try:
+   691	            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+   692	        except OSError:
+   693	            return True
+   694	        if state == "Z":
+   695	            return True
+   696	        time.sleep(0.05)
+   697	    return False
+   698	
+   699	
+   700	def _child(tmp_path) -> tuple[str, Path, Path, Path]:
+   701	    """A background child that says it started (its pid), then acts two seconds later; it
+   702	    keeps the group's stdout and stderr open, as a real straggler would."""
+   703	    ready, pidfile, late = tmp_path / "ready", tmp_path / "pid", tmp_path / "late"
+   704	    child = f"sh -c 'echo $$ > {pidfile}; touch {ready}; sleep 2; touch {late}' &"
+   705	    return child, ready, pidfile, late
+   706	
+   707	
+   708	def test_a_timed_out_group_leaves_nothing_behind_that_can_act_later(tmp_path):
+   709	    """The containment check's timeout must not leave a waiting subshell to launch a sweep after
+   710	    the test has moved on: run_group kills the whole process group."""
+   711	    child, ready, pidfile, late = _child(tmp_path)
+   712	    script = f"{child} while [ ! -e {ready} ]; do sleep 0.05; done; sleep 30"
+   713	    with pytest.raises(subprocess.TimeoutExpired):
+   714	        stack_module.run_group(["sh", "-c", script], env=dict(os.environ), cwd=tmp_path, timeout=1)
+   715	    assert ready.exists(), "the child never started, so this proves nothing"
+   716	    assert _ended(pidfile), "the child outlived the timeout"
+   717	    time.sleep(2.5)
+   718	    assert not late.exists(), "a descendant outlived the timeout and acted"
+   719	
+   720	
+   721	def test_a_finished_group_s_stragglers_are_killed_too(tmp_path):
+   722	    """The leader exits while a child still holds its output open: the group is killed at the
+   723	    leader's exit, not after the child has finished."""
+   724	    child, ready, pidfile, late = _child(tmp_path)
+   725	    script = f"{child} while [ ! -e {ready} ]; do sleep 0.05; done; echo started"
+   726	    began = time.monotonic()
+   727	    result = stack_module.run_group(
+   728	        ["sh", "-c", script], env=dict(os.environ), cwd=tmp_path, timeout=10
+   729	    )
+   730	    assert time.monotonic() - began < 1.5, "the wait outlasted the leader"
+   731	    assert result.returncode == 0 and result.stdout.strip() == "started"
+   732	    assert _ended(pidfile), "the straggler outlived its leader"
+   733	    time.sleep(2.5)
+   734	    assert not late.exists(), "a straggler outlived its leader and acted"
+   735	
+   736	
+   737	def test_the_live_tests_run_the_containment_check_in_its_own_group():
+   738	    for name in ("test_containment.py", "test_vehicle.py"):
+   739	        text = (ROOT / "live" / name).read_text(encoding="utf-8")
+   740	        assert "stack.containment_check()" in text and "verify_containment.sh" not in text, name
+
+exec
+/usr/bin/bash -lc 'git diff 3500987ce968254dee66be2a1b5ac5ab734181bd 148a31c4951e43c1cdafdf30c15b029dc7e104a8 | sha256sum; git diff --cached --quiet 148a31c4951e43c1cdafdf30c15b029dc7e104a8; git grep -n -e run_group -e TimeoutExpired 148a31c4951e43c1cdafdf30c15b029dc7e104a8 -- live tests/test_live_stack.py' in /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+ succeeded in 0ms:
+240b78d1160b4f06cffa157482cf1815263c43962ee5097f7c351cb64fdd633a  -
+148a31c4951e43c1cdafdf30c15b029dc7e104a8:live/stack.py:166:def run_group(argv: list[str], *, env: dict, cwd, timeout: float) -> subprocess.CompletedProcess:
+148a31c4951e43c1cdafdf30c15b029dc7e104a8:live/stack.py:449:        return run_group(
+148a31c4951e43c1cdafdf30c15b029dc7e104a8:tests/test_live_stack.py:710:    the test has moved on: run_group kills the whole process group."""
+148a31c4951e43c1cdafdf30c15b029dc7e104a8:tests/test_live_stack.py:713:    with pytest.raises(subprocess.TimeoutExpired):
+148a31c4951e43c1cdafdf30c15b029dc7e104a8:tests/test_live_stack.py:714:        stack_module.run_group(["sh", "-c", script], env=dict(os.environ), cwd=tmp_path, timeout=1)
+148a31c4951e43c1cdafdf30c15b029dc7e104a8:tests/test_live_stack.py:727:    result = stack_module.run_group(
+
+exec
+/usr/bin/bash -lc 'git show 148a31c4951e43c1cdafdf30c15b029dc7e104a8:governance/README.md; git diff --stat af671d04908817e914668750b7cd4f6f74034bf4 148a31c4951e43c1cdafdf30c15b029dc7e104a8; git ls-tree 148a31c4951e43c1cdafdf30c15b029dc7e104a8 docs/deep_research/vehicle' in /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+ succeeded in 0ms:
+# Governance
+
+As of **2026-10-10**, `tachyon-beep/space_chassis` `aurora-port` @ `84b1c49`. Owned by the chassis
+line. **Verify against the code before trusting any line here.**
+
+This is the single place a new session, agent or person reads first, to learn:
+- what this project is;
+- who owns what;
+- what has been decided;
+- where each line of work stands.
+
+It is meant to become the single source of truth in time. Until it is, **the code, the issue
+trackers and the decision records it points to are authoritative wherever they disagree with it.**
+
+## The two lines
+
+The project divides into exactly two lines of work. There is no third line, and nothing is co-owned
+(John, 2026-10-10).
+
+| line | what it is | where it lives | governance |
+|---|---|---|---|
+| **space_chassis** | The AI chassis: the world the fleet of agents lives in. Aurora's harness per agent, the recorder, the pump, the operator services, the containers, the brief, and the vehicle's deployment. | this repository | `chassis/` |
+| **space_vehicle** | The mission simulator: one spacecraft behind per-agent windows. | `tachyon-beep/space_vehicle`, vendored here as `docs/deep_research/vehicle/` | `vehicle/` |
+
+The two lines meet only at the frozen window contract, `docs/diode-contract.md`, and at the
+deployment of the vehicle service. Each line describes its side in its own `interface.md`.
+
+## Ownership
+
+Every path and every piece of plumbing has exactly one owner. Anything not listed under the vehicle
+line is the chassis line's.
+
+| owner | owns |
+|---|---|
+| **vehicle line** | the `tachyon-beep/space_vehicle` repository (`docs/deep_research/vehicle/`) and its CI, including filigree `space_chassis-4d7a6afd1f` |
+| | the frozen corpus `docs/deep_research/*.md` and `docs/deep_research/integration/`, including the reconciliation rows' content |
+| | `docs/diode-contract.md`, which it implements; a change still needs the chassis to adopt it |
+| | the local `vehicle-standalone` branch |
+| | filigree issues labelled `side:vehicle` |
+| | `governance/vehicle/` |
+| **chassis line** | `harness/`, `recorder/`, `pump/`, `services/`, `scripts/` |
+| | `containers/`, `serve_vehicle.sh` included: the vehicle's deployment is the chassis's |
+| | `Dockerfile.agent`, `docker-compose.yml` and its generator, `live/` |
+| | `tests/`, including `test_vehicle_reconciliation.py`, the chassis's referee of what it deploys |
+| | `contract/` (the probe and the fixture) and `brief/` |
+| | `docs/design.md`, `docs/brief-claims.md`, `docs/superpowers/` |
+| | the root documents (`CLAUDE.md`, `AGENTS.md`, `README.md`, `.env.example`) and `vendor/` |
+| | this repository's CI, and the filigree tracker itself with every issue not labelled `side:vehicle` |
+| | the submodule pointer, the reconciliation pins and every adoption commit |
+| | the paused SV branch `wip/sv-recorder-opus-20261008` |
+| | `governance/README.md`, `governance/coordination.md`, `governance/chassis/` |
+
+## What each line folder holds
+
+| file | what | changes |
+|---|---|---|
+| `snapshot.md` | where the line stands now: repo, branch, SHA, merged and in-flight work, measures | every merge |
+| `decisions.md` | the decision log: what, who (John, or a session under his delegation), when, where recorded | append-only |
+| `practice.md` | how the line is worked: constraints, how work lands, gates, reviewers | when practice changes |
+| `interface.md` | what the line offers the other line and needs from it | when the boundary moves |
+| `open.md` | in-flight items, next steps, open issues, risks, questions for John | every merge or decision |
+| `records/` | historical records worth keeping (design notes, review reports, handoff packages), dated and never edited | append-only, optional |
+
+## Maintenance rules
+
+1. Every file starts with **"As of <date>, <repo> @ <sha>"** and a "verify against the code" note.
+2. Every fact carries a pointer (file:line, issue, PR, commit, ADR), never a paraphrase with no
+   source.
+3. The owning line updates its files **in the same change** that merges work or records a decision.
+   A snapshot older than the last merge is stale and says so.
+4. Decisions are appended, never rewritten. A reversal is a new dated entry that points back.
+5. **Nothing here may reach a fleet agent.** `governance/` is in `.dockerignore`, and no image COPYs
+   it. It holds design reasoning the agents must not see.
+6. A line proposes an edit to the other line's file through the shared filigree issue or a message.
+   The owner decides and writes it.
+7. Paths to session scratch (`/tmp/…`, `.scratch/`) are not durable. Copy what must survive into
+   `records/`.
+8. **Commits:** this folder lives in the chassis repository, so the chassis line commits it. The
+   vehicle line writes `governance/vehicle/` directly, and the chassis commits it verbatim, never
+   editing it, on its next commit to `aurora-port`, or sooner on request
+   (`coordination.md`).
+9. `tests/test_retired.py` exempts `governance/`, because the decision logs record history.
+ AGENTS.md                           |   2 +-
+ CLAUDE.md                           |   2 +-
+ README.md                           |  20 +-
+ docker-compose.override.example.yml |   5 +-
+ governance/chassis/practice.md      |   3 +-
+ live/conftest.py                    |  73 +++++++-
+ live/stack.py                       | 280 ++++++++++++++++++++++++++--
+ live/test_containment.py            |  14 +-
+ live/test_vehicle.py                |  12 +-
+ scripts/verify_containment.sh       |  24 ++-
+ tests/test_live_stack.py            | 357 +++++++++++++++++++++++++++++++++++-
+ tests/test_verify_containment.py    |  82 ++++++++-
+ 12 files changed, 815 insertions(+), 59 deletions(-)
+160000 commit f44399645fb2633e695a5d758cb5a41f43fb848c	docs/deep_research/vehicle
+
+**Checking diff index**
+**Reading caller and stdlib**
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+exec
+/usr/bin/bash -lc 'git diff --cached --quiet 148a31c4951e43c1cdafdf30c15b029dc7e104a8' in /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+ succeeded in 0ms:
+exec
+/usr/bin/bash -lc "rg -n -A 35 'def wait\\(|def _wait\\(' /usr/lib/python3.*/subprocess.py; rg -n -A 35 '"'^def TemporaryFile|    def TemporaryFile'"' /usr/lib/python3.*/tempfile.py" in /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+ succeeded in 0ms:
+1259:    def wait(self, timeout=None):
+1260-        """Wait for child process to terminate; returns self.returncode."""
+1261-        if timeout is not None:
+1262-            endtime = _time() + timeout
+1263-        try:
+1264-            return self._wait(timeout=timeout)
+1265-        except KeyboardInterrupt:
+1266-            # https://bugs.python.org/issue25942
+1267-            # The first keyboard interrupt waits briefly for the child to
+1268-            # exit under the common assumption that it also received the ^C
+1269-            # generated SIGINT and will exit rapidly.
+1270-            if timeout is not None:
+1271-                sigint_timeout = min(self._sigint_wait_secs,
+1272-                                     self._remaining_time(endtime))
+1273-            else:
+1274-                sigint_timeout = self._sigint_wait_secs
+1275-            self._sigint_wait_secs = 0  # nothing else should wait.
+1276-            try:
+1277-                self._wait(timeout=sigint_timeout)
+1278-            except TimeoutExpired:
+1279-                pass
+1280-            raise  # resume the KeyboardInterrupt
+1281-
+1282-    def _close_pipe_fds(self,
+1283-                        p2cread, p2cwrite,
+1284-                        c2pread, c2pwrite,
+1285-                        errread, errwrite):
+1286-        # self._devnull is not always defined.
+1287-        devnull_fd = getattr(self, '_devnull', None)
+1288-
+1289-        with contextlib.ExitStack() as stack:
+1290-            if _mswindows:
+1291-                if p2cread != -1:
+1292-                    stack.callback(p2cread.Close)
+1293-                if c2pwrite != -1:
+1294-                    stack.callback(c2pwrite.Close)
+--
+1580:        def _wait(self, timeout):
+1581-            """Internal implementation of wait() on Windows."""
+1582-            if timeout is None:
+1583-                timeout_millis = _winapi.INFINITE
+1584-            elif timeout <= 0:
+1585-                timeout_millis = 0
+1586-            else:
+1587-                timeout_millis = int(timeout * 1000)
+1588-            if self.returncode is None:
+1589-                # API note: Returns immediately if timeout_millis == 0.
+1590-                result = _winapi.WaitForSingleObject(self._handle,
+1591-                                                     timeout_millis)
+1592-                if result == _winapi.WAIT_TIMEOUT:
+1593-                    raise TimeoutExpired(self.args, timeout)
+1594-                self.returncode = _winapi.GetExitCodeProcess(self._handle)
+1595-            return self.returncode
+1596-
+1597-
+1598-        def _readerthread(self, fh, buffer):
+1599-            buffer.append(fh.read())
+1600-            fh.close()
+1601-
+1602-
+1603-        def _communicate(self, input, endtime, orig_timeout):
+1604-            # Start reader threads feeding into a list hanging off of this
+1605-            # object, unless they've already been started.
+1606-            if self.stdout and not hasattr(self, "_stdout_buff"):
+1607-                self._stdout_buff = []
+1608-                self.stdout_thread = \
+1609-                        threading.Thread(target=self._readerthread,
+1610-                                         args=(self.stdout, self._stdout_buff))
+1611-                self.stdout_thread.daemon = True
+1612-                self.stdout_thread.start()
+1613-            if self.stderr and not hasattr(self, "_stderr_buff"):
+1614-                self._stderr_buff = []
+1615-                self.stderr_thread = \
+--
+2021:        def _wait(self, timeout):
+2022-            """Internal implementation of wait() on POSIX."""
+2023-            if self.returncode is not None:
+2024-                return self.returncode
+2025-
+2026-            if timeout is not None:
+2027-                endtime = _time() + timeout
+2028-                # Enter a busy loop if we have a timeout.  This busy loop was
+2029-                # cribbed from Lib/threading.py in Thread.wait() at r71065.
+2030-                delay = 0.0005 # 500 us -> initial delay of 1 ms
+2031-                while True:
+2032-                    if self._waitpid_lock.acquire(False):
+2033-                        try:
+2034-                            if self.returncode is not None:
+2035-                                break  # Another thread waited.
+2036-                            (pid, sts) = self._try_wait(os.WNOHANG)
+2037-                            assert pid == self.pid or pid == 0
+2038-                            if pid == self.pid:
+2039-                                self._handle_exitstatus(sts)
+2040-                                break
+2041-                        finally:
+2042-                            self._waitpid_lock.release()
+2043-                    remaining = self._remaining_time(endtime)
+2044-                    if remaining <= 0:
+2045-                        raise TimeoutExpired(self.args, timeout)
+2046-                    delay = min(delay * 2, remaining, .05)
+2047-                    time.sleep(delay)
+2048-            else:
+2049-                while self.returncode is None:
+2050-                    with self._waitpid_lock:
+2051-                        if self.returncode is not None:
+2052-                            break  # Another thread waited.
+2053-                        (pid, sts) = self._try_wait(0)
+2054-                        # Check the pid and loop as waitpid has been known to
+2055-                        # return 0 even without WNOHANG in odd situations.
+2056-                        # http://bugs.python.org/issue14396.
+749:    def TemporaryFile(mode='w+b', buffering=-1, encoding=None,
+750-                      newline=None, suffix=None, prefix=None,
+751-                      dir=None, *, errors=None):
+752-        """Create and return a temporary file.
+753-        Arguments:
+754-        'prefix', 'suffix', 'dir' -- as for mkstemp.
+755-        'mode' -- the mode argument to io.open (default "w+b").
+756-        'buffering' -- the buffer size argument to io.open (default -1).
+757-        'encoding' -- the encoding argument to io.open (default None)
+758-        'newline' -- the newline argument to io.open (default None)
+759-        'errors' -- the errors argument to io.open (default None)
+760-        The file is created as mkstemp() would do it.
+761-
+762-        Returns an object with a file-like interface.  The file has no
+763-        name, and will cease to exist when it is closed.
+764-        """
+765-        global _O_TMPFILE_WORKS
+766-
+767-        if "b" not in mode:
+768-            encoding = _io.text_encoding(encoding)
+769-
+770-        prefix, suffix, dir, output_type = _sanitize_params(prefix, suffix, dir)
+771-
+772-        flags = _bin_openflags
+773-        if _O_TMPFILE_WORKS:
+774-            fd = None
+775-            def opener(*args):
+776-                nonlocal fd
+777-                flags2 = (flags | _os.O_TMPFILE) & ~_os.O_CREAT
+778-                fd = _os.open(dir, flags2, 0o600)
+779-                return fd
+780-            try:
+781-                file = _io.open(dir, mode, buffering=buffering,
+782-                                newline=newline, encoding=encoding,
+783-                                errors=errors, opener=opener)
+784-                raw = getattr(file, 'buffer', file)
+
+exec
+/usr/bin/bash -lc "git show 148a31c4951e43c1cdafdf30c15b029dc7e104a8:live/stack.py | nl -ba | sed -n '420,470p'; git show 148a31c4951e43c1cdafdf30c15b029dc7e104a8:live/test_containment.py | nl -ba | tail -70; git show 148a31c4951e43c1cdafdf30c15b029dc7e104a8:live/test_vehicle.py | nl -ba | tail -65" in /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+ succeeded in 0ms:
+   420	        lines += [
+   421	            f"      {key}: {json.dumps(str(value).replace('$', '$$'))}"
+   422	            for key, value in environment.items()
+   423	        ]
+   424	        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+   425	        if path not in self.overrides:
+   426	            self.overrides.append(path)
+   427	        self.compose("up", "-d", "--force-recreate", "--no-deps", service)
+   428	
+   429	    def _labelled(self, label: str) -> list[str]:
+   430	        """The value of `label` on every running container that carries it."""
+   431	        template = f'{{{{.Label "{label}"}}}}'
+   432	        result = self.run(["docker", "ps", "--filter", f"label={label}", "--format", template])
+   433	        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+   434	
+   435	    def others_running(self) -> list[str]:
+   436	        """Every other smoke project with a container up on this daemon, and every containment
+   437	        sweep running, whoever started it."""
+   438	        projects = {
+   439	            p
+   440	            for p in self._labelled("com.docker.compose.project")
+   441	            if p.startswith(SMOKE_PROJECT_PREFIX) and p != self.project
+   442	        }
+   443	        sweeps = {f"a containment sweep ({owner})" for owner in self._labelled(SWEEP_LABEL)}
+   444	        return sorted(projects | sweeps)
+   445	
+   446	    def containment_check(self) -> subprocess.CompletedProcess:
+   447	        """scripts/verify_containment.sh against this stack, in its own process group: a timeout
+   448	        kills every process it started, so no sweep can be launched after the test moves on."""
+   449	        return run_group(
+   450	            ["sh", str(REPO / "scripts" / "verify_containment.sh")],
+   451	            env=self.containment_environment(),
+   452	            cwd=REPO,
+   453	            timeout=900,
+   454	        )
+   455	
+   456	    def containment_environment(self) -> dict:
+   457	        """What scripts/verify_containment.sh runs with against this stack."""
+   458	        agents = " ".join(f"agent_{n}" for n in range(1, self.agents + 1))
+   459	        return allowed_environment(
+   460	            {
+   461	                "COMPOSE": " ".join(self.compose_command()),
+   462	                "AGENTS": agents,
+   463	                "SWEEP_LABEL": self.project,
+   464	            }
+   465	        )
+   466	
+   467	    def services(self) -> list[str]:
+   468	        services = ["stub"]
+   469	        services += [f"recorder_{n}" for n in range(1, self.agents + 1)]
+   470	        services += [f"agent_{n}" for n in range(1, self.agents + 1)]
+     1	"""The first live checks: the image builds, each agent's world is up, and the walls hold (spec 9.6)."""
+     2	
+     3	from probes import postgres_answers, progress
+     4	from stack import wait_for
+     5	
+     6	
+     7	def test_the_image_builds_and_each_agent_s_postgres_answers(stack):
+     8	    for n in range(1, stack.agents + 1):
+     9	        assert postgres_answers(stack, n), f"agent_{n}'s postgres does not answer"
+    10	
+    11	
+    12	def test_containment_holds_for_every_agent(stack):
+    13	    result = stack.containment_check()
+    14	    assert result.returncode == 0, result.stdout + result.stderr
+    15	    assert "PASS  agent_3 has no trace of its recorder's real key" in result.stdout
+    16	    for n in range(1, stack.agents + 1):
+    17	        assert f"PASS  agent_{n} has no vehicle in its image" in result.stdout, n
+    18	        assert f"PASS  agent_{n} mounts nothing of the vehicle's source" in result.stdout, n
+    19	
+    20	
+    21	DEEP_REQUEST = r"""
+    22	import socket
+    23	body = b"[" * 100000 + b"]" * 100000
+    24	s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    25	s.settimeout(30)
+    26	s.connect("/llm/sock/core.sock")
+    27	s.sendall(
+    28	    b"POST /api/v1/chat/completions HTTP/1.1\r\nHost: localhost\r\n"
+    29	    b"Content-Type: application/json\r\nConnection: close\r\n"
+    30	    b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+    31	)
+    32	reply = b""
+    33	while True:
+    34	    piece = s.recv(65536)
+    35	    if not piece:
+    36	        break
+    37	    reply += piece
+    38	print(reply.decode("utf-8", "replace"))
+    39	"""
+    40	
+    41	
+    42	def test_an_agent_s_deeply_nested_request_is_refused_by_its_recorder(stack):
+    43	    before = (progress(stack, 1) or {}).get("completed_at", 0)
+    44	    result = stack.exec("agent_1", "python3", "-c", DEEP_REQUEST)
+    45	    assert result.returncode == 0, result.stderr
+    46	    assert result.stdout.startswith("HTTP/1.0 400") or result.stdout.startswith("HTTP/1.1 400")
+    47	    assert "structure_limit" in result.stdout
+    48	    wait_for(
+    49	        lambda: (progress(stack, 1) or {}).get("completed_at", 0) > before,
+    50	        timeout=120,
+    51	        every=3,
+    52	        what="agent_1's chassis to keep completing calls",
+    53	    )
+   279	            what="the restart policy to bring the vehicle back",
+   280	        )
+   281	
+   282	        def resumed(frames=frames):
+   283	            newest = {s: _newest_frame(stack, s) for s in stack.slugs}
+   284	            fresh = all(
+   285	                frame and frame.get("boot_id") != frames[s]["boot_id"]
+   286	                for s, frame in newest.items()
+   287	            )
+   288	            return newest if fresh else None
+   289	
+   290	        after_frames = wait_for(
+   291	            resumed,
+   292	            timeout=START_SECONDS,
+   293	            every=1,
+   294	            what="a frame from the new boot in every window",
+   295	        )
+   296	        after = _executive(stack)
+   297	        assert after is not None, "the window root's .executive.json cannot be read"
+   298	        assert after["world_id"] == before["world_id"], "a restart resumes the world it was flying"
+   299	        assert after["tick"] > before["tick"], (before["tick"], after["tick"])
+   300	        for s in stack.slugs:
+   301	            assert after_frames[s]["seq"] > frames[s]["seq"], f"{s}'s frame sequence continues"
+   302	            assert _window_world(stack, s) == before["world_id"], s
+   303	        found = RESUMED.findall(stack.logs("vehicle"))
+   304	        assert len(found) == banners + 1, f"one resume banner for this boot: {found[banners:]}"
+   305	        resumed_world, recovered, checkpoint, replayed = found[-1]
+   306	        recovered, checkpoint, replayed = int(recovered), int(checkpoint), int(replayed)
+   307	        assert resumed_world == before["world_id"], "the banner names the world it was flying"
+   308	        assert replayed == recovered - checkpoint, "the banner's replay is its two ticks apart"
+   309	        # A checkpoint that completed after the pre-kill read holds the command's cycle; the
+   310	        # resume then replays nothing of it, possibly nothing at all. Set up again.
+   311	        if checkpoint > command_tick:
+   312	            crossed.append(f"tick {command_tick}: resumed from checkpoint {checkpoint}")
+   313	            continue
+   314	        # From here M <= T < N, so the resume replayed at least the command's cycle.
+   315	        assert command_tick < recovered, (
+   316	            f"the command's cycle (tick {command_tick}) is in the record the resume recovered "
+   317	            f"(through tick {recovered})"
+   318	        )
+   319	        assert replayed > 0, "the resume replayed the ticks after its checkpoint"
+   320	        results = _results_for(stack, slug, marker)
+   321	        assert len(results) == 1, (
+   322	            f"a recorded command has exactly one result after the replay: {results}"
+   323	        )
+   324	        _assert_no_window_carries_the_world_s_identity(stack)
+   325	        return
+   326	    raise AssertionError(f"no setup put the command's cycle inside the replay: {crossed}")
+   327	
+   328	
+   329	def test_docker_stop_reaches_the_vehicle_within_its_grace(vehicle_stack):
+   330	    stack = vehicle_stack
+   331	    # Running and advancing now, so a fast stop is the stop's doing and not a vehicle already gone.
+   332	    tick = _tick(stack)
+   333	    wait_for(lambda: _tick(stack) > tick, timeout=60, every=0.2, what="the vehicle to advance")
+   334	    container = stack.container_id("vehicle")
+   335	    started = time.monotonic()
+   336	    stack.compose("stop", "--timeout", "30", "vehicle")
+   337	    elapsed = time.monotonic() - started
+   338	    # Without docker-init the console would be PID 1, ignore SIGTERM, and wait out the 30 s.
+   339	    assert elapsed < 20, f"docker stop took {elapsed:.1f}s: the SIGTERM did not reach the console"
+   340	    state = stack.run(
+   341	        ["docker", "inspect", "-f", "{{.State.Status}} {{.State.OOMKilled}}", container]
+   342	    )
+   343	    assert state.stdout.split() == ["exited", "false"], state.stdout
+
+**Writing timing diagnostics comment**
+**Verifying increment scope**
+codex
+**land**
+
+**Critical:** None.
+
+**Important:** None in the R2c delta. The pipe-EOF defect is fixed in [live/stack.py:172](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/live/stack.py:172): output goes to temporary files, and `wait(timeout)` observes only the leader. The `finally` kills the group before output is read, including on timeout or `KeyboardInterrupt`.
+
+**Minor:**
+
+- **Timing-dependent tests:** [tests/test_live_stack.py:714](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/tests/test_live_stack.py:714) allows only one second for child startup; line 730 measures startup and scheduling within the 1.5-second prompt-return limit. Both can fail on a heavily loaded host despite correct cleanup. The readiness handshake improves validity but does not remove those scheduling assumptions.
+- **Timeout diagnostics regress:** `wait()` raises `TimeoutExpired` without captured stdout/stderr; exception propagation then closes the temporary files ([live/stack.py:177](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/live/stack.py:177)). This loses diagnostic output, but does not compromise cleanup or the current caller’s assertions.
+
+Other requested checks: context managers close both files on exceptional paths, including failed `Popen`; text-mode temporary files are valid subprocess destinations, with `seek(0)` preparing their subsequent reads. Repeated `wait()` safely returns the cached status. An already-vanished group produces the suppressed `ProcessLookupError`. A single interrupt during the first wait reaches cleanup; repeated interrupts can still interrupt cleanup. The narrow PGID-reuse race after leader reaping already existed in R2b. Output remains unbounded: capture now consumes temporary storage, and successful completion still reads everything into memory.
+
+The tests preserve inherited stdout/stderr, establish readiness, check child termination, and retain the no-late-action assertion ([tests/test_live_stack.py:700](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/tests/test_live_stack.py:700)). No substantive assertion is weakened; reducing the final sleep to 2.5 seconds still exceeds the child’s two-second delay.
+
+Verified the delta hash, staged-index equality, vehicle pin, and two-file scope. Read-only source review; no tests, builds, containers, or `.env` reads. Owner control results were supplied evidence, not independently reproduced.
+tokens used
+36,469
+**land**
+
+**Critical:** None.
+
+**Important:** None in the R2c delta. The pipe-EOF defect is fixed in [live/stack.py:172](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/live/stack.py:172): output goes to temporary files, and `wait(timeout)` observes only the leader. The `finally` kills the group before output is read, including on timeout or `KeyboardInterrupt`.
+
+**Minor:**
+
+- **Timing-dependent tests:** [tests/test_live_stack.py:714](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/tests/test_live_stack.py:714) allows only one second for child startup; line 730 measures startup and scheduling within the 1.5-second prompt-return limit. Both can fail on a heavily loaded host despite correct cleanup. The readiness handshake improves validity but does not remove those scheduling assumptions.
+- **Timeout diagnostics regress:** `wait()` raises `TimeoutExpired` without captured stdout/stderr; exception propagation then closes the temporary files ([live/stack.py:177](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/live/stack.py:177)). This loses diagnostic output, but does not compromise cleanup or the current caller’s assertions.
+
+Other requested checks: context managers close both files on exceptional paths, including failed `Popen`; text-mode temporary files are valid subprocess destinations, with `seek(0)` preparing their subsequent reads. Repeated `wait()` safely returns the cached status. An already-vanished group produces the suppressed `ProcessLookupError`. A single interrupt during the first wait reaches cleanup; repeated interrupts can still interrupt cleanup. The narrow PGID-reuse race after leader reaping already existed in R2b. Output remains unbounded: capture now consumes temporary storage, and successful completion still reads everything into memory.
+
+The tests preserve inherited stdout/stderr, establish readiness, check child termination, and retain the no-late-action assertion ([tests/test_live_stack.py:700](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/tests/test_live_stack.py:700)). No substantive assertion is weakened; reducing the final sleep to 2.5 seconds still exceeds the child’s two-second delay.
+
+Verified the delta hash, staged-index equality, vehicle pin, and two-file scope. Read-only source review; no tests, builds, containers, or `.env` reads. Owner control results were supplied evidence, not independently reproduced.

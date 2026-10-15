@@ -1,0 +1,13 @@
+{
+  "world_id": "2cd93a5734fd4c1a9769b42ff8e4c91a",
+  "slugs": [
+    "alpha"
+  ],
+  "scenario": "nominal",
+  "seed": 0,
+  "ring_slots": {
+    "alpha": 300
+  },
+  "tick": 7,
+  "updated_at": "2026-10-11T00:21:58.547773+00:00"
+}

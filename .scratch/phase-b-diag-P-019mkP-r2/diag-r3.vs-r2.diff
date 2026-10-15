@@ -1,0 +1,405 @@
+--- ../phase-b-diag-P-019mkP/diag.py	2026-10-11 11:50:55.521290750 +1100
++++ diag.py	2026-10-11 11:57:52.479496608 +1100
+@@ -182,12 +182,27 @@
+ 
+ 
+ def unit_state() -> dict:
+-    shown = run(["systemctl", "--user", "show", "-p", "ActiveState,LoadState,ControlGroup", SCOPE])
++    try:
++        shown = run(["systemctl", "--user", "show", "-p", "ActiveState,LoadState,ControlGroup", SCOPE], timeout=20)
++    except (subprocess.TimeoutExpired, OSError) as error:
++        return {"error": f"{type(error).__name__}: {error}"}
+     if shown.returncode != 0:
+         return {"error": shown.stderr.strip()}
+     return dict(line.split("=", 1) for line in shown.stdout.splitlines() if "=" in line)
+ 
+ 
++def live_infos(pids) -> list[dict]:
++    """proc_info for each pid still there: one that exits between the listing and the read is
++    skipped, never an error."""
++    infos = []
++    for pid in pids or []:
++        try:
++            infos.append(proc_info(pid))
++        except (OSError, ValueError, IndexError):
++            continue
++    return infos
++
++
+ def cgroup_procs(cgroup: str) -> list[str] | None:
+     """The scope's processes; None when unreadable (never taken as zero)."""
+     try:
+@@ -253,176 +268,204 @@
+ )
+ # The original driver's path: an asynchronous list in a non-interactive sh, then `wait` for it.
+ shell = f"{scoped} > {log} 2>&1 &\nwait $!"
+-note("launch", sh=shell)
+-driver = subprocess.Popen(["sh", "-c", shell], cwd=WORKTREE, start_new_session=False)
+-started = time.monotonic()
+-
+-# The scope, its exact limits, and the launcher's record, before anything runs.
++# Defined before anything that can fail, so cleanup can always run against them.
++driver = None
+ cgroup = None
+-while time.monotonic() - started < 20:
+-    state = unit_state()
+-    if state.get("ActiveState") == "active" and state.get("ControlGroup") and record.exists():
+-        cgroup = state["ControlGroup"]
+-        break
+-    time.sleep(0.2)
+-limits = {}
+-if cgroup:
+-    try:
+-        limits = {
+-            "cpu.max": Path(f"/sys/fs/cgroup{cgroup}/cpu.max").read_text().strip(),
+-            "memory.max": Path(f"/sys/fs/cgroup{cgroup}/memory.max").read_text().strip(),
+-            "memory.events": Path(f"/sys/fs/cgroup{cgroup}/memory.events").read_text().split(),
+-        }
+-    except OSError as error:
+-        limits = {"error": str(error)}
+-launcher = json.loads(record.read_text()) if record.exists() else None
+-note("scope", cgroup=cgroup, limits=limits, launcher=launcher)
+-if not cgroup:
+-    supervision.append("the scope did not become active with its launcher record")
+-elif limits.get("cpu.max") != CPU_MAX or limits.get("memory.max") != MEMORY_MAX:
+-    supervision.append(f"the scope's limits are not {CPU_MAX} / {MEMORY_MAX}")
+-
+-# The monitor: one sample every five seconds; a failed read of a live scope is a failure.
++released = None
++watcher = None
+ stop = threading.Event()
+ heartbeat = [0.0]
+ abort: list[str] = []
+-oom_before = None
+-
++started = time.monotonic()
++try:
++    note("launch", sh=shell)
++    driver = subprocess.Popen(["sh", "-c", shell], cwd=WORKTREE, start_new_session=False)
+ 
+-def monitor() -> None:
+-    global oom_before
+-    prev = cpu_times()
+-    strikes = 0
+-    ticks = os.sysconf("SC_CLK_TCK")
+-    last_daemons = daemons()
+-    try:
+-        while not stop.is_set():
+-            time.sleep(5 if heartbeat[0] else 0.5)
+-            prev_, host = host_sample(prev)
+-            prev = prev_
+-            procs = cgroup_procs(cgroup)
+-            active = unit_state().get("ActiveState") == "active"
+-            if procs is None and active:
+-                raise RuntimeError("the live scope's cgroup.procs is unreadable")
+-            events = {}
+-            try:
+-                raw = Path(f"/sys/fs/cgroup{cgroup}/memory.events").read_text().split()
+-                events = dict(zip(raw[::2], map(int, raw[1::2])))
+-                current = int(Path(f"/sys/fs/cgroup{cgroup}/memory.current").read_text())
+-            except OSError:
+-                if active:
+-                    raise
+-                current = None
+-            if oom_before is None:
+-                oom_before = events.get("oom_kill", 0)
+-            infos = []
+-            for pid in procs or []:
++    # The scope, its exact limits, and the launcher's record, before anything runs.
++    cgroup = None
++    while time.monotonic() - started < 20:
++        state = unit_state()
++        if state.get("ActiveState") == "active" and state.get("ControlGroup") and record.exists():
++            cgroup = state["ControlGroup"]
++            break
++        time.sleep(0.2)
++    limits = {}
++    if cgroup:
++        try:
++            limits = {
++                "cpu.max": Path(f"/sys/fs/cgroup{cgroup}/cpu.max").read_text().strip(),
++                "memory.max": Path(f"/sys/fs/cgroup{cgroup}/memory.max").read_text().strip(),
++                "memory.events": Path(f"/sys/fs/cgroup{cgroup}/memory.events").read_text().split(),
++            }
++        except OSError as error:
++            limits = {"error": str(error)}
++    launcher = json.loads(record.read_text()) if record.exists() else None
++    note("scope", cgroup=cgroup, limits=limits, launcher=launcher)
++    if not cgroup:
++        supervision.append("the scope did not become active with its launcher record")
++    elif limits.get("cpu.max") != CPU_MAX or limits.get("memory.max") != MEMORY_MAX:
++        supervision.append(f"the scope's limits are not {CPU_MAX} / {MEMORY_MAX}")
++
++    # The monitor: one sample every five seconds; a failed read of a live scope is a failure.
++    oom_before = None
++
++
++    def monitor() -> None:
++        global oom_before
++        prev = cpu_times()
++        strikes = 0
++        ticks = os.sysconf("SC_CLK_TCK")
++        last_daemons = daemons()
++        try:
++            while not stop.is_set():
++                time.sleep(5 if heartbeat[0] else 0.5)
++                prev_, host = host_sample(prev)
++                prev = prev_
++                procs = cgroup_procs(cgroup)
++                state = unit_state()
++                if "error" in state:
++                    raise RuntimeError(f"the scope's state cannot be read: {state['error']}")
++                active = state.get("ActiveState") == "active"
++                if procs is None and active and unit_state().get("ActiveState") == "active":
++                    raise RuntimeError("the live scope's cgroup.procs is unreadable")
++                events = {}
+                 try:
+-                    infos.append(proc_info(pid))
++                    raw = Path(f"/sys/fs/cgroup{cgroup}/memory.events").read_text().split()
++                    events = dict(zip(raw[::2], map(int, raw[1::2])))
++                    current = int(Path(f"/sys/fs/cgroup{cgroup}/memory.current").read_text())
+                 except OSError:
+-                    continue
+-            now_daemons = daemons()
+-            daemon_cpu = {
+-                name: {
+-                    "cpu_pct_of_one": round(
+-                        100 * (d["cpu_ticks"] - last_daemons.get(name, d)["cpu_ticks"]) / ticks / 5, 1
+-                    ),
+-                    "rss_kib": d["rss_kib"],
++                    if active and unit_state().get("ActiveState") == "active":
++                        raise
++                    active, current = False, None
++                if oom_before is None:
++                    oom_before = events.get("oom_kill", 0)
++                infos = live_infos(procs)
++                now_daemons = daemons()
++                daemon_cpu = {
++                    name: {
++                        "cpu_pct_of_one": round(
++                            100 * (d["cpu_ticks"] - last_daemons.get(name, d)["cpu_ticks"]) / ticks / 5, 1
++                        ),
++                        "rss_kib": d["rss_kib"],
++                    }
++                    for name, d in now_daemons.items()
+                 }
+-                for name, d in now_daemons.items()
+-            }
+-            last_daemons = now_daemons
+-            sample = {
+-                "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+-                **host,
+-                "scope_active": active,
+-                "scope_memory_current": current,
+-                "scope_memory_events": events,
+-                "scope_procs": infos,
+-                "driver_sh": {"pid": driver.pid, "returncode": driver.poll()},
+-                "daemons": daemon_cpu,
+-            }
+-            with open(EVIDENCE / "monitor.jsonl", "a") as out:
+-                out.write(json.dumps(sample) + "\n")
+-            heartbeat[0] = time.monotonic()
+-            if host["mem_available_mib"] < 12288:
+-                abort.append(f"MemAvailable {host['mem_available_mib']} MiB < 12 GiB")
+-            strikes = strikes + 1 if (host["cpu_busy"] > 85 or host["load1"] > 20) else 0
+-            if strikes >= 3:
+-                abort.append("CPU busy > 85% or load1 > 20 for three samples")
+-            if events.get("oom_kill", 0) > oom_before or events.get("oom", 0) > 0:
+-                abort.append(f"an OOM in the owned scope: {events}")
+-            if not active:
+-                return
+-    except Exception as error:  # noqa: BLE001 - a monitor that cannot see is a monitor failure
+-        abort.append(f"monitor failure: {type(error).__name__}: {error}")
+-
+-
+-watcher = threading.Thread(target=monitor, daemon=True)
+-if not supervision:
+-    watcher.start()
+-    while not heartbeat[0] and watcher.is_alive() and time.monotonic() - started < 40:
+-        time.sleep(0.2)
+-    if not heartbeat[0]:
+-        supervision.append("the monitor took no first sample")
+-    else:
+-        first = json.loads((EVIDENCE / "monitor.jsonl").read_text().splitlines()[0])
+-        note("monitor-first-sample", sample=first)
+-
+-# Release the test only now.
+-released = None
+-if not supervision:
+-    go.write_text("go\n")
+-    released = time.monotonic()
+-    note("released", outer_deadline_s=OUTER_DEADLINE)
+-    niced = False
+-    while driver.poll() is None:
+-        elapsed = time.monotonic() - released
+-        if not niced and elapsed > 8:
+-            procs = [proc_info(p) for p in (cgroup_procs(cgroup) or [])]
+-            pytest_procs = [p for p in procs if "pytest" in p["cmd"] or "execnet" in p["cmd"]]
+-            note("nice-check", procs=procs)
+-            if not pytest_procs or any(p["nice"] != 19 for p in procs):
+-                supervision.append("the scope's processes are not all at nice 19")
+-            niced = True
+-        if abort:
+-            supervision.extend(abort)
+-        if not watcher.is_alive() and driver.poll() is None:
+-            try:  # the scope ended and the monitor with it: the sh's `wait` returns a moment later
+-                driver.wait(timeout=10)
+-            except subprocess.TimeoutExpired:
+-                supervision.append(abort[-1] if abort else "the monitor stopped while the test ran")
+-        if heartbeat[0] and time.monotonic() - heartbeat[0] > 20 and driver.poll() is None:
+-            supervision.append("the monitor's heartbeat is stale")
+-        if elapsed > OUTER_DEADLINE:
+-            supervision.append("the ten-minute outer deadline passed")
+-        if supervision:
+-            break
+-        time.sleep(1)
++                last_daemons = now_daemons
++                sample = {
++                    "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
++                    **host,
++                    "scope_active": active,
++                    "scope_memory_current": current,
++                    "scope_memory_events": events,
++                    "scope_procs": infos,
++                    "driver_sh": {"pid": driver.pid, "returncode": driver.poll()},
++                    "daemons": daemon_cpu,
++                }
++                with open(EVIDENCE / "monitor.jsonl", "a") as out:
++                    out.write(json.dumps(sample) + "\n")
++                heartbeat[0] = time.monotonic()
++                if host["mem_available_mib"] < 12288:
++                    abort.append(f"MemAvailable {host['mem_available_mib']} MiB < 12 GiB")
++                strikes = strikes + 1 if (host["cpu_busy"] > 85 or host["load1"] > 20) else 0
++                if strikes >= 3:
++                    abort.append("CPU busy > 85% or load1 > 20 for three samples")
++                if events.get("oom_kill", 0) > oom_before or events.get("oom", 0) > 0:
++                    abort.append(f"an OOM in the owned scope: {events}")
++                if not active:
++                    return
++        except Exception as error:  # noqa: BLE001 - a monitor that cannot see is a monitor failure
++            abort.append(f"monitor failure: {type(error).__name__}: {error}")
++
++
++    watcher = threading.Thread(target=monitor, daemon=True)
++    if not supervision:
++        watcher.start()
++        while not heartbeat[0] and watcher.is_alive() and time.monotonic() - started < 40:
++            time.sleep(0.2)
++        if not heartbeat[0]:
++            supervision.append("the monitor took no first sample")
++        else:
++            first = json.loads((EVIDENCE / "monitor.jsonl").read_text().splitlines()[0])
++            note("monitor-first-sample", sample=first)
++            if abort:
++                supervision.append(f"the first sample is not healthy: {abort}")
++            if not first.get("scope_active"):
++                supervision.append("the first sample does not see the scope active")
++            if not watcher.is_alive():
++                supervision.append("the monitor ended before the test was released")
++
++    # Release the test only now.
++    released = None
++    if not supervision:
++        go.write_text("go\n")
++        released = time.monotonic()
++        note("released", outer_deadline_s=OUTER_DEADLINE)
++        niced = False
++        while driver.poll() is None:
++            elapsed = time.monotonic() - released
++            if not niced and elapsed > 8:
++                procs = live_infos(cgroup_procs(cgroup))
++                pytest_procs = [p for p in procs if "pytest" in p["cmd"] or "execnet" in p["cmd"]]
++                note("nice-check", procs=procs)
++                if not pytest_procs or any(p["nice"] != 19 for p in procs):
++                    supervision.append("the scope's processes are not all at nice 19")
++                niced = True
++            if abort:
++                supervision.extend(abort)
++            if not watcher.is_alive() and driver.poll() is None:
++                try:  # the scope ended and the monitor with it: the sh's `wait` returns a moment later
++                    driver.wait(timeout=10)
++                except subprocess.TimeoutExpired:
++                    supervision.append(abort[-1] if abort else "the monitor stopped while the test ran")
++            if heartbeat[0] and time.monotonic() - heartbeat[0] > 20 and driver.poll() is None:
++                supervision.append("the monitor's heartbeat is stale")
++            if elapsed > OUTER_DEADLINE:
++                supervision.append("the ten-minute outer deadline passed")
++            if supervision:
++                break
++            time.sleep(1)
++
++except BaseException as error:  # noqa: BLE001 - any failure after the launch still cleans up
++    supervision.append(f"supervisor error after the launch: {type(error).__name__}: {error}")
++    note("supervisor-error", error=f"{type(error).__name__}: {error}")
+ 
+ # Cleanup: bounded, and verified from the unit and its cgroup, never assumed.
+ cleanup = {"steps": []}
+ if cgroup is None:
+     # The scope never came up: release nothing, but find it if it exists.
+     cgroup = unit_state().get("ControlGroup") or None
+-if unit_state().get("ActiveState") == "active":
+-    stopped = run(["systemctl", "--user", "stop", SCOPE], timeout=40)
+-    cleanup["steps"].append({"stop_rc": stopped.returncode, "stderr": stopped.stderr.strip()})
++state = unit_state()
++if not (state.get("ActiveState") == "inactive" or state.get("LoadState") == "not-found"):
++    try:
++        stopped = run(["systemctl", "--user", "stop", SCOPE], timeout=40)
++        cleanup["steps"].append({"stop_rc": stopped.returncode, "stderr": stopped.stderr.strip()})
++    except (subprocess.TimeoutExpired, OSError) as error:
++        cleanup["steps"].append({"stop_error": f"{type(error).__name__}: {error}"})
+     deadline = time.monotonic() + 15
+     while unit_state().get("ActiveState") == "active" and time.monotonic() < deadline:
+         time.sleep(0.5)
+     if unit_state().get("ActiveState") == "active":
+-        killed = run(["systemctl", "--user", "kill", "--signal=SIGKILL", SCOPE], timeout=20)
+-        cleanup["steps"].append({"sigkill_rc": killed.returncode})
+-        time.sleep(3)
+-try:
+-    driver_rc = driver.wait(timeout=30)
+-except subprocess.TimeoutExpired:
+-    driver.kill()
+-    driver_rc = driver.wait(timeout=10)
+-    cleanup["steps"].append("the sh driver was killed after the scope ended")
++        try:
++            killed = run(["systemctl", "--user", "kill", "--signal=SIGKILL", SCOPE], timeout=20)
++            cleanup["steps"].append({"sigkill_rc": killed.returncode})
++        except (subprocess.TimeoutExpired, OSError) as error:
++            cleanup["steps"].append({"sigkill_error": f"{type(error).__name__}: {error}"})
++        deadline = time.monotonic() + 15
++        while unit_state().get("ActiveState") == "active" and time.monotonic() < deadline:
++            time.sleep(0.5)
++driver_rc = None
++if driver is not None:
++    try:
++        driver_rc = driver.wait(timeout=30)
++    except subprocess.TimeoutExpired:
++        driver.kill()
++        driver_rc = driver.wait(timeout=10)
++        cleanup["steps"].append("the sh driver was killed after the scope ended")
+ stop.set()
+-watcher.join(timeout=15) if watcher.is_alive() or watcher.ident else None
++if watcher is not None and watcher.ident:
++    watcher.join(timeout=15)
++# A monitor failure that arrived as the test ended, or during the join, is part of the verdict.
++supervision.extend(abort)
+ final = unit_state()
+ procs_after = cgroup_procs(cgroup) if cgroup else None
+ cgroup_gone = bool(cgroup) and not Path(f"/sys/fs/cgroup{cgroup}").exists()
+@@ -436,7 +479,7 @@
+         "unit": final,
+         "cgroup_removed": cgroup_gone,
+         "cgroup_procs_after": procs_after,
+-        "monitor_thread_alive": watcher.is_alive(),
++        "monitor_thread_alive": watcher is not None and watcher.is_alive(),
+         "driver_sh_rc": driver_rc,
+         "remaining_helpers": helpers,
+     }
+@@ -445,7 +488,7 @@
+ cleanup["verified"] = (
+     ended
+     and (cgroup_gone or procs_after == [] or (cgroup is None and final.get("LoadState") == "not-found"))
+-    and not watcher.is_alive()
++    and not (watcher is not None and watcher.is_alive())
+     and not helpers
+ )
+ note("cleanup", **cleanup)

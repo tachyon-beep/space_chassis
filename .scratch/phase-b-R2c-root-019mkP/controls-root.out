@@ -1,0 +1,22 @@
+diag.py sha256 6eac172448026b6f4fe604ba5aa205439d5099c533cf33a1976e08f0a4dfc6b9
+PASS  a failed stop with failed state lookups still attempts SIGKILL: ['state', 'state', 'state']
+PASS  ... and never reports termination it did not see
+PASS  ... and records both attempts: [{'stop_error': "TimeoutExpired: Command '['systemctl']' timed out after 40 seconds"}, {'sigkill_rc': 0}]
+PASS  ... within its bounds (two 15 s waits): 30.0 s
+PASS  a failed kill after a failed stop is unverified
+PASS  ... recording stop_error and sigkill_error: [{'stop_error': "TimeoutExpired: Command '['systemctl']' timed out after 40 seconds"}, {'sigkill_error': 'OSError: bus gone'}]
+PASS  a scope the kill ends is verified: [{'stop_error': "TimeoutExpired: Command '['systemctl']' timed out after 40 seconds"}, {'sigkill_rc': 0}]
+PASS  a scope the stop ends is verified without a kill: ['state', 'stop', 'state', 'state']
+PASS  an already-not-found scope is left alone and verified: ['state']
+PASS  an already-failed scope is left alone and verified: ['state']
+PASS  an unanswerable first lookup still stops and kills: ['state', 'stop', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'kill', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state', 'state']
+PASS  reporting returns when the receipt write and the error's text both raise: True
+PASS  ... and keeps the verdict entry: ['supervisor error after the launch: (undescribable)']
+PASS  an ordinary error is reported with its text: ["supervisor error after the launch: KeyError: 'x'"]
+PASS  reporting returns even when the verdict list cannot be appended to: True
+PASS  the launch's except does nothing but call record_failure: ['record_failure(supervision, error)']
+PASS  ... and the try has no finally or else that could raise first
+PASS  cleanup calls terminate_scope at module level, after the try
+PASS  cleanup is verified only when termination is
+PASS  termination is not inside the launch's try
+0 failure(s)

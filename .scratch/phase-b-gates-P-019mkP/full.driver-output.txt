@@ -1,0 +1,3 @@
+gate rc=1
+
+[exited with code 0]

@@ -1,0 +1,1326 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 0974d59..01949b4 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -37,7 +37,7 @@ docker compose --profile fleet config -q    # the topology parses
+ sh scripts/prepare_host.sh                  # roster, .env, and the bounded volume images
+ python3 scripts/status.py --verbose         # one line per agent, from the record
+ sh scripts/verify_containment.sh --all      # safety claims vs. a running stack
+-python3 -m pytest live -q                   # the smoke stack: three agents, a stub model; the fastest end-to-end proof
++systemd-run --user --scope -p CPUQuota=35% -p MemoryMax=1G nice -n 19 python3 -m pytest live -q   # the smoke stacks, one at a time, inside their capped scope; the fastest end-to-end proof
+ ```
+ 
+ One `pytest` collects every suite: the operator side and the assertions about this repository's own
+diff --git a/CLAUDE.md b/CLAUDE.md
+index aff60fd..b7b542a 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -12,7 +12,7 @@ python3 -m pytest harness/tests -q                     # one suite: the Aurora h
+ python3 -m pytest recorder/tests -q                    # the recorder and the spend caps
+ python3 -m pytest pump/tests -q                        # the pump
+ python3 -m pytest docs/deep_research/vehicle/tests/test_vehicle_config.py -q   # the vehicle's referee
+-python3 -m pytest live -q                              # the live run: builds the image and runs the smoke stack; minutes
++systemd-run --user --scope -p CPUQuota=35% -p MemoryMax=1G nice -n 19 python3 -m pytest live -q   # the live run, inside its capped scope: builds the images and runs the smoke stacks one at a time; minutes
+ 
+ uvx ruff check . --no-cache                            # ruff is not installed here; uvx fetches it
+ uvx ruff format --check . --no-cache
+diff --git a/README.md b/README.md
+index 7d12009..9efba60 100644
+--- a/README.md
++++ b/README.md
+@@ -201,12 +201,26 @@ agent can read or change any transcript, its own included.
+ The smoke stack brings up three agents and their recorders, answers them from a
+ stub model that replies on cue instead of a real one, and mounts the contract
+ fixture as the window, on scratch directories with a dummy key and its own
+-compose project. It costs nothing and exercises everything except the vehicle:
++compose project. It costs nothing. A second stack runs the same fleet with the
++vehicle as the window (`live/test_vehicle.py`); it replaces the first. One smoke
++stack at a time: a stack holds a lock every checkout of this user shares from
++its start to its `down`, and refuses to start while another smoke project is
++running. Every container the run starts is capped by the kernel -- each stack
++service (`CAPS` in `live/stack.py`: CPUs, and memory with no swap past it, read
++back from each container's cgroup before any test runs) and the containment
++check's image sweep -- and the live run refuses to start a stack outside a
++capped user scope, which holds pytest and the docker clients:
+ 
+ ```sh
+-python3 -m pytest live -q
++systemd-run --user --scope -p CPUQuota=35% -p MemoryMax=1G nice -n 19 python3 -m pytest live -q
+ ```
+ 
++Together that is 4.95 CPUs and 13.25 GiB of the live run's 5 CPUs and 14 GiB
++(Governance, 2026-10-11). Not capped: the docker daemon's own work, which the
++remainder is left for, and the image builds. The builds run one at a time;
++Docker's default builder runs their steps inside the daemon, and this harness
++sets no limit on them.
++
+ It builds the image, runs the containment and acceptance checks against the
+ running stack — no route out, the binds, the caps, a `done`, a reseed — and
+ tears it down. It takes a few minutes, and it is the fastest way to see whether
+@@ -229,33 +243,68 @@ identity: a restart that names any of them differently refuses.
+ - **A restart needs nothing.** The restart policy brings it back and it resumes
+   the same world: the same `world_id`, mission time not advancing while it was
+   down. Every command whose cycle was recorded gets exactly one result; a batch
+-  claimed in the cycle a crash interrupted is lost with no result. A corrupt
++  claimed in the cycle a crash interrupted is lost with no result. (Until vehicle
++  #39 is fixed, a batch an agent replaces at the instant the vehicle claims the
++  file can also be lost with no result, with no crash at all.) A corrupt
+   checkpoint falls back to the generation before it. The work a restart redoes
+-  is bounded by one checkpoint interval.
++  is normally under one checkpoint interval (50 ticks); more when it falls back a
++  generation or a cadence checkpoint failed.
+ - **A rebuild of the vehicle image** that changes the Python patch version, libc
+   (or the platform), or the vehicle's configuration or engine code makes the
+   checkpoint incompatible, and every restart after it refuses until a new world
+   is begun. The base, `python:3.13-slim`, is pinned by digest in
+   `Dockerfile.agent`, so a rebuild keeps its Python and libc until someone
+-  changes that digest, which is a new-world event (the checkpoint records
+-  glibc's own version, which the Debian point updates the image's apt layer may
+-  pick up leave alone); in practice every vehicle pointer bump changes its
+-  configuration or engine too. A host kernel update does not matter.
++  changes that digest, which is a new-world event. (The checkpoint records
++  glibc's own version number; a Debian point update that the image's apt layer
++  picks up does not change it.) In practice every vehicle pointer bump changes
++  its configuration or engine too, so every adoption is a new world. A host
++  kernel update does not matter.
+ - **A deliberate new world** -- a new mission, a changed roster, scenario or
+-  seed, a vehicle update, or an exit 3 that will not clear: stop the fleet and
++  seed, a vehicle update, or an exit 3 that will not clear because the record or
++  the checkpoints themselves are damaged: stop the fleet and
+   the vehicle (an agent's window is bound by inode, so moving it under a running
+   agent leaves the agent writing into the old one); move the whole of `/state`
+   aside, the contents of each window aside, keeping each `<slug>/` and
+   `<slug>/output/` (or rerun `prepare_host.sh`), and the window root's
+   `.executive.json` aside too -- it binds the old world; start. A start with no
+   checkpoint on a `/state` that holds a record refuses: one state directory is
+-  one world.
++  one world. Start the vehicle before the fleet: until its first start
++  succeeds, a window an agent has written to (a `pending.json` from an older
++  world) makes that first start refuse.
+ - **`--closed-interlock` on a restart** is added to the world's set and
+   journaled: a restart can trip an interlock but never clear one. It is
+   not wired into `serve_vehicle.sh`; passing it means overriding the service's
+   entrypoint for that start.
+-- **An exit 3:** `docker compose logs vehicle`; the last line names the file,
+-  the check and what clears it.
++- **A resume says so in the vehicle's log** (`docker compose logs vehicle`): "resumed world
++  ... at tick N (checkpoint ... at tick M, replayed K, republished R)", and a
++  line each when it falls back to the previous checkpoint, rewrites the window
++  root's record, or advises on a window's `pending.json`.
++- **An exit 3:** `docker compose logs vehicle`; the last line is one sentence
++  naming the file, the check and what clears it. The restart policy retries it:
++  a refused start claims no command and runs no cycle, and a transient read
++  error clears itself; one that repeats will not clear on its own. Read the named
++  file's permissions and the disk before anything else -- a record the vehicle
++  cannot open or write refuses in the same words as one that is damaged, and only
++  damage is a reason for a new world. The cases include:
++  - both checkpoint generations unusable;
++  - a record that cannot continue the checkpoint, or a record file that cannot
++    be verified (a new world, once its permissions and the disk are ruled out);
++  - an `OSError` anywhere on the start path, the configuration's reads
++    included, naming the path and the errno;
++  - a record that cannot be written, or cut back after a failed append (the
++    run stops);
++  - a handle that cannot be closed on the way out, when nothing else failed;
++  - a scenario, seed, ring size, phase or slug set that differs from the
++    world's, an incompatible checkpoint after a rebuild, a `/state` with a record
++    and no checkpoint, another executive holding the lock, or a window root whose
++    record names a different world (beside a checkpoint, a record that is
++    unreadable, missing or otherwise disagrees is rewritten from the recovered
++    world, and the start goes on unless that write fails);
++  - a checkpoint at the recovered tick that cannot be written: the start is
++    refused before anything is claimed, and the world resumes from the record at
++    the next start;
++  - and a run that stops itself mid-mission because its state can no longer be
++    compared.
+ 
+ Probe a window (`contract/diode_probe.py` submits commands) only in a stack
+ with no fleet in it, or on a scratch directory: in a live mission every window
+diff --git a/docs/deep_research/integration/reconciliation/README.md b/docs/deep_research/integration/reconciliation/README.md
+index b26341a..2a625ab 100644
+--- a/docs/deep_research/integration/reconciliation/README.md
++++ b/docs/deep_research/integration/reconciliation/README.md
+@@ -90,8 +90,8 @@ from becoming eight codebases:
+ | `../../vehicle/channels.yaml` | Written. 147 channels with units, rates, priorities, events **and an event class**, a crew perception bound of seven positions, and a derived maximum decision age per point (one publish period). Each declared event is now either an `alarm` with a threshold behind it, a `realised_by` naming the threshold on another channel that keeps the promise, a `notification` that is published on change, or a `frame` field — because an audit of apollo's prose `events` against the thresholds found 53 of 118 promises unkept. The RCS pulse-width point no longer calls the LM 10 ms command duration a universal qualified minimum. |
+ | `../../vehicle/vehicle.yaml` | Written. Four configurations that close on mass; propulsion, loads, zones, antennas sourced to the Apollo 11 mission report and the Program Summary Report. The reference design now declares the BUS_A/B 40 A continuous rating once as a chosen value sourced to electrical_diode.md:251. RCS minimum impulse bits remain owed; an electrical command ON time does not bound delivered impulse while thrust continues after OFF. The docked LM axial frame now follows ODB Rev 2 Figure 2-17, X_A = 1422.75 - X_E; the J-2 lateral rotation remains UNCONFIGURED, so mixed-frame tensors and a full jet matrix remain owed. |
+ | `../../vehicle/mission.yaml` | Written. Eight phases summing to exactly 192.0 h, the MET epoch, crew, and a Δv budget of published per-manoeuvre velocity changes. The initial state vector is now four of six osculating elements (C-24), re-derived by the linter; the other two need a lunar ephemeris at the arrival epoch. Extended by `mission_diode.md` (a ten-posture execution machine with terminal abort, and a freshness manifest per hazardous transition) and by `domains/comms/` (the lunar occultation derived from geometry: 46.5 min per revolution against Apollo's ~45). The per-phase `allowed_verbs` list was **deleted** — it duplicated the verbs' own `allowed_phases` and had drifted 197 places from it. Round 86 names MET 0 as a chosen post-extraction transfer start, aligns launch switches to it, and labels the 73 h coast a chosen transfer interval. Round 89 pins the onboard configuration after Apollo 17 checklist F37 00E selects P00 and before V49, while the transfer state remains chosen. |
+-| `../../vehicle/tools/check_vehicle.py` | Written. Composes with 273 declared debts and carries 877 `report.refuse` call sites — among them, since round 84, the six refusals that hold the launch block's inventory of itself: `mission.yaml#launch_state` could declare the positions it *makes* (`states`) and the ones it read out of a document (`sourced`) and had no way to declare the ones it *owes*, so the count lived in prose — a comment above the block and the docstring of the test that holds it, both claiming nine positions were choices the corpus does not make while rounds 80, 81 and 83 had made four of them — and `owed` is that half as a field, refused when it is absent beside `states`, when it is not a map, when a position is both made and owed, when an owed position's state is no longer unconfigured (the refusal that would have fired on the day the first source landed), when an owed name is no state at all, and when an owed position says nothing about what would close it — among them, since round 83, the five refusals that hold a state's `unit` to the source its provenance cites: a `unit_source` member the state cannot take, a member of the vocabulary the split does not account for, a member that is both the source's and the vehicle's, an addition with no reason, and a split declared on a `unit` that is not a vocabulary — because `cabin_regulator_position` held four members where `apollo_diode.md:95` gives three and the account of the fourth lived in the channel's note rather than the state's — among them, since round 81, the four refusals that hold a telemetry profile to the link mode that carries it: a `link_mode` that is no state's vocabulary, a `rate_state` that is no state, a rate that is no declared profile's `bps`, and the two positions in `mission.yaml#launch_state` disagreeing — because `apollo_diode.md:161` and `:165` declare the link mode and the rate of one choice in two channels and nothing had joined them, so a vehicle could hold `sband_low` beside 51,200 bit/s — among them, since round 80, the four refusals that hold a launch position to the document it came from: a `sourced` locator for a state the block does not declare, a locator with no page, a `source` with nothing cited in it, and the join in both directions between the block's `sourced` map and the state's own `initial_provenance.basis` — because the block could say *decided* and nothing else, and nine positions sat as an operator question while a published launch checklist stated three of them — among them, since round 79, the six refusals that hold a hysteresis band's *effect*: a band with values and no `band_value` at all, a `band_value` that is not a mapping over exactly the two boundaries, a member the state's own `unit` cannot hold, a state whose `unit` is no vocabulary at all, and an outcome declared on a state whose band is still owed — because a comparator has two boundaries and these vocabularies have three to five members, which is why §5's latch rule had no output to write and why `load_shed_class`, whose one band is the tier that selects `none`, cannot be moved by its own band at all — among them, since round 78, the two refusals that keep §5's integer-microsecond stamps meaningful: a `tick_hz` whose tick is not a whole number of microseconds (at 50 Hz it is 20,000 exactly, and at 60 Hz the plant's rounding would let a float decide the tie-break between two events in one tick, which is the thing `plant.md` §5 says timestamps exist to remove) and one shorter than a microsecond, where there is no integer stamp to make at all — among them, since round 77, the four refusals that hold a hysteresis band to the point it is a band on: a band with values and no `band_on` at all, a `band_on` naming no registered point, a band disagreeing with the threshold declared on its own point in that point's units (which is how `load_shed_class`'s clear came to sit 0.2 V below `bus_a_undervoltage`'s while its own note claimed the two were the same), and a band claiming other units while dividing differently from the band it names — the ratio being the part of a band that survives a unit change, which is what `lcl_tripped`'s 1.25/1.05 shares with `lcl_overcurrent`'s 313 A/263 A — among them, since round 76, the two directions of the join between `mission.yaml#launch_state` and the four states that cite it: one decision about MET 0, declared once and held on both sides — including, since round 75, the rule that a state moved by a one-way event must declare what the event makes it: the event named a transition between two configurations and the state speaks a vocabulary of its own, and nothing joined the two — among them, since round 74, the three refusals that hold `also_present` to the per-subject form: a flat list, a list of the wrong length, and a configuration that is both a phase's subject and merely there — including, since round 73, the rule that a phase's simultaneous crew add up to `crew.size`: the two crew models were held together by comparing a *maximum*, and a maximum cannot see a phase that puts five people in a three-person crew — among them, since round 72, the rule that `reads:` names a state on the node that *drives* the flux: a discharge empties at the rate its consumer sets, so the target is what the flux multiplies, and a check that asked the source every time is how a declaration came to override a correct driver with the cabin's own mass — including, since round 70, the rule that a `state_order` needs something to order and the one that an edge discharges the stock it *leaves*. Both were guards whose condition answered the requirement and not the declaration, and both had a declaration hiding behind them: a cross-article dependency written as an intra-node order on `fuel_cell`, and a second drain of the cabin's CO2 — including, since round 69, the rule that a phase boundary is a whole number of ticks from the epoch: the ladder was checked against itself and against its total, and never against the clock the mission runs on — including, since round 68, the rule that an edge discharges the stock it *leaves*: the field was read only to choose between the stocks on a crowded node, so `E-ATM-ABSORB` and its LM twin drained the cabin's CO2 from a node they do not leave, subtracting one outflow twice, including the ones only a landed domain can trip. It reports every unset value by the path that reaches it; enforces D-04 (no claim quantity) and the forbidden-verb list by pattern rather than by name; refuses a guard whose evidence cannot arrive in time (invariant D); binds every published enum to the vocabulary its own state can take — which found a regulator position and a stage configuration the vehicle could be in and could not report; re-derives the translunar osculating elements from the parking orbit and the phase ladder, refusing a trajectory that cannot arrive (C-24); holds the presentation contract to its own summary, refusing a cadence class or a mirror bound that disagrees with the registry; derives the 59-node tick order and refuses a residual cycle, a cycle that does not close, or a node whose producing states have no declared order; refuses a duplicate key, which is the signature of an absorbed list item; refuses a registered channel nothing publishes; refuses a declared event with no class, an `alarm` nothing implements, or a `realised_by` naming no threshold; refuses a top-level `vehicle.yaml` section nothing reads, and a section declared and left empty — which is how the thermal block spent its life with `thermal: null` and its three subsections as orphan keys, so every reader of the section silently got `None`; refuses a fault whose `component` names no component, state or node; refuses a key written where a block scalar's prose lives, so the declaration does not exist in the parsed document — the silent half of the absorbed-key accident, which needs no collision and therefore survived `duplicate_keys`; refuses an `UNCONFIGURED` scalar whose top-level namesake in the same file is declared, a debt that has been answered and left standing; refuses a withheld truth that is also a registered channel (the §7 boundary, which nothing read until this round — 38 named channels and 0 described categories declared `not_published` and unenforced), a `severity` outside V-04's ladder (142 severity declarations, unread by any tool until the round that landed `check_profiles`'s V-04 rule, and one of them had no severity at all), and a fault whose `kind`, `seeding`, `detection` or `response` is malformed — the diagnostic half of the faults that no tool read; refuses a conservation edge with an unset value, an undecidable dimension, or anything other than a one-for-one ratio — a check that had existed since the graph's first version and had never once refused anything, because the dimension lookup returned nothing for six of the node units and the guard skipped the edge; refuses a point whose `from` resolves to no state and no coupling node — which surfaced `eclss.cabin_temp_c` and `thermal.zone_csm_cabin_t` as one cabin temperature published twice, the reconciliation's oldest problem arriving somewhere new; and prints three derived views in place of the authored lists that were deleted: `--order` for the tick order, `--phases` for the verbs by phase, and `--debts` for the owed list grouped by the scalar each one wants rather than by the path that reaches it. Round 86 also refuses a launch-state event that disagrees with the MET 0 initial state or the first phase's docked post-extraction configuration. Round 87 derives the continuous-current alarm from the bus rating and refuses a clear limit that drifts from its declared one-channel-quantum margin. Round 88 refuses a universal RCS command ON time and holds SM, CM and LM command paths, pulse-floor debt and group-command policy apart. Round 89 pins the P00 and active-DAP initial-state source relation; the thermal audit rejects cross-vehicle nodal citations; the frame check rejects a docked positive LM/Apollo X relation and leaves J-2 lateral clocking owed. |
+-| `tests/test_vehicle_config.py` | Written, and now living in the vehicle's own repository (`tachyon-beep/space_vehicle`, mounted here as a git submodule at `docs/deep_research/vehicle`); the assertions that need this repository's files — the frozen corpus, `contract/diode_probe.py`, this README's rows, the compose service — stayed behind in `tests/test_vehicle_reconciliation.py`. Three hundred forty-four tests: the definition composes, and the great majority break a copy of it in one place each to watch a refusal fire — including the crew perception bound in both directions, a forbidden verb form, an interlock that resolves to no threshold, a verb advertising no arguments, a quality function that can see the fault state, a conclusion emitted as a quality code, an irreversible verb that ignores the clock, a guard on evidence that cannot arrive, a channel whose state cannot hold its values, a launch disagreement whose refusal names the wrong domain, an initial state that cannot reach the Moon, an eccentricity that disagrees with `1 - r_p/a`, a cadence class that disagrees with the registry, a mirror over its bound, a layer mapping that would publish truth, a verb that is both offered and denied, a consumption counter with no rating it is exhausted at, a fault that happens to nothing, two views of the cooling machine that disagree about what a loop is, a `vehicle.yaml` section orphaned from its parent, a block the linter holds deleted outright — the registry's coverage census, the failure chains, or a domain's fault coverage — a loop whose return band starts below its own supply or sits beside its radiator's stations, a radiator outlet warmer than its inlet, a loop whose collected load disagrees with the zones that name it, a backup loop a zone assigns itself to — and a `vehicle.yaml` that will not parse — which must be refused rather than crashed on — and a parse guard covers every file, a `vehicle` compose service whose image cannot carry the configuration, whose window lands beside the agents' mount instead of inside it, whose network list is not `worknet` alone, or whose slug list is one name rather than the roster, a state whose declared unit is a rate while the field its derivation computes is a coefficient, and a build order whose *ready now* bucket promises a state a real tick refuses, or a tank draining into a node that publishes no value under its own name. | Also refuses a residual cycle, a cycle that does not close, a cycle whose members are a path rather than a loop, a key written twice, a channel with no producer, a stale figure in the vehicle README's front table or its per-domain paragraphs, a tool docstring whose fault counts have drifted from the domain policies, a changelog row whose countable figures have drifted from the tool it describes, a worklist that files a declared rule under code that exists, a standing debt that says its own obligation is answered, and a carried value that disagrees with the declaration its `same_as` names. The 339th test breaks the MET 0 event and first configuration to prove the new refusal. The new broken-copy test refuses a changed bus rating, clear limit, missing rating link, missing margin and missing provenance reasons. The RCS scope test refuses a restored global 10 ms scalar, CM simulator timing presented as hardware, wrong SM command path, a nonzero group dwell and a copied per-thruster pulse floor. The new broken-copy cases refuse a changed P00/DAP source bridge, unsupported thermal-bay provenance, and the former positive docked LM/Apollo axial mapping. |
++| `../../vehicle/tools/check_vehicle.py` | Written. Composes with 273 declared debts and carries 882 `report.refuse` call sites — among them, since round 84, the six refusals that hold the launch block's inventory of itself: `mission.yaml#launch_state` could declare the positions it *makes* (`states`) and the ones it read out of a document (`sourced`) and had no way to declare the ones it *owes*, so the count lived in prose — a comment above the block and the docstring of the test that holds it, both claiming nine positions were choices the corpus does not make while rounds 80, 81 and 83 had made four of them — and `owed` is that half as a field, refused when it is absent beside `states`, when it is not a map, when a position is both made and owed, when an owed position's state is no longer unconfigured (the refusal that would have fired on the day the first source landed), when an owed name is no state at all, and when an owed position says nothing about what would close it — among them, since round 83, the five refusals that hold a state's `unit` to the source its provenance cites: a `unit_source` member the state cannot take, a member of the vocabulary the split does not account for, a member that is both the source's and the vehicle's, an addition with no reason, and a split declared on a `unit` that is not a vocabulary — because `cabin_regulator_position` held four members where `apollo_diode.md:95` gives three and the account of the fourth lived in the channel's note rather than the state's — among them, since round 81, the four refusals that hold a telemetry profile to the link mode that carries it: a `link_mode` that is no state's vocabulary, a `rate_state` that is no state, a rate that is no declared profile's `bps`, and the two positions in `mission.yaml#launch_state` disagreeing — because `apollo_diode.md:161` and `:165` declare the link mode and the rate of one choice in two channels and nothing had joined them, so a vehicle could hold `sband_low` beside 51,200 bit/s — among them, since round 80, the four refusals that hold a launch position to the document it came from: a `sourced` locator for a state the block does not declare, a locator with no page, a `source` with nothing cited in it, and the join in both directions between the block's `sourced` map and the state's own `initial_provenance.basis` — because the block could say *decided* and nothing else, and nine positions sat as an operator question while a published launch checklist stated three of them — among them, since round 79, the six refusals that hold a hysteresis band's *effect*: a band with values and no `band_value` at all, a `band_value` that is not a mapping over exactly the two boundaries, a member the state's own `unit` cannot hold, a state whose `unit` is no vocabulary at all, and an outcome declared on a state whose band is still owed — because a comparator has two boundaries and these vocabularies have three to five members, which is why §5's latch rule had no output to write and why `load_shed_class`, whose one band is the tier that selects `none`, cannot be moved by its own band at all — among them, since round 78, the two refusals that keep §5's integer-microsecond stamps meaningful: a `tick_hz` whose tick is not a whole number of microseconds (at 50 Hz it is 20,000 exactly, and at 60 Hz the plant's rounding would let a float decide the tie-break between two events in one tick, which is the thing `plant.md` §5 says timestamps exist to remove) and one shorter than a microsecond, where there is no integer stamp to make at all — among them, since round 77, the four refusals that hold a hysteresis band to the point it is a band on: a band with values and no `band_on` at all, a `band_on` naming no registered point, a band disagreeing with the threshold declared on its own point in that point's units (which is how `load_shed_class`'s clear came to sit 0.2 V below `bus_a_undervoltage`'s while its own note claimed the two were the same), and a band claiming other units while dividing differently from the band it names — the ratio being the part of a band that survives a unit change, which is what `lcl_tripped`'s 1.25/1.05 shares with `lcl_overcurrent`'s 313 A/263 A — among them, since round 76, the two directions of the join between `mission.yaml#launch_state` and the four states that cite it: one decision about MET 0, declared once and held on both sides — including, since round 75, the rule that a state moved by a one-way event must declare what the event makes it: the event named a transition between two configurations and the state speaks a vocabulary of its own, and nothing joined the two — among them, since round 74, the three refusals that hold `also_present` to the per-subject form: a flat list, a list of the wrong length, and a configuration that is both a phase's subject and merely there — including, since round 73, the rule that a phase's simultaneous crew add up to `crew.size`: the two crew models were held together by comparing a *maximum*, and a maximum cannot see a phase that puts five people in a three-person crew — among them, since round 72, the rule that `reads:` names a state on the node that *drives* the flux: a discharge empties at the rate its consumer sets, so the target is what the flux multiplies, and a check that asked the source every time is how a declaration came to override a correct driver with the cabin's own mass — including, since round 70, the rule that a `state_order` needs something to order and the one that an edge discharges the stock it *leaves*. Both were guards whose condition answered the requirement and not the declaration, and both had a declaration hiding behind them: a cross-article dependency written as an intra-node order on `fuel_cell`, and a second drain of the cabin's CO2 — including, since round 69, the rule that a phase boundary is a whole number of ticks from the epoch: the ladder was checked against itself and against its total, and never against the clock the mission runs on — including, since round 68, the rule that an edge discharges the stock it *leaves*: the field was read only to choose between the stocks on a crowded node, so `E-ATM-ABSORB` and its LM twin drained the cabin's CO2 from a node they do not leave, subtracting one outflow twice, including the ones only a landed domain can trip. It reports every unset value by the path that reaches it; enforces D-04 (no claim quantity) and the forbidden-verb list by pattern rather than by name; refuses a guard whose evidence cannot arrive in time (invariant D); binds every published enum to the vocabulary its own state can take — which found a regulator position and a stage configuration the vehicle could be in and could not report; re-derives the translunar osculating elements from the parking orbit and the phase ladder, refusing a trajectory that cannot arrive (C-24); holds the presentation contract to its own summary, refusing a cadence class or a mirror bound that disagrees with the registry; derives the 59-node tick order and refuses a residual cycle, a cycle that does not close, or a node whose producing states have no declared order; refuses a duplicate key, which is the signature of an absorbed list item; refuses a registered channel nothing publishes; refuses a declared event with no class, an `alarm` nothing implements, or a `realised_by` naming no threshold; refuses a top-level `vehicle.yaml` section nothing reads, and a section declared and left empty — which is how the thermal block spent its life with `thermal: null` and its three subsections as orphan keys, so every reader of the section silently got `None`; refuses a fault whose `component` names no component, state or node; refuses a key written where a block scalar's prose lives, so the declaration does not exist in the parsed document — the silent half of the absorbed-key accident, which needs no collision and therefore survived `duplicate_keys`; refuses an `UNCONFIGURED` scalar whose top-level namesake in the same file is declared, a debt that has been answered and left standing; refuses a withheld truth that is also a registered channel (the §7 boundary, which nothing read until this round — 38 named channels and 0 described categories declared `not_published` and unenforced), a `severity` outside V-04's ladder (142 severity declarations, unread by any tool until the round that landed `check_profiles`'s V-04 rule, and one of them had no severity at all), and a fault whose `kind`, `seeding`, `detection` or `response` is malformed — the diagnostic half of the faults that no tool read; refuses a conservation edge with an unset value, an undecidable dimension, or anything other than a one-for-one ratio — a check that had existed since the graph's first version and had never once refused anything, because the dimension lookup returned nothing for six of the node units and the guard skipped the edge; refuses a point whose `from` resolves to no state and no coupling node — which surfaced `eclss.cabin_temp_c` and `thermal.zone_csm_cabin_t` as one cabin temperature published twice, the reconciliation's oldest problem arriving somewhere new; and prints three derived views in place of the authored lists that were deleted: `--order` for the tick order, `--phases` for the verbs by phase, and `--debts` for the owed list grouped by the scalar each one wants rather than by the path that reaches it. Round 86 also refuses a launch-state event that disagrees with the MET 0 initial state or the first phase's docked post-extraction configuration. Round 87 derives the continuous-current alarm from the bus rating and refuses a clear limit that drifts from its declared one-channel-quantum margin. Round 88 refuses a universal RCS command ON time and holds SM, CM and LM command paths, pulse-floor debt and group-command policy apart. Round 89 pins the P00 and active-DAP initial-state source relation; the thermal audit rejects cross-vehicle nodal citations; the frame check rejects a docked positive LM/Apollo X relation and leaves J-2 lateral clocking owed. |
++| `tests/test_vehicle_config.py` | Written, and now living in the vehicle's own repository (`tachyon-beep/space_vehicle`, mounted here as a git submodule at `docs/deep_research/vehicle`); the assertions that need this repository's files — the frozen corpus, `contract/diode_probe.py`, this README's rows, the compose service — stayed behind in `tests/test_vehicle_reconciliation.py`. Five hundred twenty-five tests: the definition composes, and the great majority break a copy of it in one place each to watch a refusal fire — including the crew perception bound in both directions, a forbidden verb form, an interlock that resolves to no threshold, a verb advertising no arguments, a quality function that can see the fault state, a conclusion emitted as a quality code, an irreversible verb that ignores the clock, a guard on evidence that cannot arrive, a channel whose state cannot hold its values, a launch disagreement whose refusal names the wrong domain, an initial state that cannot reach the Moon, an eccentricity that disagrees with `1 - r_p/a`, a cadence class that disagrees with the registry, a mirror over its bound, a layer mapping that would publish truth, a verb that is both offered and denied, a consumption counter with no rating it is exhausted at, a fault that happens to nothing, two views of the cooling machine that disagree about what a loop is, a `vehicle.yaml` section orphaned from its parent, a block the linter holds deleted outright — the registry's coverage census, the failure chains, or a domain's fault coverage — a loop whose return band starts below its own supply or sits beside its radiator's stations, a radiator outlet warmer than its inlet, a loop whose collected load disagrees with the zones that name it, a backup loop a zone assigns itself to — and a `vehicle.yaml` that will not parse — which must be refused rather than crashed on — and a parse guard covers every file, a `vehicle` compose service whose image cannot carry the configuration, whose window lands beside the agents' mount instead of inside it, whose network list is not `worknet` alone, or whose slug list is one name rather than the roster, a state whose declared unit is a rate while the field its derivation computes is a coefficient, and a build order whose *ready now* bucket promises a state a real tick refuses, or a tank draining into a node that publishes no value under its own name. | Also refuses a residual cycle, a cycle that does not close, a cycle whose members are a path rather than a loop, a key written twice, a channel with no producer, a stale figure in the vehicle README's front table or its per-domain paragraphs, a tool docstring whose fault counts have drifted from the domain policies, a changelog row whose countable figures have drifted from the tool it describes, a worklist that files a declared rule under code that exists, a standing debt that says its own obligation is answered, and a carried value that disagrees with the declaration its `same_as` names. The 339th test breaks the MET 0 event and first configuration to prove the new refusal. The new broken-copy test refuses a changed bus rating, clear limit, missing rating link, missing margin and missing provenance reasons. The RCS scope test refuses a restored global 10 ms scalar, CM simulator timing presented as hardware, wrong SM command path, a nonzero group dwell and a copied per-thruster pulse floor. The new broken-copy cases refuse a changed P00/DAP source bridge, unsupported thermal-bay provenance, and the former positive docked LM/Apollo axial mapping. |
+ | `../../vehicle/plant.md` | Written. The core contract: `step()`, the seven integrator classes, the ordering rule, determinism, the sub-tick event queue, the truth/evidence boundary, and what the linter refuses a domain for. |
+ | `../../vehicle/domains/structure/` | **Landed.** Closes C-13: a five-entry one-way event taxonomy authored from apollo because `events_diode.md` contains none of the vehicle's irreversible actions. Three one-way states carry `requires_arm`, and the linter refuses one that does not. The hatch debt now accounts for post-docking tunnel-hatch operations.
+ | `../../vehicle/domains/eclss/` | **Landed.** Two crewed compartments as four conserved gas masses each, 14 thresholds, 6 verbs, **21 faults** — the CSM's eleven and ten LM twins (ECL-12 to ECL-21), added when an audit found that in `descent`, `surface` and `ascent_rendezvous` no injectable fault could move the air the crew were breathing; the ppO₂ band corrected from a sea-level 140–180 to a derived 248–269 mmHg.
+diff --git a/docs/deep_research/vehicle b/docs/deep_research/vehicle
+index dd79e76..f443996 160000
+--- a/docs/deep_research/vehicle
++++ b/docs/deep_research/vehicle
+@@ -1 +1 @@
+-Subproject commit dd79e7608c931df9e5273824a3b2b9f396cb7cb7
++Subproject commit f44399645fb2633e695a5d758cb5a41f43fb848c
+diff --git a/live/conftest.py b/live/conftest.py
+index 4c386b1..c0b5d1f 100644
+--- a/live/conftest.py
++++ b/live/conftest.py
+@@ -1,10 +1,12 @@
+-"""The live suite's one stack: three agents, built and started once for the session.
++"""The live suite's stacks: three agents, built and started once for the session, with the contract
++fixture as the window; and, for live/test_vehicle.py, the same fleet with the vehicle as the window.
+ 
+ agent_3's recorder is capped at four requests an hour, so it is refused on its fifth call and spends
+ the run in the watchdog's pause loop (spec 9.7); agent_1 and agent_2 run on the stub at its normal
+ pace. The stack starts once, every test reads and drives it, and the finalizer copies each
+ service's log to .scratch/live-evidence/ before `down()` removes the scratch root, so a failed run
+-leaves its evidence behind.
++leaves its evidence behind. The vehicle's stack replaces the fixture's (one stack at a time), and the
++fixture's evidence is kept then.
+ 
+ This directory is not in `testpaths`: a bare `pytest -q` never starts a container.
+ """
+@@ -17,7 +19,20 @@ import pytest
+ sys.path.insert(0, str(Path(__file__).resolve().parent))
+ 
+ from probes import postgres_answers  # noqa: E402
+-from stack import REPO, SmokeStack, wait_for  # noqa: E402
++from stack import (  # noqa: E402
++    CAPS,
++    HOST_CPUS,
++    HOST_MEMORY,
++    HOST_SCOPE_COMMAND,
++    REPO,
++    STACK_CPUS,
++    STACK_MEMORY,
++    SmokeStack,
++    cgroup_limits,
++    memory_bytes,
++    own_cgroup,
++    wait_for,
++)
+ 
+ EVIDENCE = REPO / ".scratch" / "live-evidence"
+ START_SECONDS = 300
+@@ -25,18 +40,50 @@ TRANSCRIPT_HEAD_BYTES = 2 << 20
+ 
+ 
+ def pytest_collection_modifyitems(items):
+-    """Containment first: it describes the stack as it started, before any test breaks an agent."""
+-    items.sort(key=lambda item: 0 if item.path.name == "test_containment.py" else 1)
++    """Containment first: it describes the stack as it started, before any test breaks an agent.
++    The vehicle's last: its stack replaces the fixture's (one stack at a time), so every test of
++    the fixture's stack runs before it goes."""
++    order = {"test_containment.py": 0, "test_vehicle.py": 2}
++    items.sort(key=lambda item: order.get(item.path.name, 1))
++
++
++# The stacks this session started. Starting one takes down any other first, keeping its evidence:
++# Governance's budget (2026-10-11) is one smoke stack at a time, and SmokeStack.start refuses to
++# start beside another smoke project anyway.
++_UP: list[SmokeStack] = []
++
++
++def _only(smoke: SmokeStack) -> None:
++    for other in _UP:
++        try:
++            if (other.root / "override.yml").exists():
++                _keep_evidence(other)
++        finally:
++            other.down()
++    _UP[:] = [smoke]
++
++
++def _assert_inside_the_host_scope() -> None:
++    """pytest and the docker clients it runs are the host side of the live run's budget: this
++    process must be in a cgroup that caps them, read from the kernel, not taken on trust."""
++    cpus, memory, _ = cgroup_limits(own_cgroup())
++    inside = 0 < cpus <= HOST_CPUS + 1e-9 and 0 < memory <= HOST_MEMORY
++    assert inside, (
++        f"the live run must be inside a capped user scope (this one: {cpus} CPUs, {memory} bytes); "
++        f"run it as: {HOST_SCOPE_COMMAND}"
++    )
+ 
+ 
+ def _keep_evidence(smoke: SmokeStack) -> None:
+-    EVIDENCE.mkdir(parents=True, exist_ok=True)
+-    services = ["stub", "diode"]
++    # The vehicle stack's evidence beside the fixture stack's, never over it.
++    evidence = EVIDENCE if smoke.window == "diode" else EVIDENCE / smoke.window
++    evidence.mkdir(parents=True, exist_ok=True)
++    services = ["stub", smoke.window]
+     for n in range(1, smoke.agents + 1):
+         services += [f"agent_{n}", f"recorder_{n}"]
+     for service in services:
+         result = smoke.compose("logs", "--no-color", "--timestamps", service, check=False)
+-        (EVIDENCE / f"{service}.log").write_text(result.stdout + result.stderr, encoding="utf-8")
++        (evidence / f"{service}.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+     # The head of each transcript, for fixtures: bodies only, never a header, and a dummy key.
+     for n in range(1, smoke.agents + 1):
+         source = smoke.volumes / f"transcripts_agent_{n}" / "data" / "agent_life_transcript.jsonl"
+@@ -45,30 +92,66 @@ def _keep_evidence(smoke: SmokeStack) -> None:
+                 head = handle.read(TRANSCRIPT_HEAD_BYTES)
+         except OSError:
+             continue
+-        (EVIDENCE / f"transcript_agent_{n}.jsonl").write_bytes(head)
++        (evidence / f"transcript_agent_{n}.jsonl").write_bytes(head)
+     ps = smoke.compose("ps", "--all", check=False)
+-    (EVIDENCE / "ps.txt").write_text(ps.stdout + ps.stderr, encoding="utf-8")
++    (evidence / "ps.txt").write_text(ps.stdout + ps.stderr, encoding="utf-8")
++
++
++def _assert_within_budget(smoke: SmokeStack) -> None:
++    """What the kernel enforces, read from each container's cgroup, not what compose was asked:
++    every service capped, no swap past its memory, its cap the one assigned, the sum in budget."""
++    caps = smoke.enforced_caps()
++    for service, (cpus, memory, swap) in caps.items():
++        kind = service.rsplit("_", 1)[0] if service[-1].isdigit() else service
++        kind = "window" if kind in ("diode", "vehicle") else kind
++        want_cpus, want_memory = CAPS[kind]
++        want_bytes = memory_bytes(want_memory)
++        assert cpus == float(want_cpus), f"{service} enforces {cpus} CPUs, not {want_cpus}"
++        assert memory == want_bytes, f"{service} enforces {memory} bytes, not {want_memory}"
++        assert swap == 0, f"{service} may swap {swap} bytes past its memory limit"
++    assert sum(c for c, _, _ in caps.values()) <= STACK_CPUS + 1e-9, caps
++    assert sum(m for _, m, _ in caps.values()) <= STACK_MEMORY, caps
++
++
++def _started(smoke: SmokeStack) -> None:
++    _assert_inside_the_host_scope()
++    _only(smoke)
++    smoke.start()
++    for n in range(1, smoke.agents + 1):
++        agent = f"agent_{n}"
++        wait_for(
++            lambda agent=agent: "started from the image seed" in smoke.logs(agent),
++            timeout=START_SECONDS,
++            every=2,
++            what=f"{agent}'s watchdog to start",
++        )
++        wait_for(
++            lambda n=n: postgres_answers(smoke, n),
++            timeout=60,
++            every=2,
++            what=f"agent_{n}'s postgres",
++        )
++    _assert_within_budget(smoke)
+ 
+ 
+ @pytest.fixture(scope="session")
+ def stack():
+     smoke = SmokeStack(3, recorder_overrides={3: {"RECORDER_HOURLY_MAX": "4"}})
+     try:
+-        smoke.start()
+-        for n in range(1, smoke.agents + 1):
+-            agent = f"agent_{n}"
+-            wait_for(
+-                lambda agent=agent: "started from the image seed" in smoke.logs(agent),
+-                timeout=START_SECONDS,
+-                every=2,
+-                what=f"{agent}'s watchdog to start",
+-            )
+-            wait_for(
+-                lambda n=n: postgres_answers(smoke, n),
+-                timeout=60,
+-                every=2,
+-                what=f"agent_{n}'s postgres",
+-            )
++        _started(smoke)
++        yield smoke
++    finally:
++        if (smoke.root / "override.yml").exists():
++            _keep_evidence(smoke)
++        smoke.down()
++
++
++@pytest.fixture(scope="session")
++def vehicle_stack():
++    """The same fleet with the vehicle as its window: its own project, scratch root and /state."""
++    smoke = SmokeStack(3, window="vehicle")
++    try:
++        _started(smoke)
+         yield smoke
+     finally:
+         if (smoke.root / "override.yml").exists():
+diff --git a/live/stack.py b/live/stack.py
+index 6da2b6d..ad09338 100644
+--- a/live/stack.py
++++ b/live/stack.py
+@@ -10,7 +10,8 @@ The model key is a dummy. Compose lets the shell's environment beat --env-file,
+ call here runs with an allowlisted environment: whatever the operator's shell exports, no key and
+ no upstream reaches the smoke recorders.
+ 
+-It builds and runs its own image tag, SMOKE_IMAGE, so the operator's `space-chassis-agent` is never
++It builds and runs its own image tags, SMOKE_IMAGE and, with the vehicle as its window,
++SMOKE_VEHICLE_IMAGE, so the operator's `space-chassis-agent` and `space-chassis-vehicle` are never
+ rebuilt from a working tree, and it puts back whatever console seed the operator's prepare_host.sh
+ left (the build needs one from .env.example). The scratch directories are plain host directories
+ the containers write as uid 1000, the image's agent: on a host whose user is another uid, the first
+@@ -25,6 +26,7 @@ timeout, so a wedged daemon fails a test instead of hanging the suite.
+ from __future__ import annotations
+ 
+ import atexit
++import fcntl
+ import json
+ import os
+ import shutil
+@@ -40,12 +42,81 @@ import volume_images  # noqa: E402
+ 
+ ALLOWED_VARIABLES = ("PATH", "HOME", "USER", "LANG", "XDG_RUNTIME_DIR")
+ SMOKE_IMAGE = "space-chassis-agent:smoke"
++# The vehicle's own image (Dockerfile.agent's `vehicle` stage): the agents' carries nothing of it.
++SMOKE_VEHICLE_IMAGE = "space-chassis-vehicle:smoke"
+ DECLARED_AGENTS = 10
+ CONSOLE_SEED = REPO / "llm_console_seed.json"
+ DOCKER_TIMEOUT_SECONDS = 120
+ BUILD_TIMEOUT_SECONDS = 3600
+ STUB_PORT = 8199
+ DUMMY_KEY = "sk-smoke-dummy"
++# The window's two implementations: the contract fixture, or the vehicle itself.
++WINDOWS = ("diode", "vehicle")
++# The vehicle checkpoints every 50 ticks; at the operator's 5 s poll that is minutes per check.
++VEHICLE_SMOKE_POLL = "0.2"
++# A seed no window has any reason to contain, so live/test_vehicle.py can look for it in every file
++# an agent can read: the world's identity belongs in the window root's .executive.json alone.
++SMOKE_VEHICLE_SEED = "8675309"
++
++# The live run's budget (Governance, 2026-10-11): one smoke stack at a time, inside 5 CPUs and
++# 14 GiB in all, overhead included. What is enforced, each by the kernel:
++# - every container the stack starts: `cpus`, and `mem_limit` with `memswap_limit` equal to it, so
++#   nothing swaps past it (tmpfs pages are charged to the container too). The sum is STACK_CPUS and
++#   STACK_MEMORY; tests/test_live_stack.py holds the rendered config to it, and live/conftest.py
++#   reads every running container's cgroup back before a test runs;
++# - the containment check's throwaway image sweep (scripts/verify_containment.sh), one at a time
++#   beside the stack: SWEEP_CPUS and SWEEP_MEMORY;
++# - pytest and the docker clients: the user scope the run must be inside (HOST_CPUS, HOST_MEMORY;
++#   live/conftest.py refuses to start a stack outside one).
++# What is left (BUDGET minus those) is a reserve for the docker daemon's own work, which no client
++# can cap: it is not enforced. Agents keep the operator's 3g; their CPU is 0.75.
++CAPS = {
++    "agent": ("0.75", "3g"),
++    "recorder": ("0.2", "512m"),
++    "window": ("1.0", "512m"),
++    "stub": ("0.2", "256m"),
++    "fleet_monitor": ("0.1", "256m"),
++    "review": ("0.25", "512m"),
++}
++STACK_CPUS = 4.4
++STACK_MEMORY = 12 << 30
++SWEEP_CPUS, SWEEP_MEMORY = "0.2", "256m"
++HOST_CPUS = 0.35
++HOST_MEMORY = 1 << 30
++BUDGET_CPUS = 5.0
++BUDGET_MEMORY = 14 << 30
++HOST_SCOPE_COMMAND = "systemd-run --user --scope -p CPUQuota=35% -p MemoryMax=1G nice -n 19 python3 -m pytest live -q"
++# One stack at a time: a lock every checkout and session of this user shares, held from start() to
++# down(), and a refusal to start beside any smoke project already running on the daemon.
++SMOKE_PROJECT_PREFIX = "space_chassis_smoke_"
++SMOKE_LOCK = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "space_chassis_smoke.lock"
++# Where docker's systemd cgroup driver puts a container: system.slice/docker-<id>.scope.
++DOCKER_CGROUPS = Path("/sys/fs/cgroup/system.slice")
++
++
++def memory_bytes(text: str) -> int:
++    """A compose memory value as bytes: `512m`, `3g`."""
++    return int(text[:-1]) << {"m": 20, "g": 30}[text[-1]]
++
++
++def cgroup_limits(directory: Path) -> tuple[float, int, int | None]:
++    """A cgroup v2 directory's CPUs, memory and swap limits; -1 where unlimited, None where absent."""
++
++    def number(text: str) -> int:
++        return -1 if text.strip() == "max" else int(text)
++
++    quota, period = (directory / "cpu.max").read_text().split()
++    cpus = -1.0 if quota == "max" else int(quota) / int(period)
++    memory = number((directory / "memory.max").read_text())
++    swap_file = directory / "memory.swap.max"
++    swap = number(swap_file.read_text()) if swap_file.exists() else None
++    return cpus, memory, swap
++
++
++def own_cgroup() -> Path:
++    """This process's cgroup v2 directory."""
++    line = Path("/proc/self/cgroup").read_text().strip().splitlines()[0]
++    return Path("/sys/fs/cgroup" + line.split("::", 1)[1])
+ 
+ 
+ def allowed_environment(extra: dict | None = None) -> dict:
+@@ -59,6 +130,12 @@ def allowed_environment(extra: dict | None = None) -> dict:
+     return env
+ 
+ 
++def _capped(kind: str) -> list[str]:
++    """A service's caps, as override lines: its CPUs, and its memory with no swap past it."""
++    cpus, memory = CAPS[kind]
++    return [f'    cpus: "{cpus}"', f"    mem_limit: {memory}", f"    memswap_limit: {memory}"]
++
++
+ def wait_for(predicate, *, timeout: float, every: float = 1.0, what: str):
+     """Poll predicate until it returns something truthy; raise naming what was awaited."""
+     deadline = time.monotonic() + timeout
+@@ -78,13 +155,26 @@ class SmokeStack:
+         recorder_overrides: dict[int, dict] | None = None,
+         root: Path | None = None,
+         runner=subprocess.run,
++        window: str = "diode",
++        lock: Path | None = None,
+     ) -> None:
++        if window not in WINDOWS:
++            raise ValueError(f"window must be one of {WINDOWS}, not {window!r}")
+         self.agents = agents
+         self.recorder_overrides = recorder_overrides or {}
+-        self.project = f"space_chassis_smoke_{os.getpid()}"
+-        self.root = Path(root) if root is not None else REPO / f".smoke-{os.getpid()}"
++        self.window = window
++        # A vehicle stack is its own project and scratch root; it never runs beside the fixture's.
++        suffix = "" if window == "diode" else f"_{window}"
++        self.project = f"{SMOKE_PROJECT_PREFIX}{os.getpid()}{suffix}"
++        self.root = (
++            Path(root)
++            if root is not None
++            else REPO / f".smoke-{os.getpid()}{suffix.replace('_', '-')}"
++        )
+         self._runner = runner
+         self._torn_down = False
++        self.lock = Path(lock) if lock is not None else SMOKE_LOCK
++        self._lock_fd: int | None = None
+         # Override files added after `up` by recreate(), kept on every later compose call.
+         self.overrides: list[Path] = []
+         atexit.register(self.down)
+@@ -135,6 +225,7 @@ class SmokeStack:
+             "services:",
+             "  stub:",
+             f"    image: {SMOKE_IMAGE}",
++            *_capped("stub"),
+             '    entrypoint: ["python", "/opt/live/stub_llm.py"]',
+             "    environment:",
+             f'      VERIFY_STUB_PORT: "{STUB_PORT}"',
+@@ -150,28 +241,45 @@ class SmokeStack:
+             '    security_opt: ["no-new-privileges:true"]',
+         ]
+         for n in range(1, self.agents + 1):
+-            lines += [f"  agent_{n}:", f"    image: {SMOKE_IMAGE}"]
++            lines += [f"  agent_{n}:", f"    image: {SMOKE_IMAGE}", *_capped("agent")]
+             lines += [f"  recorder_{n}:", f"    image: {SMOKE_IMAGE}", "    depends_on: [stub]"]
++            lines += _capped("recorder")
+             overrides = self.recorder_overrides.get(n)
+             if overrides:
+                 lines.append("    environment:")
+                 lines += [f'      {key}: "{value}"' for key, value in overrides.items()]
++        if self.window == "diode":
++            lines += [
++                "  diode:",
++                f"    image: {SMOKE_IMAGE}",
++                *_capped("window"),
++                '    entrypoint: ["python", "/opt/fake/fake_diode.py"]',
++                "    environment:",
++                f"      AGENT_SLUGS: {','.join(self.slugs)}",
++                "    volumes:",
++                "      - ./contract/fake_diode.py:/opt/fake/fake_diode.py:ro",
++            ]
++        else:
++            # The vehicle serves VEHICLE_SLUGS, which compose fills from smoke.env's FLEET_SLUGS.
++            lines += [
++                "  vehicle:",
++                f"    image: {SMOKE_VEHICLE_IMAGE}",
++                *_capped("window"),
++                "    environment:",
++                f'      DIODE_POLL_SECONDS: "{VEHICLE_SMOKE_POLL}"',
++                f'      VEHICLE_SEED: "{SMOKE_VEHICLE_SEED}"',
++            ]
+         lines += [
+-            "  diode:",
+-            f"    image: {SMOKE_IMAGE}",
+-            '    entrypoint: ["python", "/opt/fake/fake_diode.py"]',
+-            "    environment:",
+-            f"      AGENT_SLUGS: {','.join(self.slugs)}",
+-            "    volumes:",
+-            "      - ./contract/fake_diode.py:/opt/fake/fake_diode.py:ro",
+             "  fleet_monitor:",
+             f"    image: {SMOKE_IMAGE}",
++            *_capped("fleet_monitor"),
+             "    environment:",
+             f"      AGENT_SLUGS: {','.join(self.slugs)}",
+             '      MONITOR_INTERVAL_SECONDS: "5"',
+             '      QUIET_SECONDS: "20"',
+             "  review:",
+             f"    image: {SMOKE_IMAGE}",
++            *_capped("review"),
+             "    ports: !reset []",
+             "    environment:",
+             f"      AGENT_SLUGS: {','.join(self.slugs)}",
+@@ -196,7 +304,7 @@ class SmokeStack:
+             "--profile",
+             "fleet",
+             "--profile",
+-            "diode",
++            self.window,
+             *args,
+         ]
+ 
+@@ -239,7 +347,12 @@ class SmokeStack:
+                     ".env.example",
+                 ]
+             )
++            # The vehicle is in its own profile and image: built only by name, and only when it
++            # serves. One build at a time (Governance, 2026-10-11): compose builds the services it
++            # is given in parallel, so each is its own call.
+             self.compose("build", "agent_1", timeout=BUILD_TIMEOUT_SECONDS)
++            if self.window == "vehicle":
++                self.compose("build", "vehicle", timeout=BUILD_TIMEOUT_SECONDS)
+         finally:
+             if kept is None:
+                 CONSOLE_SEED.unlink(missing_ok=True)
+@@ -247,11 +360,7 @@ class SmokeStack:
+                 CONSOLE_SEED.write_bytes(kept)
+ 
+     def up(self) -> None:
+-        services = ["stub"]
+-        services += [f"recorder_{n}" for n in range(1, self.agents + 1)]
+-        services += [f"agent_{n}" for n in range(1, self.agents + 1)]
+-        services += ["diode", "fleet_monitor", "review"]
+-        self.compose("up", "-d", *services)
++        self.compose("up", "-d", *self.services())
+ 
+     def recreate(self, service: str, environment: dict[str, str]) -> None:
+         """Recreate one running service alone, with its environment changed and nothing else."""
+@@ -267,10 +376,62 @@ class SmokeStack:
+             self.overrides.append(path)
+         self.compose("up", "-d", "--force-recreate", "--no-deps", service)
+ 
++    def others_running(self) -> list[str]:
++        """Every other smoke project with a container up on this daemon."""
++        label = "com.docker.compose.project"
++        template = f'{{{{.Label "{label}"}}}}'
++        result = self.run(["docker", "ps", "--filter", f"label={label}", "--format", template])
++        running = {line.strip() for line in result.stdout.splitlines()}
++        return sorted(
++            p for p in running if p.startswith(SMOKE_PROJECT_PREFIX) and p != self.project
++        )
++
++    def services(self) -> list[str]:
++        services = ["stub"]
++        services += [f"recorder_{n}" for n in range(1, self.agents + 1)]
++        services += [f"agent_{n}" for n in range(1, self.agents + 1)]
++        return services + [self.window, "fleet_monitor", "review"]
++
++    def enforced_caps(self) -> dict[str, tuple[float, int, int | None]]:
++        """What the kernel enforces on each running service: its container's own cgroup (v2), read
++        from the host side, so nothing inside the container is trusted or needs to answer."""
++        caps = {}
++        for service in self.services():
++            short = self.container_id(service)
++            assert short, f"{service} has no container"
++            full = self.run(["docker", "inspect", "-f", "{{.Id}}", short]).stdout.strip()
++            scope = DOCKER_CGROUPS / f"docker-{full}.scope"
++            assert scope.is_dir(), f"{service}'s cgroup is not at {scope}"
++            caps[service] = cgroup_limits(scope)
++        return caps
++
++    def _hold_the_lock(self) -> None:
++        fd = os.open(self.lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
++        try:
++            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            os.close(fd)
++            raise RuntimeError(f"one smoke stack at a time: another holds {self.lock}") from None
++        self._lock_fd = fd
++
++    def _release_the_lock(self) -> None:
++        if self._lock_fd is not None:
++            os.close(self._lock_fd)
++            self._lock_fd = None
++
++    def _refuse_beside_another(self) -> None:
++        others = self.others_running()
++        if others:
++            raise RuntimeError(f"one smoke stack at a time: {', '.join(others)} is running")
++
+     def start(self) -> None:
++        self._hold_the_lock()
+         try:
++            self._refuse_beside_another()
+             self.prepare()
+             self.build()
++            # Again after the build: a stack started meanwhile by anything not holding the lock.
++            self._refuse_beside_another()
+             self.up()
+         except BaseException:
+             self.down()
+@@ -311,9 +472,12 @@ class SmokeStack:
+         self._write_cue(n, {"stop": True})
+ 
+     def down(self) -> None:
+-        if self._torn_down:
+-            return
+-        if (self.root / "override.yml").exists():
+-            self.compose("down", "-v", "--remove-orphans", "--timeout", "5", check=False)
+-        self._torn_down = True
+-        shutil.rmtree(self.root, ignore_errors=True)
++        try:
++            if self._torn_down:
++                return
++            if (self.root / "override.yml").exists():
++                self.compose("down", "-v", "--remove-orphans", "--timeout", "5", check=False)
++            self._torn_down = True
++            shutil.rmtree(self.root, ignore_errors=True)
++        finally:
++            self._release_the_lock()
+diff --git a/live/test_vehicle.py b/live/test_vehicle.py
+new file mode 100644
+index 0000000..877c1b6
+--- /dev/null
++++ b/live/test_vehicle.py
+@@ -0,0 +1,351 @@
++"""The vehicle as the window (plan 7, Phase B): one executive for every agent's window, a restart
++that resumes the same world, containment with it running, and a stop that reaches it.
++
++The tests share one vehicle stack and run in file order: the stop is last. Everything is read from
++the host side of the window image and the vehicle's own log -- `.executive.json` in the window
++root, each window's `state.json`, and the telemetry frames, which carry the boot that wrote them.
++The smoke override polls every 0.2 s, so the vehicle's checkpoint (every 50 ticks) comes in
++seconds; a kill after it exercises the cadence checkpoint and the replay from it.
++"""
++
++import json
++import re
++import subprocess
++import time
++
++from stack import REPO, SMOKE_VEHICLE_SEED, allowed_environment, wait_for
++
++# Startup hashes the vehicle's whole configuration corpus and replays from the last checkpoint:
++# seconds on a warm host, more on a cold one.
++START_SECONDS = 180
++
++
++def _executive(stack) -> dict | None:
++    try:
++        return json.loads((stack.volumes / "diode" / "data" / ".executive.json").read_text())
++    except (OSError, ValueError):
++        return None
++
++
++def _tick(stack) -> int:
++    return (_executive(stack) or {}).get("tick", -1)
++
++
++def _window_world(stack, slug: str) -> str | None:
++    try:
++        state = json.loads((stack.volumes / "diode" / "data" / slug / "state.json").read_text())
++    except (OSError, ValueError):
++        return None
++    return (state.get("executive") or {}).get("world_id")
++
++
++def _newest_frame(stack, slug: str) -> dict | None:
++    newest = None
++    for path in (stack.volumes / "diode" / "data" / slug / "telemetry").glob("*.json"):
++        try:
++            frame = json.loads(path.read_text())
++        except (OSError, ValueError):
++            continue
++        if newest is None or frame.get("seq", -1) > newest.get("seq", -1):
++            newest = frame
++    return newest
++
++
++def _restarts(stack) -> int:
++    try:
++        return stack.restart_count("vehicle")
++    except subprocess.CalledProcessError:
++        return -1  # between the exit and the restart, the container is not listed
++
++
++def test_one_executive_serves_every_agent_s_window_under_one_world(vehicle_stack):
++    stack = vehicle_stack
++    wait_for(
++        lambda: _tick(stack) >= 5 and all(_window_world(stack, s) for s in stack.slugs),
++        timeout=START_SECONDS,
++        every=2,
++        what="the vehicle to publish every window",
++    )
++    executive = _executive(stack)
++    assert sorted(executive["slugs"]) == sorted(stack.slugs), executive
++    assert "vehicle" not in executive["slugs"], "a roster stack serves no window of its own"
++    for slug in stack.slugs:
++        assert _window_world(stack, slug) == executive["world_id"], slug
++    consoles = stack.exec("vehicle", "pgrep", "-f", "[c]onsole\\.py").stdout.split()
++    assert len(consoles) == 1, f"one executive serves every window, not {consoles}"
++
++
++HIDDEN_KEYS = {"scenario", "seed", "arms", "dwell", "onset"}
++SEED_TEXT = re.compile(rf"(?<![0-9]){SMOKE_VEHICLE_SEED}(?![0-9])")
++
++
++def _keys_and_values(value) -> tuple[set[str], list]:
++    if isinstance(value, dict):
++        keys, values = set(value), []
++        for item in value.values():
++            inner_keys, inner_values = _keys_and_values(item)
++            keys |= inner_keys
++            values += inner_values
++        return keys, values
++    if isinstance(value, list):
++        keys, values = set(), []
++        for item in value:
++            inner_keys, inner_values = _keys_and_values(item)
++            keys |= inner_keys
++            values += inner_values
++        return keys, values
++    return set(), [value]
++
++
++def _files(window) -> set:
++    """Every regular file under a window now. A directory listed and gone before it is walked is
++    listed again, so a walk the vehicle races ends in a listing, never an error."""
++    for attempt in range(5):
++        try:
++            return {p for p in window.rglob("*") if p.is_file()}
++        except FileNotFoundError:
++            if attempt == 4:
++                raise
++            time.sleep(0.1)
++    raise AssertionError("unreachable")
++
++
++# How often a scan of one window lists it again after a file it listed is gone. A cycle every
++# 0.2 s removes a few names (the temporaries it renames into place, the telemetry it prunes); one
++# window's scan takes milliseconds, so a scan that needs more than this is not racing a cycle.
++RELISTS = 100
++# How often one file is read again: a temporary read while it was being written, or a read that
++# failed for a reason other than the file being gone. Past it the file is a failure, never a skip.
++REREADS = 5
++
++
++def _assert_no_window_carries_the_world_s_identity(stack) -> None:
++    """John, 2026-10-10: no risk of information sharing. The identity (scenario, seed, the armed
++    faults and their dwell) belongs in the window root's `.executive.json`, which no agent binds.
++    Every regular file in every agent's window is read: as text, for the smoke world's distinctive
++    seed; and as JSON where it is JSON, for the identity's keys and for the seed as a value.
++
++    The vehicle runs while this reads. It publishes by writing a randomly named temporary and
++    renaming it into place, and it prunes old telemetry, so a name listed a moment ago can be gone
++    for good: a read that finds it gone lists the window again and reads what is new, and what was
++    read is checked as read. `pending.json` must be read whole."""
++    executive = _executive(stack)
++    assert executive is not None and str(executive.get("seed")) == SMOKE_VEHICLE_SEED, executive
++    for slug in stack.slugs:
++        window = stack.volumes / "diode" / "data" / slug
++        checked: set = set()
++        todo = _files(window)
++        relists = 0
++        rereads: dict = {}
++        while todo:
++            path = min(todo)
++            where = path.relative_to(stack.volumes)
++            try:
++                text = path.read_text(encoding="utf-8", errors="replace")
++            except FileNotFoundError:
++                relists += 1
++                assert relists <= RELISTS, f"{slug}'s files kept vanishing: {relists} listings"
++                todo = _files(window) - checked
++                continue
++            except OSError as error:
++                rereads[path] = rereads.get(path, 0) + 1
++                assert rereads[path] < REREADS, f"{where} cannot be read after retries: {error}"
++                time.sleep(0.1)
++                continue
++            assert not SEED_TEXT.search(text), f"{where} carries the world's seed"
++            if path.suffix == ".json":
++                try:
++                    document = json.loads(text)
++                except ValueError:
++                    # Read again. A file that is malformed and then gone is dropped by the next
++                    # read, its text already scanned: the vehicle writes its JSON whole and renames
++                    # it into place, so only a file an agent wrote (console.json) can be torn.
++                    rereads[path] = rereads.get(path, 0) + 1
++                    assert rereads[path] < REREADS, f"{where} is not whole JSON after retries"
++                    time.sleep(0.1)
++                    continue
++                keys, values = _keys_and_values(document)
++                assert not keys & HIDDEN_KEYS, f"{where} carries {sorted(keys & HIDDEN_KEYS)}"
++                assert str(SMOKE_VEHICLE_SEED) not in {str(v) for v in values}, (
++                    f"{where} carries the seed"
++                )
++            checked.add(path)
++            todo.discard(path)
++        assert window / "pending.json" in checked, f"{slug}'s pending.json was never read whole"
++
++
++def test_no_agent_window_carries_the_world_s_identity(vehicle_stack):
++    """The vehicle pinned before this adoption (`dd79e76`) wrote the scenario, seed, armed faults
++    and their dwell into each window's `pending.json`. Checked again after the resume, below."""
++    _assert_no_window_carries_the_world_s_identity(vehicle_stack)
++
++
++def test_containment_holds_with_the_vehicle_running(vehicle_stack):
++    stack = vehicle_stack
++    agents = " ".join(f"agent_{n}" for n in range(1, stack.agents + 1))
++    result = subprocess.run(
++        ["sh", str(REPO / "scripts" / "verify_containment.sh")],
++        cwd=REPO,
++        env=allowed_environment({"COMPOSE": " ".join(stack.compose_command()), "AGENTS": agents}),
++        capture_output=True,
++        text=True,
++        timeout=900,
++    )
++    assert result.returncode == 0, result.stdout + result.stderr
++    assert "PASS  the vehicle binds /diode and /state and nothing else" in result.stdout
++    for n in range(1, stack.agents + 1):
++        assert f"PASS  agent_{n} mounts nothing of the vehicle's private state" in result.stdout
++        assert f"PASS  agent_{n} cannot write the window root" in result.stdout
++
++
++def _results_for(stack, slug: str, marker: str) -> list[str]:
++    output = stack.volumes / "diode" / "data" / slug / "output"
++    return sorted(p.name for p in output.glob("*.txt") if marker in p.name)
++
++
++def _submit(stack, slug: str, command: str) -> None:
++    """As an agent submits: the whole file written aside, then renamed over console.json."""
++    console = stack.volumes / "diode" / "data" / slug / "console.json"
++    staging = console.with_name(".console.json.live.tmp")
++    staging.write_text(json.dumps({"commands": [command]}) + "\n", encoding="utf-8")
++    staging.replace(console)
++
++
++# The smoke vehicle's cadence checkpoint: every tick that is a multiple of this.
++CHECKPOINT_EVERY = 50
++# A result ends in its receipt line; `tick` is the tick its cycle began at (the receipt is drawn
++# before the step), and that cycle's record row is the tick after it.
++RECEIPT = re.compile(r"^receipt: world=(\S+) seq=\d+ window=\S+ tick=(\d+) ", re.MULTILINE)
++RESUMED = re.compile(
++    r"resumed world (\S+) at tick (\d+) \(checkpoint \S+ at tick (\d+)(?:, fell back)?, replayed (\d+)"
++)
++# Setups tried before the test gives up: each is a fresh command and, unless the command's cycle
++# was already checkpointed before the kill, a kill and a resume.
++ATTEMPTS = 3
++
++
++def _receipt(stack, slug: str, name: str) -> tuple[str, int]:
++    """The world and the tick a result's receipt names. A result is written whole, never replaced."""
++    text = (stack.volumes / "diode" / "data" / slug / "output" / name).read_text(encoding="utf-8")
++    found = RECEIPT.findall(text)
++    assert found, f"{name} ends in no receipt: {text[-300:]!r}"
++    world, tick = found[-1]
++    return world, int(tick)
++
++
++def test_a_killed_console_resumes_the_same_world(vehicle_stack):
++    """One recorded command, run before the kill: the resume replays its cycle and must not run it
++    again, so it ends with exactly one result. An unknown verb is refused, and a refusal is a
++    result. (A batch replaced inside a claim can be erased, vehicle #39; then no result appears
++    here at all and this fails saying so.)
++
++    The command's cycle is proved to be one the resume replayed, from the result's receipt and the
++    resume's banner: its row (receipt tick T, plus one) lies after the checkpoint the resume began
++    from (tick M) and at or before the tick it recovered (N), so M <= T < N. A cadence checkpoint
++    that lands between the result and the kill would hold the command's cycle, and the replay would
++    then prove nothing about it: that setup is not counted, and the test sets up again."""
++    stack = vehicle_stack
++    slug = stack.slugs[0]
++    crossed = []
++    for _ in range(ATTEMPTS):
++        # Past the first cadence checkpoint and early in an interval, so the command's cycle and
++        # the kill after it normally both fall inside the ticks the resume must replay.
++        wait_for(
++            lambda: _tick(stack) >= 60 and 5 <= _tick(stack) % CHECKPOINT_EVERY <= 20,
++            timeout=START_SECONDS,
++            every=0.1,
++            what="a tick early in a checkpoint interval",
++        )
++        marker = f"live_resume_{time.time_ns()}"
++        _submit(stack, slug, f"{marker} probe")
++        names = wait_for(
++            lambda marker=marker: _results_for(stack, slug, marker),
++            timeout=30,
++            every=0.1,
++            what="a result for the submitted command (none: see vehicle #39 if this recurs)",
++        )
++        before = _executive(stack)
++        assert before is not None, "the window root's .executive.json cannot be read"
++        world, command_tick = _receipt(stack, slug, names[0])
++        assert world == before["world_id"], (world, before["world_id"])
++        # The first cadence checkpoint that holds the command's row (tick command_tick + 1).
++        holding = (command_tick // CHECKPOINT_EVERY + 1) * CHECKPOINT_EVERY
++        if before["tick"] >= holding:
++            crossed.append(f"tick {command_tick}: checkpoint {holding} before the kill")
++            continue
++        frames = {s: _newest_frame(stack, s) for s in stack.slugs}
++        assert all(frames.values()), frames
++        restarts = _restarts(stack)
++        banners = len(RESUMED.findall(stack.logs("vehicle")))
++        # docker-init is PID 1; the console is its child. `docker kill` would mark the container
++        # stopped by hand, and the restart policy would leave it down.
++        stack.exec("vehicle", "pkill", "-9", "-f", "[c]onsole\\.py")
++        wait_for(
++            lambda restarts=restarts: _restarts(stack) > restarts,
++            timeout=120,
++            every=1,
++            what="the restart policy to bring the vehicle back",
++        )
++
++        def resumed(frames=frames):
++            newest = {s: _newest_frame(stack, s) for s in stack.slugs}
++            fresh = all(
++                frame and frame.get("boot_id") != frames[s]["boot_id"]
++                for s, frame in newest.items()
++            )
++            return newest if fresh else None
++
++        after_frames = wait_for(
++            resumed,
++            timeout=START_SECONDS,
++            every=1,
++            what="a frame from the new boot in every window",
++        )
++        after = _executive(stack)
++        assert after is not None, "the window root's .executive.json cannot be read"
++        assert after["world_id"] == before["world_id"], "a restart resumes the world it was flying"
++        assert after["tick"] > before["tick"], (before["tick"], after["tick"])
++        for s in stack.slugs:
++            assert after_frames[s]["seq"] > frames[s]["seq"], f"{s}'s frame sequence continues"
++            assert _window_world(stack, s) == before["world_id"], s
++        found = RESUMED.findall(stack.logs("vehicle"))
++        assert len(found) == banners + 1, f"one resume banner for this boot: {found[banners:]}"
++        resumed_world, recovered, checkpoint, replayed = found[-1]
++        recovered, checkpoint, replayed = int(recovered), int(checkpoint), int(replayed)
++        assert resumed_world == before["world_id"], "the banner names the world it was flying"
++        assert replayed == recovered - checkpoint, "the banner's replay is its two ticks apart"
++        # A checkpoint that completed after the pre-kill read holds the command's cycle; the
++        # resume then replays nothing of it, possibly nothing at all. Set up again.
++        if checkpoint > command_tick:
++            crossed.append(f"tick {command_tick}: resumed from checkpoint {checkpoint}")
++            continue
++        # From here M <= T < N, so the resume replayed at least the command's cycle.
++        assert command_tick < recovered, (
++            f"the command's cycle (tick {command_tick}) is in the record the resume recovered "
++            f"(through tick {recovered})"
++        )
++        assert replayed > 0, "the resume replayed the ticks after its checkpoint"
++        results = _results_for(stack, slug, marker)
++        assert len(results) == 1, (
++            f"a recorded command has exactly one result after the replay: {results}"
++        )
++        _assert_no_window_carries_the_world_s_identity(stack)
++        return
++    raise AssertionError(f"no setup put the command's cycle inside the replay: {crossed}")
++
++
++def test_docker_stop_reaches_the_vehicle_within_its_grace(vehicle_stack):
++    stack = vehicle_stack
++    # Running and advancing now, so a fast stop is the stop's doing and not a vehicle already gone.
++    tick = _tick(stack)
++    wait_for(lambda: _tick(stack) > tick, timeout=60, every=0.2, what="the vehicle to advance")
++    container = stack.container_id("vehicle")
++    started = time.monotonic()
++    stack.compose("stop", "--timeout", "30", "vehicle")
++    elapsed = time.monotonic() - started
++    # Without docker-init the console would be PID 1, ignore SIGTERM, and wait out the 30 s.
++    assert elapsed < 20, f"docker stop took {elapsed:.1f}s: the SIGTERM did not reach the console"
++    state = stack.run(
++        ["docker", "inspect", "-f", "{{.State.Status}} {{.State.OOMKilled}}", container]
++    )
++    assert state.stdout.split() == ["exited", "false"], state.stdout
+diff --git a/pyproject.toml b/pyproject.toml
+index 752f958..ffaddcf 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -39,7 +39,7 @@ ignore = ["E501", "B008"]
+ [tool.pytest.ini_options]
+ # One suite: `pytest -q` at this root runs the operator side and the assertions about this
+ # repository's own files (tests/), Aurora's harness, recorder and pump with the tests this
+-# repository added to them, and the vehicle's referee (344 tests), which lives in its own
++# repository added to them, and the vehicle's referee (525 test functions at the adopted vehicle), which lives in its own
+ # repository, mounted here as a git submodule. live/ is not here: it starts containers.
+ testpaths = [
+     "tests",
+diff --git a/scripts/verify_containment.sh b/scripts/verify_containment.sh
+index 8c826b8..f99acff 100755
+--- a/scripts/verify_containment.sh
++++ b/scripts/verify_containment.sh
+@@ -257,7 +257,7 @@ else:
+     sweep=""
+     swept=1
+     if [ -n "$image" ]; then
+-        sweep=$(docker run --rm --network none --user 0 --entrypoint find "$image" / -xdev \( -path /usr/local/bin/entrypoint.sh -o -path /opt/vehicle -o -name serve_vehicle.sh -o -name mission.yaml -o -name vehicle.yaml -o -name coupling.yaml -o -name plant.md -o -name fault_policy.yaml \) -print 2>/dev/null)
++        sweep=$(docker run --rm --network none --cpus 0.2 --memory 256m --memory-swap 256m --user 0 --entrypoint find "$image" / -xdev \( -path /usr/local/bin/entrypoint.sh -o -path /opt/vehicle -o -name serve_vehicle.sh -o -name mission.yaml -o -name vehicle.yaml -o -name coupling.yaml -o -name plant.md -o -name fault_policy.yaml \) -print 2>/dev/null)
+         swept=$?
+     fi
+     if [ "$swept" -ne 0 ]; then
+diff --git a/tests/test_doc_claims.py b/tests/test_doc_claims.py
+index 578860c..8702807 100644
+--- a/tests/test_doc_claims.py
++++ b/tests/test_doc_claims.py
+@@ -138,6 +138,9 @@ def test_the_readme_gives_the_operator_the_vehicle_s_procedures():
+         "new world",
+         "stop the fleet",
+         "exit 3",
++        "resumed world",
++        "OSError",
++        "both checkpoint generations unusable",
+         "VEHICLE_SLUGS",
+         "--closed-interlock",
+         "rebuild of the vehicle image",
+diff --git a/tests/test_live_stack.py b/tests/test_live_stack.py
+index 97eea96..ad05b7d 100644
+--- a/tests/test_live_stack.py
++++ b/tests/test_live_stack.py
+@@ -137,7 +137,9 @@ def test_every_compose_call_names_the_smoke_project_and_env_file(stack):
+ 
+ def test_the_orchestrator_tears_down_even_when_setup_fails(tmp_path):
+     runner = Runner(fail_on="build")
+-    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=runner)
++    smoke = stack_module.SmokeStack(
++        3, root=tmp_path / "smoke", runner=runner, lock=tmp_path / "lock"
++    )
+     with pytest.raises(subprocess.CalledProcessError):
+         smoke.start()
+     assert any("down" in argv for argv, _ in runner.calls)
+@@ -314,3 +316,232 @@ def test_a_recreate_value_reaches_compose_exactly_whatever_it_holds(stack):
+     # The printed configuration is itself a compose file, so a literal dollar is printed as `$$`;
+     # an unescaped `$c` would have been interpolated away.
+     assert environment["RECORDER_TOKEN_GLOBAL_HOURLY_MAX"] == awkward.replace("$", "$$")
++
++
++@pytest.fixture
++def vehicle_stack(tmp_path):
++    runner = Runner()
++    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=runner, window="vehicle")
++    yield smoke, runner
++    smoke._torn_down = True
++
++
++def test_a_stack_names_its_window_and_refuses_any_other():
++    with pytest.raises(ValueError, match="window"):
++        stack_module.SmokeStack(3, window="probe")
++
++
++def test_a_vehicle_stack_runs_the_vehicle_in_place_of_the_fixture(vehicle_stack):
++    smoke, runner = vehicle_stack
++    smoke.prepare()
++    smoke.up()
++    argv = runner.calls[-1][0]
++    profiles = [argv[i + 1] for i, word in enumerate(argv) if word == "--profile"]
++    assert profiles == ["fleet", "vehicle"], profiles
++    assert "vehicle" in argv[argv.index("up") :] and "diode" not in argv[argv.index("up") :]
++
++
++def test_the_vehicle_override_runs_the_vehicle_s_smoke_image_on_a_short_poll(vehicle_stack):
++    smoke, _ = vehicle_stack
++    text = smoke.override_text()
++    assert "  vehicle:\n" in text and "  diode:\n" not in text
++    block = text[text.index("  vehicle:\n") :]
++    # The vehicle has its own image (plan 8): the agents' carries nothing of it to serve.
++    assert f"    image: {stack_module.SMOKE_VEHICLE_IMAGE}\n" in block
++    assert stack_module.SMOKE_VEHICLE_IMAGE != "space-chassis-vehicle"
++    assert ":" in stack_module.SMOKE_VEHICLE_IMAGE
++    # A checkpoint every 50 ticks has to come in seconds, not the operator's minutes.
++    assert 'DIODE_POLL_SECONDS: "0.2"' in block
++
++
++def test_the_smoke_build_builds_the_vehicle_s_image_only_when_it_is_the_window(tmp_path):
++    def builds(window):
++        runner = Runner()
++        smoke = stack_module.SmokeStack(3, root=tmp_path / window, runner=runner, window=window)
++        smoke._torn_down = True
++        smoke.build()
++        calls = [argv for argv, _ in runner.calls if "build" in argv]
++        return [argv[argv.index("build") + 1 :] for argv in calls]
++
++    # One build at a time (Governance, 2026-10-11): compose builds the services one call names in
++    # parallel, so the vehicle's image is its own call, after the agents'.
++    assert builds("vehicle") == [["agent_1"], ["vehicle"]]
++    assert builds("diode") == [["agent_1"]]
++
++
++@pytest.mark.parametrize("window", stack_module.WINDOWS)
++def test_every_service_the_smoke_stack_starts_is_capped_and_the_sum_is_in_budget(tmp_path, window):
++    """Needs docker on the host, like `docker compose config -q` in CLAUDE.md: absent, it fails.
++    The caps compose resolves from the base and the override together, for what `up` starts."""
++    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", window=window)
++    smoke._torn_down = True
++    smoke.prepare()
++    result = smoke.compose("config", "--format", "json", check=False)
++    assert result.returncode == 0, result.stderr
++    services = json.loads(result.stdout)["services"]
++    cpus = memory = 0
++    for name in smoke.services():
++        service = services[name]
++        assert float(service["cpus"]) > 0, name
++        assert int(service["mem_limit"]) > 0, name
++        assert service["memswap_limit"] == service["mem_limit"], f"{name} may swap past its cap"
++        cpus += float(service["cpus"])
++        memory += int(service["mem_limit"])
++    assert cpus <= stack_module.STACK_CPUS + 1e-9, cpus
++    assert memory <= stack_module.STACK_MEMORY, memory
++    # Inside Governance's 5 CPUs and 14 GiB with the other enforced shares -- the containment
++    # check's image sweep and the host side's user scope -- and a reserve left for the daemon.
++    sweep_cpus = float(stack_module.SWEEP_CPUS)
++    sweep_memory = stack_module.memory_bytes(stack_module.SWEEP_MEMORY)
++    enforced_cpus = stack_module.STACK_CPUS + sweep_cpus + stack_module.HOST_CPUS
++    enforced_memory = stack_module.STACK_MEMORY + sweep_memory + stack_module.HOST_MEMORY
++    assert enforced_cpus < stack_module.BUDGET_CPUS, enforced_cpus
++    assert enforced_memory < stack_module.BUDGET_MEMORY, enforced_memory
++
++
++def test_the_containment_check_s_image_sweep_runs_under_the_sweep_caps():
++    text = (ROOT / "scripts" / "verify_containment.sh").read_text(encoding="utf-8")
++    sweep = next(line for line in text.splitlines() if "--entrypoint find" in line)
++    memory = stack_module.SWEEP_MEMORY
++    caps = f"--cpus {stack_module.SWEEP_CPUS} --memory {memory} --memory-swap {memory}"
++    assert caps in sweep, sweep
++
++
++def test_the_live_run_s_scope_command_caps_what_the_conftest_requires():
++    command = stack_module.HOST_SCOPE_COMMAND
++    assert f"CPUQuota={round(stack_module.HOST_CPUS * 100)}%" in command
++    assert f"MemoryMax={stack_module.HOST_MEMORY >> 30}G" in command
++    assert command.endswith("python3 -m pytest live -q")
++    readme = (ROOT / "README.md").read_text(encoding="utf-8")
++    assert command in readme and command in (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
++
++
++def test_cgroup_limits_reads_cpus_memory_and_swap(tmp_path):
++    (tmp_path / "cpu.max").write_text("75000 100000\n")
++    (tmp_path / "memory.max").write_text("3221225472\n")
++    (tmp_path / "memory.swap.max").write_text("0\n")
++    assert stack_module.cgroup_limits(tmp_path) == (0.75, 3 << 30, 0)
++    (tmp_path / "cpu.max").write_text("max 100000\n")
++    (tmp_path / "memory.max").write_text("max\n")
++    (tmp_path / "memory.swap.max").unlink()
++    assert stack_module.cgroup_limits(tmp_path) == (-1.0, -1, None)
++
++
++def test_the_guard_asks_the_daemon_with_a_template_it_can_execute(tmp_path):
++    """Needs docker on the host. `.Labels` is a string in `docker ps --format`; `.Label` is the
++    lookup. Run against every container the daemon has, so a template error cannot hide behind an
++    empty listing."""
++    runner = Runner()
++    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=runner)
++    smoke._torn_down = True
++    smoke.others_running()
++    argv = runner.calls[-1][0]
++    template = '{{.Label "com.docker.compose.project"}}'
++    assert argv == [
++        "docker",
++        "ps",
++        "--filter",
++        "label=com.docker.compose.project",
++        "--format",
++        template,
++    ]
++    result = subprocess.run(
++        ["docker", "ps", "--all", "--format", template],
++        capture_output=True,
++        text=True,
++        timeout=60,
++    )
++    assert result.returncode == 0, result.stderr
++
++
++def test_a_second_stack_waits_for_the_first_s_lock(tmp_path):
++    lock = tmp_path / "lock"
++    first = stack_module.SmokeStack(3, root=tmp_path / "one", runner=Runner(), lock=lock)
++    second = stack_module.SmokeStack(3, root=tmp_path / "two", runner=Runner(), lock=lock)
++    first._hold_the_lock()
++    with pytest.raises(RuntimeError, match="one smoke stack at a time: another holds"):
++        second.start()
++    first.down()
++    second.start()
++    assert second._lock_fd is not None
++    second.down()
++    assert second._lock_fd is None
++
++
++def test_the_guard_looks_again_after_the_build(tmp_path):
++    class Late(Runner):
++        looks = 0
++
++        def __call__(self, argv, **kwargs):
++            if argv[:2] == ["docker", "ps"]:
++                self.calls.append((argv, kwargs))
++                Late.looks += 1
++                running = "" if Late.looks == 1 else "space_chassis_smoke_2\n"
++                return subprocess.CompletedProcess(argv, 0, stdout=running, stderr="")
++            return super().__call__(argv, **kwargs)
++
++    runner = Late()
++    smoke = stack_module.SmokeStack(
++        3, root=tmp_path / "smoke", runner=runner, lock=tmp_path / "lock"
++    )
++    with pytest.raises(RuntimeError, match="space_chassis_smoke_2 is running"):
++        smoke.start()
++    assert any("build" in argv for argv, _ in runner.calls)
++    assert not any("up" in argv for argv, _ in runner.calls)
++    assert smoke._lock_fd is None
++
++
++def test_a_stack_will_not_start_beside_another_smoke_stack(tmp_path):
++    class Busy(Runner):
++        def __call__(self, argv, **kwargs):
++            if argv[:2] == ["docker", "ps"]:
++                self.calls.append((argv, kwargs))
++                running = "space_chassis_smoke_1_vehicle\nspace-chassis\n"
++                return subprocess.CompletedProcess(argv, 0, stdout=running, stderr="")
++            return super().__call__(argv, **kwargs)
++
++    runner = Busy()
++    smoke = stack_module.SmokeStack(
++        3, root=tmp_path / "smoke", runner=runner, lock=tmp_path / "lock"
++    )
++    smoke._torn_down = True
++    with pytest.raises(
++        RuntimeError, match="one smoke stack at a time: space_chassis_smoke_1_vehicle"
++    ):
++        smoke.start()
++    assert not any("build" in argv or "up" in argv for argv, _ in runner.calls)
++
++
++def test_a_stack_ignores_its_own_project_and_the_operator_s(tmp_path):
++    class Own(Runner):
++        def __call__(self, argv, **kwargs):
++            if argv[:2] == ["docker", "ps"]:
++                running = f"{smoke.project}\nspace-chassis\n"
++                return subprocess.CompletedProcess(argv, 0, stdout=running, stderr="")
++            return super().__call__(argv, **kwargs)
++
++    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=Own())
++    smoke._torn_down = True
++    assert smoke.others_running() == []
++
++
++def test_a_vehicle_stack_has_its_own_project_and_root(tmp_path):
++    diode = stack_module.SmokeStack(3, runner=Runner())
++    vehicle = stack_module.SmokeStack(3, runner=Runner(), window="vehicle")
++    diode._torn_down = vehicle._torn_down = True
++    assert vehicle.project != diode.project and vehicle.project.endswith("_vehicle")
++    assert vehicle.root != diode.root
++
++
++def test_the_vehicle_override_parses_against_the_base_compose(vehicle_stack):
++    """Needs docker on the host, like `docker compose config -q` in CLAUDE.md: absent, it fails."""
++    smoke, _ = vehicle_stack
++    smoke.prepare()
++    real = stack_module.SmokeStack(3, root=smoke.root, window="vehicle")
++    real._torn_down = True
++    result = real.compose("config", "--format", "json", check=False)
++    assert result.returncode == 0, result.stderr
++    vehicle = json.loads(result.stdout)["services"]["vehicle"]
++    assert vehicle["image"] == stack_module.SMOKE_VEHICLE_IMAGE
++    assert vehicle["build"]["target"] == "vehicle"
++    assert vehicle["environment"]["VEHICLE_SLUGS"] == "agent_1,agent_2,agent_3"
+diff --git a/tests/test_vehicle_reconciliation.py b/tests/test_vehicle_reconciliation.py
+index 1feae40..f7c52c0 100644
+--- a/tests/test_vehicle_reconciliation.py
++++ b/tests/test_vehicle_reconciliation.py
+@@ -104,7 +104,9 @@ def copy_definition(destination: Path) -> Path:
+     for name in ("README.md", "plant.md"):
+         shutil.copy(VEHICLE / name, destination / name)
+     (destination / "tools").mkdir(exist_ok=True)
+-    for name in ("faults.py", "console.py"):
++    # checkpoint.py joined the list with the vehicle's restart resume (WP08.3): the linter reads its
++    # `capture_state` to know what a resume remembers.
++    for name in ("faults.py", "console.py", "checkpoint.py"):
+         shutil.copy(VEHICLE / "tools" / name, destination / "tools" / name)
+     domains = VEHICLE / "domains"
+     if domains.is_dir():

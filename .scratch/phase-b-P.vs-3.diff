@@ -1,0 +1,82 @@
+diff --git a/README.md b/README.md
+index 76902b9..0390ee8 100644
+--- a/README.md
++++ b/README.md
+@@ -285,9 +285,9 @@ identity: a restart that names any of them differently refuses.
+   - a scenario, seed, ring size, phase or slug set that differs from the
+     world's, an incompatible checkpoint after a rebuild, a `/state` with a record
+     and no checkpoint, another executive holding the lock, or a window root whose
+-    record names a different world (a record that is unreadable, missing or
+-    otherwise disagrees with the checkpoint is rewritten from it, and the start
+-    goes on);
++    record names a different world (beside a checkpoint, a record that is
++    unreadable, missing or otherwise disagrees is rewritten from the recovered
++    world, and the start goes on unless that write fails);
+   - a checkpoint at the recovered tick that cannot be written: the start is
+     refused before anything is claimed, and the world resumes from the record at
+     the next start;
+diff --git a/live/test_vehicle.py b/live/test_vehicle.py
+index 29e35d6..877c1b6 100644
+--- a/live/test_vehicle.py
++++ b/live/test_vehicle.py
+@@ -147,10 +147,9 @@ def _assert_no_window_carries_the_world_s_identity(stack) -> None:
+                 assert relists <= RELISTS, f"{slug}'s files kept vanishing: {relists} listings"
+                 todo = _files(window) - checked
+                 continue
+-            except OSError:
++            except OSError as error:
+                 rereads[path] = rereads.get(path, 0) + 1
+-                if rereads[path] >= REREADS:
+-                    raise
++                assert rereads[path] < REREADS, f"{where} cannot be read after retries: {error}"
+                 time.sleep(0.1)
+                 continue
+             assert not SEED_TEXT.search(text), f"{where} carries the world's seed"
+@@ -158,6 +157,9 @@ def _assert_no_window_carries_the_world_s_identity(stack) -> None:
+                 try:
+                     document = json.loads(text)
+                 except ValueError:
++                    # Read again. A file that is malformed and then gone is dropped by the next
++                    # read, its text already scanned: the vehicle writes its JSON whole and renames
++                    # it into place, so only a file an agent wrote (console.json) can be torn.
+                     rereads[path] = rereads.get(path, 0) + 1
+                     assert rereads[path] < REREADS, f"{where} is not whole JSON after retries"
+                     time.sleep(0.1)
+@@ -263,6 +265,7 @@ def test_a_killed_console_resumes_the_same_world(vehicle_stack):
+             what="a result for the submitted command (none: see vehicle #39 if this recurs)",
+         )
+         before = _executive(stack)
++        assert before is not None, "the window root's .executive.json cannot be read"
+         world, command_tick = _receipt(stack, slug, names[0])
+         assert world == before["world_id"], (world, before["world_id"])
+         # The first cadence checkpoint that holds the command's row (tick command_tick + 1).
+@@ -299,6 +302,7 @@ def test_a_killed_console_resumes_the_same_world(vehicle_stack):
+             what="a frame from the new boot in every window",
+         )
+         after = _executive(stack)
++        assert after is not None, "the window root's .executive.json cannot be read"
+         assert after["world_id"] == before["world_id"], "a restart resumes the world it was flying"
+         assert after["tick"] > before["tick"], (before["tick"], after["tick"])
+         for s in stack.slugs:
+@@ -309,16 +313,18 @@ def test_a_killed_console_resumes_the_same_world(vehicle_stack):
+         resumed_world, recovered, checkpoint, replayed = found[-1]
+         recovered, checkpoint, replayed = int(recovered), int(checkpoint), int(replayed)
+         assert resumed_world == before["world_id"], "the banner names the world it was flying"
+-        assert replayed == recovered - checkpoint > 0, (
+-            "the resume replayed the ticks after its checkpoint"
+-        )
++        assert replayed == recovered - checkpoint, "the banner's replay is its two ticks apart"
++        # A checkpoint that completed after the pre-kill read holds the command's cycle; the
++        # resume then replays nothing of it, possibly nothing at all. Set up again.
+         if checkpoint > command_tick:
+             crossed.append(f"tick {command_tick}: resumed from checkpoint {checkpoint}")
+             continue
++        # From here M <= T < N, so the resume replayed at least the command's cycle.
+         assert command_tick < recovered, (
+             f"the command's cycle (tick {command_tick}) is in the record the resume recovered "
+             f"(through tick {recovered})"
+         )
++        assert replayed > 0, "the resume replayed the ticks after its checkpoint"
+         results = _results_for(stack, slug, marker)
+         assert len(results) == 1, (
+             f"a recorded command has exactly one result after the replay: {results}"

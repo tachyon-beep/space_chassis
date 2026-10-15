@@ -1,0 +1,101 @@
+--- ../phase-b-diag-P-019mkP-r2/diag.py	2026-10-11 12:04:54.817666416 +1100
++++ full.py	2026-10-11 12:19:37.999755356 +1100
+@@ -1,16 +1,18 @@
+-"""Independent supervisor for grant SPACE-20261011-P-DIAG-01 (master plan §20). One arm per call.
++"""Full-suite supervisor for Phase B tree P: the accepted diagnostic supervisor (DIAG-02, master
++plan §23, `2ead42be…`) adapted to the whole suite only (master plan §24). One run per call:
+ 
+-  python3 diag.py arm1   # the original driver's path: `systemd-run --scope ... &` from a
+-                         # non-interactive sh, so the scoped command starts with SIGINT ignored
+-  python3 diag.py arm2   # the same path, with SIGINT restored to SIG_DFL inside the scope
+-
+-Both arms run the one unchanged node with `-q -p no:cacheprovider -n 2` from the adoption root, in
+-a scope of CPUQuota=200% and MemoryMax=8G, at nice 19. The test does not start until the scope's
+-limits read back exactly, nice 19 is confirmed, and the monitor has taken a sample: the launcher
+-waits for a go-file. A ten-minute outer deadline runs from the go-file, apart from the test's own
+-120-second timeout. The test's result and the supervision's result are reported separately; any
+-abort, deadline, monitor failure, drift or unverified cleanup is a diagnostic abort, never a test
+-result. Nothing outside the arm's own scope, sh and monitor is ever signalled.
++  python3 full.py <grant id>
++
++It runs `python3 -m pytest -q -p no:cacheprovider -n 2` from the adoption root, in a scope of
++CPUQuota=200% and MemoryMax=8G, at nice 19, through the original launch path with the unchanged
++launcher always restoring SIGINT to SIG_DFL (DIAG-02's arm 2: an asynchronous list in a
++non-interactive sh starts its command with SIGINT ignored). The suite does not start until the
++scope's limits read back exactly and the monitor has taken a healthy sample: the launcher waits for
++a go-file. A 90-minute outer safety deadline runs from the go-file (the one prior full run under the
++same caps took 31 minutes) and changes no test timeout. The suite's result and the supervision's
++result are reported separately; any abort, deadline, monitor failure, drift or unverified cleanup
++is a supervisory abort, never a test result. Nothing outside the run's own scope, sh and monitor is
++ever signalled.
+ """
+ 
+ import hashlib
+@@ -24,8 +26,9 @@
+ import time
+ from pathlib import Path
+ 
+-ARM = sys.argv[1]
+-assert ARM in ("arm1", "arm2"), ARM
++GRANT = sys.argv[1]
++assert GRANT.startswith("SPACE-"), GRANT
++ARM = "full"
+ HERE = Path(__file__).resolve().parent
+ WORKTREE = Path("/home/john/space_chassis/.claude/worktrees/vehicle-adoption")
+ VEHICLE = WORKTREE / "docs/deep_research/vehicle"
+@@ -33,16 +36,12 @@
+ VEHICLE_SHA = "f44399645fb2633e695a5d758cb5a41f43fb848c"
+ TEST_FILE = VEHICLE / "tests/test_vehicle_config.py"
+ TEST_SHA = "3b917de30861c432c467d92d6a75b1faf7b31cd0e62626dfde095997110c4a53"
+-NODE = (
+-    "docs/deep_research/vehicle/tests/test_vehicle_config.py::"
+-    "test_a_run_ending_cleanly_checkpoints_its_last_completed_cycle_and_an_interrupt_mid_cycle_does_not"
+-)
+ CPU_MAX, MEMORY_MAX = "200000 100000", "8589934592"
+-OUTER_DEADLINE = 600
++OUTER_DEADLINE = 5400
+ EVIDENCE = HERE / ARM
+-EVIDENCE.mkdir(exist_ok=False)  # session-unique, never reused: a second call for an arm refuses
++EVIDENCE.mkdir(exist_ok=False)  # session-unique, never reused: a second call refuses
+ RECEIPT = EVIDENCE / "receipt.jsonl"
+-UNIT = f"space-chassis-pdiag-{ARM}-{int(time.time())}"
++UNIT = f"space-chassis-pfull-{int(time.time())}"
+ # systemctl resolves a bare name to `.service`: every query, stop and kill names the scope itself.
+ SCOPE = f"{UNIT}.scope"
+ 
+@@ -268,9 +267,9 @@
+ note(
+     "start",
+     arm=ARM,
+-    grant="SPACE-20261011-P-DIAG-01",
++    grant=GRANT,
+     unit=UNIT,
+-    node=NODE,
++    selection="python3 -m pytest -q -p no:cacheprovider -n 2",
+     supervisor_sha256=sha(Path(__file__)),
+     launcher_sha256=sha(HERE / "launch.py"),
+     supervisor_sigint=repr(signal.getsignal(signal.SIGINT)),
+@@ -311,11 +310,11 @@
+     sys.exit(90)
+ 
+ go, record, log = EVIDENCE / "go", EVIDENCE / "launcher.json", EVIDENCE / "pytest.log"
+-restore = "1" if ARM == "arm2" else "0"
++restore = "1"  # always: the full suite runs with SIGINT at its default
+ scoped = (
+     f"systemd-run --user --scope --unit={UNIT} -p CPUQuota=200% -p MemoryMax=8G "
+     f"python3 {HERE / 'launch.py'} {restore} {go} {record} "
+-    f"nice -n 19 python3 -m pytest {NODE} -q -p no:cacheprovider -n 2"
++    "nice -n 19 python3 -m pytest -q -p no:cacheprovider -n 2"
+ )
+ # The original driver's path: an asynchronous list in a non-interactive sh, then `wait` for it.
+ shell = f"{scoped} > {log} 2>&1 &\nwait $!"
+@@ -540,8 +539,7 @@
+     "ran": released is not None,
+     "outcomes": {c: progress.count(c) for c in set(progress)},
+     "failed": re.findall(r"^FAILED (\S+)", text, re.MULTILINE),
+-    "timeout_120": "timed out after 120 seconds" in text,
+-    "timeout_site": "in interrupted_console" in text and "process.communicate(timeout=120)" in text,
++    "errors": re.findall(r"^ERROR (\S+)", text, re.MULTILINE),
+     "pytest_log_sha256": sha(log) if log.exists() else None,
+ }
+ supervision = list(dict.fromkeys(supervision))

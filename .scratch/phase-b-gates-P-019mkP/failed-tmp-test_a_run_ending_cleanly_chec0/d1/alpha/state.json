@@ -1,0 +1,2224 @@
+{
+  "published_at": "2026-10-11T00:19:55.556518+00:00",
+  "available_commands": [
+    "abort_rcs_activity",
+    "ack_alarm",
+    "arm_engine",
+    "ask_crew",
+    "enter_safe_hold",
+    "isolate_rcs_manifold",
+    "load_burn",
+    "load_state_vector",
+    "point_hga",
+    "request_imu_alignment",
+    "request_reconciliation",
+    "request_translation",
+    "reset_computer",
+    "reset_latched_fault",
+    "select_antenna",
+    "select_nav_source",
+    "select_sensor",
+    "set_absorber_path",
+    "set_alert_overlay",
+    "set_attitude_target",
+    "set_battery_contactor",
+    "set_breaker",
+    "set_burn_cutoff",
+    "set_bus_tie",
+    "set_cabin_regulator",
+    "set_comm_mode",
+    "set_computer_mode",
+    "set_coolant_loop",
+    "set_coolant_pump",
+    "set_deadband",
+    "set_display_mode",
+    "set_docking_latch",
+    "set_evaporator_feed",
+    "set_guidance_mode",
+    "set_hatch_valve",
+    "set_heater",
+    "set_instrumentation_mode",
+    "set_load",
+    "set_o2_flow",
+    "set_o2_source",
+    "set_power_amplifier",
+    "set_radiator_bypass",
+    "set_rcs_mode",
+    "set_rcs_quad",
+    "set_relief_valve",
+    "set_reserve_policy",
+    "set_source",
+    "set_stage_heater",
+    "set_suit_fan",
+    "set_suit_loop",
+    "set_telemetry_profile",
+    "set_vent_valve",
+    "start_burn",
+    "stop_burn"
+  ],
+  "variables": {
+    "rcs_abort_enable": true,
+    "ack_alarm_enable": true,
+    "engine_sps_arm_enable": true,
+    "engine_dps_arm_enable": true,
+    "engine_aps_arm_enable": true,
+    "arm_lm_undocking_enable": true,
+    "arm_descent_stage_separation_enable": true,
+    "arm_lm_ascent_jettison_enable": true,
+    "arm_pyro_fire_enable": true,
+    "ask_crew_enable": true,
+    "rcs_safe_hold_enable": true,
+    "execute_lm_undocking_enable": true,
+    "execute_descent_stage_separation_enable": true,
+    "execute_lm_ascent_jettison_enable": true,
+    "execute_pyro_fire_enable": true,
+    "rcs_branch_sm_feed_a_enable": true,
+    "rcs_branch_sm_feed_b_enable": true,
+    "rcs_branch_cm_feed_a_enable": true,
+    "rcs_branch_lm_feed_a_enable": true,
+    "rcs_branch_lm_feed_b_enable": true,
+    "rcs_branch_lm_feed_c_enable": true,
+    "rcs_branch_lm_feed_d_enable": true,
+    "burn_load_sps_enable": true,
+    "burn_load_dps_enable": true,
+    "burn_load_aps_enable": true,
+    "state_vector_load_enable": true,
+    "hga_point_earth_enable": true,
+    "hga_point_moon_limb_enable": true,
+    "hga_point_csm_enable": true,
+    "hga_point_inertial_enable": true,
+    "hga_point_stow_enable": true,
+    "imu_align_star_enable": true,
+    "imu_align_sun_enable": true,
+    "imu_align_moon_horizon_enable": true,
+    "imu_align_stored_enable": true,
+    "recon_request_enable": true,
+    "rcs_translate_BODY_enable": true,
+    "rcs_translate_LVLH_enable": true,
+    "rcs_translate_EARTH_J2000_enable": true,
+    "rcs_translate_MOON_J2000_enable": true,
+    "computer_reset_enable": true,
+    "rcs_reset_thruster_health_enable": true,
+    "rcs_reset_allocation_status_enable": true,
+    "rcs_reset_safety_state_enable": true,
+    "antenna_high_gain_enable": true,
+    "antenna_omni_a_enable": true,
+    "antenna_omni_b_enable": true,
+    "antenna_sband_steerable_enable": true,
+    "nav_source_imu_only_enable": true,
+    "nav_source_star_sighting_enable": true,
+    "nav_source_radar_enable": true,
+    "nav_source_ground_uplink_enable": true,
+    "nav_source_blended_enable": true,
+    "sensor_cabin_pressure_primary_enable": true,
+    "sensor_cabin_pressure_secondary_enable": true,
+    "sensor_cabin_pressure_auto_enable": true,
+    "sensor_bus_voltage_primary_enable": true,
+    "sensor_bus_voltage_secondary_enable": true,
+    "sensor_bus_voltage_auto_enable": true,
+    "sensor_imu_primary_enable": true,
+    "sensor_imu_secondary_enable": true,
+    "sensor_imu_auto_enable": true,
+    "sensor_radar_primary_enable": true,
+    "sensor_radar_secondary_enable": true,
+    "sensor_radar_auto_enable": true,
+    "sensor_co2_primary_enable": true,
+    "sensor_co2_secondary_enable": true,
+    "sensor_co2_auto_enable": true,
+    "absorber_csm_primary_enable": true,
+    "absorber_csm_secondary_enable": true,
+    "absorber_csm_both_enable": true,
+    "absorber_csm_bypass_enable": true,
+    "absorber_lm_primary_enable": true,
+    "absorber_lm_secondary_enable": true,
+    "absorber_lm_both_enable": true,
+    "absorber_lm_bypass_enable": true,
+    "alert_overlay_enable": true,
+    "rcs_target_BODY_enable": true,
+    "rcs_target_LVLH_enable": true,
+    "rcs_target_EARTH_J2000_enable": true,
+    "rcs_target_MOON_J2000_enable": true,
+    "contactor_battery_csm_1_enable": true,
+    "contactor_battery_csm_2_enable": true,
+    "contactor_battery_csm_3_enable": true,
+    "contactor_battery_lm_descent_1_enable": true,
+    "contactor_battery_lm_descent_2_enable": true,
+    "contactor_battery_lm_descent_3_enable": true,
+    "contactor_battery_lm_descent_4_enable": true,
+    "contactor_battery_lm_ascent_1_enable": true,
+    "contactor_battery_lm_ascent_2_enable": true,
+    "breaker_csm_tie_ab_enable": true,
+    "breaker_lcl_enable": true,
+    "cutoff_sps_enable": true,
+    "cutoff_dps_enable": true,
+    "tie_auto_enable": true,
+    "regulator_csm_mode_enable": true,
+    "regulator_lm_mode_enable": true,
+    "comm_mode_sband_high_enable": true,
+    "comm_mode_sband_low_enable": true,
+    "comm_mode_vhf_enable": true,
+    "comm_mode_none_enable": true,
+    "computer_mode_idle_enable": true,
+    "computer_mode_run_enable": true,
+    "computer_mode_standby_enable": true,
+    "loop_loop_primary_mode_enable": true,
+    "loop_loop_secondary_mode_enable": true,
+    "loop_loop_lm_mode_enable": true,
+    "pump_pump_1_enable": true,
+    "pump_pump_2_enable": true,
+    "pump_pump_lm_enable": true,
+    "rcs_profile_conservative_enable": true,
+    "rcs_profile_nominal_enable": true,
+    "rcs_profile_tight_enable": true,
+    "rcs_profile_safe_vector_enable": true,
+    "display_csm_commander_enable": true,
+    "display_csm_navigator_enable": true,
+    "display_csm_lower_equipment_bay_enable": true,
+    "display_lm_commander_enable": true,
+    "display_lm_pilot_enable": true,
+    "latch_docking_interface_enable": true,
+    "evaporator_csm_enable": true,
+    "evaporator_lm_enable": true,
+    "guidance_mode_coast_enable": true,
+    "guidance_mode_burn_enable": true,
+    "guidance_mode_landing_enable": true,
+    "guidance_mode_rendezvous_enable": true,
+    "guidance_mode_alignment_enable": true,
+    "guidance_mode_free_drift_enable": true,
+    "hatch_hatch_crew_csm_enable": true,
+    "hatch_hatch_crew_lm_enable": true,
+    "heater_heater_bank_csm_enable": true,
+    "heater_heater_bank_lm_enable": true,
+    "instrumentation_profile_full_enable": true,
+    "instrumentation_profile_minimal_plus_eng_enable": true,
+    "instrumentation_profile_minimal_enable": true,
+    "load_csm_sband_transceiver_enable": true,
+    "load_csm_sband_power_amplifier_enable": true,
+    "load_csm_suit_fan_enable": true,
+    "load_csm_cabin_fan_enable": true,
+    "load_csm_co2_scrubber_enable": true,
+    "load_csm_imu_enable": true,
+    "load_csm_guidance_computer_enable": true,
+    "load_csm_instrumentation_enable": true,
+    "load_csm_coolant_pump_1_enable": true,
+    "load_csm_coolant_pump_2_enable": true,
+    "load_csm_heaters_enable": true,
+    "load_csm_rcs_heaters_enable": true,
+    "load_csm_comm_heaters_enable": true,
+    "load_csm_lighting_enable": true,
+    "load_lm_sband_transmitter_enable": true,
+    "load_lm_sband_high_power_enable": true,
+    "load_lm_cabin_fan_enable": true,
+    "load_lm_suit_fan_enable": true,
+    "load_lm_co2_scrubber_enable": true,
+    "load_lm_guidance_computer_enable": true,
+    "load_lm_landing_radar_enable": true,
+    "load_lm_instrumentation_enable": true,
+    "load_lm_heaters_enable": true,
+    "load_lm_rcs_heaters_enable": true,
+    "load_lm_lighting_enable": true,
+    "o2_flow_csm_enable": true,
+    "o2_flow_lm_enable": true,
+    "o2_csm_primary_enable": true,
+    "o2_csm_surge_enable": true,
+    "o2_csm_isolated_enable": true,
+    "o2_lm_primary_enable": true,
+    "o2_lm_surge_enable": true,
+    "o2_lm_isolated_enable": true,
+    "power_amplifier_sband_power_amplifier_enable": true,
+    "power_amplifier_lm_sband_enable": true,
+    "radar_on_enable": true,
+    "radar_off_enable": true,
+    "radar_standby_enable": true,
+    "bypass_loop_primary_enable": true,
+    "bypass_loop_secondary_enable": true,
+    "rcs_mode_auto_enable": true,
+    "rcs_mode_manual_enable": true,
+    "rcs_mode_free_drift_enable": true,
+    "rcs_group_sm_primary_enable": true,
+    "rcs_group_sm_secondary_enable": true,
+    "rcs_group_cm_enable": true,
+    "rcs_group_lm_enable": true,
+    "relief_csm_enable": true,
+    "relief_lm_enable": true,
+    "reserve_floor_o2_csm_enable": true,
+    "reserve_floor_o2_lm_enable": true,
+    "reserve_floor_water_potable_enable": true,
+    "reserve_floor_water_cooling_enable": true,
+    "reserve_floor_prop_main_enable": true,
+    "reserve_floor_prop_rcs_enable": true,
+    "reserve_floor_pressurant_he_enable": true,
+    "reserve_floor_absorber_capacity_csm_enable": true,
+    "reserve_floor_absorber_capacity_lm_enable": true,
+    "reserve_floor_h2_csm_enable": true,
+    "reserve_floor_battery_enable": true,
+    "source_fc_1_enable": true,
+    "source_fc_2_enable": true,
+    "source_fc_3_enable": true,
+    "source_battery_csm_1_enable": true,
+    "source_battery_csm_2_enable": true,
+    "source_battery_csm_3_enable": true,
+    "source_battery_lm_descent_1_enable": true,
+    "source_battery_lm_descent_2_enable": true,
+    "source_battery_lm_descent_3_enable": true,
+    "source_battery_lm_descent_4_enable": true,
+    "source_battery_lm_ascent_1_enable": true,
+    "source_battery_lm_ascent_2_enable": true,
+    "stage_heater_lm_descent_enable": true,
+    "stage_heater_lm_ascent_enable": true,
+    "stage_heater_csm_service_enable": true,
+    "suit_fan_csm_enable": true,
+    "suit_fan_lm_enable": true,
+    "suit_loop_csm_enable": true,
+    "suit_loop_lm_enable": true,
+    "telemetry_profile_emergency_enable": true,
+    "telemetry_profile_low_enable": true,
+    "telemetry_profile_normal_enable": true,
+    "telemetry_profile_high_enable": true,
+    "telemetry_profile_burst_enable": true,
+    "throttle_dps_enable": true,
+    "vent_csm_enable": true,
+    "vent_lm_enable": true,
+    "burn_start_sps_enable": true,
+    "burn_start_dps_enable": true,
+    "burn_start_aps_enable": true,
+    "burn_stop_sps_enable": true,
+    "burn_stop_dps_enable": true,
+    "burn_stop_aps_enable": true
+  },
+  "budget": {
+    "used_this_window": 0,
+    "limit_per_window": 120,
+    "window_seconds": 3600,
+    "oldest_expires_in_seconds": 3600
+  },
+  "queue_depth": 0,
+  "ring": {
+    "slots": 300,
+    "held": 3,
+    "losses": 0,
+    "newest_seq": 2
+  },
+  "vehicle": {
+    "phase": "translunar_coast",
+    "posture": "",
+    "abort_latched": false
+  },
+  "executive": {
+    "world_id": "ef1c3771f7f74345bac1f61f1e1ab8e9",
+    "tick": 3
+  },
+  "capability": [
+    {
+      "verb": "abort_rcs_activity",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "scope": {
+          "type": "enum",
+          "values": [
+            "translation",
+            "slew",
+            "all"
+          ]
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "rcs_abort_enable"
+      ]
+    },
+    {
+      "verb": "ack_alarm",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "alert_id": {
+          "type": "string",
+          "max_length": 64
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "ack_alarm_enable"
+      ]
+    },
+    {
+      "verb": "arm_engine",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "engine": {
+          "type": "enum",
+          "values": [
+            "sps",
+            "dps",
+            "aps"
+          ]
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "armed",
+            "safe"
+          ]
+        }
+      },
+      "availability_reason": "open; 3 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "engine_sps_arm_enable",
+        "engine_dps_arm_enable",
+        "engine_aps_arm_enable"
+      ]
+    },
+    {
+      "verb": "arm_event",
+      "available": false,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "event": {
+          "type": "enum",
+          "values": [
+            "lm_undocking",
+            "descent_stage_separation",
+            "lm_ascent_jettison",
+            "pyro_fire"
+          ]
+        }
+      },
+      "availability_reason": "phase: translunar_coast is not in ['lunar_orbit', 'descent', 'surface', 'ascent_rendezvous', 'lunar_orbit_docked']",
+      "gate_variables": [
+        "arm_lm_undocking_enable",
+        "arm_descent_stage_separation_enable",
+        "arm_lm_ascent_jettison_enable",
+        "arm_pyro_fire_enable"
+      ]
+    },
+    {
+      "verb": "ask_crew",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "crew_id": {
+          "type": "enum",
+          "values": [
+            "commander",
+            "lm_pilot",
+            "csm_pilot"
+          ]
+        },
+        "position": {
+          "type": "enum",
+          "values": [
+            "csm_commander",
+            "csm_navigator",
+            "csm_lower_equipment_bay",
+            "lm_commander",
+            "lm_pilot",
+            "tunnel",
+            "surface_eva"
+          ],
+          "names": "crew_station"
+        },
+        "question": {
+          "type": "string",
+          "max_length": 300
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "ask_crew_enable"
+      ]
+    },
+    {
+      "verb": "enter_safe_hold",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "safe_vector": {
+          "type": "enum",
+          "optional": true,
+          "values": [
+            "sun_safe",
+            "earth_safe",
+            "comm_safe",
+            "inertial_safe",
+            "current"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "optional": true,
+          "max_length": 200
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "rcs_safe_hold_enable"
+      ]
+    },
+    {
+      "verb": "execute_event",
+      "available": false,
+      "irreversible": true,
+      "deferrable": false,
+      "argument_schema": {
+        "event": {
+          "type": "enum",
+          "values": [
+            "lm_undocking",
+            "descent_stage_separation",
+            "lm_ascent_jettison",
+            "pyro_fire"
+          ]
+        },
+        "arm_token": {
+          "type": "string",
+          "max_length": 16
+        }
+      },
+      "availability_reason": "phase: translunar_coast is not in ['lunar_orbit', 'descent', 'surface', 'ascent_rendezvous', 'lunar_orbit_docked']",
+      "gate_variables": [
+        "execute_lm_undocking_enable",
+        "execute_descent_stage_separation_enable",
+        "execute_lm_ascent_jettison_enable",
+        "execute_pyro_fire_enable"
+      ]
+    },
+    {
+      "verb": "isolate_rcs_manifold",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "branch": {
+          "type": "enum",
+          "values": [
+            "sm_feed_a",
+            "sm_feed_b",
+            "cm_feed_a",
+            "lm_feed_a",
+            "lm_feed_b",
+            "lm_feed_c",
+            "lm_feed_d"
+          ]
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "rcs_branch_sm_feed_a_enable",
+        "rcs_branch_sm_feed_b_enable",
+        "rcs_branch_cm_feed_a_enable",
+        "rcs_branch_lm_feed_a_enable",
+        "rcs_branch_lm_feed_b_enable",
+        "rcs_branch_lm_feed_c_enable",
+        "rcs_branch_lm_feed_d_enable"
+      ]
+    },
+    {
+      "verb": "load_burn",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "engine": {
+          "type": "enum",
+          "values": [
+            "sps",
+            "dps",
+            "aps"
+          ]
+        },
+        "target": {
+          "type": "enum",
+          "values": [
+            "loi",
+            "doi",
+            "powered_descent",
+            "ascent",
+            "rendezvous",
+            "tei",
+            "midcourse_translunar",
+            "midcourse_transearth",
+            "custom"
+          ]
+        },
+        "duration_s": {
+          "type": "number",
+          "minimum": 0.5
+        },
+        "throttle_pct": {
+          "type": "number",
+          "optional": true
+        },
+        "dv_target_m_s": {
+          "type": "number",
+          "optional": true
+        }
+      },
+      "availability_reason": "open; 4 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "burn_load_sps_enable",
+        "burn_load_dps_enable",
+        "burn_load_aps_enable"
+      ]
+    },
+    {
+      "verb": "load_state_vector",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "frame": {
+          "type": "enum",
+          "values": [
+            "EARTH_J2000",
+            "MOON_J2000",
+            "LVLH"
+          ]
+        },
+        "position": {
+          "type": "array",
+          "items": "number",
+          "length": 3
+        },
+        "velocity": {
+          "type": "array",
+          "items": "number",
+          "length": 3
+        },
+        "epoch_met_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "position_sigma_m": {
+          "type": "number",
+          "optional": true,
+          "minimum": 0
+        },
+        "source": {
+          "type": "enum",
+          "values": [
+            "ground_tracking",
+            "onboard_solution",
+            "crew_sighting"
+          ]
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "state_vector_load_enable"
+      ]
+    },
+    {
+      "verb": "point_hga",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "target": {
+          "type": "enum",
+          "values": [
+            "earth",
+            "moon_limb",
+            "csm",
+            "inertial",
+            "stow"
+          ]
+        },
+        "mode": {
+          "type": "enum",
+          "values": [
+            "auto",
+            "manual"
+          ],
+          "optional": true
+        },
+        "slew_rate_deg_s": {
+          "type": "number",
+          "optional": true,
+          "minimum": 0
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "hga_point_earth_enable",
+        "hga_point_moon_limb_enable",
+        "hga_point_csm_enable",
+        "hga_point_inertial_enable",
+        "hga_point_stow_enable"
+      ]
+    },
+    {
+      "verb": "request_imu_alignment",
+      "available": true,
+      "irreversible": false,
+      "deferrable": true,
+      "argument_schema": {
+        "source": {
+          "type": "enum",
+          "values": [
+            "star",
+            "sun",
+            "moon_horizon",
+            "stored"
+          ]
+        },
+        "target": {
+          "type": "enum",
+          "values": [
+            "EARTH_J2000",
+            "MOON_J2000",
+            "LVLH"
+          ],
+          "names": "frame"
+        },
+        "timeout_s": {
+          "type": "number",
+          "optional": true,
+          "minimum": 0
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "imu_align_star_enable",
+        "imu_align_sun_enable",
+        "imu_align_moon_horizon_enable",
+        "imu_align_stored_enable"
+      ]
+    },
+    {
+      "verb": "request_reconciliation",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "resource": {
+          "type": "enum",
+          "values": [
+            "o2_csm",
+            "o2_lm",
+            "water_potable",
+            "water_cooling",
+            "prop_main",
+            "prop_rcs",
+            "pressurant_he",
+            "absorber_capacity_csm",
+            "absorber_capacity_lm",
+            "all"
+          ]
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "recon_request_enable"
+      ]
+    },
+    {
+      "verb": "request_translation",
+      "available": true,
+      "irreversible": false,
+      "deferrable": true,
+      "argument_schema": {
+        "frame": {
+          "type": "enum",
+          "values": [
+            "BODY",
+            "LVLH",
+            "EARTH_J2000",
+            "MOON_J2000"
+          ]
+        },
+        "dv_m_s": {
+          "type": "number",
+          "optional": true,
+          "minimum": 0
+        },
+        "impulse_ns": {
+          "type": "number",
+          "optional": true,
+          "minimum": 0
+        },
+        "window_s": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 3600
+        },
+        "attitude_policy": {
+          "type": "enum",
+          "values": [
+            "hold_current",
+            "hold_target",
+            "allow_bounded_rotation"
+          ]
+        },
+        "max_propellant_kg": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_attitude_error_deg": {
+          "type": "number",
+          "optional": true,
+          "minimum": 0
+        }
+      },
+      "availability_reason": "open; 4 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "rcs_translate_BODY_enable",
+        "rcs_translate_LVLH_enable",
+        "rcs_translate_EARTH_J2000_enable",
+        "rcs_translate_MOON_J2000_enable"
+      ]
+    },
+    {
+      "verb": "reset_computer",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "reason": {
+          "type": "string",
+          "optional": true,
+          "max_length": 200
+        },
+        "preserve_memory": {
+          "type": "boolean",
+          "optional": true
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "computer_reset_enable"
+      ]
+    },
+    {
+      "verb": "reset_latched_fault",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "fault_id": {
+          "type": "enum",
+          "values": [
+            "thruster_health",
+            "allocation_status",
+            "safety_state"
+          ]
+        },
+        "recovery_token": {
+          "type": "string",
+          "optional": true
+        }
+      },
+      "availability_reason": "open; 3 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "rcs_reset_thruster_health_enable",
+        "rcs_reset_allocation_status_enable",
+        "rcs_reset_safety_state_enable"
+      ]
+    },
+    {
+      "verb": "select_antenna",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "antenna": {
+          "type": "enum",
+          "values": [
+            "high_gain",
+            "omni_a",
+            "omni_b",
+            "sband_steerable"
+          ],
+          "names": "vehicle_entry"
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "antenna_high_gain_enable",
+        "antenna_omni_a_enable",
+        "antenna_omni_b_enable",
+        "antenna_sband_steerable_enable"
+      ]
+    },
+    {
+      "verb": "select_nav_source",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "source": {
+          "type": "enum",
+          "values": [
+            "imu_only",
+            "star_sighting",
+            "radar",
+            "ground_uplink",
+            "blended"
+          ]
+        },
+        "weight": {
+          "type": "enum",
+          "values": [
+            "exclusive",
+            "primary",
+            "secondary"
+          ],
+          "optional": true
+        }
+      },
+      "availability_reason": "open; 1 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "nav_source_imu_only_enable",
+        "nav_source_star_sighting_enable",
+        "nav_source_radar_enable",
+        "nav_source_ground_uplink_enable",
+        "nav_source_blended_enable"
+      ]
+    },
+    {
+      "verb": "select_sensor",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "group": {
+          "type": "enum",
+          "values": [
+            "cabin_pressure",
+            "bus_voltage",
+            "imu",
+            "radar",
+            "co2"
+          ]
+        },
+        "source": {
+          "type": "enum",
+          "values": [
+            "primary",
+            "secondary",
+            "auto"
+          ]
+        }
+      },
+      "availability_reason": "open; 1 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "sensor_cabin_pressure_primary_enable",
+        "sensor_cabin_pressure_secondary_enable",
+        "sensor_cabin_pressure_auto_enable",
+        "sensor_bus_voltage_primary_enable",
+        "sensor_bus_voltage_secondary_enable",
+        "sensor_bus_voltage_auto_enable",
+        "sensor_imu_primary_enable",
+        "sensor_imu_secondary_enable",
+        "sensor_imu_auto_enable",
+        "sensor_radar_primary_enable",
+        "sensor_radar_secondary_enable",
+        "sensor_radar_auto_enable",
+        "sensor_co2_primary_enable",
+        "sensor_co2_secondary_enable",
+        "sensor_co2_auto_enable"
+      ]
+    },
+    {
+      "verb": "set_absorber_path",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "vehicle": {
+          "type": "enum",
+          "values": [
+            "csm",
+            "lm"
+          ]
+        },
+        "path": {
+          "type": "enum",
+          "values": [
+            "primary",
+            "secondary",
+            "both",
+            "bypass"
+          ]
+        }
+      },
+      "availability_reason": "open; 2 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "absorber_csm_primary_enable",
+        "absorber_csm_secondary_enable",
+        "absorber_csm_both_enable",
+        "absorber_csm_bypass_enable",
+        "absorber_lm_primary_enable",
+        "absorber_lm_secondary_enable",
+        "absorber_lm_both_enable",
+        "absorber_lm_bypass_enable"
+      ]
+    },
+    {
+      "verb": "set_alert_overlay",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "alert_id": {
+          "type": "string",
+          "max_length": 64
+        },
+        "overlay": {
+          "type": "enum",
+          "values": [
+            "suppress",
+            "inhibit",
+            "shelve",
+            "clear_overlay"
+          ]
+        },
+        "duration_s": {
+          "type": "number",
+          "optional": true
+        }
+      },
+      "availability_reason": "open; 3 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "alert_overlay_enable"
+      ]
+    },
+    {
+      "verb": "set_attitude_target",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "frame": {
+          "type": "enum",
+          "values": [
+            "BODY",
+            "LVLH",
+            "EARTH_J2000",
+            "MOON_J2000"
+          ]
+        },
+        "quaternion": {
+          "type": "array",
+          "items": "number",
+          "length": 4,
+          "note": "unit quaternion",
+          "quaternion_order": "[w,x,y,z]",
+          "quaternion_order_source": "vehicle.yaml:conventions.quaternion_order"
+        },
+        "rate_limit_deg_s": {
+          "type": "number",
+          "optional": true,
+          "minimum": 0
+        },
+        "tolerance_profile": {
+          "type": "enum",
+          "values": [
+            "tight",
+            "nominal",
+            "loose"
+          ],
+          "optional": true
+        },
+        "safe_vector": {
+          "type": "enum",
+          "optional": true,
+          "values": [
+            "sun_safe",
+            "earth_safe",
+            "comm_safe",
+            "inertial_safe"
+          ]
+        }
+      },
+      "availability_reason": "open; 1 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "rcs_target_BODY_enable",
+        "rcs_target_LVLH_enable",
+        "rcs_target_EARTH_J2000_enable",
+        "rcs_target_MOON_J2000_enable"
+      ]
+    },
+    {
+      "verb": "set_battery_contactor",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "battery": {
+          "type": "enum",
+          "values": [
+            "battery_csm_1",
+            "battery_csm_2",
+            "battery_csm_3",
+            "battery_lm_descent_1",
+            "battery_lm_descent_2",
+            "battery_lm_descent_3",
+            "battery_lm_descent_4",
+            "battery_lm_ascent_1",
+            "battery_lm_ascent_2"
+          ],
+          "names": "component"
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "on",
+            "off"
+          ]
+        }
+      },
+      "availability_reason": "open; 1 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "contactor_battery_csm_1_enable",
+        "contactor_battery_csm_2_enable",
+        "contactor_battery_csm_3_enable",
+        "contactor_battery_lm_descent_1_enable",
+        "contactor_battery_lm_descent_2_enable",
+        "contactor_battery_lm_descent_3_enable",
+        "contactor_battery_lm_descent_4_enable",
+        "contactor_battery_lm_ascent_1_enable",
+        "contactor_battery_lm_ascent_2_enable"
+      ]
+    },
+    {
+      "verb": "set_breaker",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "breaker": {
+          "type": "enum",
+          "values": [
+            "csm_tie_ab",
+            "lcl"
+          ],
+          "names": "component"
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "in",
+            "out",
+            "reset"
+          ]
+        }
+      },
+      "availability_reason": "open; 1 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "breaker_csm_tie_ab_enable",
+        "breaker_lcl_enable"
+      ]
+    },
+    {
+      "verb": "set_burn_cutoff",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "engine": {
+          "type": "enum",
+          "values": [
+            "sps",
+            "dps"
+          ]
+        },
+        "mode": {
+          "type": "enum",
+          "values": [
+            "duration",
+            "dv_target",
+            "gnc_request",
+            "manual"
+          ]
+        },
+        "dv_target_m_s": {
+          "type": "number",
+          "optional": true
+        }
+      },
+      "availability_reason": "open; 1 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "cutoff_sps_enable",
+        "cutoff_dps_enable"
+      ]
+    },
+    {
+      "verb": "set_bus_tie",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "tie": {
+          "type": "enum",
+          "values": [
+            "csm_tie_ab"
+          ],
+          "names": "component"
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "open",
+            "closed",
+            "auto"
+          ]
+        }
+      },
+      "availability_reason": "open; 1 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "tie_auto_enable"
+      ]
+    },
+    {
+      "verb": "set_cabin_regulator",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "vehicle": {
+          "type": "enum",
+          "values": [
+            "csm",
+            "lm"
+          ]
+        },
+        "mode": {
+          "type": "enum",
+          "values": [
+            "closed",
+            "primary",
+            "emergency",
+            "isolated"
+          ]
+        }
+      },
+      "availability_reason": "open; 2 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "regulator_csm_mode_enable",
+        "regulator_lm_mode_enable"
+      ]
+    },
+    {
+      "verb": "set_comm_mode",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "mode": {
+          "type": "enum",
+          "values": [
+            "sband_high",
+            "sband_low",
+            "vhf",
+            "none"
+          ]
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "comm_mode_sband_high_enable",
+        "comm_mode_sband_low_enable",
+        "comm_mode_vhf_enable",
+        "comm_mode_none_enable"
+      ]
+    },
+    {
+      "verb": "set_computer_mode",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "mode": {
+          "type": "enum",
+          "values": [
+            "idle",
+            "run",
+            "standby"
+          ]
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "computer_mode_idle_enable",
+        "computer_mode_run_enable",
+        "computer_mode_standby_enable"
+      ]
+    },
+    {
+      "verb": "set_coolant_loop",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "loop": {
+          "type": "enum",
+          "values": [
+            "loop_primary",
+            "loop_secondary",
+            "loop_lm"
+          ]
+        },
+        "mode": {
+          "type": "enum",
+          "values": [
+            "primary",
+            "secondary",
+            "series",
+            "isolated"
+          ]
+        }
+      },
+      "availability_reason": "open; 1 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "loop_loop_primary_mode_enable",
+        "loop_loop_secondary_mode_enable",
+        "loop_loop_lm_mode_enable"
+      ]
+    },
+    {
+      "verb": "set_coolant_pump",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "loop": {
+          "type": "enum",
+          "values": [
+            "loop_primary",
+            "loop_secondary",
+            "loop_lm"
+          ]
+        },
+        "pump": {
+          "type": "enum",
+          "values": [
+            "pump_1",
+            "pump_2",
+            "pump_lm"
+          ]
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "on",
+            "off"
+          ]
+        }
+      },
+      "availability_reason": "open; 2 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "pump_pump_1_enable",
+        "pump_pump_2_enable",
+        "pump_pump_lm_enable"
+      ]
+    },
+    {
+      "verb": "set_deadband",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "profile": {
+          "type": "enum",
+          "values": [
+            "conservative",
+            "nominal",
+            "tight",
+            "safe_vector"
+          ]
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "rcs_profile_conservative_enable",
+        "rcs_profile_nominal_enable",
+        "rcs_profile_tight_enable",
+        "rcs_profile_safe_vector_enable"
+      ]
+    },
+    {
+      "verb": "set_display_mode",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "position": {
+          "type": "enum",
+          "values": [
+            "csm_commander",
+            "csm_navigator",
+            "csm_lower_equipment_bay",
+            "lm_commander",
+            "lm_pilot"
+          ],
+          "names": "crew_station"
+        },
+        "mode": {
+          "type": "enum",
+          "values": [
+            "nominal",
+            "caution_review",
+            "procedure",
+            "trend"
+          ]
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "display_csm_commander_enable",
+        "display_csm_navigator_enable",
+        "display_csm_lower_equipment_bay_enable",
+        "display_lm_commander_enable",
+        "display_lm_pilot_enable"
+      ]
+    },
+    {
+      "verb": "set_docking_latch",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "interface": {
+          "type": "enum",
+          "values": [
+            "docking_interface"
+          ]
+        },
+        "latch": {
+          "type": "enum",
+          "values": [
+            "all",
+            "one"
+          ]
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "engage",
+            "release"
+          ]
+        }
+      },
+      "availability_reason": "open; 2 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "latch_docking_interface_enable"
+      ]
+    },
+    {
+      "verb": "set_evaporator_feed",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "vehicle": {
+          "type": "enum",
+          "values": [
+            "csm",
+            "lm"
+          ]
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "on",
+            "off"
+          ]
+        }
+      },
+      "availability_reason": "open; 2 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "evaporator_csm_enable",
+        "evaporator_lm_enable"
+      ]
+    },
+    {
+      "verb": "set_guidance_mode",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "mode": {
+          "type": "enum",
+          "values": [
+            "coast",
+            "burn",
+            "landing",
+            "rendezvous",
+            "alignment",
+            "free_drift"
+          ]
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "guidance_mode_coast_enable",
+        "guidance_mode_burn_enable",
+        "guidance_mode_landing_enable",
+        "guidance_mode_rendezvous_enable",
+        "guidance_mode_alignment_enable",
+        "guidance_mode_free_drift_enable"
+      ]
+    },
+    {
+      "verb": "set_hatch_valve",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "vehicle": {
+          "type": "enum",
+          "values": [
+            "csm",
+            "lm"
+          ]
+        },
+        "hatch": {
+          "type": "enum",
+          "values": [
+            "hatch_crew_csm",
+            "hatch_crew_lm"
+          ]
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "closed",
+            "latched",
+            "open"
+          ]
+        }
+      },
+      "availability_reason": "open; 2 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "hatch_hatch_crew_csm_enable",
+        "hatch_hatch_crew_lm_enable"
+      ]
+    },
+    {
+      "verb": "set_heater",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "bank": {
+          "type": "enum",
+          "values": [
+            "heater_bank_csm",
+            "heater_bank_lm"
+          ],
+          "names": "component"
+        },
+        "zone": {
+          "type": "enum",
+          "values": [
+            "csm_cabin",
+            "csm_avionics_bay",
+            "csm_service_bay",
+            "lm_cabin",
+            "lm_descent_bay"
+          ]
+        },
+        "duty": {
+          "type": "integer",
+          "range": [
+            0,
+            100
+          ],
+          "unit": "%"
+        }
+      },
+      "availability_reason": "open; 2 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "heater_heater_bank_csm_enable",
+        "heater_heater_bank_lm_enable"
+      ]
+    },
+    {
+      "verb": "set_instrumentation_mode",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "profile": {
+          "type": "enum",
+          "values": [
+            "full",
+            "minimal_plus_eng",
+            "minimal"
+          ]
+        },
+        "groups": {
+          "type": "array",
+          "items": "string",
+          "optional": true,
+          "note": "instrument classes to include; bounded by the profile's ceiling"
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "instrumentation_profile_full_enable",
+        "instrumentation_profile_minimal_plus_eng_enable",
+        "instrumentation_profile_minimal_enable"
+      ]
+    },
+    {
+      "verb": "set_load",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "load": {
+          "type": "enum",
+          "values": [
+            "csm_sband_transceiver",
+            "csm_sband_power_amplifier",
+            "csm_suit_fan",
+            "csm_cabin_fan",
+            "csm_co2_scrubber",
+            "csm_imu",
+            "csm_guidance_computer",
+            "csm_instrumentation",
+            "csm_coolant_pump_1",
+            "csm_coolant_pump_2",
+            "csm_heaters",
+            "csm_rcs_heaters",
+            "csm_comm_heaters",
+            "csm_lighting",
+            "lm_sband_transmitter",
+            "lm_sband_high_power",
+            "lm_cabin_fan",
+            "lm_suit_fan",
+            "lm_co2_scrubber",
+            "lm_guidance_computer",
+            "lm_landing_radar",
+            "lm_instrumentation",
+            "lm_heaters",
+            "lm_rcs_heaters",
+            "lm_lighting"
+          ]
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "on",
+            "off"
+          ]
+        },
+        "priority": {
+          "type": "enum",
+          "values": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "optional": true
+        }
+      },
+      "availability_reason": "open; 1 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "load_csm_sband_transceiver_enable",
+        "load_csm_sband_power_amplifier_enable",
+        "load_csm_suit_fan_enable",
+        "load_csm_cabin_fan_enable",
+        "load_csm_co2_scrubber_enable",
+        "load_csm_imu_enable",
+        "load_csm_guidance_computer_enable",
+        "load_csm_instrumentation_enable",
+        "load_csm_coolant_pump_1_enable",
+        "load_csm_coolant_pump_2_enable",
+        "load_csm_heaters_enable",
+        "load_csm_rcs_heaters_enable",
+        "load_csm_comm_heaters_enable",
+        "load_csm_lighting_enable",
+        "load_lm_sband_transmitter_enable",
+        "load_lm_sband_high_power_enable",
+        "load_lm_cabin_fan_enable",
+        "load_lm_suit_fan_enable",
+        "load_lm_co2_scrubber_enable",
+        "load_lm_guidance_computer_enable",
+        "load_lm_landing_radar_enable",
+        "load_lm_instrumentation_enable",
+        "load_lm_heaters_enable",
+        "load_lm_rcs_heaters_enable",
+        "load_lm_lighting_enable"
+      ]
+    },
+    {
+      "verb": "set_o2_flow",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "vehicle": {
+          "type": "enum",
+          "values": [
+            "csm",
+            "lm"
+          ]
+        },
+        "flow": {
+          "type": "enum",
+          "values": [
+            "off",
+            "low",
+            "nominal",
+            "high"
+          ]
+        }
+      },
+      "availability_reason": "open; 3 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "o2_flow_csm_enable",
+        "o2_flow_lm_enable"
+      ]
+    },
+    {
+      "verb": "set_o2_source",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "vehicle": {
+          "type": "enum",
+          "values": [
+            "csm",
+            "lm"
+          ]
+        },
+        "source": {
+          "type": "enum",
+          "values": [
+            "primary",
+            "surge",
+            "isolated"
+          ]
+        },
+        "flow": {
+          "type": "enum",
+          "values": [
+            "off",
+            "low",
+            "nominal",
+            "high"
+          ]
+        }
+      },
+      "availability_reason": "open; 2 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "o2_csm_primary_enable",
+        "o2_csm_surge_enable",
+        "o2_csm_isolated_enable",
+        "o2_lm_primary_enable",
+        "o2_lm_surge_enable",
+        "o2_lm_isolated_enable"
+      ]
+    },
+    {
+      "verb": "set_power_amplifier",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "state": {
+          "type": "enum",
+          "values": [
+            "on",
+            "off"
+          ]
+        },
+        "transmitter": {
+          "type": "enum",
+          "values": [
+            "sband_power_amplifier",
+            "lm_sband"
+          ],
+          "optional": true
+        }
+      },
+      "availability_reason": "open; 4 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "power_amplifier_sband_power_amplifier_enable",
+        "power_amplifier_lm_sband_enable"
+      ]
+    },
+    {
+      "verb": "set_radar",
+      "available": false,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "state": {
+          "type": "enum",
+          "values": [
+            "on",
+            "off",
+            "standby"
+          ]
+        },
+        "mode": {
+          "type": "enum",
+          "values": [
+            "altitude",
+            "range_rate",
+            "both"
+          ],
+          "optional": true
+        },
+        "acquire_altitude_m": {
+          "type": "number",
+          "optional": true,
+          "minimum": 0
+        }
+      },
+      "availability_reason": "phase: translunar_coast is not in ['lunar_orbit', 'descent', 'surface', 'ascent_rendezvous']",
+      "gate_variables": [
+        "radar_on_enable",
+        "radar_off_enable",
+        "radar_standby_enable"
+      ]
+    },
+    {
+      "verb": "set_radiator_bypass",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "loop": {
+          "type": "enum",
+          "values": [
+            "loop_primary",
+            "loop_secondary"
+          ]
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "radiator",
+            "bypass"
+          ]
+        }
+      },
+      "availability_reason": "open; 2 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "bypass_loop_primary_enable",
+        "bypass_loop_secondary_enable"
+      ]
+    },
+    {
+      "verb": "set_rcs_mode",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "mode": {
+          "type": "enum",
+          "values": [
+            "auto",
+            "manual",
+            "free_drift"
+          ]
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "rcs_mode_auto_enable",
+        "rcs_mode_manual_enable",
+        "rcs_mode_free_drift_enable"
+      ]
+    },
+    {
+      "verb": "set_rcs_quad",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "group": {
+          "type": "enum",
+          "values": [
+            "sm_primary",
+            "sm_secondary",
+            "cm",
+            "lm"
+          ]
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "enable",
+            "inhibit"
+          ]
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "rcs_group_sm_primary_enable",
+        "rcs_group_sm_secondary_enable",
+        "rcs_group_cm_enable",
+        "rcs_group_lm_enable"
+      ]
+    },
+    {
+      "verb": "set_relief_valve",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "vehicle": {
+          "type": "enum",
+          "values": [
+            "csm",
+            "lm"
+          ]
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "auto",
+            "open",
+            "isolated"
+          ]
+        }
+      },
+      "availability_reason": "open; 1 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "relief_csm_enable",
+        "relief_lm_enable"
+      ]
+    },
+    {
+      "verb": "set_reserve_policy",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "resource": {
+          "type": "enum",
+          "values": [
+            "o2_csm",
+            "o2_lm",
+            "water_potable",
+            "water_cooling",
+            "prop_main",
+            "prop_rcs",
+            "pressurant_he",
+            "absorber_capacity_csm",
+            "absorber_capacity_lm",
+            "h2_csm",
+            "battery"
+          ],
+          "floor_units": {
+            "o2_csm": "kg",
+            "o2_lm": "kg",
+            "water_potable": "kg",
+            "water_cooling": "kg",
+            "prop_main": "%",
+            "prop_rcs": "%",
+            "pressurant_he": "kg",
+            "absorber_capacity_csm": "%",
+            "absorber_capacity_lm": "%",
+            "h2_csm": "kg",
+            "battery": "%"
+          }
+        },
+        "floor": {
+          "type": "number",
+          "minimum": 0
+        },
+        "note": {
+          "type": "string",
+          "optional": true,
+          "max_length": 200
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "reserve_floor_o2_csm_enable",
+        "reserve_floor_o2_lm_enable",
+        "reserve_floor_water_potable_enable",
+        "reserve_floor_water_cooling_enable",
+        "reserve_floor_prop_main_enable",
+        "reserve_floor_prop_rcs_enable",
+        "reserve_floor_pressurant_he_enable",
+        "reserve_floor_absorber_capacity_csm_enable",
+        "reserve_floor_absorber_capacity_lm_enable",
+        "reserve_floor_h2_csm_enable",
+        "reserve_floor_battery_enable"
+      ]
+    },
+    {
+      "verb": "set_source",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "source": {
+          "type": "enum",
+          "values": [
+            "fc_1",
+            "fc_2",
+            "fc_3",
+            "battery_csm_1",
+            "battery_csm_2",
+            "battery_csm_3",
+            "battery_lm_descent_1",
+            "battery_lm_descent_2",
+            "battery_lm_descent_3",
+            "battery_lm_descent_4",
+            "battery_lm_ascent_1",
+            "battery_lm_ascent_2"
+          ],
+          "names": "component"
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "on",
+            "off"
+          ]
+        }
+      },
+      "availability_reason": "open; 2 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "source_fc_1_enable",
+        "source_fc_2_enable",
+        "source_fc_3_enable",
+        "source_battery_csm_1_enable",
+        "source_battery_csm_2_enable",
+        "source_battery_csm_3_enable",
+        "source_battery_lm_descent_1_enable",
+        "source_battery_lm_descent_2_enable",
+        "source_battery_lm_descent_3_enable",
+        "source_battery_lm_descent_4_enable",
+        "source_battery_lm_ascent_1_enable",
+        "source_battery_lm_ascent_2_enable"
+      ]
+    },
+    {
+      "verb": "set_stage_heater",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "stage": {
+          "type": "enum",
+          "values": [
+            "lm_descent",
+            "lm_ascent",
+            "csm_service"
+          ]
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "on",
+            "off"
+          ]
+        }
+      },
+      "availability_reason": "open; 1 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "stage_heater_lm_descent_enable",
+        "stage_heater_lm_ascent_enable",
+        "stage_heater_csm_service_enable"
+      ]
+    },
+    {
+      "verb": "set_suit_fan",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "vehicle": {
+          "type": "enum",
+          "values": [
+            "csm",
+            "lm"
+          ]
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "on",
+            "off"
+          ]
+        }
+      },
+      "availability_reason": "open; 1 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "suit_fan_csm_enable",
+        "suit_fan_lm_enable"
+      ]
+    },
+    {
+      "verb": "set_suit_loop",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "vehicle": {
+          "type": "enum",
+          "values": [
+            "csm",
+            "lm"
+          ]
+        },
+        "loop": {
+          "type": "enum",
+          "values": [
+            "cabin",
+            "suit",
+            "mixed"
+          ]
+        }
+      },
+      "availability_reason": "open; 2 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "suit_loop_csm_enable",
+        "suit_loop_lm_enable"
+      ]
+    },
+    {
+      "verb": "set_telemetry_profile",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "profile": {
+          "type": "enum",
+          "values": [
+            "emergency",
+            "low",
+            "normal",
+            "high",
+            "burst"
+          ]
+        },
+        "channels": {
+          "type": "array",
+          "items": "string",
+          "optional": true,
+          "note": "channel classes to include; bounded by the profile's ceiling"
+        },
+        "duration_s": {
+          "type": "number",
+          "optional": true,
+          "minimum": 0,
+          "maximum": 3600
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "telemetry_profile_emergency_enable",
+        "telemetry_profile_low_enable",
+        "telemetry_profile_normal_enable",
+        "telemetry_profile_high_enable",
+        "telemetry_profile_burst_enable"
+      ]
+    },
+    {
+      "verb": "set_throttle",
+      "available": false,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "engine": {
+          "type": "enum",
+          "values": [
+            "dps"
+          ]
+        },
+        "throttle_pct": {
+          "type": "number",
+          "minimum": 10.5,
+          "maximum": 92.5
+        }
+      },
+      "availability_reason": "phase: translunar_coast is not in ['lunar_orbit', 'descent', 'surface', 'ascent_rendezvous']",
+      "gate_variables": [
+        "throttle_dps_enable"
+      ]
+    },
+    {
+      "verb": "set_vent_valve",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "vehicle": {
+          "type": "enum",
+          "values": [
+            "csm",
+            "lm"
+          ]
+        },
+        "state": {
+          "type": "enum",
+          "values": [
+            "closed",
+            "vent",
+            "repress"
+          ]
+        }
+      },
+      "availability_reason": "open; 2 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "vent_csm_enable",
+        "vent_lm_enable"
+      ]
+    },
+    {
+      "verb": "start_burn",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "engine": {
+          "type": "enum",
+          "values": [
+            "sps",
+            "dps",
+            "aps"
+          ]
+        }
+      },
+      "availability_reason": "open; 6 interlock(s) checked when a command arrives, not now",
+      "gate_variables": [
+        "burn_start_sps_enable",
+        "burn_start_dps_enable",
+        "burn_start_aps_enable"
+      ]
+    },
+    {
+      "verb": "stop_burn",
+      "available": true,
+      "irreversible": false,
+      "deferrable": false,
+      "argument_schema": {
+        "engine": {
+          "type": "enum",
+          "values": [
+            "sps",
+            "dps",
+            "aps"
+          ]
+        }
+      },
+      "availability_reason": "open",
+      "gate_variables": [
+        "burn_stop_sps_enable",
+        "burn_stop_dps_enable",
+        "burn_stop_aps_enable"
+      ]
+    }
+  ]
+}

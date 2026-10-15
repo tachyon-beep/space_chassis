@@ -1,0 +1,313 @@
+diff --git a/README.md b/README.md
+index 4a1b330..76902b9 100644
+--- a/README.md
++++ b/README.md
+@@ -285,9 +285,14 @@ identity: a restart that names any of them differently refuses.
+   - a scenario, seed, ring size, phase or slug set that differs from the
+     world's, an incompatible checkpoint after a rebuild, a `/state` with a record
+     and no checkpoint, another executive holding the lock, or a window root whose
+-    record disagrees with the checkpoint;
++    record names a different world (a record that is unreadable, missing or
++    otherwise disagrees with the checkpoint is rewritten from it, and the start
++    goes on);
++  - a checkpoint at the recovered tick that cannot be written: the start is
++    refused before anything is claimed, and the world resumes from the record at
++    the next start;
+   - and a run that stops itself mid-mission because its state can no longer be
+-    compared, or because the checkpoint at the recovered tick cannot be written.
++    compared.
+ 
+ Probe a window (`contract/diode_probe.py` submits commands) only in a stack
+ with no fleet in it, or on a scratch directory: in a live mission every window
+diff --git a/live/test_vehicle.py b/live/test_vehicle.py
+index 3b73516..29e35d6 100644
+--- a/live/test_vehicle.py
++++ b/live/test_vehicle.py
+@@ -97,50 +97,79 @@ def _keys_and_values(value) -> tuple[set[str], list]:
+     return set(), [value]
+ 
+ 
+-def _read(path) -> str:
+-    """A window file's text. The vehicle replaces files whole (write, then rename), so a read sees
+-    the old file or the new one; one that still fails after retries is a failure, never a skip."""
++def _files(window) -> set:
++    """Every regular file under a window now. A directory listed and gone before it is walked is
++    listed again, so a walk the vehicle races ends in a listing, never an error."""
+     for attempt in range(5):
+         try:
+-            return path.read_text(encoding="utf-8", errors="replace")
+-        except OSError:
++            return {p for p in window.rglob("*") if p.is_file()}
++        except FileNotFoundError:
+             if attempt == 4:
+                 raise
+             time.sleep(0.1)
+     raise AssertionError("unreachable")
+ 
+ 
++# How often a scan of one window lists it again after a file it listed is gone. A cycle every
++# 0.2 s removes a few names (the temporaries it renames into place, the telemetry it prunes); one
++# window's scan takes milliseconds, so a scan that needs more than this is not racing a cycle.
++RELISTS = 100
++# How often one file is read again: a temporary read while it was being written, or a read that
++# failed for a reason other than the file being gone. Past it the file is a failure, never a skip.
++REREADS = 5
++
++
+ def _assert_no_window_carries_the_world_s_identity(stack) -> None:
+     """John, 2026-10-10: no risk of information sharing. The identity (scenario, seed, the armed
+     faults and their dwell) belongs in the window root's `.executive.json`, which no agent binds.
+     Every regular file in every agent's window is read: as text, for the smoke world's distinctive
+-    seed; and as JSON where it is JSON, for the identity's keys and for the seed as a value."""
++    seed; and as JSON where it is JSON, for the identity's keys and for the seed as a value.
++
++    The vehicle runs while this reads. It publishes by writing a randomly named temporary and
++    renaming it into place, and it prunes old telemetry, so a name listed a moment ago can be gone
++    for good: a read that finds it gone lists the window again and reads what is new, and what was
++    read is checked as read. `pending.json` must be read whole."""
+     executive = _executive(stack)
+     assert executive is not None and str(executive.get("seed")) == SMOKE_VEHICLE_SEED, executive
+     for slug in stack.slugs:
+         window = stack.volumes / "diode" / "data" / slug
+-        parsed_pending = False
+-        for path in sorted(p for p in window.rglob("*") if p.is_file()):
++        checked: set = set()
++        todo = _files(window)
++        relists = 0
++        rereads: dict = {}
++        while todo:
++            path = min(todo)
+             where = path.relative_to(stack.volumes)
+-            text = _read(path)
+-            assert not SEED_TEXT.search(text), f"{where} carries the world's seed"
+-            if path.suffix != ".json":
++            try:
++                text = path.read_text(encoding="utf-8", errors="replace")
++            except FileNotFoundError:
++                relists += 1
++                assert relists <= RELISTS, f"{slug}'s files kept vanishing: {relists} listings"
++                todo = _files(window) - checked
++                continue
++            except OSError:
++                rereads[path] = rereads.get(path, 0) + 1
++                if rereads[path] >= REREADS:
++                    raise
++                time.sleep(0.1)
+                 continue
+-            for attempt in range(5):
++            assert not SEED_TEXT.search(text), f"{where} carries the world's seed"
++            if path.suffix == ".json":
+                 try:
+-                    document = json.loads(_read(path))
+-                    break
++                    document = json.loads(text)
+                 except ValueError:
+-                    if attempt == 4:
+-                        raise AssertionError(f"{where} is not whole JSON after retries") from None
++                    rereads[path] = rereads.get(path, 0) + 1
++                    assert rereads[path] < REREADS, f"{where} is not whole JSON after retries"
+                     time.sleep(0.1)
+-            keys, values = _keys_and_values(document)
+-            assert not keys & HIDDEN_KEYS, f"{where} carries {sorted(keys & HIDDEN_KEYS)}"
+-            assert str(SMOKE_VEHICLE_SEED) not in {str(v) for v in values}, (
+-                f"{where} carries the seed"
+-            )
+-            parsed_pending |= path.name == "pending.json"
+-        assert parsed_pending, f"{slug}'s pending.json was never read whole"
++                    continue
++                keys, values = _keys_and_values(document)
++                assert not keys & HIDDEN_KEYS, f"{where} carries {sorted(keys & HIDDEN_KEYS)}"
++                assert str(SMOKE_VEHICLE_SEED) not in {str(v) for v in values}, (
++                    f"{where} carries the seed"
++                )
++            checked.add(path)
++            todo.discard(path)
++        assert window / "pending.json" in checked, f"{slug}'s pending.json was never read whole"
+ 
+ 
+ def test_no_agent_window_carries_the_world_s_identity(vehicle_stack):
+@@ -180,71 +209,123 @@ def _submit(stack, slug: str, command: str) -> None:
+     staging.replace(console)
+ 
+ 
++# The smoke vehicle's cadence checkpoint: every tick that is a multiple of this.
++CHECKPOINT_EVERY = 50
++# A result ends in its receipt line; `tick` is the tick its cycle began at (the receipt is drawn
++# before the step), and that cycle's record row is the tick after it.
++RECEIPT = re.compile(r"^receipt: world=(\S+) seq=\d+ window=\S+ tick=(\d+) ", re.MULTILINE)
++RESUMED = re.compile(
++    r"resumed world (\S+) at tick (\d+) \(checkpoint \S+ at tick (\d+)(?:, fell back)?, replayed (\d+)"
++)
++# Setups tried before the test gives up: each is a fresh command and, unless the command's cycle
++# was already checkpointed before the kill, a kill and a resume.
++ATTEMPTS = 3
++
++
++def _receipt(stack, slug: str, name: str) -> tuple[str, int]:
++    """The world and the tick a result's receipt names. A result is written whole, never replaced."""
++    text = (stack.volumes / "diode" / "data" / slug / "output" / name).read_text(encoding="utf-8")
++    found = RECEIPT.findall(text)
++    assert found, f"{name} ends in no receipt: {text[-300:]!r}"
++    world, tick = found[-1]
++    return world, int(tick)
++
++
+ def test_a_killed_console_resumes_the_same_world(vehicle_stack):
++    """One recorded command, run before the kill: the resume replays its cycle and must not run it
++    again, so it ends with exactly one result. An unknown verb is refused, and a refusal is a
++    result. (A batch replaced inside a claim can be erased, vehicle #39; then no result appears
++    here at all and this fails saying so.)
++
++    The command's cycle is proved to be one the resume replayed, from the result's receipt and the
++    resume's banner: its row (receipt tick T, plus one) lies after the checkpoint the resume began
++    from (tick M) and at or before the tick it recovered (N), so M <= T < N. A cadence checkpoint
++    that lands between the result and the kill would hold the command's cycle, and the replay would
++    then prove nothing about it: that setup is not counted, and the test sets up again."""
+     stack = vehicle_stack
+-    # Past the first cadence checkpoint (every 50 ticks) and early in an interval, so a command
+-    # submitted now and the kill after it both fall inside the ticks the resume must replay.
+-    wait_for(
+-        lambda: _tick(stack) >= 60 and 5 <= _tick(stack) % 50 <= 20,
+-        timeout=START_SECONDS,
+-        every=0.1,
+-        what="a tick early in a checkpoint interval",
+-    )
+-    # One recorded command, run before the kill: the resume replays its cycle and must not run it
+-    # again, so it ends with exactly one result. An unknown verb is refused, and a refusal is a
+-    # result. (A batch replaced inside a claim can be erased, vehicle #39; then no result appears
+-    # here at all and this fails saying so.)
+-    marker = f"live_resume_{time.time_ns()}"
+-    _submit(stack, stack.slugs[0], f"{marker} probe")
+-    wait_for(
+-        lambda: _results_for(stack, stack.slugs[0], marker),
+-        timeout=30,
+-        every=0.1,
+-        what="a result for the submitted command (none: see vehicle #39 if this recurs)",
+-    )
+-    before = _executive(stack)
+-    frames = {slug: _newest_frame(stack, slug) for slug in stack.slugs}
+-    assert all(frames.values()), frames
+-    restarts = _restarts(stack)
+-    # docker-init is PID 1; the console is its child. `docker kill` would mark the container
+-    # stopped by hand, and the restart policy would leave it down.
+-    stack.exec("vehicle", "pkill", "-9", "-f", "[c]onsole\\.py")
+-    wait_for(
+-        lambda: _restarts(stack) > restarts,
+-        timeout=120,
+-        every=1,
+-        what="the restart policy to bring the vehicle back",
+-    )
+-
+-    def resumed():
+-        newest = {slug: _newest_frame(stack, slug) for slug in stack.slugs}
+-        fresh = all(
+-            frame and frame.get("boot_id") != frames[slug]["boot_id"]
+-            for slug, frame in newest.items()
++    slug = stack.slugs[0]
++    crossed = []
++    for _ in range(ATTEMPTS):
++        # Past the first cadence checkpoint and early in an interval, so the command's cycle and
++        # the kill after it normally both fall inside the ticks the resume must replay.
++        wait_for(
++            lambda: _tick(stack) >= 60 and 5 <= _tick(stack) % CHECKPOINT_EVERY <= 20,
++            timeout=START_SECONDS,
++            every=0.1,
++            what="a tick early in a checkpoint interval",
++        )
++        marker = f"live_resume_{time.time_ns()}"
++        _submit(stack, slug, f"{marker} probe")
++        names = wait_for(
++            lambda marker=marker: _results_for(stack, slug, marker),
++            timeout=30,
++            every=0.1,
++            what="a result for the submitted command (none: see vehicle #39 if this recurs)",
++        )
++        before = _executive(stack)
++        world, command_tick = _receipt(stack, slug, names[0])
++        assert world == before["world_id"], (world, before["world_id"])
++        # The first cadence checkpoint that holds the command's row (tick command_tick + 1).
++        holding = (command_tick // CHECKPOINT_EVERY + 1) * CHECKPOINT_EVERY
++        if before["tick"] >= holding:
++            crossed.append(f"tick {command_tick}: checkpoint {holding} before the kill")
++            continue
++        frames = {s: _newest_frame(stack, s) for s in stack.slugs}
++        assert all(frames.values()), frames
++        restarts = _restarts(stack)
++        banners = len(RESUMED.findall(stack.logs("vehicle")))
++        # docker-init is PID 1; the console is its child. `docker kill` would mark the container
++        # stopped by hand, and the restart policy would leave it down.
++        stack.exec("vehicle", "pkill", "-9", "-f", "[c]onsole\\.py")
++        wait_for(
++            lambda restarts=restarts: _restarts(stack) > restarts,
++            timeout=120,
++            every=1,
++            what="the restart policy to bring the vehicle back",
+         )
+-        return newest if fresh else None
+ 
+-    after_frames = wait_for(
+-        resumed, timeout=START_SECONDS, every=1, what="a frame from the new boot in every window"
+-    )
+-    after = _executive(stack)
+-    assert after["world_id"] == before["world_id"], "a restart resumes the world it was flying"
+-    assert after["tick"] > before["tick"], (before["tick"], after["tick"])
+-    for slug in stack.slugs:
+-        assert after_frames[slug]["seq"] > frames[slug]["seq"], f"{slug}'s frame sequence continues"
+-        assert _window_world(stack, slug) == before["world_id"], slug
+-    log = stack.logs("vehicle")
+-    assert f"resumed world {before['world_id']}" in log
+-    replayed = re.search(
+-        r"resumed world \S+ at tick \d+ \(checkpoint \S+ at tick \d+(?:, fell back)?, replayed (\d+)",
+-        log,
+-    )
+-    assert replayed and int(replayed[1]) > 0, "the resume replayed the ticks after its checkpoint"
+-    results = _results_for(stack, stack.slugs[0], marker)
+-    assert len(results) == 1, (
+-        f"a recorded command has exactly one result after the replay: {results}"
+-    )
+-    _assert_no_window_carries_the_world_s_identity(stack)
++        def resumed(frames=frames):
++            newest = {s: _newest_frame(stack, s) for s in stack.slugs}
++            fresh = all(
++                frame and frame.get("boot_id") != frames[s]["boot_id"]
++                for s, frame in newest.items()
++            )
++            return newest if fresh else None
++
++        after_frames = wait_for(
++            resumed,
++            timeout=START_SECONDS,
++            every=1,
++            what="a frame from the new boot in every window",
++        )
++        after = _executive(stack)
++        assert after["world_id"] == before["world_id"], "a restart resumes the world it was flying"
++        assert after["tick"] > before["tick"], (before["tick"], after["tick"])
++        for s in stack.slugs:
++            assert after_frames[s]["seq"] > frames[s]["seq"], f"{s}'s frame sequence continues"
++            assert _window_world(stack, s) == before["world_id"], s
++        found = RESUMED.findall(stack.logs("vehicle"))
++        assert len(found) == banners + 1, f"one resume banner for this boot: {found[banners:]}"
++        resumed_world, recovered, checkpoint, replayed = found[-1]
++        recovered, checkpoint, replayed = int(recovered), int(checkpoint), int(replayed)
++        assert resumed_world == before["world_id"], "the banner names the world it was flying"
++        assert replayed == recovered - checkpoint > 0, (
++            "the resume replayed the ticks after its checkpoint"
++        )
++        if checkpoint > command_tick:
++            crossed.append(f"tick {command_tick}: resumed from checkpoint {checkpoint}")
++            continue
++        assert command_tick < recovered, (
++            f"the command's cycle (tick {command_tick}) is in the record the resume recovered "
++            f"(through tick {recovered})"
++        )
++        results = _results_for(stack, slug, marker)
++        assert len(results) == 1, (
++            f"a recorded command has exactly one result after the replay: {results}"
++        )
++        _assert_no_window_carries_the_world_s_identity(stack)
++        return
++    raise AssertionError(f"no setup put the command's cycle inside the replay: {crossed}")
+ 
+ 
+ def test_docker_stop_reaches_the_vehicle_within_its_grace(vehicle_stack):

@@ -1,0 +1,9 @@
+2026-10-11T10:51:19+11:00 grant SPACE-20261011-P-01 selection=root command: python3 -m pytest tests -q -p no:cacheprovider -n 2
+2026-10-11T10:51:19+11:00 before: tree=af671d04908817e914668750b7cd4f6f74034bf4 worktree=clean vehicle=f44399645fb2633e695a5d758cb5a41f43fb848c vehicle-dirty-paths=0
+2026-10-11T10:51:21+11:00 capacity: MemAvailable=42034MiB load1=2.70 cpu-busy=14%
+2026-10-11T10:51:21+11:00 competing Space drivers: none; smoke projects running: 0
+2026-10-11T10:51:21+11:00 start: unit=space-chassis-p-root-1791676279.scope systemd-run --user --scope -p CPUQuota=200% -p MemoryMax=8G nice -n 19 python3 -m pytest tests -q -p no:cacheprovider -n 2
+2026-10-11T10:51:25+11:00 scope readback: cgroup=/user.slice/user-1000.slice/user@1000.service/app.slice/space-chassis-p-root-1791676279.scope cpu.max=200000 100000 memory.max=8589934592 nice= 19
+2026-10-11T10:51:55+11:00 end: rc=0  result: ................                                                         [100%]
+2026-10-11T10:51:55+11:00 after: tree=af671d04908817e914668750b7cd4f6f74034bf4 worktree=clean vehicle=f44399645fb2633e695a5d758cb5a41f43fb848c vehicle-dirty-paths=0
+2026-10-11T10:51:55+11:00 owned processes left in scope: 0

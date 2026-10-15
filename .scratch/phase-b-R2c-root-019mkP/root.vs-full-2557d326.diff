@@ -1,0 +1,76 @@
+--- ../phase-b-full-P-019mkP/full.py	2026-10-11 12:19:37.999755356 +1100
++++ root.py	2026-10-11 13:41:14.197582232 +1100
+@@ -1,15 +1,15 @@
+-"""Full-suite supervisor for Phase B tree P: the accepted diagnostic supervisor (DIAG-02, master
+-plan §23, `2ead42be…`) adapted to the whole suite only (master plan §24). One run per call:
++"""Root-suite supervisor for Phase B increment R2c: the accepted full-suite supervisor (`full.py`,
++master plan §25, `2557d326…`) bound to R2c's tree and the root suite only. One run per call:
+ 
+-  python3 full.py <grant id>
++  python3 root.py <grant id>
+ 
+-It runs `python3 -m pytest -q -p no:cacheprovider -n 2` from the adoption root, in a scope of
++It runs `python3 -m pytest tests -q -p no:cacheprovider -n 2` from the adoption root, in a scope of
+ CPUQuota=200% and MemoryMax=8G, at nice 19, through the original launch path with the unchanged
+ launcher always restoring SIGINT to SIG_DFL (DIAG-02's arm 2: an asynchronous list in a
+ non-interactive sh starts its command with SIGINT ignored). The suite does not start until the
+ scope's limits read back exactly and the monitor has taken a healthy sample: the launcher waits for
+-a go-file. A 90-minute outer safety deadline runs from the go-file (the one prior full run under the
+-same caps took 31 minutes) and changes no test timeout. The suite's result and the supervision's
++a go-file. A ten-minute outer safety deadline runs from the go-file (P's root suite under the same
++caps took 34 seconds) and changes no test timeout. The suite's result and the supervision's
+ result are reported separately; any abort, deadline, monitor failure, drift or unverified cleanup
+ is a supervisory abort, never a test result. Nothing outside the run's own scope, sh and monitor is
+ ever signalled.
+@@ -28,20 +28,20 @@
+ 
+ GRANT = sys.argv[1]
+ assert GRANT.startswith("SPACE-"), GRANT
+-ARM = "full"
++ARM = "root"
+ HERE = Path(__file__).resolve().parent
+ WORKTREE = Path("/home/john/space_chassis/.claude/worktrees/vehicle-adoption")
+ VEHICLE = WORKTREE / "docs/deep_research/vehicle"
+-P_TREE = "af671d04908817e914668750b7cd4f6f74034bf4"
++CANDIDATE_TREE = "148a31c4951e43c1cdafdf30c15b029dc7e104a8"  # R2c
+ VEHICLE_SHA = "f44399645fb2633e695a5d758cb5a41f43fb848c"
+ TEST_FILE = VEHICLE / "tests/test_vehicle_config.py"
+ TEST_SHA = "3b917de30861c432c467d92d6a75b1faf7b31cd0e62626dfde095997110c4a53"
+ CPU_MAX, MEMORY_MAX = "200000 100000", "8589934592"
+-OUTER_DEADLINE = 5400
++OUTER_DEADLINE = 600
+ EVIDENCE = HERE / ARM
+ EVIDENCE.mkdir(exist_ok=False)  # session-unique, never reused: a second call refuses
+ RECEIPT = EVIDENCE / "receipt.jsonl"
+-UNIT = f"space-chassis-pfull-{int(time.time())}"
++UNIT = f"space-chassis-r2c-root-{int(time.time())}"
+ # systemctl resolves a bare name to `.service`: every query, stop and kill names the scope itself.
+ SCOPE = f"{UNIT}.scope"
+ 
+@@ -170,7 +170,7 @@
+         "test_file_sha256": sha(TEST_FILE),
+     }
+     result["ok"] = (
+-        tree == P_TREE
++        tree == CANDIDATE_TREE
+         and unstaged == 0
+         and not untracked
+         and vehicle == VEHICLE_SHA
+@@ -269,7 +269,7 @@
+     arm=ARM,
+     grant=GRANT,
+     unit=UNIT,
+-    selection="python3 -m pytest -q -p no:cacheprovider -n 2",
++    selection="python3 -m pytest tests -q -p no:cacheprovider -n 2",
+     supervisor_sha256=sha(Path(__file__)),
+     launcher_sha256=sha(HERE / "launch.py"),
+     supervisor_sigint=repr(signal.getsignal(signal.SIGINT)),
+@@ -314,7 +314,7 @@
+ scoped = (
+     f"systemd-run --user --scope --unit={UNIT} -p CPUQuota=200% -p MemoryMax=8G "
+     f"python3 {HERE / 'launch.py'} {restore} {go} {record} "
+-    "nice -n 19 python3 -m pytest -q -p no:cacheprovider -n 2"
++    "nice -n 19 python3 -m pytest tests -q -p no:cacheprovider -n 2"
+ )
+ # The original driver's path: an asynchronous list in a non-interactive sh, then `wait` for it.
+ shell = f"{scoped} > {log} 2>&1 &\nwait $!"

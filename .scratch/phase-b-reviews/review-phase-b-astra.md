@@ -1,0 +1,26 @@
+**Land after fixes.** Reviewed frozen tree `a1fbad19…`; the staged diff and supplied SHA-256 match.
+
+**Critical:** None found.
+
+**Important**
+
+1. **The exit-3 procedure can abandon a recoverable world.** [README.md:267](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/README.md:267) prescribes “begin a new world” when the record cannot continue or be verified. An intact journal with incorrect permissions produces exactly that refusal: [console.py:2051](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/docs/deep_research/vehicle/tools/console.py:2051) converts `EACCES` into `RecordRefused`, wrapped as “record cannot continue” at lines 4861–4862. Following the documented reset unnecessarily replaces a resumable world. Distinguish repairable access/I/O failures from irrecoverable record damage.
+
+2. **The live resume test omits two Task 6 acceptance properties.** [live/test_vehicle.py:138](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/live/test_vehicle.py:138) checks frame continuity only for `slugs[0]`; lines 168–169 merely reread the other windows’ unchanged world IDs. No vehicle commands are submitted or results counted—the uncued stub only calls `list_dir` ([stub_llm.py:141](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/live/stub_llm.py:141)). Consequently, stopped publication to windows 2/3, or lost/duplicated recorded-command results, can pass. [Task 6:169–174](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/docs/superpowers/plans/2026-10-09-aurora-port-7-vehicle-adoption.md:169) requires every window to advance and recorded commands to receive exactly one result. Add per-window before/after observations and a durably recorded command/result assertion; this need not exercise the excluded #39 race.
+
+3. **The identity check silently accepts unexamined files.** [live/test_vehicle.py:99–107](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/live/test_vehicle.py:99) skips every read/parse failure without retrying or requiring a successfully parsed `pending.json`. A regression that writes leaking JSON non-atomically can be sampled during truncation, skipped, and subsequently expose `seed` while the check passes. Ordinary atomic replacement does not justify ignoring malformed JSON: [console.py:425–463](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/docs/deep_research/vehicle/tools/console.py:425) exposes complete old/new files. Require successful bounded retries and repeat the check after resume. Its scope remains five exact dictionary keys in sampled `*.json` files: strings, generated text, temporary files, and later publications are outside that evidence. I found no current leak from this gap.
+
+**Minor**
+
+4. **“A refused start writes nothing” is false.** [README.md:264](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/README.md:264) contradicts recovery ordering: [console.py:4977](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/docs/deep_research/vehicle/tools/console.py:4977) journals events, line 5002 rewrites the root record, and line 5024 republishes results before the mandatory checkpoint at lines 5513–5519 can fail with exit 3. A checkpoint write failure therefore leaves a refused start with observable writes. Narrow the claim to no new commands claimed or cycles run.
+
+5. **The one-interval replay bound is overstated**—retained Phase A prose at [README.md:233](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/README.md:233). [checkpoint.py:987–1004](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/docs/deep_research/vehicle/tools/checkpoint.py:987) can select the previous generation, already requiring more than one interval; [console.py:3183–3217](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/docs/deep_research/vehicle/tools/console.py:3183) continues through failed cadence checkpoints. Repeated checkpoint failures can leave substantially longer replay.
+
+6. **The main resume banner is stdout.** [README.md:258](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/README.md:258) says stderr, but [console.py:5413](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/docs/deep_research/vehicle/tools/console.py:5413) uses `print`. A stderr-only collector misses ordinary successful resumes; combined Compose logs work.
+
+7. **The stop check can pass an already-dead vehicle.** [live/test_vehicle.py:172–178](/home/john/space_chassis/.claude/worktrees/vehicle-adoption/live/test_vehicle.py:172) checks elapsed time alone. A vehicle that exits between the previous test and `stop` passes immediately. Establish running/advancing state immediately before stopping and inspect its terminal state.
+
+The adoption plumbing otherwise matches `f443996`: CLI flags, omitted `--phase`, init/restart policy, isolated `/state`, per-agent window binds, and inaccessible root `.executive.json`. The reset procedure preserves bind directories. Pins **882/525** are correct; no stale executable reconciliation pins remain. The adopted tree equals `45f4267`.
+
+**Declined to judge:** runtime gate results, actual crash/filesystem behavior, universal information secrecy, and vehicle #39’s implementation. No tests, builds, containers, mutations, or `.env` reads were performed.
+

@@ -1,0 +1,1259 @@
+WARNING: failed to clean up stale arg0 temp dirs: Permission denied (os error 13)
+OpenAI Codex v0.162.1
+--------
+workdir: /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+model: gpt-6-astra
+provider: openai
+approval: on-request
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: detailed
+session id: 01a1282e-227a-71c2-9cb7-ac3d7ec9a775
+--------
+user
+Confirmation review of increment P of the chassis's Phase B adoption (repository /home/john/space_chassis/.claude/worktrees/vehicle-adoption; vehicle clone at f44399645fb2633e695a5d758cb5a41f43fb848c). P's tree is af671d04908817e914668750b7cd4f6f74034bf4. It is candidate-3 (04dff0beaa37294bc839122885f3543535520fc5) plus ONLY the fixes to candidate-3's review findings; it contains no resource-control changes. The delta is `git diff 04dff0beaa37294bc839122885f3543535520fc5 af671d04908817e914668750b7cd4f6f74034bf4` (saved /home/john/space_chassis/.scratch/phase-b-P.vs-3.diff, sha256 4c2684bb0b230d3ab3b7f99d99910fa2bacd0b3c0166a20e8a88f3bc7f243254). The full candidate against the published base is `git diff vehicle-adoption af671d04908817e914668750b7cd4f6f74034bf4`.
+
+READ FROM GIT OBJECTS ONLY: `git show af671d04908817e914668750b7cd4f6f74034bf4:<path>`, `git diff <tree> <tree>`, and the vehicle sources under docs/deep_research/vehicle (unchanged, f443996). The worktree's working files are being edited for a later increment and are NOT the tree under review. STRICTLY READ-ONLY: no edits, no git state changes, no builds, containers or tests. Never read a file named .env.
+
+Findings being answered (candidate-3 reviews):
+- Astra (Important): live/test_vehicle.py asserted a positive replay before the crossed-checkpoint retry, so a checkpoint completing between the pre-kill read and the kill (S = N, replayed 0) failed instead of setting up again. Fix: replayed == recovered - checkpoint; then retry when checkpoint > command_tick; then command_tick < recovered and replayed > 0.
+- Opus (Minor): README root-record wording overclaimed (rewrite only beside a checkpoint, from the recovered world, and the start refuses if that write fails; see console.py ~4707-4740, ~5001-5007, ~5552-5556); a comment for a malformed-then-vanished JSON file; an unreadable file fails naming it; `before` and `after` asserted not None.
+
+Judge with file:line evidence (against the tree and console.py at f443996): is each fixed correctly; did the delta introduce any defect or weaken any assertion? Report: one-line verdict (land / land after fixes / do not land); Critical / Important / Minor; under ~350 words.
+
+warning: Exceeded skills context budget. All skill descriptions were removed and 72 additional skills were not included in the model-visible skills list.
+hook: SessionStart
+hook: SessionStart
+hook: SessionStart Completed
+hook: SessionStart Completed
+codex
+I’ll review the exact Git-object delta, check each reported fix against the vehicle source, and look for weakened assertions. I’ll keep this read-only and won’t run tests or read `.env`.
+
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+/usr/bin/bash -lc "rg -n 'Phase B|candidate-3|increment P|vehicle-adoption' /home/john/.codex/memories/MEMORY.md" in /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+ exited 1 in 0ms:
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+/usr/bin/bash -lc 'git diff --stat 04dff0beaa37294bc839122885f3543535520fc5 af671d04908817e914668750b7cd4f6f74034bf4 && git diff 04dff0beaa37294bc839122885f3543535520fc5 af671d04908817e914668750b7cd4f6f74034bf4' in /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+ succeeded in 0ms:
+ README.md            |  6 +++---
+ live/test_vehicle.py | 18 ++++++++++++------
+ 2 files changed, 15 insertions(+), 9 deletions(-)
+diff --git a/README.md b/README.md
+index 76902b9..0390ee8 100644
+--- a/README.md
++++ b/README.md
+@@ -285,9 +285,9 @@ identity: a restart that names any of them differently refuses.
+   - a scenario, seed, ring size, phase or slug set that differs from the
+     world's, an incompatible checkpoint after a rebuild, a `/state` with a record
+     and no checkpoint, another executive holding the lock, or a window root whose
+-    record names a different world (a record that is unreadable, missing or
+-    otherwise disagrees with the checkpoint is rewritten from it, and the start
+-    goes on);
++    record names a different world (beside a checkpoint, a record that is
++    unreadable, missing or otherwise disagrees is rewritten from the recovered
++    world, and the start goes on unless that write fails);
+   - a checkpoint at the recovered tick that cannot be written: the start is
+     refused before anything is claimed, and the world resumes from the record at
+     the next start;
+diff --git a/live/test_vehicle.py b/live/test_vehicle.py
+index 29e35d6..877c1b6 100644
+--- a/live/test_vehicle.py
++++ b/live/test_vehicle.py
+@@ -147,10 +147,9 @@ def _assert_no_window_carries_the_world_s_identity(stack) -> None:
+                 assert relists <= RELISTS, f"{slug}'s files kept vanishing: {relists} listings"
+                 todo = _files(window) - checked
+                 continue
+-            except OSError:
++            except OSError as error:
+                 rereads[path] = rereads.get(path, 0) + 1
+-                if rereads[path] >= REREADS:
+-                    raise
++                assert rereads[path] < REREADS, f"{where} cannot be read after retries: {error}"
+                 time.sleep(0.1)
+                 continue
+             assert not SEED_TEXT.search(text), f"{where} carries the world's seed"
+@@ -158,6 +157,9 @@ def _assert_no_window_carries_the_world_s_identity(stack) -> None:
+                 try:
+                     document = json.loads(text)
+                 except ValueError:
++                    # Read again. A file that is malformed and then gone is dropped by the next
++                    # read, its text already scanned: the vehicle writes its JSON whole and renames
++                    # it into place, so only a file an agent wrote (console.json) can be torn.
+                     rereads[path] = rereads.get(path, 0) + 1
+                     assert rereads[path] < REREADS, f"{where} is not whole JSON after retries"
+                     time.sleep(0.1)
+@@ -263,6 +265,7 @@ def test_a_killed_console_resumes_the_same_world(vehicle_stack):
+             what="a result for the submitted command (none: see vehicle #39 if this recurs)",
+         )
+         before = _executive(stack)
++        assert before is not None, "the window root's .executive.json cannot be read"
+         world, command_tick = _receipt(stack, slug, names[0])
+         assert world == before["world_id"], (world, before["world_id"])
+         # The first cadence checkpoint that holds the command's row (tick command_tick + 1).
+@@ -299,6 +302,7 @@ def test_a_killed_console_resumes_the_same_world(vehicle_stack):
+             what="a frame from the new boot in every window",
+         )
+         after = _executive(stack)
++        assert after is not None, "the window root's .executive.json cannot be read"
+         assert after["world_id"] == before["world_id"], "a restart resumes the world it was flying"
+         assert after["tick"] > before["tick"], (before["tick"], after["tick"])
+         for s in stack.slugs:
+@@ -309,16 +313,18 @@ def test_a_killed_console_resumes_the_same_world(vehicle_stack):
+         resumed_world, recovered, checkpoint, replayed = found[-1]
+         recovered, checkpoint, replayed = int(recovered), int(checkpoint), int(replayed)
+         assert resumed_world == before["world_id"], "the banner names the world it was flying"
+-        assert replayed == recovered - checkpoint > 0, (
+-            "the resume replayed the ticks after its checkpoint"
+-        )
++        assert replayed == recovered - checkpoint, "the banner's replay is its two ticks apart"
++        # A checkpoint that completed after the pre-kill read holds the command's cycle; the
++        # resume then replays nothing of it, possibly nothing at all. Set up again.
+         if checkpoint > command_tick:
+             crossed.append(f"tick {command_tick}: resumed from checkpoint {checkpoint}")
+             continue
++        # From here M <= T < N, so the resume replayed at least the command's cycle.
+         assert command_tick < recovered, (
+             f"the command's cycle (tick {command_tick}) is in the record the resume recovered "
+             f"(through tick {recovered})"
+         )
++        assert replayed > 0, "the resume replayed the ticks after its checkpoint"
+         results = _results_for(stack, slug, marker)
+         assert len(results) == 1, (
+             f"a recorded command has exactly one result after the replay: {results}"
+
+**Locating governance files**
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+exec
+/usr/bin/bash -lc "git show af671d04908817e914668750b7cd4f6f74034bf4:live/test_vehicle.py | nl -ba | sed -n '1,410p'" in /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+ succeeded in 0ms:
+     1	"""The vehicle as the window (plan 7, Phase B): one executive for every agent's window, a restart
+     2	that resumes the same world, containment with it running, and a stop that reaches it.
+     3	
+     4	The tests share one vehicle stack and run in file order: the stop is last. Everything is read from
+     5	the host side of the window image and the vehicle's own log -- `.executive.json` in the window
+     6	root, each window's `state.json`, and the telemetry frames, which carry the boot that wrote them.
+     7	The smoke override polls every 0.2 s, so the vehicle's checkpoint (every 50 ticks) comes in
+     8	seconds; a kill after it exercises the cadence checkpoint and the replay from it.
+     9	"""
+    10	
+    11	import json
+    12	import re
+    13	import subprocess
+    14	import time
+    15	
+    16	from stack import REPO, SMOKE_VEHICLE_SEED, allowed_environment, wait_for
+    17	
+    18	# Startup hashes the vehicle's whole configuration corpus and replays from the last checkpoint:
+    19	# seconds on a warm host, more on a cold one.
+    20	START_SECONDS = 180
+    21	
+    22	
+    23	def _executive(stack) -> dict | None:
+    24	    try:
+    25	        return json.loads((stack.volumes / "diode" / "data" / ".executive.json").read_text())
+    26	    except (OSError, ValueError):
+    27	        return None
+    28	
+    29	
+    30	def _tick(stack) -> int:
+    31	    return (_executive(stack) or {}).get("tick", -1)
+    32	
+    33	
+    34	def _window_world(stack, slug: str) -> str | None:
+    35	    try:
+    36	        state = json.loads((stack.volumes / "diode" / "data" / slug / "state.json").read_text())
+    37	    except (OSError, ValueError):
+    38	        return None
+    39	    return (state.get("executive") or {}).get("world_id")
+    40	
+    41	
+    42	def _newest_frame(stack, slug: str) -> dict | None:
+    43	    newest = None
+    44	    for path in (stack.volumes / "diode" / "data" / slug / "telemetry").glob("*.json"):
+    45	        try:
+    46	            frame = json.loads(path.read_text())
+    47	        except (OSError, ValueError):
+    48	            continue
+    49	        if newest is None or frame.get("seq", -1) > newest.get("seq", -1):
+    50	            newest = frame
+    51	    return newest
+    52	
+    53	
+    54	def _restarts(stack) -> int:
+    55	    try:
+    56	        return stack.restart_count("vehicle")
+    57	    except subprocess.CalledProcessError:
+    58	        return -1  # between the exit and the restart, the container is not listed
+    59	
+    60	
+    61	def test_one_executive_serves_every_agent_s_window_under_one_world(vehicle_stack):
+    62	    stack = vehicle_stack
+    63	    wait_for(
+    64	        lambda: _tick(stack) >= 5 and all(_window_world(stack, s) for s in stack.slugs),
+    65	        timeout=START_SECONDS,
+    66	        every=2,
+    67	        what="the vehicle to publish every window",
+    68	    )
+    69	    executive = _executive(stack)
+    70	    assert sorted(executive["slugs"]) == sorted(stack.slugs), executive
+    71	    assert "vehicle" not in executive["slugs"], "a roster stack serves no window of its own"
+    72	    for slug in stack.slugs:
+    73	        assert _window_world(stack, slug) == executive["world_id"], slug
+    74	    consoles = stack.exec("vehicle", "pgrep", "-f", "[c]onsole\\.py").stdout.split()
+    75	    assert len(consoles) == 1, f"one executive serves every window, not {consoles}"
+    76	
+    77	
+    78	HIDDEN_KEYS = {"scenario", "seed", "arms", "dwell", "onset"}
+    79	SEED_TEXT = re.compile(rf"(?<![0-9]){SMOKE_VEHICLE_SEED}(?![0-9])")
+    80	
+    81	
+    82	def _keys_and_values(value) -> tuple[set[str], list]:
+    83	    if isinstance(value, dict):
+    84	        keys, values = set(value), []
+    85	        for item in value.values():
+    86	            inner_keys, inner_values = _keys_and_values(item)
+    87	            keys |= inner_keys
+    88	            values += inner_values
+    89	        return keys, values
+    90	    if isinstance(value, list):
+    91	        keys, values = set(), []
+    92	        for item in value:
+    93	            inner_keys, inner_values = _keys_and_values(item)
+    94	            keys |= inner_keys
+    95	            values += inner_values
+    96	        return keys, values
+    97	    return set(), [value]
+    98	
+    99	
+   100	def _files(window) -> set:
+   101	    """Every regular file under a window now. A directory listed and gone before it is walked is
+   102	    listed again, so a walk the vehicle races ends in a listing, never an error."""
+   103	    for attempt in range(5):
+   104	        try:
+   105	            return {p for p in window.rglob("*") if p.is_file()}
+   106	        except FileNotFoundError:
+   107	            if attempt == 4:
+   108	                raise
+   109	            time.sleep(0.1)
+   110	    raise AssertionError("unreachable")
+   111	
+   112	
+   113	# How often a scan of one window lists it again after a file it listed is gone. A cycle every
+   114	# 0.2 s removes a few names (the temporaries it renames into place, the telemetry it prunes); one
+   115	# window's scan takes milliseconds, so a scan that needs more than this is not racing a cycle.
+   116	RELISTS = 100
+   117	# How often one file is read again: a temporary read while it was being written, or a read that
+   118	# failed for a reason other than the file being gone. Past it the file is a failure, never a skip.
+   119	REREADS = 5
+   120	
+   121	
+   122	def _assert_no_window_carries_the_world_s_identity(stack) -> None:
+   123	    """John, 2026-10-10: no risk of information sharing. The identity (scenario, seed, the armed
+   124	    faults and their dwell) belongs in the window root's `.executive.json`, which no agent binds.
+   125	    Every regular file in every agent's window is read: as text, for the smoke world's distinctive
+   126	    seed; and as JSON where it is JSON, for the identity's keys and for the seed as a value.
+   127	
+   128	    The vehicle runs while this reads. It publishes by writing a randomly named temporary and
+   129	    renaming it into place, and it prunes old telemetry, so a name listed a moment ago can be gone
+   130	    for good: a read that finds it gone lists the window again and reads what is new, and what was
+   131	    read is checked as read. `pending.json` must be read whole."""
+   132	    executive = _executive(stack)
+   133	    assert executive is not None and str(executive.get("seed")) == SMOKE_VEHICLE_SEED, executive
+   134	    for slug in stack.slugs:
+   135	        window = stack.volumes / "diode" / "data" / slug
+   136	        checked: set = set()
+   137	        todo = _files(window)
+   138	        relists = 0
+   139	        rereads: dict = {}
+   140	        while todo:
+   141	            path = min(todo)
+   142	            where = path.relative_to(stack.volumes)
+   143	            try:
+   144	                text = path.read_text(encoding="utf-8", errors="replace")
+   145	            except FileNotFoundError:
+   146	                relists += 1
+   147	                assert relists <= RELISTS, f"{slug}'s files kept vanishing: {relists} listings"
+   148	                todo = _files(window) - checked
+   149	                continue
+   150	            except OSError as error:
+   151	                rereads[path] = rereads.get(path, 0) + 1
+   152	                assert rereads[path] < REREADS, f"{where} cannot be read after retries: {error}"
+   153	                time.sleep(0.1)
+   154	                continue
+   155	            assert not SEED_TEXT.search(text), f"{where} carries the world's seed"
+   156	            if path.suffix == ".json":
+   157	                try:
+   158	                    document = json.loads(text)
+   159	                except ValueError:
+   160	                    # Read again. A file that is malformed and then gone is dropped by the next
+   161	                    # read, its text already scanned: the vehicle writes its JSON whole and renames
+   162	                    # it into place, so only a file an agent wrote (console.json) can be torn.
+   163	                    rereads[path] = rereads.get(path, 0) + 1
+   164	                    assert rereads[path] < REREADS, f"{where} is not whole JSON after retries"
+   165	                    time.sleep(0.1)
+   166	                    continue
+   167	                keys, values = _keys_and_values(document)
+   168	                assert not keys & HIDDEN_KEYS, f"{where} carries {sorted(keys & HIDDEN_KEYS)}"
+   169	                assert str(SMOKE_VEHICLE_SEED) not in {str(v) for v in values}, (
+   170	                    f"{where} carries the seed"
+   171	                )
+   172	            checked.add(path)
+   173	            todo.discard(path)
+   174	        assert window / "pending.json" in checked, f"{slug}'s pending.json was never read whole"
+   175	
+   176	
+   177	def test_no_agent_window_carries_the_world_s_identity(vehicle_stack):
+   178	    """The vehicle pinned before this adoption (`dd79e76`) wrote the scenario, seed, armed faults
+   179	    and their dwell into each window's `pending.json`. Checked again after the resume, below."""
+   180	    _assert_no_window_carries_the_world_s_identity(vehicle_stack)
+   181	
+   182	
+   183	def test_containment_holds_with_the_vehicle_running(vehicle_stack):
+   184	    stack = vehicle_stack
+   185	    agents = " ".join(f"agent_{n}" for n in range(1, stack.agents + 1))
+   186	    result = subprocess.run(
+   187	        ["sh", str(REPO / "scripts" / "verify_containment.sh")],
+   188	        cwd=REPO,
+   189	        env=allowed_environment({"COMPOSE": " ".join(stack.compose_command()), "AGENTS": agents}),
+   190	        capture_output=True,
+   191	        text=True,
+   192	        timeout=900,
+   193	    )
+   194	    assert result.returncode == 0, result.stdout + result.stderr
+   195	    assert "PASS  the vehicle binds /diode and /state and nothing else" in result.stdout
+   196	    for n in range(1, stack.agents + 1):
+   197	        assert f"PASS  agent_{n} mounts nothing of the vehicle's private state" in result.stdout
+   198	        assert f"PASS  agent_{n} cannot write the window root" in result.stdout
+   199	
+   200	
+   201	def _results_for(stack, slug: str, marker: str) -> list[str]:
+   202	    output = stack.volumes / "diode" / "data" / slug / "output"
+   203	    return sorted(p.name for p in output.glob("*.txt") if marker in p.name)
+   204	
+   205	
+   206	def _submit(stack, slug: str, command: str) -> None:
+   207	    """As an agent submits: the whole file written aside, then renamed over console.json."""
+   208	    console = stack.volumes / "diode" / "data" / slug / "console.json"
+   209	    staging = console.with_name(".console.json.live.tmp")
+   210	    staging.write_text(json.dumps({"commands": [command]}) + "\n", encoding="utf-8")
+   211	    staging.replace(console)
+   212	
+   213	
+   214	# The smoke vehicle's cadence checkpoint: every tick that is a multiple of this.
+   215	CHECKPOINT_EVERY = 50
+   216	# A result ends in its receipt line; `tick` is the tick its cycle began at (the receipt is drawn
+   217	# before the step), and that cycle's record row is the tick after it.
+   218	RECEIPT = re.compile(r"^receipt: world=(\S+) seq=\d+ window=\S+ tick=(\d+) ", re.MULTILINE)
+   219	RESUMED = re.compile(
+   220	    r"resumed world (\S+) at tick (\d+) \(checkpoint \S+ at tick (\d+)(?:, fell back)?, replayed (\d+)"
+   221	)
+   222	# Setups tried before the test gives up: each is a fresh command and, unless the command's cycle
+   223	# was already checkpointed before the kill, a kill and a resume.
+   224	ATTEMPTS = 3
+   225	
+   226	
+   227	def _receipt(stack, slug: str, name: str) -> tuple[str, int]:
+   228	    """The world and the tick a result's receipt names. A result is written whole, never replaced."""
+   229	    text = (stack.volumes / "diode" / "data" / slug / "output" / name).read_text(encoding="utf-8")
+   230	    found = RECEIPT.findall(text)
+   231	    assert found, f"{name} ends in no receipt: {text[-300:]!r}"
+   232	    world, tick = found[-1]
+   233	    return world, int(tick)
+   234	
+   235	
+   236	def test_a_killed_console_resumes_the_same_world(vehicle_stack):
+   237	    """One recorded command, run before the kill: the resume replays its cycle and must not run it
+   238	    again, so it ends with exactly one result. An unknown verb is refused, and a refusal is a
+   239	    result. (A batch replaced inside a claim can be erased, vehicle #39; then no result appears
+   240	    here at all and this fails saying so.)
+   241	
+   242	    The command's cycle is proved to be one the resume replayed, from the result's receipt and the
+   243	    resume's banner: its row (receipt tick T, plus one) lies after the checkpoint the resume began
+   244	    from (tick M) and at or before the tick it recovered (N), so M <= T < N. A cadence checkpoint
+   245	    that lands between the result and the kill would hold the command's cycle, and the replay would
+   246	    then prove nothing about it: that setup is not counted, and the test sets up again."""
+   247	    stack = vehicle_stack
+   248	    slug = stack.slugs[0]
+   249	    crossed = []
+   250	    for _ in range(ATTEMPTS):
+   251	        # Past the first cadence checkpoint and early in an interval, so the command's cycle and
+   252	        # the kill after it normally both fall inside the ticks the resume must replay.
+   253	        wait_for(
+   254	            lambda: _tick(stack) >= 60 and 5 <= _tick(stack) % CHECKPOINT_EVERY <= 20,
+   255	            timeout=START_SECONDS,
+   256	            every=0.1,
+   257	            what="a tick early in a checkpoint interval",
+   258	        )
+   259	        marker = f"live_resume_{time.time_ns()}"
+   260	        _submit(stack, slug, f"{marker} probe")
+   261	        names = wait_for(
+   262	            lambda marker=marker: _results_for(stack, slug, marker),
+   263	            timeout=30,
+   264	            every=0.1,
+   265	            what="a result for the submitted command (none: see vehicle #39 if this recurs)",
+   266	        )
+   267	        before = _executive(stack)
+   268	        assert before is not None, "the window root's .executive.json cannot be read"
+   269	        world, command_tick = _receipt(stack, slug, names[0])
+   270	        assert world == before["world_id"], (world, before["world_id"])
+   271	        # The first cadence checkpoint that holds the command's row (tick command_tick + 1).
+   272	        holding = (command_tick // CHECKPOINT_EVERY + 1) * CHECKPOINT_EVERY
+   273	        if before["tick"] >= holding:
+   274	            crossed.append(f"tick {command_tick}: checkpoint {holding} before the kill")
+   275	            continue
+   276	        frames = {s: _newest_frame(stack, s) for s in stack.slugs}
+   277	        assert all(frames.values()), frames
+   278	        restarts = _restarts(stack)
+   279	        banners = len(RESUMED.findall(stack.logs("vehicle")))
+   280	        # docker-init is PID 1; the console is its child. `docker kill` would mark the container
+   281	        # stopped by hand, and the restart policy would leave it down.
+   282	        stack.exec("vehicle", "pkill", "-9", "-f", "[c]onsole\\.py")
+   283	        wait_for(
+   284	            lambda restarts=restarts: _restarts(stack) > restarts,
+   285	            timeout=120,
+   286	            every=1,
+   287	            what="the restart policy to bring the vehicle back",
+   288	        )
+   289	
+   290	        def resumed(frames=frames):
+   291	            newest = {s: _newest_frame(stack, s) for s in stack.slugs}
+   292	            fresh = all(
+   293	                frame and frame.get("boot_id") != frames[s]["boot_id"]
+   294	                for s, frame in newest.items()
+   295	            )
+   296	            return newest if fresh else None
+   297	
+   298	        after_frames = wait_for(
+   299	            resumed,
+   300	            timeout=START_SECONDS,
+   301	            every=1,
+   302	            what="a frame from the new boot in every window",
+   303	        )
+   304	        after = _executive(stack)
+   305	        assert after is not None, "the window root's .executive.json cannot be read"
+   306	        assert after["world_id"] == before["world_id"], "a restart resumes the world it was flying"
+   307	        assert after["tick"] > before["tick"], (before["tick"], after["tick"])
+   308	        for s in stack.slugs:
+   309	            assert after_frames[s]["seq"] > frames[s]["seq"], f"{s}'s frame sequence continues"
+   310	            assert _window_world(stack, s) == before["world_id"], s
+   311	        found = RESUMED.findall(stack.logs("vehicle"))
+   312	        assert len(found) == banners + 1, f"one resume banner for this boot: {found[banners:]}"
+   313	        resumed_world, recovered, checkpoint, replayed = found[-1]
+   314	        recovered, checkpoint, replayed = int(recovered), int(checkpoint), int(replayed)
+   315	        assert resumed_world == before["world_id"], "the banner names the world it was flying"
+   316	        assert replayed == recovered - checkpoint, "the banner's replay is its two ticks apart"
+   317	        # A checkpoint that completed after the pre-kill read holds the command's cycle; the
+   318	        # resume then replays nothing of it, possibly nothing at all. Set up again.
+   319	        if checkpoint > command_tick:
+   320	            crossed.append(f"tick {command_tick}: resumed from checkpoint {checkpoint}")
+   321	            continue
+   322	        # From here M <= T < N, so the resume replayed at least the command's cycle.
+   323	        assert command_tick < recovered, (
+   324	            f"the command's cycle (tick {command_tick}) is in the record the resume recovered "
+   325	            f"(through tick {recovered})"
+   326	        )
+   327	        assert replayed > 0, "the resume replayed the ticks after its checkpoint"
+   328	        results = _results_for(stack, slug, marker)
+   329	        assert len(results) == 1, (
+   330	            f"a recorded command has exactly one result after the replay: {results}"
+   331	        )
+   332	        _assert_no_window_carries_the_world_s_identity(stack)
+   333	        return
+   334	    raise AssertionError(f"no setup put the command's cycle inside the replay: {crossed}")
+   335	
+   336	
+   337	def test_docker_stop_reaches_the_vehicle_within_its_grace(vehicle_stack):
+   338	    stack = vehicle_stack
+   339	    # Running and advancing now, so a fast stop is the stop's doing and not a vehicle already gone.
+   340	    tick = _tick(stack)
+   341	    wait_for(lambda: _tick(stack) > tick, timeout=60, every=0.2, what="the vehicle to advance")
+   342	    container = stack.container_id("vehicle")
+   343	    started = time.monotonic()
+   344	    stack.compose("stop", "--timeout", "30", "vehicle")
+   345	    elapsed = time.monotonic() - started
+   346	    # Without docker-init the console would be PID 1, ignore SIGTERM, and wait out the 30 s.
+   347	    assert elapsed < 20, f"docker stop took {elapsed:.1f}s: the SIGTERM did not reach the console"
+   348	    state = stack.run(
+   349	        ["docker", "inspect", "-f", "{{.State.Status}} {{.State.OOMKilled}}", container]
+   350	    )
+   351	    assert state.stdout.split() == ["exited", "false"], state.stdout
+
+exec
+/usr/bin/bash -lc "git show af671d04908817e914668750b7cd4f6f74034bf4:README.md | nl -ba | sed -n '260,310p'; git show af671d04908817e914668750b7cd4f6f74034bf4:governance/README.md" in /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+ succeeded in 0ms:
+   260	  succeeds, a window an agent has written to (a `pending.json` from an older
+   261	  world) makes that first start refuse.
+   262	- **`--closed-interlock` on a restart** is added to the world's set and
+   263	  journaled: a restart can trip an interlock but never clear one. It is
+   264	  not wired into `serve_vehicle.sh`; passing it means overriding the service's
+   265	  entrypoint for that start.
+   266	- **A resume says so in the vehicle's log** (`docker compose logs vehicle`): "resumed world
+   267	  ... at tick N (checkpoint ... at tick M, replayed K, republished R)", and a
+   268	  line each when it falls back to the previous checkpoint, rewrites the window
+   269	  root's record, or advises on a window's `pending.json`.
+   270	- **An exit 3:** `docker compose logs vehicle`; the last line is one sentence
+   271	  naming the file, the check and what clears it. The restart policy retries it:
+   272	  a refused start claims no command and runs no cycle, and a transient read
+   273	  error clears itself; one that repeats will not clear on its own. Read the named
+   274	  file's permissions and the disk before anything else -- a record the vehicle
+   275	  cannot open or write refuses in the same words as one that is damaged, and only
+   276	  damage is a reason for a new world. The cases include:
+   277	  - both checkpoint generations unusable;
+   278	  - a record that cannot continue the checkpoint, or a record file that cannot
+   279	    be verified (a new world, once its permissions and the disk are ruled out);
+   280	  - an `OSError` anywhere on the start path, the configuration's reads
+   281	    included, naming the path and the errno;
+   282	  - a record that cannot be written, or cut back after a failed append (the
+   283	    run stops);
+   284	  - a handle that cannot be closed on the way out, when nothing else failed;
+   285	  - a scenario, seed, ring size, phase or slug set that differs from the
+   286	    world's, an incompatible checkpoint after a rebuild, a `/state` with a record
+   287	    and no checkpoint, another executive holding the lock, or a window root whose
+   288	    record names a different world (beside a checkpoint, a record that is
+   289	    unreadable, missing or otherwise disagrees is rewritten from the recovered
+   290	    world, and the start goes on unless that write fails);
+   291	  - a checkpoint at the recovered tick that cannot be written: the start is
+   292	    refused before anything is claimed, and the world resumes from the record at
+   293	    the next start;
+   294	  - and a run that stops itself mid-mission because its state can no longer be
+   295	    compared.
+   296	
+   297	Probe a window (`contract/diode_probe.py` submits commands) only in a stack
+   298	with no fleet in it, or on a scratch directory: in a live mission every window
+   299	commands the one spacecraft the fleet is flying.
+   300	
+   301	## Verifying the world
+   302	
+   303	```sh
+   304	python3 -m pytest -q -n 8                   # every suite; no containers
+   305	uvx ruff check . --no-cache && uvx ruff format --check . --no-cache
+   306	docker compose --profile fleet config -q    # the topology parses
+   307	sh scripts/verify_containment.sh --all      # against a running stack
+   308	python3 contract/diode_probe.py --diode-dir ./volumes/diode/data --list
+   309	```
+   310	
+# Governance
+
+As of **2026-10-10**, `tachyon-beep/space_chassis` `aurora-port` @ `84b1c49`. Owned by the chassis
+line. **Verify against the code before trusting any line here.**
+
+This is the single place a new session, agent or person reads first, to learn:
+- what this project is;
+- who owns what;
+- what has been decided;
+- where each line of work stands.
+
+It is meant to become the single source of truth in time. Until it is, **the code, the issue
+trackers and the decision records it points to are authoritative wherever they disagree with it.**
+
+## The two lines
+
+The project divides into exactly two lines of work. There is no third line, and nothing is co-owned
+(John, 2026-10-10).
+
+| line | what it is | where it lives | governance |
+|---|---|---|---|
+| **space_chassis** | The AI chassis: the world the fleet of agents lives in. Aurora's harness per agent, the recorder, the pump, the operator services, the containers, the brief, and the vehicle's deployment. | this repository | `chassis/` |
+| **space_vehicle** | The mission simulator: one spacecraft behind per-agent windows. | `tachyon-beep/space_vehicle`, vendored here as `docs/deep_research/vehicle/` | `vehicle/` |
+
+The two lines meet only at the frozen window contract, `docs/diode-contract.md`, and at the
+deployment of the vehicle service. Each line describes its side in its own `interface.md`.
+
+## Ownership
+
+Every path and every piece of plumbing has exactly one owner. Anything not listed under the vehicle
+line is the chassis line's.
+
+| owner | owns |
+|---|---|
+| **vehicle line** | the `tachyon-beep/space_vehicle` repository (`docs/deep_research/vehicle/`) and its CI, including filigree `space_chassis-4d7a6afd1f` |
+| | the frozen corpus `docs/deep_research/*.md` and `docs/deep_research/integration/`, including the reconciliation rows' content |
+| | `docs/diode-contract.md`, which it implements; a change still needs the chassis to adopt it |
+| | the local `vehicle-standalone` branch |
+| | filigree issues labelled `side:vehicle` |
+| | `governance/vehicle/` |
+| **chassis line** | `harness/`, `recorder/`, `pump/`, `services/`, `scripts/` |
+| | `containers/`, `serve_vehicle.sh` included: the vehicle's deployment is the chassis's |
+| | `Dockerfile.agent`, `docker-compose.yml` and its generator, `live/` |
+| | `tests/`, including `test_vehicle_reconciliation.py`, the chassis's referee of what it deploys |
+| | `contract/` (the probe and the fixture) and `brief/` |
+| | `docs/design.md`, `docs/brief-claims.md`, `docs/superpowers/` |
+| | the root documents (`CLAUDE.md`, `AGENTS.md`, `README.md`, `.env.example`) and `vendor/` |
+| | this repository's CI, and the filigree tracker itself with every issue not labelled `side:vehicle` |
+| | the submodule pointer, the reconciliation pins and every adoption commit |
+| | the paused SV branch `wip/sv-recorder-opus-20261008` |
+| | `governance/README.md`, `governance/coordination.md`, `governance/chassis/` |
+
+## What each line folder holds
+
+| file | what | changes |
+|---|---|---|
+| `snapshot.md` | where the line stands now: repo, branch, SHA, merged and in-flight work, measures | every merge |
+| `decisions.md` | the decision log: what, who (John, or a session under his delegation), when, where recorded | append-only |
+| `practice.md` | how the line is worked: constraints, how work lands, gates, reviewers | when practice changes |
+| `interface.md` | what the line offers the other line and needs from it | when the boundary moves |
+| `open.md` | in-flight items, next steps, open issues, risks, questions for John | every merge or decision |
+| `records/` | historical records worth keeping (design notes, review reports, handoff packages), dated and never edited | append-only, optional |
+
+## Maintenance rules
+
+1. Every file starts with **"As of <date>, <repo> @ <sha>"** and a "verify against the code" note.
+2. Every fact carries a pointer (file:line, issue, PR, commit, ADR), never a paraphrase with no
+   source.
+3. The owning line updates its files **in the same change** that merges work or records a decision.
+   A snapshot older than the last merge is stale and says so.
+4. Decisions are appended, never rewritten. A reversal is a new dated entry that points back.
+5. **Nothing here may reach a fleet agent.** `governance/` is in `.dockerignore`, and no image COPYs
+   it. It holds design reasoning the agents must not see.
+6. A line proposes an edit to the other line's file through the shared filigree issue or a message.
+   The owner decides and writes it.
+7. Paths to session scratch (`/tmp/…`, `.scratch/`) are not durable. Copy what must survive into
+   `records/`.
+8. **Commits:** this folder lives in the chassis repository, so the chassis line commits it. The
+   vehicle line writes `governance/vehicle/` directly, and the chassis commits it verbatim, never
+   editing it, on its next commit to `aurora-port`, or sooner on request
+   (`coordination.md`).
+9. `tests/test_retired.py` exempts `governance/`, because the decision logs record history.
+
+exec
+/usr/bin/bash -lc "git show f44399645fb2633e695a5d758cb5a41f43fb848c:tools/console.py | nl -ba | sed -n '4670,4755p;4970,5025p;5510,5575p'" in /home/john/space_chassis/.claude/worktrees/vehicle-adoption/docs/deep_research/vehicle
+ succeeded in 0ms:
+  4670	        with contextlib.suppress(FileNotFoundError):
+  4671	            os.lstat(journal.name, dir_fd=journal_fd)
+  4672	            places.append((journal_fd, journal.name))
+  4673	    # An `OSError` here (a listing or an `lstat` that fails) is the caller's to turn into a refusal by
+  4674	    # name; `RecordRefused` from a file's first lines means the file is not a fresh directory's.
+  4675	    holding = []
+  4676	    for dir_fd, name in places:
+  4677	        try:
+  4678	            if _first_header(dir_fd, name) is not None:
+  4679	                holding.append(name)
+  4680	        except RecordRefused:
+  4681	            holding.append(name)
+  4682	    return holding
+  4683	
+  4684	
+  4685	class ResumeRefused(Exception):
+  4686	    """A saved world this start will not resume; the message is the operator's sentence."""
+  4687	
+  4688	
+  4689	@dataclass
+  4690	class Resumption:
+  4691	    """What a resume did, for the banner, the journal and the tests."""
+  4692	
+  4693	    snapshot_tick: int
+  4694	    tick: int
+  4695	    fell_back: str | None
+  4696	    root_record: str
+  4697	    run_inputs: dict[str, Any]
+  4698	    advisories: list[dict[str, Any]]
+  4699	    events: list[dict[str, Any]] = field(default_factory=list)
+  4700	    republished: list[dict[str, Any]] = field(default_factory=list)
+  4701	
+  4702	    @property
+  4703	    def replayed(self) -> int:
+  4704	        return self.tick - self.snapshot_tick
+  4705	
+  4706	
+  4707	def classify_root_record(
+  4708	    record: dict[str, Any] | None, problem: str | None, expected: dict[str, Any], snapshot_tick: int
+  4709	) -> tuple[str, str]:
+  4710	    """`reconcile_root_record` against the *recovered* state, with one more answer: `routine` (#20's note 1).
+  4711	
+  4712	    The root record is rewritten every cycle after the cycle's row (`cycle`), and a checkpoint is taken
+  4713	    every `N` ticks, so on an ordinary restart the record is ahead of the checkpoint and at, or one
+  4714	    behind, the last durable row `L`. Compared with the checkpoint's own tick that is a disagreement on
+  4715	    every boot, and the `root_record_rewritten` event would stop meaning "damaged or tampered". So the
+  4716	    record is compared with the state the replay recovered: a record that agrees on every identity key
+  4717	    but the tick, naming this world at a tick in `[T, L]`, is **routine** — journaled inside the
+  4718	    `resumed` event and rewritten without a mismatch event. So is an unbound record at tick 0 beside a
+  4719	    world whose checkpoint is its genesis and that recovered at most one tick (`T = 0`, `L ≤ 1`: addendum
+  4720	    B9 as widened by review F8 and bounded by confirmation G7 — a kill after the first row and before the
+  4721	    first root-record write leaves it, and nothing later does). Everything else is
+  4722	    `reconcile_root_record`'s: agree, rewrite with its event, or — a readable record of another world —
+  4723	    refuse. A record ahead of `L` is a disagreement: an `fsync`ed row does not vanish.
+  4724	    """
+  4725	    action, why = reconcile_root_record(record, problem, expected)
+  4726	    if action != "rewrite" or record is None or problem is not None:
+  4727	        return action, why
+  4728	    tick, bound = record.get("tick"), record.get("world_id")
+  4729	    if not all(record.get(key) == expected[key] for key in ROOT_RECORD_IDENTITY if key not in ("world_id", "tick")):
+  4730	        return action, why
+  4731	    recovered = expected["tick"]
+  4732	    if bound == expected["world_id"] and isinstance(tick, int) and not isinstance(tick, bool) and snapshot_tick <= tick <= recovered:
+  4733	        return "routine", f"the root record is at tick {tick}, within the checkpoint's tick {snapshot_tick} and the recovered tick {recovered}: routine"
+  4734	    if bound is None and tick == 0 and snapshot_tick == 0 and recovered <= 1:
+  4735	        # The genesis checkpoint precedes every row, so a kill after the first row and before the first
+  4736	        # cycle's root-record write leaves exactly this (review F8) — and only up to `L = 1`: every later
+  4737	        # cycle rewrites the record, so an unbound one beside more is not what a kill leaves (confirmation G7).
+  4738	        return "routine", f"the root record is unbound at tick 0 beside a world saved at tick 0 and recovered to tick {recovered}: routine"
+  4739	    return action, why
+  4740	
+  4741	
+  4742	def _newest_journal_mtime(executive: Executive) -> tuple[str | None, str]:
+  4743	    """`wall_down`, and where it came from: the newest journal file's last write (rows carry no wall stamp)."""
+  4744	    dir_fd = executive.journal_dir_fd
+  4745	    if dir_fd is None or executive.journal is None:
+  4746	        return None, "no record"
+  4747	    names = [executive.journal.name] if executive.journal_shared else [n for n in os.listdir(dir_fd) if JOURNAL_SEGMENT_NAME.fullmatch(n)]
+  4748	    newest: tuple[float, str] | None = None
+  4749	    for name in names:
+  4750	        with contextlib.suppress(OSError):
+  4751	            info = os.lstat(name, dir_fd=dir_fd)
+  4752	            if stat.S_ISREG(info.st_mode) and (newest is None or info.st_mtime > newest[0]):
+  4753	                newest = (info.st_mtime, name)
+  4754	    if newest is None:
+  4755	        return None, "no journal file"
+  4970	            "world_id": expected["world_id"],
+  4971	            "tick": expected["tick"],
+  4972	            "checkpoint": Path(loaded.path).name,
+  4973	            "reason": why,
+  4974	            "problem": problem,
+  4975	            **superseded_record(record_now, record_bytes),
+  4976	        })
+  4977	    try:
+  4978	        for event in events:
+  4979	            append_journal_line(executive.journal, event, dir_fd=executive.journal_dir_fd)
+  4980	    except Exception as exc:  # noqa: BLE001 - the refusal names it
+  4981	        raise ResumeRefused(
+  4982	            f"the journal at {executive.journal} cannot take the resume's events ({type(exc).__name__}: {exc}), so nothing was rewritten"
+  4983	        ) from exc
+  4984	    # The operator's view is stderr (`docker compose logs vehicle`), not the private journal (review F14):
+  4985	    # one line for a fall-back, one for a mismatched root record, one per advisory.
+  4986	    if resumed_event["checkpoint"]["fell_back"] is not None:
+  4987	        sys.stderr.write(
+  4988	            f"[console] resume: fell back to {Path(loaded.path).name} at tick {snapshot_tick}: {CURRENT} was refused "
+  4989	            f"({resumed_event['checkpoint']['fell_back']}), and the refused file is kept as {rejected}\n"
+  4990	        )
+  4991	    for advisory in advisories:
+  4992	        said = (
+  4993	            f"names world {advisory['pending_world_id']}" if "pending_world_id" in advisory
+  4994	            else f"says tick {advisory['pending_ticks']}, past the recovered tick {tick}"
+  4995	        )
+  4996	        sys.stderr.write(
+  4997	            f"[console] resume: window {advisory['window']!r}: its pending.json {said}; advisory only (ADR 0002 H), and its next "
+  4998	            "publication rewrites it\n"
+  4999	        )
+  5000	    if action != "agree":
+  5001	        try:
+  5002	            write_json_atomic(RECORD_FILE, executive.root_record(), dir_fd=executive.diode_fd)
+  5003	        except Exception as exc:  # noqa: BLE001 - the refusal names it
+  5004	            raise ResumeRefused(
+  5005	                f"the root record at {executive.diode_dir / RECORD_FILE} cannot be rewritten from the recovered world "
+  5006	                f"({type(exc).__name__}: {exc}); {why}. The events were journaled first: remove what is at that path and start again"
+  5007	            ) from exc
+  5008	        if action == "rewrite":
+  5009	            # Said once it is so (confirmation G6): a failed rewrite says only that it failed, above.
+  5010	            sys.stderr.write(f"[console] resume: the root record at {executive.diode_dir / RECORD_FILE} was rewritten: {why}; the mismatch is journaled\n")
+  5011	
+  5012	    republished: list[dict[str, Any]] = []
+  5013	    for window in executive.windows.values():
+  5014	        window.variables_known = False
+  5015	        try:
+  5016	            try:
+  5017	                handles = window.open_handles()
+  5018	            except WindowAbsent:
+  5019	                window.repair()
+  5020	                handles = window.open_handles()
+  5021	            payload, _problem = read_ingress(window.console, dir_fd=handles.root)
+  5022	            if payload is not None and isinstance(payload.get("variables"), dict):
+  5023	                window.variables, window.variables_known, window._honoured = payload["variables"], True, None
+  5024	            republished.extend(executive.publish_obligations(window))
+  5025	        except Exception as exc:  # noqa: BLE001 - the window's, recorded; the world resumes
+  5510	                # Addendum B3: a checkpoint at the recovered tick before anything is claimed — it makes the
+  5511	                # named run inputs durable and bounds the next resume's replay and re-publication.
+  5512	                try:
+  5513	                    executive.checkpoint()
+  5514	                except Exception as exc:  # noqa: BLE001 - the refusal names it
+  5515	                    with contextlib.suppress(OSError):  # the refusal is what is reported (fifth round)
+  5516	                        executive.close()
+  5517	                    return refuse(
+  5518	                        f"the checkpoint at the recovered tick {resumption.tick} cannot be written into {state_path} ({exc}); nothing has been "
+  5519	                        "claimed this boot, and the world resumes from the record at the next start"
+  5520	                    )
+  5521	                rings = sorted({w.ring_slots for w in executive.windows.values()})
+  5522	                return functools.partial(
+  5523	                    run,
+  5524	                    executive,
+  5525	                    f"[console] {diode_dir} resumed world {executive.world_id} at tick {executive.tick} "
+  5526	                    f"(checkpoint {checkpoint_found.path.name} at tick {resumption.snapshot_tick}"
+  5527	                    + (", fell back" if resumption.fell_back else "")
+  5528	                    + f", replayed {resumption.replayed}, republished {sum(1 for r in resumption.republished if r.get('result') == 'written')}) "
+  5529	                    f"slugs={','.join(sorted(executive.windows))} phase={executive.phase} scenario={executive.scenario} "
+  5530	                    f"seed={executive.seed} ring={','.join(map(str, rings))} poll={args.poll}s "
+  5531	                    f"cycles={args.cycles or 'until interrupted'} state-dir={state_dir}",
+  5532	                )
+  5533	            # `--plan` answers from the checkpoint's identity and writes nothing in the diode directory
+  5534	            # (the state directory and its lock were made above, as for any start).
+  5535	            record, problem = expected, None
+  5536	        if checkpoint_found is None and state_fd is not None and not (args.init or args.plan or args.plan_json):
+  5537	            # Addendum B11 (S11): a fresh world over a record with no checkpoint. Its first segment would be a
+  5538	            # second root of the record, and every resume after it would refuse; one state directory is one
+  5539	            # world's (ADR 0002 H). Only the first header of each journal file is read. It is the first thing
+  5540	            # said (review F9): the state directory is the problem, whatever the diode directory holds.
+  5541	            try:
+  5542	                holding = state_record_files(state_fd, journal_fd, journal_explicit)
+  5543	            except OSError as exc:
+  5544	                # Confirmation G4: every `OSError` on a start's path is a refusal by name, with every handle closed.
+  5545	                return refuse(f"the state directory {state_dir} cannot be read for a record ({errno_name(exc)}); nothing was started")
+  5546	            if holding:
+  5547	                return refuse(
+  5548	                    f"the state directory {state_dir} holds a record ({', '.join(holding)}) and no checkpoint: another world's, "
+  5549	                    "or one that died before its first checkpoint was written. One state directory is one world's "
+  5550	                    f"(ADR 0002 H): move {', '.join(holding)} out of {state_dir}, or point --state-dir at an empty directory"
+  5551	                )
+  5552	        if problem is not None:
+  5553	            return refuse(
+  5554	                f"the directory's record at {diode_dir / RECORD_FILE} cannot be read: {problem}. A record "
+  5555	                "that cannot be read is not a fresh directory; repair or clear it"
+  5556	            )
+  5557	        record = record or {}
+  5558	        recorded_slugs: dict[str, int] = {
+  5559	            str(slug): int((record.get("ring_slots") or {}).get(slug, DEFAULT_RING_SLOTS))
+  5560	            for slug in record.get("slugs") or []
+  5561	        }
+  5562	
+  5563	        # ---- the run's identity, resolved once against the directory's record --------------------
+  5564	        #
+  5565	        # A caller who names a value gets it. A caller who names nothing inherits whatever the
+  5566	        # directory's own record holds. A directory with no record gets the declared default. One
+  5567	        # directory is one world, so the identity is the directory's and not a window's.
+  5568	        recorded_scenario = record.get("scenario")
+  5569	        if not isinstance(recorded_scenario, str) or not recorded_scenario:
+  5570	            recorded_scenario = None
+  5571	        scenario = resolve_remembered(args.scenario, recorded_scenario, DEFAULT_SCENARIO)
+  5572	        if scenario not in postures:
+  5573	            if args.scenario is not None:
+  5574	                return refuse(
+  5575	                    f"scenario {scenario!r} is not one of the vehicle's {len(postures)}: {sorted(postures)}"
+
+**Validating malformed .tmp suffix**
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+exec
+/usr/bin/bash -lc "git diff 04dff0beaa37294bc839122885f3543535520fc5 af671d04908817e914668750b7cd4f6f74034bf4 | sha256sum; git show af671d04908817e914668750b7cd4f6f74034bf4:README.md | nl -ba | sed -n '275,303p'" in /home/john/space_chassis/.claude/worktrees/vehicle-adoption
+ succeeded in 0ms:
+4c2684bb0b230d3ab3b7f99d99910fa2bacd0b3c0166a20e8a88f3bc7f243254  -
+   275	  cannot open or write refuses in the same words as one that is damaged, and only
+   276	  damage is a reason for a new world. The cases include:
+   277	  - both checkpoint generations unusable;
+   278	  - a record that cannot continue the checkpoint, or a record file that cannot
+   279	    be verified (a new world, once its permissions and the disk are ruled out);
+   280	  - an `OSError` anywhere on the start path, the configuration's reads
+   281	    included, naming the path and the errno;
+   282	  - a record that cannot be written, or cut back after a failed append (the
+   283	    run stops);
+   284	  - a handle that cannot be closed on the way out, when nothing else failed;
+   285	  - a scenario, seed, ring size, phase or slug set that differs from the
+   286	    world's, an incompatible checkpoint after a rebuild, a `/state` with a record
+   287	    and no checkpoint, another executive holding the lock, or a window root whose
+   288	    record names a different world (beside a checkpoint, a record that is
+   289	    unreadable, missing or otherwise disagrees is rewritten from the recovered
+   290	    world, and the start goes on unless that write fails);
+   291	  - a checkpoint at the recovered tick that cannot be written: the start is
+   292	    refused before anything is claimed, and the world resumes from the record at
+   293	    the next start;
+   294	  - and a run that stops itself mid-mission because its state can no longer be
+   295	    compared.
+   296	
+   297	Probe a window (`contract/diode_probe.py` submits commands) only in a stack
+   298	with no fleet in it, or on a scratch directory: in a live mission every window
+   299	commands the one spacecraft the fleet is flying.
+   300	
+   301	## Verifying the world
+   302	
+   303	```sh
+
+exec
+/usr/bin/bash -lc "git show f44399645fb2633e695a5d758cb5a41f43fb848c:tools/console.py | rg -n 'def write_json_atomic|def reconcile_root_record|receipt: world|classify_root_record\\(|snapshot_tick =|write_text\\(|\\.json|mkstemp'" in /home/john/space_chassis/.claude/worktrees/vehicle-adoption/docs/deep_research/vehicle
+ succeeded in 0ms:
+46:    resume of ticks, arm tokens, dwell and deferrals from the agent-writable `pending.json` is
+52:    `<diode-dir>/.executive.json`, says which world a directory is, and a second executive refuses a
+67:`serves.json`, the journal segment, the checkpoint reads (`choose_generation(..., dir_fd=)`) — or,
+71:directory, the lock, `serves.json` — fails as a refusal naming the file and the errno, never a
+95:    directory. `serves.json` in the state directory records the diode directory it serves, so
+98:    the state directory, `journal.<boot_id>.jsonl`; an explicit `--journal PATH` still wins, and is
+103:    verified checkpoint exists, `root_record_from_checkpoint` says what `.executive.json` must hold
+117:  - **A directory planted at `.executive.json` beside a checkpoint refuses every start** (EISDIR on
+268:# a directory that has no record — a fresh one. The record read for this is `<diode-dir>/.executive.json`,
+269:# which no agent can write under the per-slug mounts; a window's `pending.json` carries none of the
+298:RECORD_FILE = ".executive.json"
+300:# serves, and one journal segment per boot (ADR 0002 J: `journal.<segment>.jsonl`, segment = boot).
+301:SERVES_FILE = "serves.json"
+302:JOURNAL_SEGMENT = "journal.{boot_id}.jsonl"
+303:JOURNAL_SEGMENT_NAME = re.compile(r"journal\.([A-Za-z0-9_-]{1,64})\.jsonl")
+431:    `.state.json.<pid>.tmp` would otherwise have been written through), and `os.replace` with the
+504:def write_json_atomic(path: str | os.PathLike[str], payload: Any, *, dir_fd: int | None = None, durable: bool = False) -> None:
+587:        return None, f"console.json is not UTF-8 ({exc.reason} at byte {exc.start})"
+593:            f"console.json is not valid JSON ({detail}); a half-written file lands here too, and "
+597:        return None, f"console.json is a JSON {type(loaded).__name__}, not an object"
+604:    The refuse-only reader of a window's `pending.json` at startup: the legacy check reads it to
+632:    """`<diode-dir>/.executive.json`, or `(None, None)` for a directory that has none, or a refusal.
+1096:# **The journal is the record.** One segment per boot — `journal.<boot_id>.jsonl` in the state
+2100:    """The record of a state directory's `journal.*.jsonl`, or of one `--journal` file, checked end to end — or from an anchor.
+2486:        f"receipt: world={entry['world_id']} seq={entry['local']} window={entry['window']} "
+2659:    """`(recorded, journal)` from `serves.json`: whether it says where the record is, and the explicit journal (or `None`)."""
+2674:    """`.executive.json` as the windows' copy of a verified checkpoint's identity (ADR 0002 H(ii)).
+2696:def reconcile_root_record(
+2958:        rewrote every mirror and `pending.json` to tick 0 and the root record to an unbound world —
+3080:                    # preparation: `prepare` wrote `pending.json` at tick 0 (addendum B7).
+3288:        """`_record_failure` for a window's slug, or for `.executive.json` at the stage `root_record`."""
+3517:        `.executive.json` while the executive ran ended the run, which is the stop button ADR 0002 H
+3870:                f"published in HELP.md and in state.json's `available_commands`; {verb!r} is not "
+3881:                f"published in state.json.variables as {gate_variable!r}.\n"
+3887:                f"published in state.json.variables as {shut[0]!r}, and this window closed it.\n"
+3904:                    "written into pending.json is read back as one. Nothing has been fired.\n"
+4130:    FILES = ("console.json", "state.json", "HELP.md", "README.md", "pending.json")
+4144:        self.console = "console.json"
+4147:        self.state = "state.json"
+4150:        self.pending = "pending.json"
+4252:        `console.json` is written last, because it is the file a reader treats as "the vehicle is
+4289:        its mirror, `pending.json` and generated files from the state the executive holds. `prepare`
+4290:        wrote `pending.json` at tick 0 here, which showed a window an earlier tick than it had seen.
+4352:                f"console.json's `commands` is a JSON {type(commands).__name__}, not a list, so "
+4444:            f"receipt: world={self.executive.world_id} seq={verdict.local} window={self.slug} "
+4450:        """Results, one frame, `state.json`, `HELP.md`, `README.md` and `pending.json`. Every cycle.
+4452:        `state.json` is rewritten "whether or not anything was submitted", which is what makes the
+4495:                # directory's `.executive.json` (and on the startup banner), which no agent can read
+4510:        """`state.json`: the capability snapshot, the gates, the budget, the ring, the executive."""
+4561:        `sorted(glob("*.json"))` put `1000.json` before `999.json`, so from the thousandth frame the
+4566:        cannot push a real frame out (`900000.json` sorts after every real frame and would otherwise
+4597:        `NNN.json` is the *sequence* number, so a name is never reused and a reader can always tell
+4617:        write_json_atomic(f"{self.seq:03d}.json", frame, dir_fd=telemetry)
+4707:def classify_root_record(
+4734:    if bound is None and tick == 0 and snapshot_tick == 0 and recovered <= 1:
+4792:       was a fall-back, the root record's class, the run-input changes and any `pending.json`
+4803:    snapshot_tick = int(body["identity"]["tick"])
+4885:            rejected = f"checkpoint.rejected.{executive.boot_id}.json"
+4918:    action, why = classify_root_record(record_now, problem, expected, snapshot_tick)
+4927:        # ADR 0002 H: beside a verified checkpoint the legacy `pending.json` checks are advisory. The
+4932:                legacy = read_json_bounded("pending.json", dir_fd=window_fd) or {}
+4997:            f"[console] resume: window {advisory['window']!r}: its pending.json {said}; advisory only (ADR 0002 H), and its next "
+5260:        # lock, `serves.json` and a startup event are all written below, and the `--journal` rule used to
+5356:            """Write `serves.json`; the refusal sentence if it cannot be written (second review, Opus 1)."""
+5358:                return "no state directory is open, so serves.json cannot be written"
+5486:                        f"{previous or own} (its serves.json): a restart reads the record where it was written, so name the same "
+5645:            # **The legacy check, and it is the only read of a window's `pending.json`: refuse-only.** A
+5663:                        legacy = read_json_bounded("pending.json", dir_fd=window_fd) or {}
+5672:                        f"the window at {diode_dir / slug} is a legacy window: its pending.json records "
+
+codex
+The delta matches the supplied SHA-256 and changes only `README.md` and `live/test_vehicle.py`. The replay retry now precedes the positive-replay assertion, while a successful attempt still requires replay of the command’s cycle and exactly one result. I’m checking the README and malformed-file comment against the vehicle’s write and recovery paths.
+
+hook: PreToolUse
+hook: PreToolUse Completed
+exec
+/usr/bin/bash -lc "git show f44399645fb2633e695a5d758cb5a41f43fb848c:tools/console.py | nl -ba | sed -n '420,518p;2690,2735p;4435,4508p;4798,4809p;4909,4927p;5488,5512p'" in /home/john/space_chassis/.claude/worktrees/vehicle-adoption/docs/deep_research/vehicle
+ succeeded in 0ms:
+   420	    dir_fd: int | None = None,
+   421	    noclobber: bool = False,
+   422	    sync_file: bool = False,
+   423	    sync_dir: bool = False,
+   424	) -> None:
+   425	    """Write through a temporary file and rename, the way the contract requires of the claim.
+   426	
+   427	    A reader that opens the path sees either the old file or the new one. Everything happens relative
+   428	    to a directory handle — the caller's `dir_fd`, or the target's parent opened here for a plain path
+   429	    — so no step resolves a path an agent can redirect between one step and the next: the temporary
+   430	    is created `O_CREAT | O_EXCL | O_NOFOLLOW` under a random name (a link planted at a predictable
+   431	    `.state.json.<pid>.tmp` would otherwise have been written through), and `os.replace` with the
+   432	    same handle renames *over* a link rather than through it, so a link planted at the target becomes
+   433	    a regular file and the thing it pointed at is untouched. With `noclobber`, the final name is made
+   434	    with `os.link`, which fails `EEXIST` rather than replacing anything — a result file is never
+   435	    overwritten, and the caller picks another name. With `sync_file` the temporary is `fsync`ed before
+   436	    it takes its name, and with `sync_dir` the directory is `fsync`ed after, so the name is durable too
+   437	    (ADR 0002 J, child 4's review finding 6: a claim and a result the record relies on are disk facts).
+   438	    """
+   439	    name = os.fspath(path)
+   440	    opened: int | None = None
+   441	    if dir_fd is None:
+   442	        target = Path(name)
+   443	        opened = dir_fd = os.open(target.parent if str(target.parent) else ".", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+   444	        name = target.name
+   445	    try:
+   446	        temporary = f".{name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+   447	        fd = os.open(
+   448	            temporary,
+   449	            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+   450	            0o644,
+   451	            dir_fd=dir_fd,
+   452	        )
+   453	        try:
+   454	            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+   455	                handle.write(text)
+   456	                if sync_file:
+   457	                    handle.flush()
+   458	                    os.fsync(handle.fileno())
+   459	            if noclobber:
+   460	                os.link(temporary, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+   461	                os.unlink(temporary, dir_fd=dir_fd)
+   462	            else:
+   463	                os.replace(temporary, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+   464	            if sync_dir:
+   465	                os.fsync(dir_fd)
+   466	        except BaseException:
+   467	            with contextlib.suppress(OSError):
+   468	                os.unlink(temporary, dir_fd=dir_fd)
+   469	            raise
+   470	    finally:
+   471	        if opened is not None:
+   472	            os.close(opened)
+   473	
+   474	
+   475	def _no_json_constants(name: str) -> Any:
+   476	    """`NaN`, `Infinity` and `-Infinity` are Python's, not JSON's (RFC 8259): refuse them on the way in."""
+   477	    raise ValueError(f"{name} is not a JSON value (RFC 8259)")
+   478	
+   479	
+   480	def _finite_float(text: str) -> float:
+   481	    """A JSON number as a double, refused when it is not finite (second review, Opus 3).
+   482	
+   483	    `parse_constant` sees only the literals `NaN`, `Infinity` and `-Infinity`; `1e400` is a decimal
+   484	    the float parser turns into `inf` without asking it, and an infinity read is one no writer here
+   485	    can write back.
+   486	    """
+   487	    value = float(text)
+   488	    if not math.isfinite(value):
+   489	        shown = text if len(text) <= 40 else f"{text[:40]}… ({len(text)} characters)"
+   490	        raise ValueError(f"{shown} overflows a double, and a non-finite number is not a JSON value (RFC 8259)")
+   491	    return value
+   492	
+   493	
+   494	def loads_json(text: str | bytes) -> Any:
+   495	    """`json.loads` as a conforming reader on the far side would do it: no non-finite numbers."""
+   496	    return json.loads(text, parse_constant=_no_json_constants, parse_float=_finite_float)
+   497	
+   498	
+   499	def dumps_json(payload: Any, **kwargs: Any) -> str:
+   500	    """`json.dumps` with `allow_nan=False`: nothing the vehicle publishes is unreadable to a conforming reader."""
+   501	    return json.dumps(payload, allow_nan=False, **kwargs)
+   502	
+   503	
+   504	def write_json_atomic(path: str | os.PathLike[str], payload: Any, *, dir_fd: int | None = None, durable: bool = False) -> None:
+   505	    write_text_atomic(path, dumps_json(payload, indent=2, sort_keys=False) + "\n", dir_fd=dir_fd, sync_file=durable, sync_dir=durable)
+   506	
+   507	
+   508	def read_regular_bounded(
+   509	    path: str | os.PathLike[str], *, dir_fd: int | None = None
+   510	) -> tuple[bytes | None, str | None]:
+   511	    """The bytes of a regular file of bounded size, or the sentence that says why not.
+   512	
+   513	    **A FIFO or a device at an agent-writable path blocked the read for ever.** `Path.read_text`
+   514	    on a FIFO with no writer never returns, and a symlink to `/dev/zero` returns zeros without end —
+   515	    one window could hang every window's executive. So the file is opened `O_RDONLY | O_NOFOLLOW |
+   516	    O_NONBLOCK`, relative to the caller's directory handle where one is given, `fstat`ed, refused
+   517	    unless it is a regular file, and read to at most `MAX_READ_BYTES + 1` so an oversized file is
+   518	    named rather than loaded. Every agent-writable read goes through here; the operator's own record
+  2690	        "ring_slots": {slug: windows[slug]["ring_slots"] for slug in sorted(windows)},
+  2691	        "tick": body["identity"]["tick"],
+  2692	        "updated_at": utc_now().isoformat(),
+  2693	    }
+  2694	
+  2695	
+  2696	def reconcile_root_record(
+  2697	    record: dict[str, Any] | None, problem: str | None, expected: dict[str, Any]
+  2698	) -> tuple[str, str]:
+  2699	    """What to do about the root record beside a verified checkpoint: `("agree" | "rewrite" | "refuse", why)`.
+  2700	
+  2701	    `record` and `problem` are `read_root_record`'s answer; `expected` is `root_record_from_checkpoint`.
+  2702	    A record that cannot be read, is missing, or disagrees with the checkpoint on any identity key is
+  2703	    *rewritten* — never a refusal, because the root is agent-writable until the chassis adopts its
+  2704	    per-slug mounts (`adf38d6`, chassis branch `aurora-port`) and a refusal there is a stop button in
+  2705	    the agents' hands (ADR 0002 H). An unbound record (`world_id: null`) is a
+  2706	    disagreement: the checkpoint is a world that exists. A *readable* record naming a different world
+  2707	    is the one refusal: two executives with separate state directories on one diode directory.
+  2708	    """
+  2709	    if problem is not None:
+  2710	        return "rewrite", f"the root record cannot be read ({problem}), so it is rewritten from the checkpoint"
+  2711	    if record is None:
+  2712	        return "rewrite", "there is no root record beside the checkpoint, so it is written from it"
+  2713	    bound = record.get("world_id")
+  2714	    if isinstance(bound, str) and bound and bound != expected["world_id"]:
+  2715	        return "refuse", (
+  2716	            f"the root record names world {bounded_repr(bound)} and the checkpoint records {expected['world_id']!r}: "
+  2717	            "two executives with separate state directories on one diode directory (ADR 0002 H)"
+  2718	        )
+  2719	    differing = [key for key in ROOT_RECORD_IDENTITY if record.get(key) != expected[key]]
+  2720	    if differing:
+  2721	        return "rewrite", f"the root record disagrees with the checkpoint on {differing}, so it is rewritten from it"
+  2722	    return "agree", "the root record is the checkpoint's copy"
+  2723	
+  2724	
+  2725	@dataclass
+  2726	class Verdict:
+  2727	    """One result in the making: what a window's line became, and the receipts it was given.
+  2728	
+  2729	    A verdict is created at validation, which is when its receipts are drawn — so a loser can name
+  2730	    the winner's receipt in the same tick — and its body is finished after the step for the commands
+  2731	    that staged an effect, because what changed in truth is not known until then. `receipt` is the
+  2732	    executive's global sequence, kept for the journal and the executive's own record; `local` is the
+  2733	    window's, and it is the one a result file carries: a window learns how many results it has been
+  2734	    given, not how many the world has.
+  2735	    """
+  4435	
+  4436	    def receipt(self, verdict: Verdict) -> str:
+  4437	        """The block every result ends with: where in the one world this result was decided.
+  4438	
+  4439	        `seq` is this window's own count of results, so a window learns how many results it has
+  4440	        been given and not how many the world has; the world and the tick are shared facts.
+  4441	        """
+  4442	        offset_us = verdict.effect.offset_us if verdict.effect is not None else 0
+  4443	        return (
+  4444	            f"receipt: world={self.executive.world_id} seq={verdict.local} window={self.slug} "
+  4445	            f"tick={verdict.tick} offset_us={offset_us} state={verdict.state}\n"
+  4446	        )
+  4447	
+  4448	    # -- publication ------------------------------------------------------------------------
+  4449	    def publish(self, verdicts: list[Verdict]) -> list[Path]:
+  4450	        """Results, one frame, `state.json`, `HELP.md`, `README.md` and `pending.json`. Every cycle.
+  4451	
+  4452	        `state.json` is rewritten "whether or not anything was submitted", which is what makes the
+  4453	        probe's `check_state_is_a_mirror` meaningful. The generated files are rewritten from the
+  4454	        cached text for the same reason: a hand-edit lasts until the next cycle. The window-local
+  4455	        receipts of its results are appended to `landed` — and named in the record's `results_written`
+  4456	        note (ADR 0002 J rule 3) — only once their files and `output/` are durable; a publication that
+  4457	        fails before that leaves them owed (review F2), and the window's next publication finds what did
+  4458	        reach the disk by its receipt line.
+  4459	        """
+  4460	        root = self._handles().root
+  4461	        written = []
+  4462	        # What the window is owed from earlier cycles first, so a failure here leaves this cycle's
+  4463	        # results owed too rather than written ahead of older ones (addendum B4).
+  4464	        for outcome in self.executive.publish_obligations(self):
+  4465	            if "file" in outcome:
+  4466	                written.append(self.root / self.output / outcome["file"])
+  4467	        made: list[int] = []
+  4468	        for verdict in sorted(verdicts, key=lambda v: v.receipt):
+  4469	            written.append(self.write_result(verdict.command, verdict.body + self.receipt(verdict)))
+  4470	            made.append(verdict.local)
+  4471	        if made and self.executive.journal is not None:
+  4472	            # Each result file was `fsync`ed as it was made; the directory makes their names durable, and
+  4473	            # only then are they landed — noted, and not owed (child 4's review finding 6; review F2 and
+  4474	            # ruling R2: a directory `fsync` that fails leaves every one of them owed and none noted).
+  4475	            # With no record nothing relies on it, and nothing is `fsync`ed.
+  4476	            os.fsync(self._handles().output)
+  4477	            self.landed.extend(made)
+  4478	            self.executive._note_window_results(self)
+  4479	        else:
+  4480	            self.landed.extend(made)
+  4481	        # The frame first, so the mirror's ring accounting describes the directory as it is: the old
+  4482	        # console wrote the mirror before the frame and its `newest_seq` ran one behind the ring.
+  4483	        self.write_frame()
+  4484	        write_json_atomic(self.state, self.mirror(), dir_fd=root)
+  4485	        write_text_atomic(self.help_file, self.executive.help_text, dir_fd=root)
+  4486	        write_text_atomic(self.readme, self.executive.readme_text, dir_fd=root)
+  4487	        write_json_atomic(
+  4488	            self.pending,
+  4489	            {
+  4490	                "pending": self.deferred,
+  4491	                "ticks": self.executive.tick,
+  4492	                "seq": self.seq,
+  4493	                "boot_id": self.boot_id,
+  4494	                # **No scenario and no seed.** The run's identity is the operator's: it lives in the
+  4495	                # directory's `.executive.json` (and on the startup banner), which no agent can read
+  4496	                # under the per-slug mounts; checkpoints will carry it too once they are written. This file is in the agent's own window, and the seed keys the
+  4497	                # fault plan and the scenario names how hard the run is — telling the fleet either
+  4498	                # would do part of the diagnosis for it.
+  4499	                # The ring's own accounting: what it is bounded to, and what it has lost.
+  4500	                "ring_slots": self.ring_slots,
+  4501	                "ring_losses": self.ring_losses(),
+  4502	                # The binding (ADR 0001 choice D): which world's physics this window has shown.
+  4503	                "world_id": self.executive.world_id,
+  4504	            },
+  4505	            dir_fd=root,
+  4506	        )
+  4507	        return written
+  4508	
+  4798	
+  4799	    Refusals are `ResumeRefused`, with the executive closed. The caller holds the lock.
+  4800	    """
+  4801	    body = loaded.body
+  4802	    run = body["run"]
+  4803	    snapshot_tick = int(body["identity"]["tick"])
+  4804	    try:
+  4805	        executive = Executive(
+  4806	            world,
+  4807	            diode_dir,
+  4808	            phase=run["phase"],
+  4809	            scenario=run["scenario"],
+  4909	        executive.tripped |= set(added)
+  4910	
+  4911	    # Read as `main` reads it at every start: a scenario that is not one of the vehicle's postures is garbled.
+  4912	    try:
+  4913	        postures: set[str] | None = set(load_postures(Path(world.root)))
+  4914	    except Exception:  # noqa: BLE001 - a record is then read without that one check
+  4915	        postures = None
+  4916	    record_now, problem, record_bytes = read_root_record_bytes(RECORD_FILE, dir_fd=executive.diode_fd, postures=postures)
+  4917	    expected = root_record_from_checkpoint(recovered)
+  4918	    action, why = classify_root_record(record_now, problem, expected, snapshot_tick)
+  4919	    if action == "refuse":
+  4920	        raise ResumeRefused(
+  4921	            f"the root record at {executive.diode_dir / RECORD_FILE} and {where} disagree about which world this is: {why}. "
+  4922	            "Neither is rewritten; stop the other executive or point --state-dir at the directory that serves this one"
+  4923	        )
+  4924	
+  4925	    advisories: list[dict[str, Any]] = []
+  4926	    for slug in sorted(executive.windows):
+  4927	        # ADR 0002 H: beside a verified checkpoint the legacy `pending.json` checks are advisory. The
+  5488	                    )
+  5489	                unserved = serves_refusal()
+  5490	                if unserved is not None:
+  5491	                    return refuse(unserved)
+  5492	                # **Resume** (ADR 0002 F1, G, J, L; child 3): the checkpoint and the record after it.
+  5493	                try:
+  5494	                    executive, resumption = resume_executive(
+  5495	                        world,
+  5496	                        diode_dir,
+  5497	                        checkpoint_found,
+  5498	                        boot_id=boot_id,
+  5499	                        state_dir=state_path,
+  5500	                        state_fd=state_fd,
+  5501	                        journal=journal_explicit,
+  5502	                        journal_dir_fd=journal_fd,
+  5503	                        max_batch=args.max_batch,
+  5504	                        closed_interlocks=set(args.closed_interlock or []),
+  5505	                        diode_fd=diode_fd,
+  5506	                    )
+  5507	                except ResumeRefused as exc:
+  5508	                    return refuse(f"{exc}. The executive does not start a fresh world over a saved one (ADR 0002 K)")
+  5509	                starting.closing(executive.close, state_path or diode_canonical.path)
+  5510	                # Addendum B3: a checkpoint at the recovered tick before anything is claimed — it makes the
+  5511	                # named run inputs durable and bounds the next resume's replay and re-publication.
+  5512	                try:
+
+codex
+**Land.** All candidate-3 findings are correctly addressed; no introduced defect or weakened acceptance assertion found in P’s delta.
+
+Evidence below is from chassis tree `af671d0` and vehicle commit `f443996`.
+
+- **Critical:** None.
+- **Important — replay race fixed:** `live/test_vehicle.py:316–327` checks `replayed == recovered - checkpoint` before retrying when `checkpoint > command_tick`. This correctly permits the crossed-checkpoint case with zero replay to retry. Acceptance still requires `checkpoint <= command_tick < recovered`, positive replay, and exactly one result (`328–331`). Exhausting the attempts still fails (`334`). This matches the vehicle’s replay calculation and banner (`tools/console.py:4702–4704,5525–5528`).
+- **Minor — README fixed:** `README.md:285–290` now qualifies repair as occurring beside a checkpoint, from the recovered world, with refusal if rewriting fails. The different-world refusal remains explicit. This matches `tools/console.py:4916–4922,5000–5007`; without a checkpoint, an unreadable record still refuses (`5552–5556`).
+- **Minor — malformed-then-vanished comment fixed:** `live/test_vehicle.py:159–166` explains the existing retry/removal behavior without changing it. The text seed check precedes JSON parsing (`155`); disappearance triggers relisting (`145–149`); `pending.json` must still be read whole (`174`). Vehicle JSON publication uses completed temporary files renamed into place (`tools/console.py:446–463,504–505`).
+- **Minor — diagnostics fixed:** `live/test_vehicle.py:150–152` retains failure on the fifth unsuccessful read and explicitly names the path and error. The added assertions at `268` and `305` diagnose missing/unreadable executive records before indexing.
+
+The delta’s SHA-256 matches the supplied value and contains only README and live-test changes; no resource-control changes. Static Git-object review only: no tests, builds, containers, edits, Git-state changes, or `.env` reads.
+tokens used
+39,964
+**Land.** All candidate-3 findings are correctly addressed; no introduced defect or weakened acceptance assertion found in P’s delta.
+
+Evidence below is from chassis tree `af671d0` and vehicle commit `f443996`.
+
+- **Critical:** None.
+- **Important — replay race fixed:** `live/test_vehicle.py:316–327` checks `replayed == recovered - checkpoint` before retrying when `checkpoint > command_tick`. This correctly permits the crossed-checkpoint case with zero replay to retry. Acceptance still requires `checkpoint <= command_tick < recovered`, positive replay, and exactly one result (`328–331`). Exhausting the attempts still fails (`334`). This matches the vehicle’s replay calculation and banner (`tools/console.py:4702–4704,5525–5528`).
+- **Minor — README fixed:** `README.md:285–290` now qualifies repair as occurring beside a checkpoint, from the recovered world, with refusal if rewriting fails. The different-world refusal remains explicit. This matches `tools/console.py:4916–4922,5000–5007`; without a checkpoint, an unreadable record still refuses (`5552–5556`).
+- **Minor — malformed-then-vanished comment fixed:** `live/test_vehicle.py:159–166` explains the existing retry/removal behavior without changing it. The text seed check precedes JSON parsing (`155`); disappearance triggers relisting (`145–149`); `pending.json` must still be read whole (`174`). Vehicle JSON publication uses completed temporary files renamed into place (`tools/console.py:446–463,504–505`).
+- **Minor — diagnostics fixed:** `live/test_vehicle.py:150–152` retains failure on the fifth unsuccessful read and explicitly names the path and error. The added assertions at `268` and `305` diagnose missing/unreadable executive records before indexing.
+
+The delta’s SHA-256 matches the supplied value and contains only README and live-test changes; no resource-control changes. Static Git-object review only: no tests, builds, containers, edits, Git-state changes, or `.env` reads.

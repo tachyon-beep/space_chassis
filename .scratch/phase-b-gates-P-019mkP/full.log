@@ -1,0 +1,90 @@
+Running as unit: space-chassis-p-full-1791676328.scope; invocation ID: 71dc6e9dd8494db1b23a31df32a55a8e
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [  3%]
+........................................................................ [  7%]
+........................................................................ [ 11%]
+........................................................................ [ 14%]
+........................................................................ [ 18%]
+........................................................................ [ 22%]
+........................................................................ [ 25%]
+........................................................................ [ 29%]
+........................................................................ [ 33%]
+........................................................................ [ 37%]
+........................................................................ [ 40%]
+........................................................................ [ 44%]
+........................................................................ [ 48%]
+........................................................................ [ 51%]
+........................................................................ [ 55%]
+........................................................................ [ 59%]
+........................................................................ [ 63%]
+........................................................................ [ 66%]
+........................................................................ [ 70%]
+........................................................................ [ 74%]
+........................................................................ [ 77%]
+........................................................................ [ 81%]
+........................................................................ [ 85%]
+........................................................................ [ 89%]
+........................................................................ [ 92%]
+........................................................................ [ 96%]
+...................................F.................................    [100%]
+=================================== FAILURES ===================================
+_ test_a_run_ending_cleanly_checkpoints_its_last_completed_cycle_and_an_interrupt_mid_cycle_does_not _
+[gw1] linux -- Python 3.12.3 /usr/bin/python3
+
+tmp_path = PosixPath('/tmp/pytest-of-john/pytest-3614/popen-gw1/test_a_run_ending_cleanly_chec0')
+
+    def test_a_run_ending_cleanly_checkpoints_its_last_completed_cycle_and_an_interrupt_mid_cycle_does_not(tmp_path):
+        """Commitment 5: a checkpoint at a clean end — `--cycles` exhausted, or an interrupt between cycles — and never mid-cycle.
+    
+        Mid-cycle, a window's receipt counter is drawn before the step, so a capture then would be ahead of
+        the truth. An interrupt that lands in the sleep between cycles checkpoints the last completed
+        cycle; one that lands inside a cycle (here, in a window's claim) leaves the checkpoints as they
+        were and the record — which holds every completed tick — to the next resume.
+    
+        **Each interrupt is a real `SIGINT` to a real console process** (review F6, ruling R3). The first
+        version raised `KeyboardInterrupt` from a `time.sleep` patched in the test's own process, which
+        patched every sleep in it: under `xdist` an unrelated sleep in the worker raised it and took the
+        worker — and the session — down. The process's own `KeyboardInterrupt` handler is what is tested
+        here, and nothing in the test process is patched.
+        """
+        finished = start(tmp_path / "d1", tmp_path / "s1", "alpha", extra=["--cycles", "3", "--poll", "0"])
+        assert finished.returncode == 0, finished.stderr[-800:]
+        assert generation_tick(tmp_path / "s1") == 3
+    
+>       between, state = interrupted_console(tmp_path, "sleep")
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+docs/deep_research/vehicle/tests/test_vehicle_config.py:28518: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/deep_research/vehicle/tests/test_vehicle_config.py:28492: in interrupted_console
+    out, err = process.communicate(timeout=120)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/subprocess.py:1209: in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/subprocess.py:2116: in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Popen: returncode: -9 args: ['/usr/bin/python3', '/tmp/pytest-of-john/pytes...>
+endtime = 628094.606322898, orig_timeout = 120
+stdout_seq = [b'[console] /tmp/pytest-of-john/pytest-3614/popen-gw1/test_a_run_ending_cleanly_chec0/sleep/diode slugs=alpha phase=t...c1a9769b42ff8e4c91a state-dir=/tmp/pytest-of-john/pytest-3614/popen-gw1/test_a_run_ending_cleanly_chec0/sleep/state\n']
+stderr_seq = [], skip_check_and_raise = False
+
+    def _check_timeout(self, endtime, orig_timeout, stdout_seq, stderr_seq,
+                       skip_check_and_raise=False):
+        """Convenience for checking if a timeout has expired."""
+        if endtime is None:
+            return
+        if skip_check_and_raise or _time() > endtime:
+>           raise TimeoutExpired(
+                    self.args, orig_timeout,
+                    output=b''.join(stdout_seq) if stdout_seq else None,
+                    stderr=b''.join(stderr_seq) if stderr_seq else None)
+E           subprocess.TimeoutExpired: Command '['/usr/bin/python3', '/tmp/pytest-of-john/pytest-3614/popen-gw1/test_a_run_ending_cleanly_chec0/sleep/interruptible.py', '/home/john/space_chassis/.claude/worktrees/vehicle-adoption/docs/deep_research/vehicle/tools', '/tmp/pytest-of-john/pytest-3614/popen-gw1/test_a_run_ending_cleanly_chec0/sleep/ready', 'sleep', '--diode-dir', '/tmp/pytest-of-john/pytest-3614/popen-gw1/test_a_run_ending_cleanly_chec0/sleep/diode', '--state-dir', '/tmp/pytest-of-john/pytest-3614/popen-gw1/test_a_run_ending_cleanly_chec0/sleep/state', '--slug', 'alpha', '--cycles', '0', '--poll', '0']' timed out after 120 seconds
+
+/usr/lib/python3.12/subprocess.py:1253: TimeoutExpired
+=========================== short test summary info ============================
+FAILED docs/deep_research/vehicle/tests/test_vehicle_config.py::test_a_run_ending_cleanly_checkpoints_its_last_completed_cycle_and_an_interrupt_mid_cycle_does_not

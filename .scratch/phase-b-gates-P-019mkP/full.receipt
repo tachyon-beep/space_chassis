@@ -1,0 +1,9 @@
+2026-10-11T10:52:08+11:00 grant SPACE-20261011-P-01 selection=full command: python3 -m pytest -q -p no:cacheprovider -n 2
+2026-10-11T10:52:08+11:00 before: tree=af671d04908817e914668750b7cd4f6f74034bf4 worktree=clean vehicle=f44399645fb2633e695a5d758cb5a41f43fb848c vehicle-dirty-paths=0
+2026-10-11T10:52:10+11:00 capacity: MemAvailable=41741MiB load1=3.07 cpu-busy=13%
+2026-10-11T10:52:10+11:00 competing Space drivers: none; smoke projects running: 0
+2026-10-11T10:52:10+11:00 start: unit=space-chassis-p-full-1791676328.scope systemd-run --user --scope -p CPUQuota=200% -p MemoryMax=8G nice -n 19 python3 -m pytest -q -p no:cacheprovider -n 2
+2026-10-11T10:52:13+11:00 scope readback: cgroup=/user.slice/user-1000.slice/user@1000.service/app.slice/space-chassis-p-full-1791676328.scope cpu.max=200000 100000 memory.max=8589934592 nice= 19
+2026-10-11T11:23:31+11:00 end: rc=1  result: FAILED docs/deep_research/vehicle/tests/test_vehicle_config.py::test_a_run_ending_cleanly_checkpoints_its_last_completed_cycle_and_an_interrupt_mid_cycle_does_not
+2026-10-11T11:23:31+11:00 after: tree=af671d04908817e914668750b7cd4f6f74034bf4 worktree=clean vehicle=f44399645fb2633e695a5d758cb5a41f43fb848c vehicle-dirty-paths=0
+2026-10-11T11:23:31+11:00 owned processes left in scope: 0

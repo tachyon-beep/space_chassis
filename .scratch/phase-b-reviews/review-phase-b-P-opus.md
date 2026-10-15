@@ -1,0 +1,4 @@
+# Opus confirmation review of increment P, tree af671d04 (2026-10-11) — summary as handed back
+Verdict: LAND. No Critical, no Important. Read from git objects; delta sha 4c2684bb… matched; vehicle f443996.
+Astra's Important fixed correctly (banner arithmetic :316, retry when checkpoint > command_tick :319-321, then T < N :323 and replayed > 0 :327; all-crossed still fails :334). Opus minors fixed (README :288-290 matches console.py 2696-2730, 4707-4740, 5001-5007, 5552-5556; JSON comment; unreadable file named; before/after not-None).
+Minor (optional): :316 restates the vehicle's own definition (a parse-consistency check, not replay evidence); :327 is implied by M <= T < N; README does not name a failed resume journal write (console.py:4981-4986), arguably covered by "a record that cannot be written".

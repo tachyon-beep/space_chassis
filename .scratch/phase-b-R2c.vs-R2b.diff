@@ -1,0 +1,130 @@
+diff --git a/live/stack.py b/live/stack.py
+index f3af7d0..53a7862 100644
+--- a/live/stack.py
++++ b/live/stack.py
+@@ -34,6 +34,7 @@ import shutil
+ import signal
+ import subprocess
+ import sys
++import tempfile
+ import time
+ from pathlib import Path
+ 
+@@ -164,28 +165,23 @@ def _capped(kind: str) -> list[str]:
+ 
+ def run_group(argv: list[str], *, env: dict, cwd, timeout: float) -> subprocess.CompletedProcess:
+     """Run argv as the leader of its own process group, and kill the whole group -- every
+-    descendant, a subshell waiting on a lock included -- when it times out or anything else
+-    interrupts the wait, so nothing it started can act after the caller has moved on."""
+-    process = subprocess.Popen(
+-        argv,
+-        cwd=cwd,
+-        env=env,
+-        stdout=subprocess.PIPE,
+-        stderr=subprocess.PIPE,
+-        text=True,
+-        start_new_session=True,
+-    )
+-    try:
+-        out, err = process.communicate(timeout=timeout)
+-    except BaseException:
+-        with contextlib.suppress(ProcessLookupError):
+-            os.killpg(process.pid, signal.SIGKILL)
+-        process.communicate()
+-        raise
+-    # The leader has exited; anything it left in its group goes with it.
+-    with contextlib.suppress(ProcessLookupError):
+-        os.killpg(process.pid, signal.SIGKILL)
+-    return subprocess.CompletedProcess(argv, process.returncode, out, err)
++    descendant, a subshell waiting on a lock included -- as soon as the leader exits, times out,
++    or anything else interrupts the wait, so nothing it started can act after the caller has
++    moved on. Output goes to files, not pipes: a straggler holding a pipe open would otherwise
++    keep the wait going until it had finished, and the kill would come after it acted."""
++    with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
++        process = subprocess.Popen(
++            argv, cwd=cwd, env=env, stdout=out, stderr=err, text=True, start_new_session=True
++        )
++        try:
++            returncode = process.wait(timeout=timeout)
++        finally:
++            with contextlib.suppress(ProcessLookupError):
++                os.killpg(process.pid, signal.SIGKILL)
++            process.wait()
++        out.seek(0)
++        err.seek(0)
++        return subprocess.CompletedProcess(argv, returncode, out.read(), err.read())
+ 
+ 
+ def wait_for(predicate, *, timeout: float, every: float = 1.0, what: str):
+diff --git a/tests/test_live_stack.py b/tests/test_live_stack.py
+index 2626151..0a86824 100644
+--- a/tests/test_live_stack.py
++++ b/tests/test_live_stack.py
+@@ -682,29 +682,55 @@ def test_the_vehicle_override_parses_against_the_base_compose(vehicle_stack):
+     assert vehicle["environment"]["VEHICLE_SLUGS"] == "agent_1,agent_2,agent_3"
+ 
+ 
++def _ended(pidfile, seconds: float = 5.0) -> bool:
++    """The process whose pid the child wrote is gone (or a zombie), within a bound."""
++    pid = int(pidfile.read_text())
++    deadline = time.monotonic() + seconds
++    while time.monotonic() < deadline:
++        try:
++            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
++        except OSError:
++            return True
++        if state == "Z":
++            return True
++        time.sleep(0.05)
++    return False
++
++
++def _child(tmp_path) -> tuple[str, Path, Path, Path]:
++    """A background child that says it started (its pid), then acts two seconds later; it
++    keeps the group's stdout and stderr open, as a real straggler would."""
++    ready, pidfile, late = tmp_path / "ready", tmp_path / "pid", tmp_path / "late"
++    child = f"sh -c 'echo $$ > {pidfile}; touch {ready}; sleep 2; touch {late}' &"
++    return child, ready, pidfile, late
++
++
+ def test_a_timed_out_group_leaves_nothing_behind_that_can_act_later(tmp_path):
+     """The containment check's timeout must not leave a waiting subshell to launch a sweep after
+     the test has moved on: run_group kills the whole process group."""
+-    late = tmp_path / "late"
+-    script = f"(sleep 2; touch {late}) & sleep 30"
++    child, ready, pidfile, late = _child(tmp_path)
++    script = f"{child} while [ ! -e {ready} ]; do sleep 0.05; done; sleep 30"
+     with pytest.raises(subprocess.TimeoutExpired):
+-        stack_module.run_group(
+-            ["sh", "-c", script], env=dict(os.environ), cwd=tmp_path, timeout=0.5
+-        )
+-    time.sleep(3)
++        stack_module.run_group(["sh", "-c", script], env=dict(os.environ), cwd=tmp_path, timeout=1)
++    assert ready.exists(), "the child never started, so this proves nothing"
++    assert _ended(pidfile), "the child outlived the timeout"
++    time.sleep(2.5)
+     assert not late.exists(), "a descendant outlived the timeout and acted"
+ 
+ 
+ def test_a_finished_group_s_stragglers_are_killed_too(tmp_path):
+-    late = tmp_path / "late"
++    """The leader exits while a child still holds its output open: the group is killed at the
++    leader's exit, not after the child has finished."""
++    child, ready, pidfile, late = _child(tmp_path)
++    script = f"{child} while [ ! -e {ready} ]; do sleep 0.05; done; echo started"
++    began = time.monotonic()
+     result = stack_module.run_group(
+-        ["sh", "-c", f"(sleep 2; touch {late}) & echo started"],
+-        env=dict(os.environ),
+-        cwd=tmp_path,
+-        timeout=10,
++        ["sh", "-c", script], env=dict(os.environ), cwd=tmp_path, timeout=10
+     )
++    assert time.monotonic() - began < 1.5, "the wait outlasted the leader"
+     assert result.returncode == 0 and result.stdout.strip() == "started"
+-    time.sleep(3)
++    assert _ended(pidfile), "the straggler outlived its leader"
++    time.sleep(2.5)
+     assert not late.exists(), "a straggler outlived its leader and acted"
+ 
+ 

@@ -1,0 +1,356 @@
+diff --git a/live/stack.py b/live/stack.py
+index 4eb16e9..f3af7d0 100644
+--- a/live/stack.py
++++ b/live/stack.py
+@@ -26,10 +26,12 @@ timeout, so a wedged daemon fails a test instead of hanging the suite.
+ from __future__ import annotations
+ 
+ import atexit
++import contextlib
+ import fcntl
+ import json
+ import os
+ import shutil
++import signal
+ import subprocess
+ import sys
+ import time
+@@ -160,6 +162,32 @@ def _capped(kind: str) -> list[str]:
+     return [f'    cpus: "{cpus}"', f"    mem_limit: {memory}", f"    memswap_limit: {memory}"]
+ 
+ 
++def run_group(argv: list[str], *, env: dict, cwd, timeout: float) -> subprocess.CompletedProcess:
++    """Run argv as the leader of its own process group, and kill the whole group -- every
++    descendant, a subshell waiting on a lock included -- when it times out or anything else
++    interrupts the wait, so nothing it started can act after the caller has moved on."""
++    process = subprocess.Popen(
++        argv,
++        cwd=cwd,
++        env=env,
++        stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE,
++        text=True,
++        start_new_session=True,
++    )
++    try:
++        out, err = process.communicate(timeout=timeout)
++    except BaseException:
++        with contextlib.suppress(ProcessLookupError):
++            os.killpg(process.pid, signal.SIGKILL)
++        process.communicate()
++        raise
++    # The leader has exited; anything it left in its group goes with it.
++    with contextlib.suppress(ProcessLookupError):
++        os.killpg(process.pid, signal.SIGKILL)
++    return subprocess.CompletedProcess(argv, process.returncode, out, err)
++
++
+ def wait_for(predicate, *, timeout: float, every: float = 1.0, what: str):
+     """Poll predicate until it returns something truthy; raise naming what was awaited."""
+     deadline = time.monotonic() + timeout
+@@ -199,6 +227,8 @@ class SmokeStack:
+         self._torn_down = False
+         self.lock = Path(lock) if lock is not None else SMOKE_LOCK
+         self._lock_fd: int | None = None
++        # How long a teardown waits for a --rm removal in progress before calling it left behind.
++        self.settle_seconds = 10.0
+         # Override files added after `up` by recreate(), kept on every later compose call.
+         self.overrides: list[Path] = []
+         atexit.register(self.down)
+@@ -400,12 +430,10 @@ class SmokeStack:
+             self.overrides.append(path)
+         self.compose("up", "-d", "--force-recreate", "--no-deps", service)
+ 
+-    def _labelled(self, label: str, value: str | None = None) -> list[str]:
+-        """The value of `label` on every running container that carries it (or carries it with
+-        `value`)."""
+-        wanted = label if value is None else f"{label}={value}"
++    def _labelled(self, label: str) -> list[str]:
++        """The value of `label` on every running container that carries it."""
+         template = f'{{{{.Label "{label}"}}}}'
+-        result = self.run(["docker", "ps", "--filter", f"label={wanted}", "--format", template])
++        result = self.run(["docker", "ps", "--filter", f"label={label}", "--format", template])
+         return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+ 
+     def others_running(self) -> list[str]:
+@@ -419,6 +447,16 @@ class SmokeStack:
+         sweeps = {f"a containment sweep ({owner})" for owner in self._labelled(SWEEP_LABEL)}
+         return sorted(projects | sweeps)
+ 
++    def containment_check(self) -> subprocess.CompletedProcess:
++        """scripts/verify_containment.sh against this stack, in its own process group: a timeout
++        kills every process it started, so no sweep can be launched after the test moves on."""
++        return run_group(
++            ["sh", str(REPO / "scripts" / "verify_containment.sh")],
++            env=self.containment_environment(),
++            cwd=REPO,
++            timeout=900,
++        )
++
+     def containment_environment(self) -> dict:
+         """What scripts/verify_containment.sh runs with against this stack."""
+         agents = " ".join(f"agent_{n}" for n in range(1, self.agents + 1))
+@@ -524,9 +562,10 @@ class SmokeStack:
+         try:
+             if self._torn_down:
+                 return
+-            # A containment sweep this stack's tests started and a timeout orphaned goes with it.
++            # A containment sweep this stack's tests started and a timeout orphaned goes with it,
++            # running or stopped.
+             sweeps = self.run(
+-                ["docker", "ps", "-q", "--filter", f"label={SWEEP_LABEL}={self.project}"],
++                ["docker", "ps", "-a", "-q", "--filter", f"label={SWEEP_LABEL}={self.project}"],
+                 check=False,
+             ).stdout.split()
+             if sweeps:
+@@ -536,6 +575,10 @@ class SmokeStack:
+             # Checked, not assumed: nothing of the stack's or of its sweeps is left, running or not.
+             # Left behind (or not verifiable), the stack is not torn down, and the next down retries.
+             leftovers = self.leftovers()
++            deadline = time.monotonic() + self.settle_seconds  # a --rm removal settles first
++            while leftovers and time.monotonic() < deadline:
++                time.sleep(1)
++                leftovers = self.leftovers()
+             if leftovers:
+                 raise RuntimeError(f"the smoke stack's teardown is not complete: {leftovers}")
+             self._torn_down = True
+diff --git a/live/test_containment.py b/live/test_containment.py
+index 76bae96..caac47e 100644
+--- a/live/test_containment.py
++++ b/live/test_containment.py
+@@ -1,9 +1,7 @@
+ """The first live checks: the image builds, each agent's world is up, and the walls hold (spec 9.6)."""
+ 
+-import subprocess
+-
+ from probes import postgres_answers, progress
+-from stack import REPO, wait_for
++from stack import wait_for
+ 
+ 
+ def test_the_image_builds_and_each_agent_s_postgres_answers(stack):
+@@ -12,14 +10,7 @@ def test_the_image_builds_and_each_agent_s_postgres_answers(stack):
+ 
+ 
+ def test_containment_holds_for_every_agent(stack):
+-    result = subprocess.run(
+-        ["sh", str(REPO / "scripts" / "verify_containment.sh")],
+-        cwd=REPO,
+-        env=stack.containment_environment(),
+-        capture_output=True,
+-        text=True,
+-        timeout=900,
+-    )
++    result = stack.containment_check()
+     assert result.returncode == 0, result.stdout + result.stderr
+     assert "PASS  agent_3 has no trace of its recorder's real key" in result.stdout
+     for n in range(1, stack.agents + 1):
+diff --git a/live/test_vehicle.py b/live/test_vehicle.py
+index 5dcba32..2ad0f37 100644
+--- a/live/test_vehicle.py
++++ b/live/test_vehicle.py
+@@ -13,7 +13,7 @@ import re
+ import subprocess
+ import time
+ 
+-from stack import REPO, SMOKE_VEHICLE_SEED, wait_for
++from stack import SMOKE_VEHICLE_SEED, wait_for
+ 
+ # Startup hashes the vehicle's whole configuration corpus and replays from the last checkpoint:
+ # seconds on a warm host, more on a cold one.
+@@ -182,14 +182,7 @@ def test_no_agent_window_carries_the_world_s_identity(vehicle_stack):
+ 
+ def test_containment_holds_with_the_vehicle_running(vehicle_stack):
+     stack = vehicle_stack
+-    result = subprocess.run(
+-        ["sh", str(REPO / "scripts" / "verify_containment.sh")],
+-        cwd=REPO,
+-        env=stack.containment_environment(),
+-        capture_output=True,
+-        text=True,
+-        timeout=900,
+-    )
++    result = stack.containment_check()
+     assert result.returncode == 0, result.stdout + result.stderr
+     assert "PASS  the vehicle binds /diode and /state and nothing else" in result.stdout
+     for n in range(1, stack.agents + 1):
+diff --git a/scripts/verify_containment.sh b/scripts/verify_containment.sh
+index 97a51ae..92b8ddc 100755
+--- a/scripts/verify_containment.sh
++++ b/scripts/verify_containment.sh
+@@ -263,8 +263,9 @@ else:
+     if [ -n "$image" ]; then
+         sweep=$(
+             exec 9>"${SWEEP_LOCK:-/run/user/$(id -u)/space_chassis_sweep.lock}" || exit 74
+-            flock -w "${SWEEP_LOCK_WAIT:-300}" 9 || exit 75
+-            [ -z "$(docker ps -q --filter label=space_chassis.sweep)" ] || exit 76
++            flock -w "${SWEEP_LOCK_WAIT:-120}" 9 || exit 75
++            running=$(docker ps -q --filter label=space_chassis.sweep) || exit 77
++            [ -z "$running" ] || exit 76
+             docker run --rm --network none --cpus 0.2 --memory 256m --memory-swap 256m --label "space_chassis.sweep=${SWEEP_LABEL:-operator}" --user 0 --entrypoint sh "$image" -c 'printf "LIMIT %s|%s|%s\n" "$(cat /sys/fs/cgroup/cpu.max)" "$(cat /sys/fs/cgroup/memory.max)" "$(cat /sys/fs/cgroup/memory.swap.max)" && exec find "$@"' sweep / -xdev \( -path /usr/local/bin/entrypoint.sh -o -path /opt/vehicle -o -name serve_vehicle.sh -o -name mission.yaml -o -name vehicle.yaml -o -name coupling.yaml -o -name plant.md -o -name fault_policy.yaml \) -print 2>/dev/null
+         )
+         swept=$?
+@@ -272,7 +273,13 @@ else:
+     limits=$(printf '%s\n' "$sweep" | sed -n 's/^LIMIT //p')
+     sweep=$(printf '%s\n' "$sweep" | grep -v '^LIMIT ')
+     if [ "$swept" -ne 0 ]; then
+-        bad "$agent could not be probed for the vehicle"
++        case "$swept" in
++            75) why=" (another run held the sweep lock)" ;;
++            76) why=" (another sweep is still running)" ;;
++            77) why=" (the running sweeps could not be listed)" ;;
++            *) why="" ;;
++        esac
++        bad "$agent could not be probed for the vehicle$why"
+     elif [ "$limits" != "20000 100000|268435456|0" ]; then
+         bad "$agent's image sweep did not run under its caps (read back: ${limits:-nothing})"
+     elif [ "$sweep" = /usr/local/bin/entrypoint.sh ]; then
+diff --git a/tests/test_live_stack.py b/tests/test_live_stack.py
+index 7401e57..2626151 100644
+--- a/tests/test_live_stack.py
++++ b/tests/test_live_stack.py
+@@ -8,6 +8,7 @@ import json
+ import os
+ import subprocess
+ import sys
++import time
+ from pathlib import Path
+ 
+ import pytest
+@@ -402,10 +403,15 @@ def test_every_service_the_smoke_stack_starts_is_capped_and_the_sum_is_in_budget
+ 
+ def test_the_containment_check_s_image_sweep_runs_under_the_sweep_caps():
+     text = (ROOT / "scripts" / "verify_containment.sh").read_text(encoding="utf-8")
+-    sweep = next(line for line in text.splitlines() if "--entrypoint find" in line)
++    sweep = next(line for line in text.splitlines() if "space_chassis.sweep=" in line)
+     memory = stack_module.SWEEP_MEMORY
+     caps = f"--cpus {stack_module.SWEEP_CPUS} --memory {memory} --memory-swap {memory}"
+     assert caps in sweep, sweep
++    # The readback the script demands is these caps as the kernel writes them: quota per 100 ms
++    # period, memory in bytes, and no swap past it.
++    quota = round(float(stack_module.SWEEP_CPUS) * 100000)
++    expected = f"{quota} 100000|{stack_module.memory_bytes(memory)}|0"
++    assert f'[ "$limits" != "{expected}" ]' in text, expected
+ 
+ 
+ def test_the_live_run_s_scope_command_caps_what_the_conftest_requires():
+@@ -607,21 +613,22 @@ def test_down_removes_a_containment_sweep_its_tests_left_running(tmp_path):
+     smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=runner)
+     smoke.prepare()
+     smoke.down()
+-    asked = next(argv for argv, _ in runner.calls if argv[:3] == ["docker", "ps", "-q"])
+-    assert asked[-1] == f"label={stack_module.SWEEP_LABEL}={smoke.project}"
++    listed = [argv[-1] for argv, _ in runner.calls if argv[:4] == ["docker", "ps", "-a", "-q"]]
++    sweeps = f"label={stack_module.SWEEP_LABEL}={smoke.project}"
++    # Stopped sweeps are removed too (`ps -a`), then the project and its sweeps are checked gone.
++    assert listed == [sweeps, f"label=com.docker.compose.project={smoke.project}", sweeps]
+     assert ["docker", "rm", "-f", "abc123"] in [argv for argv, _ in runner.calls]
+-    checked = [argv[-1] for argv, _ in runner.calls if argv[:4] == ["docker", "ps", "-a", "-q"]]
+-    assert checked == [
+-        f"label=com.docker.compose.project={smoke.project}",
+-        f"label={stack_module.SWEEP_LABEL}={smoke.project}",
+-    ]
+     assert not smoke.root.exists()
+ 
+ 
+ def test_a_teardown_that_leaves_a_container_behind_is_not_complete_and_is_retried(tmp_path):
+     runner = Leftover(sweep_ids="abc123\n", stuck=True)
+-    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=runner)
++    smoke = stack_module.SmokeStack(
++        3, root=tmp_path / "smoke", runner=runner, lock=tmp_path / "lock"
++    )
++    smoke.settle_seconds = 0
+     smoke.prepare()
++    smoke._hold_the_lock()
+     with pytest.raises(RuntimeError, match="teardown is not complete: .*abc123"):
+         smoke.down()
+     assert smoke.root.exists() and not smoke._torn_down and smoke._lock_fd is None
+@@ -633,6 +640,7 @@ def test_a_teardown_that_leaves_a_container_behind_is_not_complete_and_is_retrie
+ def test_a_teardown_whose_listing_fails_is_not_taken_as_complete(tmp_path):
+     runner = Leftover(listing_rc=1)
+     smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=runner)
++    smoke.settle_seconds = 0
+     smoke.prepare()
+     with pytest.raises(RuntimeError, match="the listing failed"):
+         smoke.down()
+@@ -648,7 +656,7 @@ def test_the_containment_check_labels_its_sweep_with_the_stack_s_project(tmp_pat
+     assert env["AGENTS"] == "agent_1 agent_2 agent_3"
+     assert env["COMPOSE"] == " ".join(smoke.compose_command())
+     text = (ROOT / "scripts" / "verify_containment.sh").read_text(encoding="utf-8")
+-    sweep = next(line for line in text.splitlines() if "--entrypoint find" in line)
++    sweep = next(line for line in text.splitlines() if "space_chassis.sweep=" in line)
+     assert f'--label "{stack_module.SWEEP_LABEL}=${{SWEEP_LABEL:-operator}}"' in sweep
+ 
+ 
+@@ -672,3 +680,35 @@ def test_the_vehicle_override_parses_against_the_base_compose(vehicle_stack):
+     assert vehicle["image"] == stack_module.SMOKE_VEHICLE_IMAGE
+     assert vehicle["build"]["target"] == "vehicle"
+     assert vehicle["environment"]["VEHICLE_SLUGS"] == "agent_1,agent_2,agent_3"
++
++
++def test_a_timed_out_group_leaves_nothing_behind_that_can_act_later(tmp_path):
++    """The containment check's timeout must not leave a waiting subshell to launch a sweep after
++    the test has moved on: run_group kills the whole process group."""
++    late = tmp_path / "late"
++    script = f"(sleep 2; touch {late}) & sleep 30"
++    with pytest.raises(subprocess.TimeoutExpired):
++        stack_module.run_group(
++            ["sh", "-c", script], env=dict(os.environ), cwd=tmp_path, timeout=0.5
++        )
++    time.sleep(3)
++    assert not late.exists(), "a descendant outlived the timeout and acted"
++
++
++def test_a_finished_group_s_stragglers_are_killed_too(tmp_path):
++    late = tmp_path / "late"
++    result = stack_module.run_group(
++        ["sh", "-c", f"(sleep 2; touch {late}) & echo started"],
++        env=dict(os.environ),
++        cwd=tmp_path,
++        timeout=10,
++    )
++    assert result.returncode == 0 and result.stdout.strip() == "started"
++    time.sleep(3)
++    assert not late.exists(), "a straggler outlived its leader and acted"
++
++
++def test_the_live_tests_run_the_containment_check_in_its_own_group():
++    for name in ("test_containment.py", "test_vehicle.py"):
++        text = (ROOT / "live" / name).read_text(encoding="utf-8")
++        assert "stack.containment_check()" in text and "verify_containment.sh" not in text, name
+diff --git a/tests/test_verify_containment.py b/tests/test_verify_containment.py
+index 3fdd63d..4b1efb5 100644
+--- a/tests/test_verify_containment.py
++++ b/tests/test_verify_containment.py
+@@ -31,7 +31,7 @@ case "$*" in
+     *" ps --format"*)
+         printf '%b' "${SERVICES-agent_1\nagent_2\nrecorder_1\nrecorder_2\n}"; exit 0 ;;
+     *"ps -q --filter label=space_chassis.sweep"*)
+-        printf '%b' "${RUNNING_SWEEPS:-}"; exit 0 ;;
++        printf '%b' "${RUNNING_SWEEPS:-}"; exit "${RUNNING_SWEEPS_RC:-0}" ;;
+     *" ps -q "*)
+         for last in "$@"; do :; done
+         case " ${ABSENT:-} " in *" $last "*) exit 0 ;; esac
+@@ -262,6 +262,22 @@ def test_no_sweep_starts_while_another_sweep_is_running(run):
+     assert not any("space_chassis.sweep=" in line for line in run.argv_lines())
+ 
+ 
++def test_no_sweep_starts_when_the_running_sweeps_cannot_be_listed(run):
++    out = run(
++        COMPOSE="docker compose -p probe",
++        AGENTS="agent_1",
++        IMAGE_ID="sha256:img",
++        IMAGE_SWEEP=SENTINEL_PATH + "\\n",
++        IMAGE_SWEEP_RC="0",
++        RUNNING_SWEEPS_RC="1",
++    ).stdout
++    assert (
++        "FAIL  agent_1 could not be probed for the vehicle (the running sweeps could not be listed)"
++        in out
++    )
++    assert not any("space_chassis.sweep=" in line for line in run.argv_lines())
++
++
+ def test_no_sweep_starts_while_another_run_holds_the_sweep_lock(run):
+     import fcntl
+ 
