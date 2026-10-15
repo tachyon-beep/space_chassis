@@ -587,7 +587,17 @@ state:
         note: >-
           the rated speed is one scalar, and it closes this mapping, that edge and
           `pump_1_speed_rpm`'s own driver. What it would take is a pump curve or a rated rpm for the
-          CSM's coolant pump, which no source in the corpus reached gives
+          CSM's coolant pump, which no source in the corpus reached gives. **Searched in WP02
+          (2026-10-15), and none gives it:** NASA TN D-6718 (March 1972) pp. 3, 11 (a centrifugal
+          pump moving 200 lb/hr; Table II lists a "Pump" power whose OCR column cannot be aligned);
+          SM2A-03 Block II Vol. 1 §2.7 (ibiblio `aoh-v1-2-07-ecs.pdf`), whose pp. 2.7-17/18 give the
+          33/167 lb/hr split and p. 2.7-24 says the larger motors take 200 V 3-phase ac, while its
+          performance-and-design-data table (pp. 2.7-24 to 2.7-34) is illegible in the scan; the CSM
+          News Reference ECS section (ALSJ `CSM14_Environmental_Control_Subsystem_pp117-136.pdf`)
+          p. 122, "three centrifugal-type pumps" in one housing, with no speed. A 400 Hz motor's
+          synchronous speeds are a fact about motors rather than about this pump, so they do not
+          close it. The question for John is whether the pump's state should be a flow fraction of
+          the published 200 lb/hr instead of an rpm (`docs/evidence/wp02-thermal-eclss-consumables.md`)
     provenance:
       basis: chosen
       reason: "as coolant_flow_kg_s; the pump has its own speed state because a blocked loop and a slowing pump produce the same flow with different speeds, and that difference is the diagnosis"

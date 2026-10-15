@@ -346,6 +346,20 @@ consumers:
         rather than only the claim is that `rate_kg_s` is an absolute rate and it needs a load:
         `load_budget.csm_total_demand_w` supplies it, so the draw is a product of two declarations
         instead of a fourth place for one number
+      cross_check: >-
+        **a second document gives the same per-ampere rates.** The J-mission EPS training document
+        (October 1971, https://www.ibiblio.org/apollo/Documents/J%20Mission%20Electrical%20Power%20System%20Oct%201971.pdf),
+        p. 2.6-21, "Reactant Consumption and Water Production": O2 = 2.04 x 10^-2 I lb/hr,
+        H2 = 2.57 x 10^-3 I lb/hr, H2O = 2.297 x 10^-2 I lb/hr (10.42 cc per ampere-hour), with a
+        table from 0.5 to 100 A. This vehicle's figures at the rated 29 V give 8.8619e-8 x 29 x 3600
+        = 9.2518e-3 kg = **0.020397 lb O2 per ampere-hour** (0.01 % from 0.0204), 1.1166e-8 x 29 x
+        3600 = **0.0025700 lb H2**, and 0.020397 x 1.126 = **0.022967 lb water** (0.01 % from
+        0.02297). Effectivity: the J document describes the Apollo 15-17 CSM, whose fuel-cell
+        powerplants are the same Block II design as the Apollo 11 CSM's; its tank capacities (three
+        O2 tanks of 320 lb usable, three H2 of 28 lb, pp. 2.6-6 and 2.6-14) are a J-mission
+        configuration and are not used here. The validation case a WP04/WP06 rule must pass: a
+        fuel cell held at 25 A for one hour draws 0.510 lb O2 and 0.0643 lb H2 and makes 0.574 lb
+        of water, independent of the bus voltage the rule computes
   - id: fuel_cell_h2
     stock: h2_csm
     edge: E-H2-DRAW
