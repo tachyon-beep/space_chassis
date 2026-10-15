@@ -252,7 +252,7 @@ zero failures/errors/skips required; supervisor success alone is insufficient. E
 release and independent cleanup verification required. No retry/full/build/live or direct owner
 message; nothing launched by this coordinator. Emmy retains the single browser relay.
 
-**CURRENT SLOT: FREE / RELEASED — 00:23 AEDT October 12 (master §36).** S1 accepted: actual
+**Previous slot: FREE / RELEASED — 00:23 AEDT October 12 (master §36).** S1 accepted: actual
 pytest exit 0, exactly 25 selected unique JUnit cases, zero failures/errors/skips, 25.75 seconds;
 caps held, no OOM, peak 559.09 MiB, identities unchanged. Owner release 13:17:14 UTC October 11;
 independent cleanup at 13:21:21 proves both units/cgroups and run PIDs gone, no token holders or
@@ -261,6 +261,18 @@ final integration material and the repository-defined full two-lane gate proposa
 requires a separate allocation. Implementation approval stands. Option B external publication
 remains a later John decision after the concrete qualified package is ready; tier-1 publication
 approval is not transferred. No new grant, commit, publication or direct owner message here.
+
+**CURRENT SLOT: FREE / RELEASED — 00:55 AEDT October 12 (master §37).** Corrected final Option B
+preparation verified: candidate-5 tree `ccc2782e…`, manifest `bbfd222b…` (14 matching entries),
+wording confirmation r4 approved. Literal committed-head qualification retained. Coordinator
+records a one-candidate exception to pre-commit test sequencing: the existing owner may make the
+reviewed local candidate commit, explicitly unqualified/unpublished, then prepare clean detached
+qualification at its exact SHA. This is not external-publication authority or a runtime grant.
+G-2 selected: separate static/full-pytest allocations per lane, serial 3.12 then 3.13, retaining all
+seven steps and whole-suite invocations. Deadlines remain 300/3000/300/2300 seconds, payload caps
+2 CPUs/6 GiB/no swap/no GPU. Next: owner returns commit identity and repinned/reviewed G-2 package
+through Emmy's existing relay; only then consider a fresh G312s allocation. No new user decision
+is needed for this preparation. No launch or direct owner message; historical R2c grant stays closed.
 
 | channel | for |
 |---|---|

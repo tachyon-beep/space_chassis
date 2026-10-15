@@ -2324,3 +2324,133 @@ gates. Chassis brief remains draft awaiting John's final-text approval, and issu
 ELSPETH priority and Sultai's reservation remain intact. No new writer, direct owner message,
 execution, retry, commit or publication was performed here. Only coordinator records changed;
 main index SHA256 remains `86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.
+
+## 37. Option B qualification sequence decided; allocation still pending — 2026-10-12 00:55 AEDT
+
+**Slot remains FREE / RELEASED under §36; this section grants no execution.** This continues
+Emmy's delegated review of final Option B qualification policy and scheduling. The historical
+R2c root request was completed and released in §28; its 2-CPU/8-GiB/10-minute grant is not reused.
+The existing Vehicle owner and Emmy's single browser relay retain their roles. No owner message,
+candidate commit, worktree creation, collection, test, supervisor or systemd launch was performed
+by this coordinator.
+
+### Corrected package verified, not qualified
+
+The parent's freshness correction identified ambiguous quiet-console wording. The owner has now
+corrected it so **both branches require an empty `commands` list**, matching candidate
+`tools/console.py:4411–4419`. Read-only verification at 13:51–13:54 UTC confirms:
+
+| item | verified identity |
+|---|---|
+| candidate 5 diff | `0d4da11e9cbe56fcad7e09c48e027340d41f1bae438adfe8cce9dcc889a951d0` |
+| candidate 5 tree | `ccc2782e350a6b9abe33d19db6884ac3fb82ec95`; all 92 tracked file blobs match |
+| source HEAD / branch | `f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f` / `codex/39-take-by-rename`; no untracked non-ignored files |
+| current gate manifest, 14 entries, all match | `bbfd222b59d7a28b1da256012ff77388bb8aaa14ec6fb4dd0feaa9475609c418` |
+| corrected `CONTRACT-PACKAGE-B.md` | `5f2c329527395fc12d75a53ac946fc0ed0315382d996759f78c7154efd979705` |
+| wording-only confirmation `reviews/B-final-package-r4.md` | `3043f59c5b3a0df8f6d40583e3288e90c653e0bb3c0e7036754f2c1c8b4ea9ba` |
+| unchanged gate driver | `041db2859507f1df0b04ec2b9841489720056dba4b0a8bd1282afc4d02af5cb8` |
+
+Paths above are under `.scratch/wp01-handoff/diag-contract-probe/`, with gate material in
+`B-sel1/gate/`. The full r1–r4 review chain was read and its file hashes verified: r1/r2 required
+changes, r3 approved crash detection, and r4 approved the final wording. The old manifest
+`0dc258a8…` is superseded. `PROPOSAL-G.md` §6 still lists only r1; the owner discloses this in
+`B-sel1/G-RELAY-FINAL.md`. The next revision must make the proposal current.
+
+Code/tests remain the approved candidate-3 bytes (`010061b2…` / `f01bf285…`). Candidate 5 adds
+reviewed README/ADR precision. The intended 551 cases are a static expectation, not an observed
+full-gate result. The proposed gate worktree and gate evidence directories are absent. The owner's
+relay separately discloses helper-only AST/string checks and helper ruff, including an unrecorded
+uvx ruff version and a formatting-check failure; none is repository qualification. The supervisor
+and repository gate have not run for G.
+
+### Coordinator decision: local candidate commit, then literal committed-head qualification
+
+**Reject the proposed substitution of an uncommitted tree for the exact committed head.** Keep
+`governance/vehicle/practice.md:44,56`: both full lanes qualify the same SHA in an isolated clean
+detached worktree. Hosted CI's partial coverage is not a substitute for the seven local steps.
+
+John's Option B implementation approval (§29) includes ordinary local implementation commits;
+`practice.md:39–44` itself places focused implementation commits before exact-head gating. External
+publication is separately reserved by `practice.md:24`. The remaining issue is sequencing:
+candidate `CONTRIBUTING.md:32` and `AGENTS.md:84` explicitly require the whole suite before a commit.
+Testing after a commit does **not** literally meet that requirement. `PROPOSAL-G.md` §3's claim
+that a post-commit, pre-push gate would satisfy it must be removed.
+
+Under the delegated implementation/coordination authority, this section records a **bounded
+sequencing exception for one local, unpublished qualification-candidate commit**, made only by
+the existing Vehicle owner in its owned topic worktree after the final source/package review.
+This is an explicit coordinator exception, not a waiver found in the repository text, and not a
+claim that the suite already passed. It supersedes §36's pre-commit sequencing for this one
+candidate only. The independent governance reviewer concurs with this authority distinction.
+
+The owner may commit exactly the four reviewed candidate-5 files: `tools/console.py`,
+`tests/test_vehicle_config.py`, `README.md`, and
+`docs/decisions/0002-mission-clock-and-continuity.md`, with the prepared `vehicle:` message.
+The parent must be `f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f` and the resulting tree must be
+`ccc2782e350a6b9abe33d19db6884ac3fb82ec95`; otherwise stop and return the delta. Keep it explicitly
+**UNQUALIFIED / UNPUBLISHED** until the full gates and final evidence review pass. Preserve cited
+history; no amend, reset, unrelated staging or hook bypass. If commit hooks would start a workload
+requiring the shared slot, return that fact before running them. This exception grants no runtime
+allocation, push, PR, merge, adoption, release or deployment authority.
+
+### Coordinator decision: G-2, four serial allocations with unchanged coverage
+
+Select **G312s → G312p → G313s → G313p**, each separately admitted and released. Every lane retains
+all six non-pytest steps plus **one whole-suite pytest invocation**. No test sharding or reduced
+coverage. The current driver deliberately continues after failed step expectations; consequently
+G-1 could spend a whole pytest run after a cheap static failure. G-2 gives a verified stop boundary
+before pytest without changing the reviewed helper. The extra two admission/release cycles are
+accepted. Selection of this shape does not reserve any of the four allocations.
+
+| selection | GO deadline | payload RuntimeMaxSec | outer RuntimeMaxSec plus stop |
+|---|---|---|---|
+| G312s | 300 s | 365 s | 900 + 30 s |
+| G312p | 3,000 s | 3,065 s | 3,600 + 30 s |
+| G313s | 300 s | 365 s | 900 + 30 s |
+| G313p | 2,300 s | 2,365 s | 2,900 + 30 s |
+
+The tier-1 raw logs independently confirm pytest **1,990.54 s** on 3.12 and **1,484.85 s** on
+3.13 (542 cases); whole lanes were 2,017 and 1,510 s. Static steps took roughly 27 and 25 s.
+Allow roughly an hour of payload work, plus coordination; candidate-5 duration and full-suite peak
+memory remain unmeasured. These deadlines retain realistic headroom. The four outer limits sum to
+8,420 s including stops (2 h 20 min 20 s), excluding inter-allocation coordination; they are not an
+elapsed programme completion promise. No 10-minute deadline is imposed on either full pytest run.
+
+Retain proposed payload caps **2 CPUs / 6 GiB / zero swap**, nice 19, no GPU; 6 GiB is a ceiling,
+not a measured full-suite requirement. ELSPETH keeps priority and Sultai's reservation is untouched.
+One active Space selection and two total pytest workers maximum. Each next allocation requires
+the prior phase's actual expected results, explicit owner release and independent cleanup proof;
+any failure or abort stops the sequence, with no retry.
+
+### Concrete next relay and remaining prerequisites
+
+Emmy's existing relay should tell the Vehicle owner: **make the bounded local candidate commit
+above, return its exact SHA/parent/tree, and revise the G-2 preparation package for that committed
+head; do not launch.** In that preparation:
+
+1. Replace detached-base-plus-patch setup with a clean detached checkout of the candidate commit.
+   Repin the four selected specs' expected HEAD to that SHA. For the unchanged v7 identity function,
+   keep `base=f75420c` and the verified base-relative candidate diff hash, while separately proving
+   clean index/worktree and no untracked non-ignored files before/after. Return the exact setup and
+   cleanup commands; the new committed gate worktree should not need forced removal.
+   The expanded prelaunch block in `G-RELAY-FINAL.md` is expressly not independently reviewed and
+   is not accepted for execution here. Its hash pipeline does not explicitly propagate Git failure,
+   and its throwaway-index chain ends with unconditional cleanup that can mask the prior status.
+   Replace that block rather than carrying it forward: check every command's exit, compare actual
+   identities against expected values, and fail closed on observation failure. A clean committed
+   checkout removes the need for patch application or a throwaway-index tree write.
+2. Update proposal §§2,3,5,6 and relay to reflect this sequencing exception, selected phases, current
+   reviews and actual commit. Preserve candidate/code/test and corrected contract identities.
+   Re-freeze the manifest; obtain a confirming review of the changed specs/setup/proposal only.
+3. Return complete expanded commands, new spec/manifest hashes, interpreter/lock identity and fresh
+   evidence/log/unit paths. Preserve xdist `--max-worker-restart=0` and independent crash detection.
+   Acceptance still requires actual payload exit 0, all expected step outcomes, and independently
+   parsed 551 unique cases with zero failures/errors/skips for each pytest phase.
+4. After verifying that final package, this coordinator may consider **G312s only** under a fresh
+   separate allocation with current capacity/ownership and identity checks. No current grant exists.
+
+No new John decision is needed for this local sequencing/scheduling preparation. Option B external
+publication remains John's later decision once a concrete qualified package is reviewable. The
+corrected package is now verified as preparation; committed-head/spec refresh and allocation remain
+the immediate prerequisites. Only coordinator records changed; the main index remains SHA256
+`86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.
