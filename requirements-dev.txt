@@ -1,0 +1,13 @@
+# What a host needs to run the one suite and the linters (`make setup`).
+#
+# This is not the agents' floor (that is aurora/requirements-agent.txt, baked into
+# the image) and it adds no dependency to the operator-side services. The harness
+# and the recorder import openai and httpx, and their suites run them on the host;
+# the vehicle's tools need PyYAML and nothing else.
+openai<3
+httpx<1
+PyYAML
+pytest
+pytest-xdist
+# Pinned so `ruff format --check` gives the same answer on every host.
+ruff==0.17.0

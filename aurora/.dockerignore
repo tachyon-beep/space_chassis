@@ -1,0 +1,45 @@
+# Build context hygiene. The image needs the code, the brief and the crate
+# registry; it must never carry a run's leftovers, a fleet's home, or a
+# database of anything.
+volumes/
+# The volume images live beside volumes/, preallocated and large: never source, never context.
+volume-images/
+endurance/runs/
+tests/
+docs/
+site/
+
+# The context is `aurora/`: the vehicle (`../vehicle`), the corpus and contract (`../docs`) and the
+# governance (`../governance`) are outside it, so no COPY here can reach them. The vehicle stage
+# receives the vehicle as a separate named context (`Dockerfile.agent`). The project's documents are
+# in `../docs`, outside the context too.
+
+.git/
+.github/
+# The governance stream is outside this context; the line stays so a context widened by mistake
+# still cannot carry design reasoning and the vehicle's records to the fleet.
+governance/
+.scratch/
+# The smoke stack builds after it prepares, so its scratch root is beside the context.
+.smoke-*/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+
+# The registry itself is mounted at run time, not baked: it is large, it is
+# versioned on the host, and an image that carried it would need rebuilding
+# every time a crate is added.
+vendor/.cargo-home/
+vendor/kitchen/target/
+
+.env
+*.log
+
+# Patterns are anchored at the context root, so `tests/` above leaves these in. The harness's,
+# recorder's and pump's tests never reach an image, nor what the harness tests leave behind.
+harness/tests/
+harness/session_context.json
+harness/tombstones/
+recorder/tests/
+pump/tests/
