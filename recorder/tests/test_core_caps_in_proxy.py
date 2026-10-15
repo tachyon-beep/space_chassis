@@ -39,7 +39,7 @@ class _Response:
     def __init__(self, body):
         self._body = body
 
-    def read(self):
+    def read(self, size=-1):
         return self._body
 
     def getheaders(self):

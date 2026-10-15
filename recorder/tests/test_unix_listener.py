@@ -45,7 +45,7 @@ def fake_upstream(monkeypatch):
     class _Response:
         status = 200
 
-        def read(self):
+        def read(self, size=-1):
             return body
 
         def getheaders(self):

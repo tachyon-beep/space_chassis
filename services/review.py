@@ -51,7 +51,7 @@ from common import env_int, iso, read_json, slugs_from_env  # noqa: E402
 
 TRANSCRIPTS_DIR = Path(os.environ.get("TRANSCRIPTS_DIR", "/transcripts"))
 TELEMETRY_DIR = Path(os.environ.get("TELEMETRY_DIR", "/telemetry"))
-MIRROR_DIR = Path(os.environ.get("MIRROR_DIR", "/telemetry/agents"))
+MIRROR_DIR = Path(os.environ.get("MIRROR_DIR", "/mirror"))
 CLAIM = health.CLAIM_LABEL
 
 # How much of a file's tail is read to serve one page. A turn's line holds the

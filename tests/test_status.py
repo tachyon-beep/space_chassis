@@ -200,3 +200,11 @@ def test_status_text_output_carries_no_terminal_control_characters(tmp_path):
     for control in ("\x1b", "\x07", "\x9b"):
         assert control not in result.stdout
     assert "Recovery event 1" in result.stdout
+
+
+def test_a_truncated_window_is_marked_in_the_text(tmp_path, monkeypatch):
+    volumes = tmp_path / "volumes"
+    make_agent(volumes, "agent_1", transcript_ago=5)
+    row = status.agent_row("agent_1", "agent_1", volumes, time.time(), 60, {"requests": 1}, None)
+    row["signals"]["window"]["truncated"] = True
+    assert "incarnations 1+" in status.render([row], verbose=False)

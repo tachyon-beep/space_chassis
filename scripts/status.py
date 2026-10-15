@@ -174,7 +174,7 @@ def render(rows: list[dict], verbose: bool) -> str:
             f"{row['liveness']:<13}",
             f"talked {_seconds(row['transcript_age']):>5} ago",
             f"mirror {_seconds(row['mirror_age']):>5}",
-            f"incarnations {signals['incarnations']}",
+            f"incarnations {signals['incarnations']}{'+' if signals['window'].get('truncated') else ''}",
             f"hour {spend['requests']}/{cap}",
             f"refusals {signals['refusals']}",
         ]
@@ -191,6 +191,10 @@ def render(rows: list[dict], verbose: bool) -> str:
             )
     lines.append("")
     lines.append(f"{len(rows)} agent(s). {CLAIM}; everything else is read from the record.")
+    if any(row["signals"]["window"].get("truncated") for row in rows):
+        lines.append(
+            "+ counted over the newest part of a transcript that is larger than the window"
+        )
     return "\n".join(lines)
 
 

@@ -1,5 +1,9 @@
+import dataclasses
+import functools
 import gzip
+import http.client
 import http.server
+import math
 import shutil
 import socket
 import socketserver
@@ -27,6 +31,11 @@ EVENTS_MAX_BYTES = 16_777_216
 # hygiene inside the recorder, which runs under a memory limit; not a ceiling
 # on what a stream may spend.
 REQUEST_MAX_BYTES = int(os.environ.get("REQUEST_MAX_BYTES", str(16_777_216)))
+# A buffered upstream response is read at most this far; past it the reply is withheld (502) and
+# recorded as the prefix read, its usage unknown.
+RESPONSE_MAX_BYTES = int(os.environ.get("RESPONSE_MAX_BYTES", str(16_777_216)))
+# Every raw body the recorder writes or prints is cut here.
+RAW_RECORD_CHARS = 1_000_000
 # The most of a streamed body's raw bytes the recorder keeps, for a body that
 # carries no events, and the longest single event line it parses. The
 # reassembled completion is held whole; the body it came from is not.
@@ -257,12 +266,175 @@ class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_FORWARD_OPENER = urllib.request.build_opener(_RefuseRedirects)
+@dataclasses.dataclass(frozen=True)
+class Timing:
+    """The request deadlines, in seconds from the start of a request (SV O3, per request here).
+
+    The harness's client gives a reply up to client_timeout; the recorder answers inside it with
+    margin to spare. The upstream phase ends at t0 + upstream however late it began, and no
+    request starts its upstream phase later than t0 + latest_start.
+    """
+
+    client_timeout: float = 600
+    margin: float = 30
+    upstream: float = 540
+    latest_start: float = 480
+    operation: float = 60
+
+
+def timing_from_environment():
+    def number(name, default):
+        raw = os.environ.get(name, "").strip()
+        try:
+            return float(raw) if raw else default
+        except ValueError:
+            return float("nan")
+
+    base = Timing()
+    return Timing(
+        client_timeout=number("RECORDER_CLIENT_TIMEOUT", base.client_timeout),
+        margin=number("RECORDER_DEADLINE_MARGIN", base.margin),
+        upstream=number("RECORDER_UPSTREAM_DEADLINE", base.upstream),
+        latest_start=number("RECORDER_LATEST_START", base.latest_start),
+        operation=number("RECORDER_OPERATION_TIMEOUT", base.operation),
+    )
+
+
+def timing_problems(timing):
+    """Why a timing profile cannot work; empty when it can."""
+    problems = []
+    for field in dataclasses.fields(timing):
+        value = getattr(timing, field.name)
+        if not isinstance(value, (int, float)) or not math.isfinite(value):
+            problems.append(f"{field.name} is not a finite number")
+        elif value < 0 or (value == 0 and field.name != "margin"):
+            problems.append(f"{field.name} must be positive")
+    if problems:
+        return problems
+    if timing.latest_start >= timing.upstream:
+        problems.append("latest_start must be earlier than upstream")
+    if timing.upstream > timing.client_timeout - timing.margin:
+        problems.append("upstream must end inside client_timeout - margin")
+    if timing.operation > timing.upstream:
+        problems.append("operation must not exceed upstream")
+    return problems
+
+
+TIMING = timing_from_environment()
+DEADLINE_CLOCK = time.monotonic
+# The per-operation socket timeout runs this far past the deadline, so the timer, not the socket,
+# is what ends a request at its deadline.
+OPERATION_GRACE = 1.0
+
+
+def _shut(sock):
+    """Shut a socket for both directions; whatever state it is in, quietly."""
+    if sock is None:
+        return
+    with contextlib.suppress(OSError, ValueError, AttributeError):
+        socket.socket.shutdown(sock, socket.SHUT_RDWR)
+
+
+class Deadline:
+    """One request's clock, and the socket its timer shuts at t0 + upstream."""
+
+    def __init__(self, timing=None, clock=None):
+        self.timing = timing if timing is not None else TIMING
+        self.clock = clock if clock is not None else DEADLINE_CLOCK
+        self.t0 = self.clock()
+        self.connected = False
+        self.fired = False
+        self._sock = None
+        self._lock = threading.Lock()
+        self._timer = None
+
+    def elapsed(self):
+        return self.clock() - self.t0
+
+    def left(self):
+        return self.t0 + self.timing.upstream - self.clock()
+
+    def may_start(self):
+        return self.clock() - self.t0 <= self.timing.latest_start
+
+    def operation_timeout(self):
+        return max(0.05, min(self.timing.operation, self.left() + OPERATION_GRACE))
+
+    def arm(self):
+        self._timer = threading.Timer(max(0.0, self.left()), self.fire)
+        self._timer.daemon = True
+        self._timer.name = "recorder-deadline"
+        self._timer.start()
+
+    def disarm(self):
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+
+    def fire(self):
+        with self._lock:
+            self.fired = True
+            sock = self._sock
+        _shut(sock)
+
+    def register(self, sock):
+        """The upstream socket now exists: the request counts as sent from here on."""
+        with self._lock:
+            self._sock = sock
+            self.connected = True
+            fired = self.fired
+        if fired:
+            _shut(sock)
+
+
+class WatchedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, *args, deadline=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._deadline = deadline
+
+    def connect(self):
+        super().connect()
+        if self._deadline is not None:
+            self._deadline.register(self.sock)
+
+
+class WatchedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, *args, deadline=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._deadline = deadline
+
+    def connect(self):
+        # The TLS wrap replaces the socket object; the wrapped one is what the timer must shut.
+        super().connect()
+        if self._deadline is not None:
+            self._deadline.register(self.sock)
+
+
+class _WatchedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        connection = functools.partial(WatchedHTTPConnection, deadline=getattr(req, "deadline", None))
+        return self.do_open(connection, req)
+
+
+class _WatchedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        connection = functools.partial(WatchedHTTPSConnection, deadline=getattr(req, "deadline", None))
+        return self.do_open(connection, req, context=self._context)
+
+
+_FORWARD_OPENER = urllib.request.build_opener(_RefuseRedirects, _WatchedHTTPHandler, _WatchedHTTPSHandler)
 
 
 def forward_open(req, timeout=60):
-    """Open an upstream request without following redirects."""
+    """Open an upstream request without following redirects.
+
+    A request carrying a `deadline` attribute registers its upstream socket with it, so the
+    deadline's timer can cut the exchange at any phase.
+    """
     return _FORWARD_OPENER.open(req, timeout=timeout)
+
+
+_real_forward_open = forward_open
 
 
 def _capped_text(value, limit):
@@ -350,7 +522,11 @@ def iter_response_chunks(response, size=65536):
         yield piece
 
 
-def relay_chunks(writer, response, record, size=65536):
+class _DeadlinePassed(Exception):
+    pass
+
+
+def relay_chunks(writer, response, record, size=65536, deadline=None):
     """Relay a response body to the client with chunked transfer framing.
 
     Each piece is fed to the record as it passes, so nothing holds the body
@@ -361,13 +537,26 @@ def relay_chunks(writer, response, record, size=65536):
     error = None
     try:
         for piece in iter_response_chunks(response, size):
+            if deadline is not None and deadline.fired:
+                raise _DeadlinePassed("upstream deadline")
             record.feed(piece)
             writer.write(b"%X\r\n" % len(piece) + piece + b"\r\n")
+        # A socket shut at the deadline reads as an end of body: only the flag can tell.
+        if deadline is not None and deadline.fired:
+            raise _DeadlinePassed("upstream deadline")
         writer.write(b"0\r\n\r\n")
     except Exception as e:
         error = e
     record.finish()
     return error
+
+
+def raw_record(data):
+    """A body that is not recorded as JSON: as text, cut at RAW_RECORD_CHARS."""
+    text = data.decode("utf-8", errors="replace")
+    if len(text) > RAW_RECORD_CHARS:
+        return {"raw_body": text[:RAW_RECORD_CHARS], "raw_body_truncated": True}
+    return {"raw_body": text}
 
 
 def sse_payload(line):
@@ -382,9 +571,11 @@ def sse_payload(line):
     data = line[len(b"data:") :].strip()
     if not data or data == b"[DONE]":
         return None
+    if recorder_streams.over_caps(data, recorder_streams.RESPONSE_CAPS) is not None:
+        return None
     try:
         payload = json.loads(data.decode("utf-8", errors="replace"))
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -581,7 +772,7 @@ def stream_response_data(record):
     if not record.raw_truncated:
         try:
             data = json.loads(text)
-        except ValueError:
+        except (ValueError, RecursionError):
             data = None
         if isinstance(data, dict):
             return data
@@ -624,6 +815,23 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         stream = getattr(self.server, "stream_name", "core")
         registry = getattr(self.server, "registry", None)
 
+        # Structure before anything parses the body: nothing is admitted, reserved or forwarded.
+        over = recorder_streams.over_caps(req_body, recorder_streams.REQUEST_CAPS)
+        if over is not None:
+            req_data = raw_record(req_body)
+            event_id = request_id()
+            started = time.monotonic()
+            log_event("open", stream, id=event_id, model=None, messages=0)
+            log_event(
+                "close",
+                stream,
+                id=event_id,
+                status=400,
+                duration_seconds=round(time.monotonic() - started, 3),
+            )
+            self._finish_local(stream, req_data, 400, f"structure_limit: {over} over its limit")
+            return
+
         refused = None
         ticket = None
         fleet_ticket = None
@@ -658,7 +866,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         except Exception:
             req_data = None
         if not isinstance(req_data, dict):
-            req_data = {"raw_body": req_body.decode("utf-8", errors="replace")}
+            req_data = raw_record(req_body)
 
         event_id = request_id()
         messages = req_data.get("messages")
@@ -706,7 +914,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 if req_data.get("stream") is True:
                     relayed = self._relay(response_code, response_headers, res)
                 else:
-                    response_body = res.read()
+                    response_body = res.read(RESPONSE_MAX_BYTES + 1)
         except urllib.error.HTTPError as e:
             response_code = e.code
             try:
@@ -733,20 +941,36 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             response_body = json.dumps({"error": {"message": "proxy error"}}).encode("utf-8")
             response_headers = [("Content-Type", "application/json")]
 
+        untrusted = False
         if relayed is not None:
             res_data = stream_response_data(relayed)
+        elif len(response_body) > RESPONSE_MAX_BYTES:
+            # Withheld: a prefix is not the answer. Recorded as read, its usage unknown.
+            res_data = raw_record(response_body[:RESPONSE_MAX_BYTES])
+            res_data["raw_body_truncated"] = True
+            untrusted = True
+            response_code = 502
+            response_body = json.dumps(
+                {"error": {"message": f"response_too_large: over {RESPONSE_MAX_BYTES} bytes"}}
+            ).encode("utf-8")
+            response_headers = [("Content-Type", "application/json")]
+        elif recorder_streams.over_caps(response_body, recorder_streams.RESPONSE_CAPS) is not None:
+            # Relayed as the upstream sent it, recorded raw, and its claimed usage not trusted.
+            res_data = raw_record(response_body)
+            res_data["structure_limit"] = True
+            untrusted = True
         else:
             try:
                 res_data = json.loads(response_body.decode("utf-8"))
             except Exception:
-                res_data = {"raw_body": response_body.decode("utf-8", errors="replace")}
+                res_data = raw_record(response_body)
 
         close_fields = {
             "id": event_id,
             "status": response_code,
             "duration_seconds": round(time.monotonic() - started, 3),
         }
-        usage = res_data.get("usage") if isinstance(res_data, dict) else None
+        usage = res_data.get("usage") if isinstance(res_data, dict) and not untrusted else None
         if isinstance(usage, dict):
             recorded = {
                 key: usage[key]
