@@ -1,5 +1,12 @@
 # Space Aurora — master governance and custody plan
 
+> **Closed 2026-10-15.** This plan governed the two lines from 2026-10-10 to 2026-10-12 under the
+> shared test-slot regime. On 2026-10-15 John lifted his restrictions and the governance stream
+> retired that regime (`decisions.md` D1, D2); the review is `records/2026-10-15-governance-review.md`.
+> Sections 1–39 below are kept as the record of that period and are not edited. Nothing in them
+> binds any more; `practice.md`, `coordination.md` and `status.md` are current.
+
+
 As of **2026-10-11 10:04 AEDT (2026-10-10 23:04 UTC)**, `tachyon-beep/space_chassis` `aurora-port` @
 `613557528ffc42d4ea8d4ae0a3b3a2c453825ffa`. Verify against the current repositories,
 owner reports and decision evidence before relying on this baseline.

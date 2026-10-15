@@ -1,5 +1,12 @@
 # Vehicle — snapshot
 
+> **2026-10-15, governance stream.** This snapshot predates two merges and the restructure. Since
+> then: `#21` merged (PR #41, `f443996`); tier 1 of `#39` merged (PR #43, `f75420c`); the vehicle is
+> `vehicle/` in this repository with its history; the slot regime is retired and the lane's local work
+> goes to `wip/` branches (`../decisions.md` D2, D11). A real tick advances **52** of 139 states (not
+> 50: `plant.py --build-order` on `main`), with 273 debts. The measured gap map and the plan to close
+> it: `../../docs/vehicle-completion/`. Paths below are as they were.
+
 As of **2026-10-10 (21:56Z)**, `tachyon-beep/space_vehicle` **main @ `f443996`**
 (`f44399645fb2633e695a5d758cb5a41f43fb848c`, #21 merged via PR #41). In flight: #39, the claim race (design in review;
 diagnostic branch `codex/diag-ingress-trace` @ `1caab23`, unqualified evidence only). Maintained by Space Vehicle [610587]. Custody inventory for Emmy (AUR-GOV-02):

@@ -1,101 +1,81 @@
 # Governance
 
-As of **2026-10-10**, `tachyon-beep/space_chassis` `aurora-port` @ `1177d47`. Owned by the chassis
-line. **Verify against the code before trusting any line here.**
+As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `{{MAIN}}`. Owned by the governance
+stream. **Verify against the code before trusting any line here.**
 
-This is the single place a new session, agent or person reads first, to learn:
-- what this project is;
-- who owns what;
-- what has been decided;
-- where each line of work stands.
+This is the place a new session, agent or person reads first, to learn who owns what, what has been
+decided, and where each stream stands. The code, the issues and the decision records it points to are
+authoritative wherever they disagree with it.
 
-It is meant to become the single source of truth in time. Until it is, **the code, the issue
-trackers and the decision records it points to are authoritative wherever they disagree with it.**
+**Scope (John, 2026-10-15): governance is purely for the agents to deconflict and report.** How the
+project works (design, specs, plans, the contract, the corpus, the vehicle-completion suite) lives in
+[`../docs/`](../docs/README.md). New plans go there, not here.
 
-**Scope (John, 2026-10-15): governance is purely for the agents to deconflict and report**: who owns
-what, coordination between the lines, each line's status, open items and decision records. How the
-project works (design, specs, plans, ledgers, the contract, the corpus) lives in `../docs/`
-(`../docs/README.md` is its index); new plans go there, not here.
+## Read in this order
 
-## One program, two project teams, one product
+1. [`status.md`](status.md): where the programme is, reconciled against the code.
+2. [`decisions.md`](decisions.md): the programme decision log, including the 2026-10-15 lifting of
+   John's restrictions (D1–D17) and the residual decisions that still need him.
+3. [`practice.md`](practice.md): how every stream works: the loop, the gates, what is still not
+   allowed, what is still John's.
+4. [`coordination.md`](coordination.md): channels and the rules between streams.
+5. The stream you are working in: `vehicle/` or `chassis/` (`snapshot.md`, `open.md`,
+   `decisions.md`, `practice.md`, `interface.md`, `records/`).
+
+## One program, three streams, one product
 
 **Space Aurora is one program building one product**: a fleet of self-modifying agents and the
-spacecraft they fly. Two project teams build it, of equal importance and working together in
-parallel; Emmy coordinates the program (John, 2026-10-10). This folder calls each project team a
-*line*. What divides is the work, never the product: every path, branch and task has exactly one
-owning team, there is no third team, and nothing is co-owned (John, 2026-10-10).
+spacecraft they fly. Two streams build it, of equal importance and in parallel; a third coordinates
+and reports (John, 2026-10-10 and 2026-10-15). Emmy is programme lead (2026-10-10). The work divides,
+never the product: every path, branch and task has exactly one owning stream, and there are no
+shared tasks: the lead stream sets the rule and the other follows it on its side.
 
-**There are no shared tasks.** Every task has one lead team, and the lead sets the rule. Where the
-other team has to do the same thing on its side, it follows the lead's rule rather than setting its
-own (John, 2026-10-10).
+| stream | builds | lives in | governance folder | branches |
+|---|---|---|---|---|
+| **vehicle** | the mission simulator: one spacecraft behind per-agent windows | `vehicle/` (absorbed from `tachyon-beep/space_vehicle` on 2026-10-15, with its history) | `vehicle/` | `vehicle/<topic>` |
+| **aurora** (the chassis line) | the world the fleet lives in: harness, recorder, pump, operator services, containers, brief, and the vehicle's deployment | `aurora/` | `chassis/` | `aurora/<topic>` |
+| **governance** | coordination, status, decision records; the programme documents under `docs/vehicle-completion/` | `governance/` | this folder | `governance/<topic>` |
 
-| project team (line) | what it builds | where it lives | governance |
-|---|---|---|---|
-| **space_chassis** | The AI chassis: the world the fleet of agents lives in. Aurora's harness per agent, the recorder, the pump, the operator services, the containers, the brief, and the vehicle's deployment. | `aurora/` | `chassis/` |
-| **space_vehicle** | The mission simulator: one spacecraft behind per-agent windows. | `vehicle/` (absorbed from `tachyon-beep/space_vehicle` on 2026-10-15, through its `main` `f75420c`) | `vehicle/` |
-
-**Since 2026-10-15 the program is one repository with three streams** (John, 2026-10-15):
-`vehicle/` (the vehicle sim), `aurora/` (the Aurora container), `governance/` (this folder). Agents
-work in git worktrees of this one repository, on branches named for their stream. The plan, what
-moved and what it broke: [`docs/plans/2026-10-15-three-stream-restructure.md`](../docs/plans/2026-10-15-three-stream-restructure.md).
-Paths in older records below and in `chassis/`, `vehicle/` and `MASTER_GOVERNANCE_PLAN.md` are as
-they were written: `harness/` is now `aurora/harness/`, `docs/deep_research/vehicle/` is `vehicle/`.
-
-The two lines' parts of the product meet at the window contract, `docs/diode-contract.md`, and at
-the deployment of the vehicle service. Each line describes its side in its own `interface.md`.
+The two build streams meet at the window contract, `docs/diode-contract.md`, and at the deployment
+of the vehicle service. Each describes its side in its `interface.md`. Agents work in git worktrees
+of this one repository (`make worktree STREAM=… TOPIC=…`); the layout and what moved:
+[`docs/plans/2026-10-15-three-stream-restructure.md`](../docs/plans/2026-10-15-three-stream-restructure.md).
+Paths in records written before 2026-10-15 are as they were: `harness/` is now `aurora/harness/`,
+`docs/deep_research/vehicle/` is `vehicle/`.
 
 ## Ownership
 
-Every path and every piece of plumbing has exactly one owner. Anything not listed under the vehicle
-line is the chassis line's.
+Every path has exactly one owner. Anything not listed is the aurora stream's.
 
 | owner | owns |
 |---|---|
-| **vehicle line** | `vehicle/` (formerly the `tachyon-beep/space_vehicle` repository) and its CI, including filigree `space_chassis-4d7a6afd1f` |
-| | the frozen corpus `docs/deep_research/*.md` and `docs/deep_research/integration/`, including the reconciliation rows' content |
-| | `docs/diode-contract.md`, which it implements; a change still needs the chassis to adopt it |
-| | the local `vehicle-standalone` branch |
-| | filigree issues labelled `side:vehicle` |
-| | `governance/vehicle/` |
-| **chassis line** | `aurora/`: `harness/`, `recorder/`, `pump/`, `services/`, `scripts/` |
-| | `aurora/containers/`, `serve_vehicle.sh` included: the vehicle's deployment is the chassis's |
-| | `aurora/Dockerfile.agent`, `aurora/docker-compose.yml` and its generator, `aurora/live/` |
-| | `aurora/tests/`, including `test_vehicle_reconciliation.py`, the chassis's referee of what it deploys |
-| | `aurora/contract/` (the probe and the fixture) and `aurora/brief/` |
-| | `docs/design.md`, `docs/brief-claims.md`, `docs/superpowers/`, `docs/README.md` |
-| | the root and `aurora/` documents (`CLAUDE.md`, `AGENTS.md`, `README.md`, `Makefile`, `aurora/.env.example`) and `aurora/vendor/` |
-| | this repository's CI, and the filigree tracker itself with every issue not labelled `side:vehicle` |
-| | the reconciliation pins and every adoption (subtree) merge into `vehicle/` |
-| | the paused SV branch `wip/sv-recorder-opus-20261008` |
-| | `governance/README.md`, `governance/coordination.md`, `governance/chassis/` |
+| **vehicle** | `vehicle/`; the frozen corpus `docs/deep_research/`; `docs/diode-contract.md` (a change still needs the chassis to adopt it); `governance/vehicle/`; issues labelled `stream:vehicle` |
+| **aurora** | `aurora/` entire, including the vehicle's deployment (`containers/serve_vehicle.sh`, the `vehicle` compose service and image), `aurora/contract/`, `aurora/brief/`, `aurora/tests/` with `test_vehicle_reconciliation.py`; `docs/design.md`, `docs/brief-claims.md`, `docs/superpowers/`, `docs/README.md`; the root files (`CLAUDE.md`, `AGENTS.md`, `README.md`, `Makefile`, `pyproject.toml`, `requirements-dev.txt`); every adoption of a vehicle commit into the chassis's pins; the parked `vehicle-adoption` and `wip/sv-recorder-opus-20261008`; `governance/chassis/`; issues labelled `stream:aurora` |
+| **governance** | `governance/README.md`, `status.md`, `decisions.md`, `practice.md`, `coordination.md`, `records/`, `MASTER_GOVERNANCE_PLAN.md` (closed); `docs/vehicle-completion/`; the root CI workflows until a build stream takes them; issues labelled `stream:governance` |
 
-## What each line folder holds
+## What each stream folder holds
 
 | file | what | changes |
 |---|---|---|
-| `snapshot.md` | where the line stands now: repo, branch, SHA, merged and in-flight work, measures | every merge |
-| `decisions.md` | the decision log: what, who (John, or a session under his delegation), when, where recorded | append-only |
-| `practice.md` | how the line is worked: constraints, how work lands, gates, reviewers | when practice changes |
-| `interface.md` | what the line offers the other line and needs from it | when the boundary moves |
-| `open.md` | in-flight items, next steps, open issues, risks, questions for John | every merge or decision |
-| `records/` | historical records worth keeping (design notes, review reports, handoff packages), dated and never edited | append-only, optional |
+| `snapshot.md` | where the stream stands: branch, SHA, merged and in-flight work, measures | every merge |
+| `decisions.md` | the stream's decision log: what, who (John, or a session under his delegation), when, where recorded | append-only |
+| `practice.md` | what is particular to how the stream is worked; the shared rules are in [`practice.md`](practice.md) | when practice changes |
+| `interface.md` | what the stream offers the other and needs from it | when the boundary moves |
+| `open.md` | in-flight items, next steps, risks, questions for John | every merge or decision |
+| `records/` | dated records worth keeping, never edited | append-only |
 
-## Maintenance rules
+## Rules
 
 1. Every file starts with **"As of <date>, <repo> @ <sha>"** and a "verify against the code" note.
-2. Every fact carries a pointer (file:line, issue, PR, commit, ADR), never a paraphrase with no
-   source.
-3. The owning line updates its files **in the same change** that merges work or records a decision.
-   A snapshot older than the last merge is stale and says so.
+2. Every fact carries a pointer (file:line, issue, PR, commit, ADR), never a paraphrase with no source.
+3. The owning stream updates its files **in the same change** that merges work or records a
+   decision. A snapshot older than the last merge is stale and says so.
 4. Decisions are appended, never rewritten. A reversal is a new dated entry that points back.
-5. **Nothing here may reach a fleet agent.** `governance/` is outside the agents' build context (`aurora/`) and in `aurora/.dockerignore`, and no image COPYs
-   it. It holds design reasoning the agents must not see.
-6. A line proposes an edit to the other line's file through the shared filigree issue or a message.
-   The owner decides and writes it.
+5. **Nothing here may reach a fleet agent.** `governance/` is outside the agents' build context
+   (`aurora/`), so no image can `COPY` it. It holds design reasoning the agents must not see.
+6. A stream proposes an edit to another stream's file on an issue; the owner decides and writes it.
 7. Paths to session scratch (`/tmp/…`, `.scratch/`) are not durable. Copy what must survive into
-   `records/`.
-8. **Commits:** this folder lives in the chassis repository, so the chassis line commits it. The
-   vehicle line writes `governance/vehicle/` directly, and the chassis commits it verbatim, never
-   editing it, on its next commit to `aurora-port`, or sooner on request
-   (`coordination.md`).
-9. `tests/test_retired.py` exempts `governance/`, because the decision logs record history.
+   `records/`, except unqualified code, which goes to a `wip/` branch (`decisions.md` D11).
+8. Each stream commits its own governance files on its own branch. (The 2026-10-10 rule that the
+   chassis committed `governance/vehicle/` verbatim is retired, `decisions.md` D13.)
+9. `aurora/tests/test_retired.py` exempts `governance/`, because the records hold history.

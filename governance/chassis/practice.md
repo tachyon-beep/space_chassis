@@ -1,5 +1,11 @@
 # Chassis — practice
 
+> **2026-10-15.** The shared rules (the loop, gates, what is still not allowed, what is still John's)
+> are now `../practice.md`, which supersedes "Hard constraints" below where they differ: pushes, PRs,
+> merges to `main` with CI green and one review, and adoptions need no approval (`../decisions.md`
+> D1). The cycle below (plan, plan review, execute, code review, final review, record) remains this
+> stream's way of working a plan.
+
 As of **2026-10-10**, `space_chassis` `aurora-port` @ `84b1c49`. How the chassis line is worked.
 **Verify against `CLAUDE.md`, `AGENTS.md` and the tests before trusting any line here.** They are
 authoritative.
