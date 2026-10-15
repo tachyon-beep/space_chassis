@@ -36,9 +36,10 @@ key) is the fastest way to see whether the world still works end to end.
 
 ## Governance
 
-`governance/README.md` is the place to start: Space Aurora is one product, built in parallel by two
-development teams of equal importance, the chassis line (this repository, except the vehicle) and the
-vehicle line (`tachyon-beep/space_vehicle`). Every path and task has exactly one owning line.
+`governance/README.md` is the place to start: Space Aurora is one program building one product, with
+two project teams of equal importance working in parallel, the chassis line (this repository, except
+the vehicle) and the vehicle line (`tachyon-beep/space_vehicle`). Every path and task has exactly one
+owning team.
 It holds each line's snapshot, decision log, practice, interface and open items, and the rules for
 coordinating between them. The chassis line owns `governance/` except `governance/vehicle/`, which
 the vehicle line writes and the chassis commits verbatim. Nothing in it may reach an image.

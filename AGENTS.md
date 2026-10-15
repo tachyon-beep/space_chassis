@@ -8,8 +8,8 @@ read those before arguing with a rule below.
 
 ## Governance
 
-Start at `governance/README.md`: Space Aurora is one product, built in parallel by two teams of
-equal importance; it says who owns what across the two lines of work (the chassis, this
+Start at `governance/README.md`: Space Aurora is one program building one product, with two project
+teams of equal importance working in parallel; it says who owns what across the two lines of work (the chassis, this
 repository; the vehicle, `tachyon-beep/space_vehicle`), each line's current state, its decisions,
 how it is worked, and what is open. It is never copied into an image.
 
