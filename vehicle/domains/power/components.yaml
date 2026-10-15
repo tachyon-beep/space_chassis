@@ -490,6 +490,74 @@ state:
         that a fault disables, or that the shed ladder opens, leaves the state on the next tick
         because the state is recomputed rather than tracked — which is what its own reason says the
         class exists for
+
+  # The switch position of every load in the inventory below, and the state `set_load` moves. It is
+  # on a coupling node, `load_shed_state` beside the ladder's class, rather than the sentinel, because
+  # two domains read it: power sums the enabled loads onto each bus, and thermal sums the same loads'
+  # heat. A state on the sentinel is readable by its own domain only (`plant.md` §2, D5).
+  - id: load_enabled
+    node: load_shed_state
+    method: discrete
+    unit: "map[load_id,enum[on,off]]"
+    initial:
+      csm_sband_transceiver: "on"
+      csm_sband_power_amplifier: "on"
+      csm_suit_fan: "on"
+      csm_cabin_fan: "on"
+      csm_co2_scrubber: "on"
+      csm_imu: "on"
+      csm_guidance_computer: "on"
+      csm_instrumentation: "on"
+      csm_coolant_pump_1: "on"
+      csm_coolant_pump_2: "on"
+      csm_heaters: "on"
+      csm_rcs_heaters: "on"
+      csm_comm_heaters: "on"
+      csm_lighting: "on"
+      lm_sband_transmitter: "off"
+      lm_sband_high_power: "off"
+      lm_cabin_fan: "off"
+      lm_suit_fan: "off"
+      lm_co2_scrubber: "off"
+      lm_guidance_computer: "off"
+      lm_landing_radar: "off"
+      lm_instrumentation: "off"
+      lm_heaters: "off"
+      lm_rcs_heaters: "off"
+      lm_lighting: "off"
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        all inventory loads on at MET 0, matching the configured 1,723 W total, which TN D-7609 p.2
+        bounds to the flown 60–80 A coast band. The CSM loads are the fourteen whose `demand_w` sums to
+        `load_budget.csm_total_demand_w`, and 1,723 W at 28 V is 61.5 A, inside the 60-80 A that TN
+        D-7609 p. 2 gives "between SPS burns". The LM loads are off because the LM is unpowered cargo
+        in translunar coast (`docs/vehicle-completion/09-quiet-coast-episode.md` §4, in the
+        repository root); its own bus is not a CSM bus and none of them reaches `bus_a` or `bus_b`
+      note: >-
+        not a checklist position. The inventory's loads are model aggregates (`csm_heaters`,
+        `csm_lighting`) rather than Apollo circuit breakers, so a per-breaker MET-0 map from the
+        Apollo 17 launch checklist (pp. 33-59, which `mission.yaml#launch_state` cites) would first
+        need the load-to-breaker mapping `breaker_panel`'s own initial owes. What would replace this
+        choice: that mapping, and the post-extraction breaker positions read through it
+    moved_by: ["command:set_load"]
+    command_value:
+      - verb: set_load
+        argument: state
+        key: load
+        why: >-
+          identity: the verb's `state` argument is `on` or `off` and so is the element it writes, keyed
+          by the verb's `load` argument. `priority` is not a position and writes nothing here
+    note: >-
+      one position per load, keyed by `loads[].id`. The switch is the load's *connection*; whether a
+      connected load draws is the bus rules' business (`domains/power/rules.py`), which is where the
+      power amplifier's draw is gated on `comms.transmitter_on` as well. A load the command turns off
+      leaves both bus sums, the generation and the reactant draw in the same tick, because the command
+      is applied before the tick walks the schedule (`plant.md` §9 step 1)
+    provenance:
+      basis: apollo
+      ref: "apollo_diode.md:237"
+      note: "apollo's `set_load` energises or de-energises a load; this is the position the verb writes, which until this state existed it wrote nowhere (`--apply`: 0 values changed)"
 # --------------------------------------------------------------------------------------
 # Components. `kind` follows coupling.yaml's node kinds; the electrical network's members are
 # sources, storage, distribution and protection.

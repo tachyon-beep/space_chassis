@@ -49,8 +49,11 @@ def definition(tmp_path: Path, rules: str | None = None) -> Path:
     shutil.copytree(VEHICLE / "domains", root / "domains")
     path = root / "domains" / "power" / "components.yaml"
     text = path.read_text()
-    assert text.count("state:\n") == 1
-    path.write_text(text.replace("state:\n", LOAD_ENABLED, 1))
+    # The vehicle declares `load_enabled` itself now (quiet-coast power rules); the fixture is
+    # planted only on a definition that does not.
+    if "  - id: load_enabled\n" not in text:
+        assert text.count("state:\n") == 1
+        path.write_text(text.replace("state:\n", LOAD_ENABLED, 1))
     if rules is not None:
         (root / "domains" / "power" / "rules.py").write_text(rules)
     return root
@@ -59,13 +62,15 @@ def definition(tmp_path: Path, rules: str | None = None) -> Path:
 def test_set_load_moves_one_element_and_the_tick_holds_the_rest(tmp_path):
     world = plant.load_world(definition(tmp_path))
     start = plant.initial_values(world)
-    assert start["load_enabled"] == {"csm_lighting": "on", "csm_comm_heaters": "on"}
+    assert start["load_enabled"]["csm_lighting"] == "on"
+    assert start["load_enabled"]["csm_comm_heaters"] == "on"
 
     gaps: list[plant.Gap] = []
     off = plant.Effect(0, "set_load", {"load": "csm_lighting", "state": "off"})
     after = plant.step(world, start, 0.02, gaps, [off])
-    assert after["load_enabled"] == {"csm_lighting": "off", "csm_comm_heaters": "on"}
-    assert after["internal"]["load_enabled"] == after["load_enabled"]
+    assert after["load_enabled"] == {**start["load_enabled"], "csm_lighting": "off"}
+    node = next(s.node for s in world.states if s.id == "load_enabled")
+    assert after[node]["load_enabled"] == after["load_enabled"]
     assert "load_enabled" not in {gap.state.id for gap in gaps}
 
     held = plant.step(world, after, 0.02)

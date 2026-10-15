@@ -1,8 +1,8 @@
 """D5, the domain-rule seam: a rule lives in `domains/<name>/rules.py` and the plant calls it.
 
-`governance/decisions.md` D5 and `plant.md` §2. No vehicle state has a rule yet — none of the
-algebraic states the plant still refuses has inputs evidenced to `docs/evidence.md`'s standard — so
-every rule here is a **fixture**: a writable copy of the definition with a `rules.py` planted in it,
+`governance/decisions.md` D5 and `plant.md` §2. Power has no rule yet (thermal and comms do, for
+the quiet coast, and these tests measure the fixture against the vehicle as it stands), so every
+rule here is a **fixture**: a writable copy of the definition with a `rules.py` planted in it,
 the way the referee's broken-copy tests plant a broken field. Nothing in a fixture is a claim about
 the vehicle; the values are arbitrary and are chosen only to be recognisable.
 """
@@ -84,7 +84,7 @@ BUS_B_PARAMS = "    fixture_open_v: 31.0\n    fixture_drop_v_per_w: 0.001\n"
 
 def test_the_vehicle_has_no_rule_yet_and_the_class_refusal_stands():
     """Adding the seam changes no count: with no `rules.py` the refusals are the ones they were."""
-    # `domains/comms/rules.py` is the first real rule file; none of its rules is power's.
+    assert not (VEHICLE / "domains" / "power" / plant.RULES_FILE).exists()
     world = plant.load_world(VEHICLE)
     assert STATE not in world.rules
     _, gaps = tick(world)
