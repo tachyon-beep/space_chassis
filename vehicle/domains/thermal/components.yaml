@@ -306,13 +306,13 @@ state:
     method: dynamics
     node: coldplate_t
     unit: K
-    initial: 283.0568
+    initial: 283.35
     initial_provenance:
       basis: derived
       relation: >-
         the plate's own equilibrium at MET 0 (ADR 0003 item 10, the `zone_radiator_t` idiom): the
         coolant at 280.35 K (`loop_transport_t.initial`) plus the 360 W of the three avionics-bay
-        loads, all on at MET 0, over the chosen 133 W/K: 280.35 + 360/133 = 283.0568 K.
+        loads, all on at MET 0, over the chosen 120 W/K: 280.35 + 360/120 = 283.35 K (10.2 C).
         `tests/test_thermal_rules.py` holds it as the rule's fixed point. No source gives a
         launch-day coldplate temperature (`docs/evidence/wp02-thermal-eclss-consumables.md` T1)
     heat_state: avionics_bay_heat_w
@@ -321,24 +321,24 @@ state:
     rated_flow_kg_s: 0.025199576111111112
     lumped_mass_kg: 60
     specific_heat_j_per_kg_k: 900
-    conductance_w_per_k: 133
+    conductance_w_per_k: 120
     provenance:
       basis: chosen
       reason: >-
         chosen, pending operator, ADR 0003 item 11. No source reached gives a coldplate node capacity or a plate-to-coolant
-        conductance (T1). C = 60 kg aluminium-equivalent x 900 J/kg-K = 54,000 J/K and G = 133 W/K
-        (an 800 W electronics load about 6 K above the coolant) are the values this state already
-        carried, kept and relabelled rather than re-picked. The constraint ADR 0003 item 11 sets is
-        the flown coast rejection of 1,170-1,470 W (SP-368 p. 525). The steady rejection equals the
-        collected load whatever C and G are, so the aggregate cannot move them. What it bounds is
-        the temperature they imply: at the flown load the plate sits Q_bay/G = 2.7 K above the
-        coolant, far inside its 50 C limit (`avionics_plate_high`), and C/G = 406 s is the time
-        constant the episode design (09 §2) was sized on
-      bound: "G in (0, inf): the steady plate rise is Q_bay/G; C/G = 406 s; only the transient depends on C"
-      source_audit:
-        candidate_document: TIR 580-S-7159
-        evidence_status: index_only
-        missing: coldplate node capacity and plate-to-coolant conductance
+        conductance (T1). C = 60 kg aluminium-equivalent x 900 J/kg-K = 54,000 J/K is the capacity
+        this state already carried, kept. G = 120 W/K replaces the 133 W/K it carried: at 133 the
+        plate sat 360/133 = 2.7 K above 7.2 C coolant, at 9.9 C, outside the apollo band
+        `thermal.avionics_plate_c` declares ([10, 45] C, `range_kind: band`), so the band bounds G
+        at 360/2.8 = 128.6 W/K and 120 is a round value under it (plate 10.2 C at MET 0). The
+        constraint ADR 0003 item 11 sets is the flown coast rejection of 1,170-1,470 W (SP-368 p.
+        525). The steady rejection equals the collected load whatever C and G are, so the aggregate
+        cannot move them; what bounds them is the temperature they imply, inside the band and far
+        under the 50 C alarm (`avionics_plate_high`). C/G = 450 s is the time constant (the episode
+        design, 09 §2, was sized on about 400 s). The candidate source is the one
+        `zone_csm_service_t` audits (TIR 580-S-7159, index only): the coldplate node capacity and
+        plate-to-coolant conductance are what it would have to supply
+      bound: "G in (0, 128.6] W/K: the steady plate rise Q_bay/G must hold the plate inside the [10, 45] C band over 7.2 C coolant; C/G = 450 s; only the transient depends on C"
     rated_flow_provenance:
       basis: derived
       relation: "200 lb/hr x 0.45359237 / 3600 = 0.0252 kg/s, `vehicle.yaml#thermal.loops.loop_primary.nominal_flow_lb_per_h`; the same figure `coolant_flow_kg_s.initial` derives"
@@ -507,13 +507,13 @@ state:
     method: dynamics
     node: internal
     unit: K
-    initial: 283.0568
+    initial: 283.35
     initial_provenance:
       basis: derived
       relation: >-
         the amplifier's equilibrium at MET 0 (ADR 0003 item 10): the transmitter is off at MET 0
         (`comms.transmitter_on`), so it dissipates nothing and sits at the coldplate's own
-        equilibrium, 283.0568 K (`zone_csm_avionics_t.initial`)
+        equilibrium, 283.35 K (`zone_csm_avionics_t.initial`)
     dissipation_state: amp_dissipation_w
     plate_state: zone_csm_avionics_t
     lumped_mass_kg: 5
