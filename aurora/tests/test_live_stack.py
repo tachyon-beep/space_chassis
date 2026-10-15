@@ -343,7 +343,7 @@ def test_a_vehicle_stack_runs_the_vehicle_in_place_of_the_fixture(vehicle_stack)
     assert "vehicle" in argv[argv.index("up") :] and "diode" not in argv[argv.index("up") :]
 
 
-def test_the_vehicle_override_runs_the_vehicle_s_smoke_image_on_a_short_poll(vehicle_stack):
+def test_the_vehicle_override_runs_the_vehicle_s_smoke_image_on_the_operator_s_clock(vehicle_stack):
     smoke, _ = vehicle_stack
     text = smoke.override_text()
     assert "  vehicle:\n" in text and "  diode:\n" not in text
@@ -352,8 +352,9 @@ def test_the_vehicle_override_runs_the_vehicle_s_smoke_image_on_a_short_poll(veh
     assert f"    image: {stack_module.SMOKE_VEHICLE_IMAGE}\n" in block
     assert stack_module.SMOKE_VEHICLE_IMAGE != "space-chassis-vehicle"
     assert ":" in stack_module.SMOKE_VEHICLE_IMAGE
-    # A checkpoint every 50 ticks has to come in seconds, not the operator's minutes.
-    assert 'DIODE_POLL_SECONDS: "0.2"' in block
+    # The vehicle has no poll since #23: the operator's clock (m=1, k=5, N=50) checkpoints every
+    # second, so the smoke needs no override of it, and the fixture's poll is not the vehicle's.
+    assert "DIODE_POLL_SECONDS" not in block and "VEHICLE_MULTIPLIER" not in block
 
 
 def test_the_smoke_build_builds_the_vehicle_s_image_only_when_it_is_the_window(tmp_path):

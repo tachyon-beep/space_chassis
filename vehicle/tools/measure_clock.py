@@ -41,9 +41,53 @@ window count, one result file and one `fsync` each. And the record's read cost: 
 quiet rows at mission-end tick numbers (eight digits) with every window's mark, read by `read_record`
 (the checking pass) and streamed by `unwritten_results` (the replaying pass's reader), per row. The difference between these rows and `Executive.cycle` without a record is J's cost.
 
+**The clock seam (#23, WP08 child 5, design §6 and §8)** is priced as the deployment will run it: a
+cycle of `k` ticks (`--cycle-ticks`, 5 by default) with a state directory, so a command-bearing cycle
+pays option B's take barriers (the take and its directory made durable before anything is answered)
+and the write-ahead `fsync` of its first row, and every window's telemetry ring full at
+`--ring-slots` (3,000 by default: about five minutes at 10 frames a second) — the frames copied from a
+real one, so the frame's size and the rings' share of the diode image are reported too. Timed over
+`--samples` cycles each: a quiet cycle; a verdict cycle (write-ahead); the cycle that rewrites the
+generated `HELP.md` and `README.md` and rescans the ring (the cycle after a crossing of `N`); a
+checkpoint cycle; a verdict cycle that also rewrites the static files, and one that also checkpoints;
+the static rewrite and the checkpoint together, which is every cycle when `N = k`; and all of it at
+once — commands in every window with the static rewrite and a checkpoint. Every timing reports p50,
+p95, p99, max and the fraction of cycles over the budget, `k·dt/m` at `m = 1`.
+
+**The verdict** (design §8: "if the worst cycle does not fit `k·dt/m` with margin") is decided over the
+*realistic* cases — quiet, verdict, verdict with a checkpoint, verdict with the static rewrite, the
+deployment's ordinary cycles at `N > k`, where the static rewrite falls in the cycle after the
+checkpoint's: **it fits only if, in every one of them, the worst cycle is within the budget and the p99
+within 80 % of it**. The `combined` case — commands, static rewrite and checkpoint in one cycle, which
+happens only on a segment's first cycle, a repair's next cycle that crosses `N`, or when `N = k` — and
+the static-and-checkpoint case are
+reported apart, as a conservative bound that does not decide the verdict at `N > k`.
+
+`--diode-root` and `--state-root` put the windows and the record on two filesystems, and each root's
+device and filesystem type is printed: a tmpfs root makes every `fsync` free. The host's load average
+and available memory are printed before and after the section: an idle host understates a deployment
+where ten agents compete for the CPU and the disk, and the 80 % margin is the only allowance for that.
+ADR 0002's cost figures predate option B; before the deployment's `m`, `k` and ring size are fixed this
+is run on the deployment's volume images (design §8), and a section that does not fit is revisited with
+the operator, never silently dilated. **The §8 run:**
+
+1. Stop the stack, so no executive serves `/diode` while the run writes beside it (a serving start
+   reads every directory there as a window, and the monitor binds it), then run in a one-off container
+   of the vehicle service with its two images mounted:
+   `docker compose run --rm --no-deps --entrypoint python3 vehicle /opt/vehicle/tools/measure_clock.py --windows 10 --full-ring --cycle-ticks 5 --ring-slots 3000 --diode-root /diode --state-root /state`
+   (an absolute path: the vehicle stage inherits the base stage's `WORKDIR /opt/agent`). `--state-root
+   /state` assumes the one-executive (vehicle-adoption) shape, whose vehicle service mounts `/state`; the
+   per-slug shape mounts none and its root filesystem is read-only.
+2. First check the free space on the diode image: the run needs about frame bytes × 3,000 × 10 more
+   (the frame's size is in the output of a short run; a few hundred megabytes at today's frame) on an
+   image that also holds every agent's `output/`.
+3. Keep the output whole — it carries both roots' filesystems and the host's load — and remove any
+   `measure_clock_*` directory an interrupted run left under either root.
+
     python3 tools/measure_clock.py                         # the empty-ring table
     python3 tools/measure_clock.py --full-ring             # the steady-state table
     python3 tools/measure_clock.py --windows 1 2 10 --json # as data, for a record's appendix
+    python3 tools/measure_clock.py --cycle-ticks 5 --ring-slots 3000   # the clock seam's section, explicitly
 
 Nothing here is a pin: the figures are this machine's and this commit's, and the output carries
 both so that two runs can be told apart.
@@ -52,10 +96,13 @@ both so that two runs can be told apart.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
+import math
 import os
 import platform
+import shutil
 import statistics
 import subprocess
 import sys
@@ -66,6 +113,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import console  # noqa: E402
+from checkpoint import CLOCK_INPUTS, clock_section  # noqa: E402
 from console import Executive  # noqa: E402
 from plant import (  # noqa: E402
     canonical_state,
@@ -83,19 +131,26 @@ FILL_BASE_K = 280.35
 FILL_STEP_K = 0.0137
 
 
+def percentiles(xs: list[float]) -> dict[str, float]:
+    """p50, p95, p99 and max of the samples, in microseconds (p95 means little below ~20 samples, p99 below ~100)."""
+    xs = sorted(xs)
+    return {
+        "p50_us": round(statistics.median(xs), 1),
+        # Nearest rank, ceil(q·n): with 60 samples p99 is the 60th, the maximum, never the 59th.
+        "p95_us": round(xs[max(0, math.ceil(len(xs) * 0.95) - 1)], 1),
+        "p99_us": round(xs[max(0, math.ceil(len(xs) * 0.99) - 1)], 1),
+        "max_us": round(xs[-1], 1),
+    }
+
+
 def timed(fn: Any, samples: int) -> dict[str, float]:
-    """p50, p95 and max of `samples` calls, in microseconds (p95 means little below ~20 samples)."""
+    """`percentiles` of `samples` calls of `fn`."""
     xs: list[float] = []
     for _ in range(samples):
         t0 = time.perf_counter()
         fn()
         xs.append((time.perf_counter() - t0) * 1e6)
-    xs.sort()
-    return {
-        "p50_us": round(statistics.median(xs), 1),
-        "p95_us": round(xs[max(0, int(len(xs) * 0.95) - 1)], 1),
-        "max_us": round(xs[-1], 1),
-    }
+    return percentiles(xs)
 
 
 def plain_hash(values: dict[str, Any]) -> str:
@@ -175,7 +230,8 @@ def checkpoint_shaped(truth: dict[str, Any], windows: int) -> dict[str, Any]:
         "world_id": "0" * 32,
         "scenario": "nominal",
         "seed": 0,
-        "clock": {"m": 1.0, "k": 5, "n": 50, "lag_ceiling_s": 0.0},
+        # The checkpoint's own clock section (#23): every key of `CLOCK_INPUTS`, `m` as its exact fraction.
+        "clock": {key: clock_section(1, 5, 50)[key] for key in CLOCK_INPUTS},
         "tick": 12_345,
         "phase": "translunar_coast",
         "phase_entry_seq": 1,
@@ -185,7 +241,12 @@ def checkpoint_shaped(truth: dict[str, Any], windows: int) -> dict[str, Any]:
         "lineage_head": "0" * 64,
         "receipt": 1_000,
         "rng": {},
-        "segments": [{"boot_id": "b" * 32, "wall_start": "2026-10-09T00:00:00+00:00", "tick": 0}],
+        "segments": [
+            {
+                "segment": "b" * 32, "boot_id": "b" * 32, "first_tick": 0, "previous": None, "wall_epoch": "2026-10-09T00:00:00+00:00",
+                "chain": "c" * 64, "offset": 1_000_000, "m": "1/1", "k": 5, "N": 50,
+            }
+        ],
         "windows": {
             f"slug{i:02d}": {
                 "ring_slots": 300,
@@ -251,12 +312,7 @@ def verdict_cycles(executive: Any, diode: Path, slugs: list[str], samples: int, 
         t0 = time.perf_counter()
         executive.cycle()
         xs.append((time.perf_counter() - t0) * 1e6)
-    xs.sort()
-    return {
-        "p50_us": round(statistics.median(xs), 1),
-        "p95_us": round(xs[max(0, int(len(xs) * 0.95) - 1)], 1),
-        "max_us": round(xs[-1], 1),
-    }
+    return percentiles(xs)
 
 
 def record_costs(world: Any, tmpdir: Path, windows: list[int], samples: int, full_ring: bool) -> dict[str, Any]:
@@ -273,6 +329,10 @@ def record_costs(world: Any, tmpdir: Path, windows: list[int], samples: int, ful
         "windows": {},
         "published": {f"slug{i:02d}": {"tick": 12_345, "seq": 12_000} for i in range(max(windows) if windows else 10)},
         "failures": 0,
+        # Format v3 (#23): the cycle's start lag, and on a cycle's first row the previous cycle's cost.
+        "lag_us": 1_234,
+        "prev_cycle_us": 76_543,
+        "prev_end_lag_us": 1_234,
     }
     line = (json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
     fd = os.open(tmpdir / "record.jsonl", os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
@@ -358,8 +418,209 @@ def record_costs(world: Any, tmpdir: Path, windows: list[int], samples: int, ful
     return result
 
 
-def record_read_cost(tmpdir: Path, windows: int, rows: int = 20_000) -> dict[str, Any]:
-    """Per-row cost of the record's two passes, on quiet rows at eight-digit ticks with every window's mark."""
+def fill_ring(executive: Any, slug: str, slots: int) -> int:
+    """Fill one window's telemetry ring to `slots` frames, copied from its first real frame; returns the frame's size.
+
+    The frames are numbered `1 … slots` below the window's `seq`, which is moved past them, so the ring
+    holds exactly what a world that has run `slots` cycles holds; the window's cache is dropped and its
+    next publication rescans, as on a segment's first cycle.
+    """
+    telemetry = executive.diode_dir / slug / "telemetry"
+    frame = (telemetry / "000.json").read_bytes()
+    for number in range(1, slots + 1):
+        (telemetry / f"{number:03d}.json").write_bytes(frame)
+    window = executive.windows[slug]
+    window.seq = slots + 1
+    window.ring = None
+    window.refresh = True
+    return len(frame)
+
+
+def filesystem_of(path: Path) -> dict[str, str]:
+    """The filesystem `path` is on — its device (`major:minor`), and its mount's type and source from `/proc/self/mountinfo`.
+
+    Printed with the clock section (design §8): a run whose roots are a tmpfs has `fsync`s that cost
+    nothing, and its verdict and write-ahead figures mean nothing for the deployment's volume images.
+    """
+    info = os.stat(path)
+    device = f"{os.major(info.st_dev)}:{os.minor(info.st_dev)}"
+    found = {"path": str(path), "device": device, "mount": "unknown", "fstype": "unknown", "source": "unknown"}
+    try:
+        lines = Path("/proc/self/mountinfo").read_text().splitlines()
+    except OSError:
+        return found
+    resolved = str(Path(path).resolve())
+    best: tuple[str, str, str] | None = None
+    for line in lines:
+        left, _, right = line.partition(" - ")
+        fields, tail = left.split(), right.split()
+        if len(fields) < 5 or len(tail) < 2 or fields[2] != device:
+            continue
+        mount = fields[4]
+        if (resolved == mount or resolved.startswith(mount.rstrip("/") + "/")) and (best is None or len(mount) > len(best[0])):
+            best = (mount, tail[0], tail[1])
+    if best is not None:
+        found.update(mount=best[0], fstype=best[1], source=best[2])
+    return found
+
+
+def sampled(fn: Any, count: int, budget_us: float, setup: Any = None) -> dict[str, float]:
+    """`count` timed calls of `fn` (each after an untimed `setup`): `percentiles`, and the fraction over `budget_us`."""
+    xs: list[float] = []
+    for _ in range(count):
+        if setup is not None:
+            setup()
+        t0 = time.perf_counter()
+        fn()
+        xs.append((time.perf_counter() - t0) * 1e6)
+    return {**percentiles(xs), "over_budget": round(sum(1 for x in xs if x > budget_us) / len(xs), 4)}
+
+
+# The fit criterion (design §8, "the worst cycle … with margin"): over the realistic cases, every worst
+# cycle within the budget and every p99 within this share of it.
+FIT_MARGIN = 0.8
+# The deployment's ordinary cycles at `N > k`, which decide the verdict; the static rewrite and the
+# checkpoint together (and `combined`) happen only at a segment's first cycle, after a repair, or when `N = k`.
+REALISTIC_CASES = ("quiet", "verdict", "verdict_checkpoint", "verdict_static")
+
+
+def host_load() -> dict[str, Any]:
+    """The host's load average and available memory now: the machine the figures were taken on, under what."""
+    found: dict[str, Any] = {"loadavg": None, "mem_available_kb": None}
+    with contextlib.suppress(OSError):
+        found["loadavg"] = [round(x, 2) for x in os.getloadavg()]
+    with contextlib.suppress(OSError, ValueError, IndexError):
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                found["mem_available_kb"] = int(line.split()[1])
+    return found
+
+
+def clock_cycle_costs(
+    world: Any,
+    tmpdir: Path,
+    windows: list[int],
+    samples: int,
+    full_ring: bool,
+    *,
+    k: int,
+    ring_slots: int,
+    diode_root: Path | None = None,
+    state_root: Path | None = None,
+) -> dict[str, Any]:
+    """The clock seam's cycle (#23, design §6 and §8): `k` ticks, a state directory, full rings, every case timed apart and together.
+
+    Per window count, each over `samples` cycles: a quiet cycle; a verdict cycle, whose claims pay option
+    B's take barriers and whose first row is made durable before its second step (write-ahead); a verdict
+    cycle that also rewrites the static files, and one that also checkpoints; the static rewrite and
+    ring rescan alone; a checkpoint alone; the two together, which is every cycle when `N = k`; and
+    **all of it at once** — commands, take barriers, the write-ahead `fsync`, the static rewrite and the
+    checkpoint in one cycle. Each case reports p50/p95/p99/max and the fraction of its cycles over the
+    budget, `k·dt/m` at `m = 1`. **It fits only if, in every realistic case (`REALISTIC_CASES`), the
+    worst cycle is within the budget and the p99 within `FIT_MARGIN` of it** (design §8, candidate 2);
+    the static-and-checkpoint and `combined` cases, which at `N > k` happen only on a segment's first
+    cycle or a repair's next crossing, are reported as a conservative bound beside it. The windows and the state directory are made
+    under `diode_root` and `state_root` — the deployment's two volume images, for the §8 run — and each
+    root's device and filesystem type, and the host's load before and after, are in the result.
+    """
+    budget = k * tick_seconds(world) * 1e6
+    made: list[Path] = []
+    diode_base, state_base = tmpdir, tmpdir
+    if diode_root is not None:
+        diode_base = Path(tempfile.mkdtemp(prefix="measure_clock_diode_", dir=diode_root))
+        made.append(diode_base)
+    if state_root is not None:
+        state_base = Path(tempfile.mkdtemp(prefix="measure_clock_state_", dir=state_root))
+        made.append(state_base)
+    result: dict[str, Any] = {
+        "k": k, "ring_slots": ring_slots, "samples": samples, "budget_us": round(budget, 1), "fit_margin": FIT_MARGIN,
+        "filesystems": {"diode": filesystem_of(diode_base), "state": filesystem_of(state_base)},
+    }
+    by_windows: dict[str, Any] = {}
+    worst = bound = 0.0
+    fits = True
+    result["host_before"] = host_load()
+    far = k * 1_000_000  # an `N` no measured run reaches: no crossing, no checkpoint, no refresh
+    try:
+        for n in windows:
+            slugs = [f"w{i:02d}" for i in range(n)]
+            diode, state = diode_base / f"clock-diode{n}", state_base / f"clock-state{n}"
+            executive = Executive(
+                world, diode, phase="translunar_coast", scenario="nominal", seed=0, state_dir=state, cycle_ticks=k, checkpoint_every=far
+            )
+            try:
+                for slug in slugs:
+                    executive.attach(slug, ring_slots=ring_slots)
+                executive.cycle()
+                frame_bytes = 0
+                for slug in slugs:
+                    frame_bytes = fill_ring(executive, slug, ring_slots)
+                executive.cycle()  # the one rescan the filled rings need, untimed
+                if full_ring:
+                    executive.truth = fill_rings(executive.truth)
+                quiet_fsyncs = counted_fsyncs(executive.cycle)
+                submit_refusal(diode, slugs)
+                verdict_fsyncs = counted_fsyncs(executive.cycle)
+
+                def command(executive: Any = executive, diode: Path = diode, slugs: list[str] = slugs) -> None:
+                    submit_refusal(diode, slugs)
+
+                def refresh(executive: Any = executive) -> None:
+                    executive._refresh_next = True
+
+                def no_refresh(executive: Any = executive) -> None:
+                    executive._refresh_next = False
+
+                def everything(executive: Any = executive, diode: Path = diode, slugs: list[str] = slugs) -> None:
+                    submit_refusal(diode, slugs)
+                    executive._refresh_next = True
+
+                def command_no_refresh(executive: Any = executive, diode: Path = diode, slugs: list[str] = slugs) -> None:
+                    submit_refusal(diode, slugs)
+                    executive._refresh_next = False
+
+                cases = {
+                    "quiet": sampled(executive.cycle, samples, budget),
+                    "verdict": sampled(executive.cycle, samples, budget, command),
+                    "static": sampled(executive.cycle, samples, budget, refresh),
+                    "verdict_static": sampled(executive.cycle, samples, budget, everything),  # N far: commands + static, no checkpoint
+                }
+                executive.set_clock(executive.multiplier, k, k)  # N = k: every cycle crosses a multiple of N
+                cases["checkpoint"] = sampled(executive.cycle, samples, budget, no_refresh)
+                cases["verdict_checkpoint"] = sampled(executive.cycle, samples, budget, command_no_refresh)
+                cases["static_and_checkpoint"] = sampled(executive.cycle, samples, budget, refresh)
+                cases["combined"] = sampled(executive.cycle, samples, budget, everything)
+                executive.set_clock(executive.multiplier, k, far)
+                realistic = [cases[name] for name in REALISTIC_CASES]
+                worst = max(worst, *(row["max_us"] for row in realistic))
+                bound = max(bound, *(cases[name]["max_us"] for name in ("static_and_checkpoint", "combined")))
+                fits = fits and all(row["max_us"] <= budget and row["p99_us"] <= FIT_MARGIN * budget for row in realistic)
+                by_windows[str(n)] = {
+                    **cases,
+                    "quiet_fsyncs": quiet_fsyncs,
+                    "verdict_fsyncs": verdict_fsyncs,
+                    "frame_bytes": frame_bytes,
+                    "ring_bytes": frame_bytes * ring_slots * n,
+                }
+            finally:
+                executive.close()
+    finally:
+        for base in made:
+            shutil.rmtree(base, ignore_errors=True)
+    result["cycle_by_windows"] = by_windows
+    result["worst_us"] = worst
+    result["conservative_bound_us"] = bound
+    result["fits"] = fits
+    result["host_after"] = host_load()
+    return result
+
+
+def record_read_cost(tmpdir: Path, windows: int, rows: int = 20_000, k: int = 5) -> dict[str, Any]:
+    """Per-row cost of the record's two passes, on quiet rows at eight-digit ticks, in cycles of `k` (format v3, #23).
+
+    A cycle's first row carries the carried-forward cost and its last every window's mark, as the
+    executive writes them; the reader holds each row to its place in the header's cycles.
+    """
     where = tmpdir / "read-cost"
     where.mkdir()
     world_id, boot = "e" * 32, "b" * 32
@@ -367,15 +628,20 @@ def record_read_cost(tmpdir: Path, windows: int, rows: int = 20_000) -> dict[str
     header = {
         "event": "segment", "format": console.RECORD_FORMAT, "world_id": world_id, "segment": boot, "boot_id": boot,
         "first_tick": first, "previous": None, "previous_chain": "", "wall_epoch": "2026-10-09T00:00:00+00:00",
+        "m": "1/1", "k": k, "N": 10 * k,
     }
     header["chain"] = chain = console.record_chain("", header)
     lines = [console.record_line(header)]
     for tick in range(first + 1, first + rows + 1):
-        row = {
+        last = (tick - first) % k == 0
+        row: dict[str, Any] = {
             "tick": tick, "world_id": world_id, "boot_id": boot, "lineage": hashlib.sha256(str(tick).encode()).hexdigest(),
             "state_hash": hashlib.sha256(str(-tick).encode()).hexdigest()[:16], "effects": [], "receipts": [], "receipt": 1_000,
-            "windows": {}, "published": {f"w{i:02d}": {"tick": tick, "seq": tick - 1} for i in range(windows)}, "failures": 0,
+            "windows": {}, "published": {f"w{i:02d}": {"tick": tick, "seq": tick // k} for i in range(windows)} if last else {},
+            "failures": 0, "lag_us": 1_234,
         }
+        if (tick - first - 1) % k == 0:
+            row["prev_cycle_us"], row["prev_end_lag_us"] = 76_543, 1_234
         row["chain"] = chain = console.record_chain(chain, row)
         lines.append(console.record_line(row))
     (where / f"journal.{boot}.jsonl").write_bytes(b"".join(lines))
@@ -410,7 +676,18 @@ def engine_identity(root: Path) -> str:
         return "unknown"
 
 
-def measure(root: Path, *, windows: list[int], samples: int, full_ring: bool, warm_ticks: int) -> dict[str, Any]:
+def measure(
+    root: Path,
+    *,
+    windows: list[int],
+    samples: int,
+    full_ring: bool,
+    warm_ticks: int,
+    cycle_ticks: int = 5,
+    ring_slots: int = 3000,
+    diode_root: Path | None = None,
+    state_root: Path | None = None,
+) -> dict[str, Any]:
     world = load_world(root)
     dt = tick_seconds(world)
     t0 = initial_values(world)
@@ -481,12 +758,18 @@ def measure(root: Path, *, windows: list[int], samples: int, full_ring: bool, wa
                 executive.close()
         result["cycle_by_windows"] = cycles
         result["record"] = record_costs(world, tmpdir, windows, samples, full_ring)
+        result["clock"] = clock_cycle_costs(
+            world, tmpdir, windows, samples, full_ring, k=cycle_ticks, ring_slots=ring_slots, diode_root=diode_root, state_root=state_root
+        )
     return result
 
 
 def render(result: dict[str, Any]) -> str:
     def us(row: dict[str, float]) -> str:
-        return f"{row['p50_us'] / 1000:.2f} ms p50, {row['p95_us'] / 1000:.2f} p95, {row['max_us'] / 1000:.2f} max"
+        return (
+            f"{row['p50_us'] / 1000:.2f} ms p50, {row['p95_us'] / 1000:.2f} p95, {row['p99_us'] / 1000:.2f} p99, "
+            f"{row['max_us'] / 1000:.2f} max"
+        )
 
     lines = [
         f"engine {result['engine']}  python {result['python']}  {result['platform']}",
@@ -531,6 +814,42 @@ def render(result: dict[str, Any]) -> str:
         f"record read, {read['rows']:,} quiet rows of {read['row_bytes']} B ({read['windows']} windows' marks, 8-digit ticks): "
         f"check {read['check_us_per_row']} µs/row, stream {read['stream_us_per_row']} µs/row",
     ]
+    clock = result["clock"]
+    lines.append(
+        f"the clock seam: k = {clock['k']} ticks a cycle, rings of {clock['ring_slots']:,} frames, {clock['samples']} cycles a case, "
+        f"budget {clock['budget_us'] / 1000:.1f} ms at m = 1"
+    )
+    for role, fs in clock["filesystems"].items():
+        lines.append(f"  {role} root {fs['path']}: device {fs['device']}, {fs['fstype']} on {fs['source']} (mounted at {fs['mount']})")
+    for when in ("host_before", "host_after"):
+        host = clock[when]
+        lines.append(f"  host load {when.split('_')[1]} the section: loadavg {host['loadavg']}, MemAvailable {host['mem_available_kb']} kB")
+
+    def case(row: dict[str, float]) -> str:
+        return f"{us(row)}; {row['over_budget'] * 100:.1f} % over budget"
+
+    for n, row in clock["cycle_by_windows"].items():
+        lines += [
+            f"  {n} window(s): quiet {case(row['quiet'])} ({row['quiet_fsyncs']} fsync)",
+            f"    verdict, take barriers and write-ahead:  {case(row['verdict'])} ({row['verdict_fsyncs']} fsync)",
+            f"    verdict with a checkpoint:               {case(row['verdict_checkpoint'])}",
+            f"    verdict with the static rewrite:         {case(row['verdict_static'])}",
+            f"    static rewrite and ring rescan:          {case(row['static'])}",
+            f"    checkpoint:                              {case(row['checkpoint'])}",
+            f"    static and checkpoint together (first cycle, repair or N = k; a bound, not the verdict): {case(row['static_and_checkpoint'])}",
+            f"    all at once (first cycle, repair or N = k; a bound):             {case(row['combined'])}",
+            f"    frame {row['frame_bytes']:,} B; the rings hold {row['ring_bytes'] / 1e6:,.1f} MB of frames",
+        ]
+    lines.append(
+        f"  worst realistic cycle {clock['worst_us'] / 1000:.2f} ms against a {clock['budget_us'] / 1000:.1f} ms budget "
+        f"(conservative bound, first cycle, repair or N = k: {clock['conservative_bound_us'] / 1000:.2f} ms); "
+        + (
+            f"fits: every realistic case's worst cycle within the budget and p99 within {clock['fit_margin']:.0%} of it"
+            if clock["fits"]
+            else f"DOES NOT FIT with margin (a realistic case's worst past the budget, or its p99 past {clock['fit_margin']:.0%} of it): "
+            "revisit k, the window count or the ring with the operator"
+        )
+    )
     m = result["mission"]
     lines.append(f"mission: {m['phases']} phases, {m['ticks']:,} ticks; shortest phase {m['shortest_phase_ticks']:,} ticks")
     return "\n".join(lines)
@@ -544,6 +863,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--warm-ticks", type=int, default=10, help="ticks to step before measuring")
     parser.add_argument("--full-ring", action="store_true", help="fill every delay-ring slot with a float first")
     parser.add_argument("--json", action="store_true", help="emit the measurements as JSON")
+    parser.add_argument("--cycle-ticks", type=int, default=5, help="k for the clock seam's section (ADR 0002 B2: 5)")
+    parser.add_argument("--ring-slots", type=int, default=3000, help="each window's ring for the clock seam's section (#23: 3,000)")
+    parser.add_argument("--diode-root", type=Path, default=None, help="where the clock section's windows go: the deployment's diode image")
+    parser.add_argument("--state-root", type=Path, default=None, help="where the clock section's state directory goes: the vehicle's state image")
     args = parser.parse_args(argv)
     result = measure(
         Path(args.dir),
@@ -551,6 +874,10 @@ def main(argv: list[str] | None = None) -> int:
         samples=max(1, args.samples),
         full_ring=args.full_ring,
         warm_ticks=max(1, args.warm_ticks),
+        cycle_ticks=max(1, args.cycle_ticks),
+        ring_slots=max(1, args.ring_slots),
+        diode_root=args.diode_root,
+        state_root=args.state_root,
     )
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))

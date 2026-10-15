@@ -38,8 +38,15 @@
 #   VEHICLE_SLUGS       the windows to serve, comma-separated            (the roster, else `vehicle`)
 #   VEHICLE_SCENARIO    the run's difficulty identity                    (nominal)
 #   VEHICLE_SEED        the run's master seed for the fault streams      (0)
-#   DIODE_POLL_SECONDS  seconds between cycles                           (5)
-#   VEHICLE_RING_SLOTS  frames per window                                (300)
+#   VEHICLE_RING_SLOTS  frames per window, five minutes at k = 5         (3000)
+#   VEHICLE_MULTIPLIER  m, mission seconds per wall second               (1)
+#   VEHICLE_CYCLE_TICKS  k, ticks per claim and publication              (5)
+#   VEHICLE_CHECKPOINT_TICKS  N, ticks between checkpoints               (50)
+#
+# The clock (vehicle ADR 0002 A, B, J; #23), which replaced `--poll`: a serving start must name m, k
+# and N, which have no default in the console because the stack that starts the vehicle owns them.
+# The defaults here are the ADR's answers: m = 1 for the first integrated run, k = 5 (10 Hz frames),
+# N = tick_hz (50). The ring holds about five minutes at that cadence, as the record asks.
 #
 # The scenario, the seed, the ring and the slug set are the world's identity: a restart that names
 # any of them differently refuses rather than flying a different world under the same name.
@@ -53,8 +60,10 @@ set -f
 : "${VEHICLE_STATE_DIR:=/state}"
 : "${VEHICLE_SCENARIO:=nominal}"
 : "${VEHICLE_SEED:=0}"
-: "${DIODE_POLL_SECONDS:=5}"
-: "${VEHICLE_RING_SLOTS:=300}"
+: "${VEHICLE_RING_SLOTS:=3000}"
+: "${VEHICLE_MULTIPLIER:=1}"
+: "${VEHICLE_CYCLE_TICKS:=5}"
+: "${VEHICLE_CHECKPOINT_TICKS:=50}"
 
 if [ ! -f "$VEHICLE_DIR/tools/console.py" ]; then
     echo "the vehicle is not at $VEHICLE_DIR -- this image was built without it" >&2
@@ -91,7 +100,9 @@ set -- \
     --scenario "$VEHICLE_SCENARIO" \
     --seed "$VEHICLE_SEED" \
     --ring-slots "$VEHICLE_RING_SLOTS" \
-    --poll "$DIODE_POLL_SECONDS" \
+    --multiplier "$VEHICLE_MULTIPLIER" \
+    --cycle-ticks "$VEHICLE_CYCLE_TICKS" \
+    --checkpoint-ticks "$VEHICLE_CHECKPOINT_TICKS" \
     --cycles 0
 for slug in $SLUGS; do
     # The window directory, created here rather than left to the console, so a missing mount point

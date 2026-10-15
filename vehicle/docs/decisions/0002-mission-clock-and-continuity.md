@@ -311,7 +311,8 @@ what two `k` cycles cost (≈ 14 ms of wall time per 20 ms tick after child 6, t
 recovers lag no faster (≈ 0.4 s of lag per wall second either way; a 30 s lag clears in ≈ 75 s);
 a burst would only save the per-cycle claim overhead, and would stretch B's frame spacing and
 command latency to `2k` while catching up. With `k`, both stay exact and shedding (C2) is the only
-pressure valve.
+pressure valve. *Implemented by #23 (xlvi): the scheduler never runs ahead, `m` is an exact fraction,
+the epoch is a segment's, and an interim backstop at the 30 s ceiling ends a segment cleanly with exit 4.*
 
 **`m = 1` for ten windows needed child 6 first.** At `m = 1, k = 5` a cycle has `5 × 20 ms = 100 ms`
 of wall time. Ten windows' publication costs about 24 ms per cycle (the ten-window cycle less step
@@ -377,7 +378,8 @@ checkpoint. The maintainer's in form; listed for the operator's confirmation bec
 the fleet sees and how fast a command lands.
 
 Answer (B): **B2, `k = 5`** — 10 Hz frames, consoles claimed at the same cadence — operator,
-2026-10-09.
+2026-10-09. *Implemented by #23 (xlvi): one claim and one publication per cycle of `k` ticks, `k ≤
+tick_hz / max_rate`, the rotation by cycle, the static files every `N` ticks.*
 
 ### C — Overload: a tick misses its `20 ms / m` deadline (operator)
 
@@ -404,7 +406,9 @@ new signal** — the schemas are declared and the existing pair is sufficient fo
 
 Answer (C): **shed (static `HELP.md`/`README.md`, then frames; never the mirror) → dilate within
 the recorded bound → stop with a recorded hold** — operator, 2026-10-09. Never dropping ticks is
-C4's exclusion by `completion.md`, not a choice the answer made.
+C4's exclusion by `completion.md`, not a choice the answer made. *Amended by #23 (xlvi): C1's
+lag is recorded per cycle on every row, the missed count is in the segment's manifest — its clean-end
+event — and an interim backstop (a clean end, exit 4) stands in for C3 until #26.*
 
 ### D — Pause and operator hold (operator)
 
@@ -627,7 +631,8 @@ Three rules follow from `presentation.yaml#frame` ("`met_s` cannot jump backward
    record**: `--journal` is retired as a separate flag and lives in `--state-dir`, one segment file
    per boot (`journal.<segment>.jsonl`), each segment naming its `boot_id`, first tick and the
    segment before it, and replay concatenates segments by tick.
-2. **`k` and `N` are independent**, and the published tick is the third number. A frame or mirror
+2. **`k` and `N` are independent** (*superseded in this respect by #23, (xlvi): `N mod k = 0` is
+   required, and the cadence is a cycle's crossing of a multiple of `N`*), and the published tick is the third number. A frame or mirror
    may describe any tick the executive has reached; before it does, the window's `published_tick`
    is made durable (a few bytes, appended to the record). On restart the vehicle replays the record
    onto the snapshot and then steps forward to the greatest `published_tick`, so `met_s` never goes
@@ -937,6 +942,129 @@ still raises. A failing disk reports a writeback error at `close`, so this is th
 `RecordUnwritable` meets: replaced by the close's `OSError`, it read as an advisory's failure and the run
 went on after a fragment. The same holds where the start path refuses with the executive open: the
 refusal is what is reported. And the engine identity's read of a file names it, as its `stat` does.
+
+*Amended by #39 option B (2026-10-11): John's decision; design and implementation reviewed by Codex
+(`gpt-6-astra` high), the design in five rounds and the implementation in four; decided by the owner.*
+(xlv) **A claim takes the console by rename, and a take speaks for the map only to the next resume.**
+- **G is unchanged:** `variables` stay out of the checkpoint.
+- **New state:** a claim leaves a private take in the window (`.console.json.take.<boot>.<n>`) until
+  it is retired, and H gains one file in the state directory, `.boot.json`. A serving start with a state
+  directory writes this boot's id there, durably: a resume does so before it recovers any window, and a
+  fresh start after preparing its windows but before its first claim. A refused preflight never writes
+  it, and once recovery has begun it is never rolled back.
+- **A resume takes a window's map** from:
+  1. the console's own `variables`;
+  2. failing that, the take of the boot that just ended (the marker's previous id), which is then
+     retired;
+  3. failing that, unknown, as (xxxv) says.
+
+  A take from an older boot is never evidence and is retired unread.
+- **The residual stands, and narrows:** a second crash before the console shows a recovered map can
+  still leave it unknown. Issue #42 tracks why an unknown map matters.
+
+*Amended by #23, WP08 child 5, the clock seam (2026-10-12): John's decisions — cycles never run ahead,
+static files every `N` ticks, lag per cycle, the flag names, an interim lag backstop until #26, about five
+minutes of telemetry history (3,000 frames); everything else follows a named standard or this record.
+Design reviewed in three rounds by four independent reviewers (simulation, determinism, systems, Codex)
+and confirmed; implementation review and the Governance-granted test runs pending.*
+(xlvi) **The mission clock is implemented as A2 with B2's cycle, and four parts of this record move.**
+- **The clock and the cycle (A2, B2).** `m`, `k` and `N` are run inputs required with no default
+  (`--multiplier`, `--cycle-ticks`, `--checkpoint-ticks`, each defaulting to `None`): a fresh serving
+  start that does not name all three refuses with exit 3, every missing input named; `--init` and `--plan`
+  need none. Tick `t` is due at `E + (t − t0)·dt/m` on CLOCK_MONOTONIC, in integer nanoseconds, `m`
+  parsed from its decimal string as an exact fraction and the due time computed from the epoch each
+  cycle and rounded once. The epoch `E` is read at a segment's first wait, after the start's or the
+  resume's recovery and checkpoint, so recovery is never lag; `t0` is the segment's first tick. **A
+  cycle never runs ahead** (John): the cycle covering `a+1 … a+k` starts at `max(due(a+k), end of the
+  previous cycle)`, so a scheduler behind runs whole cycles back to back (burst = `k`), and the wait
+  is a loop of sleeps of at most 100 ms. `k·dt/m` must lie in `[1 ms, 60 s]`, and `k ≤ tick_hz /
+  max_rate` so a cycle's `tick_hz / k` frames a mission second reach the highest declared channel rate
+  (10 Hz: `k ≤ 5`), each refused by name at the CLI and on a resume.
+- **One claim, `k` steps, one publication.** Accepted effects are stamped at `offset_us = 0` of the
+  cycle's first tick (the receipt tick is the cycle's start tick); tick `a+1` is stepped with them and
+  the effect report and the dwell clock are computed against *that* step's before and after, the
+  other `k − 1` ticks stepped with none — exactly what replay does row by row. **Causality, plainly:**
+  a command written while tick `a` is the newest frame is applied from tick `a`, whose due time has
+  passed by up to `k·dt/m` plus the cycle's cost (more while catching up); "takes effect within `k`
+  ticks" means it appears in the next frame; no claim time is published to a window. Within a segment
+  frames are exactly `k` ticks apart; across a resume the gap is `k′ + j` after a partial cycle of `j`
+  rows, plus downtime.
+- **A refusal partway through a cycle.** The steps run into locals; a compare-point refusal at step
+  `j > 1` appends only the completed rows not yet durable (with one `fsync`), commits only the durable
+  ones, and stops with exit 3 naming the last durable tick; the cycle's batch, on its first row, is
+  owed and answered on resume. A refusal at step 1 records nothing, as before.
+- **Deferrals** are due at `a + k`, the next cycle's start, and settle at the first cycle boundary at
+  or after their due tick (later across an unaligned resume, and the result says so); expiry stays in
+  simulated seconds. **Arbitration (0001 choice A) rotates by cycle**, `(a // k) % n`, which is `tick %
+  n` at `k = 1` and gives each window the first place once in `n` cycles whatever `gcd(n, k)`.
+- **The static `HELP.md` and `README.md` every `N` ticks** (John; C's first shed made the cadence): at
+  the end of the cycle after the one that crossed a multiple of `N`, so the static and the checkpoint
+  costs normally fall in different cycles; also on a segment's first cycle and the cycle after a
+  repair. When `N = k` every cycle checkpoints, and a first-cycle or repair rewrite can coincide with
+  a checkpoint. A hand-edit lasts about a mission second, and both files say so. The same cycle
+  reconciles each window's telemetry ring, which is now a cache on the window (one scan at a segment's
+  first cycle, after a repair, on that reconcile, or when the opened `telemetry/` is another directory;
+  never an ordinary cycle). A future presentation cadence class keys on the tick, never on `seq`.
+- **J2's item 2 is superseded in one respect: `N mod k = 0` is required**, not "`k` and `N` are
+  independent"; the checkpoint and the static files use the cycle's *crossing* of a multiple of `N`,
+  so an unaligned resume never skips them.
+- **Lag, cost and missed deadlines (C1, per cycle — John).** A cycle's start lag is on each of its rows
+  (`lag_us`); its cost (end after publication and any cadence checkpoint) and end lag are known only
+  once its rows are durable, so the *next* cycle's first row carries them (`prev_cycle_us`,
+  `prev_end_lag_us`; 0 on a segment's first). **Missed** is a start lag past one tick period, `dt/m`;
+  **overran** a cost past `k·dt/m`. Container CPU throttling can stall up to a 100 ms quota period, so
+  a sporadic miss is not necessarily overload. **C1's manifest is the segment's clean-end event**
+  (`event: manifest`): cycles, start lag and cost p50/p95/p99/max by nearest rank, missed, overran,
+  stalls and backstops, also printed on stop, with the last cycle's cost and end lag beside it
+  (`last_cycle_us`, `last_end_lag_us`: the one cost no row carries). A reader of the record computes the
+  same summary, taking the last cost and the stall and backstop counts from the manifest, which is
+  authoritative, so a cleanly ended segment's equals its manifest's; a crashed segment's has no last
+  cost, its counts are its journaled `stall` and `lag_backstop` events (marked a lower bound), and a
+  partial final cycle counts as one cycle. A boot that ends cleanly without a cycle writes its header
+  first, a header-only segment, so every manifest belongs to a segment of the record. The three
+  fields are wall data: chained in the record and never in `state_hash`, the lineage, a compare-point
+  or any replay decision; shedding (#26) records its decisions and never re-derives them from lag.
+- **The record is `vehicle.record.v3`** (J's format): the segment header carries the boot's `m` (as
+  `"p/q"`), `k` and `N`, mirrored in the checkpoint's segment entries and in replay's; a cycle's first
+  row carries the effects, receipts, deltas, the new receipt counter and the carried cost, rows 2..k
+  carry none and repeat the counter and the start lag (a cycle has one of each), only the last carries
+  `published`; the readers verify that
+  invariant and accumulate a cycle's receipts from its first row to the notes after its last, moving
+  what is still pending to the unwritten list. **A command-bearing cycle writes its first row ahead**
+  and `fsync`s it before step 2, so a claimed batch exists only in memory for one step, as before; a
+  cycle with nothing to record `fsync`s its `k` rows once. A v2 world's checkpoint is refused by its
+  engine identity; no v2 reader is kept. **The checkpoint is `vehicle.checkpoint.v3`**: its `clock`
+  holds `m` (`"p/q"`), `k`, `N`, `burst_bound = k` and `lag_ceiling_s = 30`, each validated, and its
+  segment entries mirror `m`, `k`, `N` — a change to how a checkpoint is read is a change of format,
+  so an older one is *incompatible* by name rather than misread as corrupt.
+- **G's remembered inputs, resolved after the replay.** On a resume each of `m`, `k`, `N` is the named
+  flag, else the newest recovered policy — the last replayed segment's header when the replay crossed
+  into segments the checkpoint does not list, else the checkpoint's `clock` — so a fall-back to an older
+  generation cannot silently undo a journaled change; the three are validated together, a named change
+  is journaled in the `resumed` event's `run_inputs` (`"m"`, `"k"`, `"N"`: `[inherited, named]`) and kept
+  by the checkpoint the resume takes before it serves. `check_console_flags` resolves `CLOCK_INPUTS` and
+  holds the three flags to the `None` default. Neither `m` nor `k` is published to a window.
+- **Stall, overload and stopping (C3's interim, John).** A wait returning at least 1 s late, or a start
+  lag jumping by at least `max(1 s, 10·k·dt/m)` between cycles, is journaled as a `stall`. **The lag
+  backstop:** at a cycle's start, before any handle is opened or console claimed, a start lag past
+  30 s ends the segment cleanly — the checkpoint and the manifest, a `lag_backstop` event with the lag
+  and the consecutive count (read back from the previous segment's manifest, reset by any segment that
+  ends otherwise) — and exits **4**, the console's own code for it, printing `[console] lag_backstop
+  lag_s=<n> consecutive=<n>`; the restart resumes on a fresh epoch, so the world freezes through a
+  stall rather than racing to catch up (F1). Ticks are never dropped (C4). Under sustained overload
+  this is a periodic clean restart, not a hot loop. Without a state directory there is no clean end,
+  so the backstop rebases the epoch, journals the event where a journal is named and prints the line.
+  #26 replaces the constant with the checkpointed `lag_ceiling_s` and adds shedding and dilation.
+  CLOCK_MONOTONIC stops during host suspend (the world pauses with no lag) and runs through `docker
+  pause`, SIGSTOP and VM steal, which the backstop bounds. **SIGTERM and SIGINT** set a stop flag
+  through a handler installed before recovery; the loop reads it at a cycle's boundary and the wait
+  within 100 ms, so a `docker stop` finishes the current cycle and takes the clean end. For a cycle that
+  cannot reach a boundary, a second `SIGINT` is a `KeyboardInterrupt` and a second `SIGTERM` exits 143
+  explicitly (the console is its namespace's PID 1, and the kernel ignores a default action there).
+  `tools/measure_clock.py` decides §8's feasibility over the realistic cycles at `N > k` (quiet,
+  commands, commands with a checkpoint, commands with the static rewrite): every worst cycle within
+  `k·dt/m` and every p99 within 80 % of it; the cycle that does all three at once is reported as a
+  bound.
 
 ### K — A corrupt or incompatible checkpoint, and the crash loop (maintainer with chassis reviewer)
 
