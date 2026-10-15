@@ -1,6 +1,7 @@
 # 0003 — Model corrections for the quiet-coast episode
 
-- Status: accepted (maintainer items); operator items proposed, awaiting John
+- Status: accepted (maintainer items; item 9 decided by John 2026-10-15); other operator items
+  proposed, awaiting John
 - Date: 2026-10-15
 - Decision owner: vehicle maintainer for §Decision 1–5, under D1 (`governance/decisions.md`) and open
   to the operator's revision; the operator for §Decision 6–11 (scope and evidence standard)
@@ -52,7 +53,19 @@ Operator items (proposed; John decides, `09-quiet-coast-episode.md` §8 and the 
 6. B1 — the episode's scarcity is cooling margin, with data playback as the deadline.
 7. B2 — the playback volume `D₁ + D₂` is `chosen`, bounded below the (unknown) recorder capacity.
 8. B3 — `link_ok` is a declared episode boundary.
-9. B4 — a constant sun-on-radiator hold is the declared environment.
+9. B4 — **decided by John, 2026-10-15 12:25Z: "Hold in episode only".** The constant
+   sun-on-radiator hold (`environment_heat_w` = 2,477 W, `radiator_model.environment`) is the
+   declared environment of the quiet-coast episode only: `scenarios/quiet_coast.yaml` starts the
+   run in it, with the panel and the evaporator at the hold's MET-0 equilibrium (295.65 K,
+   1,145.2 W). The default vehicle starts in rotating flight (passive thermal control):
+   `environment_heat_w` is a held boundary (`dynamics`, `dX/dt = 0`, `domains/thermal/rules.py`)
+   whose default is 1,086.9 W, `chosen`, bounded by the flown PTC coast rejection 1,170–1,470 W and
+   radiator outlet ≤ 283 K (SP-368 p. 525). The PTC figure was searched for once and not found; it
+   is the absorbed load at which the radiator alone carries the MET-0 collected load (1,651 W) with
+   the loop at its 280.35 K supply, so the radiator outlet (`thermal.coolant_return_c`) reads
+   7.2 °C at MET 0, inside Apollo's 5–15 °C band, where the hot hold put it at 19.7 °C. The
+   derivation is on `environment_heat_w.initial_provenance` and held by
+   `tests/test_quiet_coast_scenario.py`.
 10. B5 — zone start temperatures are the model's derived equilibrium.
 11. Thermal node masses and conductances are `chosen`, constrained to reproduce the flown coast
     rejection of 1,170–1,470 W (SP-368 p. 525), each labelled with that bound.

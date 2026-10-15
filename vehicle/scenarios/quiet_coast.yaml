@@ -1,0 +1,16 @@
+# The quiet-coast episode's overlay on the declared vehicle (`docs/vehicle-completion/
+# 09-quiet-coast-episode.md` §7 step 8; `tools/plant.py:load_scenario`). The vehicle itself starts
+# in passive thermal control; this scenario starts it in the sun-on-radiator hot hold, which applies
+# only inside the episode (ADR 0003 item 9, John 2026-10-15: "Hold in episode only").
+#
+# Objective, frozen thresholds, D1, D2, W_min and the policy files A-D are owed here by a later
+# step: see 09 §5 ("Objective, thresholds and policies") and §7 step 8.
+scenario: quiet_coast
+initial:
+  # environment hold (owned by the integrator): 1,361 W/m2 x 0.2 x 9.1 m2, 09 §2
+  environment_heat_w: 2477.02
+  # The MET-0 equilibrium under the hold (ADR 0003 item 10, B5): the panel's fixed point at
+  # 2,477.02 W with the loop at its 280.35 K supply and the 1,651 W MET-0 collected load, and the
+  # evaporator carrying the rest, 1,651 - 505.8 W. Held by `tests/test_thermal_rules.py`.
+  zone_radiator_t: 295.65
+  evaporator_duty_w: 1145.2

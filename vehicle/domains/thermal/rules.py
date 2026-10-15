@@ -196,7 +196,15 @@ def _comm_amp(inputs, params, dt):
     return temperature + dt * net / _node_capacity(params)
 
 
+def _environment_hold(inputs, params, dt):
+    """The radiator's absorbed environmental load, held: a declared boundary of the run (ADR 0003
+    item 9). The default vehicle starts in passive thermal control; the quiet-coast scenario starts
+    it in the sun-on-radiator hold. Nothing aboard moves it, so it is what it started as."""
+    return float(inputs["environment_heat_w"])
+
+
 RULES = {
+    "environment_heat_w": _environment_hold,
     "cabin_heat_csm_w": _zone_heat,
     "cabin_heat_lm_w": _zone_heat,
     "service_bay_heat_w": _zone_heat,

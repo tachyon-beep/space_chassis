@@ -19778,7 +19778,9 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     assert values["cabin_heat_lm"] == 0.0
     # 280.35 K supply plus 661 W over 125 W/K: the cabin's rule reads `coolant_loop_t` (ADR 0003).
     assert values["cabin_eq_csm"] == pytest.approx(285.638, abs=5e-4)
-    assert values["environment_heat"] == pytest.approx(2477.02, abs=5e-3)
+    # The default vehicle's passive-thermal-control load, held; the 2,477.02 W sun-on-radiator
+    # hold is the quiet-coast scenario's (ADR 0003 item 9, "Hold in episode only").
+    assert values["environment_heat"] == pytest.approx(1086.9, abs=5e-3)
     # And the two cabin lags relaxed toward those equilibria in the same tick, which is the point of
     # evaluating the relation rather than refusing it.
     assert "zone_csm_cabin_t" in advanced and "zone_lm_cabin_t" in advanced

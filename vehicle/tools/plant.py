@@ -703,6 +703,20 @@ def rule_refusals(root: Path) -> list[tuple[str, str]]:
     Reads only the domain declarations, not the whole world: a rule refusal is a statement about
     `rules.py` and the states it names, and the linter has its own reports for everything else.
     """
+    return _domain_rules(root)[1]
+
+
+def registered_rule_states(root: Path) -> set[str]:
+    """The states an admissible domain rule advances, for `check_vehicle.py`'s undriven-node check.
+
+    `advance()` does not ask a ruled state for an inbound edge — its rule reads what its domain
+    declares — so the linter's "nothing drives it" has to read the same registry, or the two disagree
+    about a held boundary such as `environment_heat_w`.
+    """
+    return set(_domain_rules(root)[0])
+
+
+def _domain_rules(root: Path) -> tuple[dict[str, DomainRule], list[tuple[str, str]]]:
     states: list[State] = []
     domains = root / "domains"
     if domains.is_dir():
@@ -723,7 +737,7 @@ def rule_refusals(root: Path) -> list[tuple[str, str]]:
                             spec=spec,
                         )
                     )
-    return load_rules(root, states)[1]
+    return load_rules(root, states)
 
 
 def rule_readable(

@@ -139,6 +139,17 @@ def world(tmp_path_factory) -> plant.World:
     return plant.load_world(episode_definition(tmp_path_factory.mktemp("episode") / "vehicle"))
 
 
+# The episode's hot hold is the scenario's, not the vehicle's (ADR 0003 item 9, John 2026-10-15:
+# "Hold in episode only"): every test here starts where `scenarios/quiet_coast.yaml` puts it.
+EPISODE_SCENARIO = VEHICLE / "scenarios" / "quiet_coast.yaml"
+EPISODE_INITIAL = yaml.safe_load(EPISODE_SCENARIO.read_text())["initial"]
+
+
+def episode_start(world) -> dict:
+    """The quiet-coast episode's MET-0 values: the vehicle's, with the scenario's overrides."""
+    return plant.initial_values(world, plant.load_scenario(world, EPISODE_SCENARIO))
+
+
 def run(world, values, ticks, effects=None, dt=DT, on_tick=None):
     """The real step loop, `ticks` times; `effects` maps a tick to its commands."""
     for tick in range(ticks):
@@ -155,6 +166,7 @@ def run(world, values, ticks, effects=None, dt=DT, on_tick=None):
 
 
 RULED = {
+    "environment_heat_w",
     "cabin_heat_csm_w",
     "cabin_heat_lm_w",
     "service_bay_heat_w",
@@ -270,7 +282,7 @@ def test_every_chosen_value_carries_the_adr_0003_item_11_label():
 
 
 def test_heat_rates_are_summed_over_enabled_loads_and_a_shed_load_stops_heating_that_tick(world):
-    start = plant.initial_values(world)
+    start = episode_start(world)
     assert start["loop_primary_load_w"] == pytest.approx(met0_loop_load_w())
     assert start["cabin_heat_lm_w"] == 0.0 and start["descent_bay_heat_w"] == 0.0
 
@@ -294,7 +306,7 @@ def test_heat_rates_are_summed_over_enabled_loads_and_a_shed_load_stops_heating_
 def test_radiator_rejection_is_stefan_boltzmann_at_the_panel_temperature_less_the_hold(
     world, surface_k
 ):
-    values = plant.initial_values(world)
+    values = episode_start(world)
     values = {**values, "zone_radiator_t": surface_k}
     rule = world.rules["radiator_rejection_w"]
     readable = world.rule_reads.get("thermal") or plant.rule_readable(world, {})["thermal"]
@@ -317,7 +329,7 @@ def test_radiator_rejection_is_stefan_boltzmann_at_the_panel_temperature_less_th
 
 
 def test_the_loop_s_steady_state_is_the_hand_energy_balance(world):
-    """At MET 0 the model starts at its own equilibrium (ADR 0003 item 10). Hand balance: the
+    """At MET 0 the episode starts at its own equilibrium (ADR 0003 item 10). Hand balance: the
     loads put Q in; the panel's glycol sits at the Newton root of its own balance; the panel
     rejects `eps sigma A T^4 - Q_env`; the evaporator takes the rest and holds the loop at its
     280.35 K setpoint. Ten minutes through the step loop, the loop has not moved."""
@@ -326,10 +338,11 @@ def test_the_loop_s_steady_state_is_the_hand_energy_balance(world):
     panel = panel_mean_newton(SUPPLY_K, q, capacity)
     q_rad = EPS_SIGMA_A * panel**4 - Q_ENV
     q_evap = q - q_rad
-    assert STATES["zone_radiator_t"]["initial"] == pytest.approx(panel, abs=0.01)
-    assert STATES["evaporator_duty_w"]["initial"] == pytest.approx(q_evap, abs=0.1)
+    assert EPISODE_INITIAL["environment_heat_w"] == pytest.approx(Q_ENV, abs=1e-9)
+    assert EPISODE_INITIAL["zone_radiator_t"] == pytest.approx(panel, abs=0.01)
+    assert EPISODE_INITIAL["evaporator_duty_w"] == pytest.approx(q_evap, abs=0.1)
 
-    values = run(world, plant.initial_values(world), 30_000)
+    values = run(world, episode_start(world), 30_000)
     assert values["coolant_loop_t"] == pytest.approx(SUPPLY_K, abs=0.01)
     assert values["radiator_eq_t"] == pytest.approx(panel, abs=1e-3)
     assert values["zone_radiator_t"] == pytest.approx(panel, abs=0.01)
@@ -361,7 +374,7 @@ def test_with_the_radiator_alone_carrying_the_load_no_water_is_spent(world):
         "csm_sband_transceiver",
         "csm_imu",
     ]
-    values = plant.initial_values(world)
+    values = episode_start(world)
     values = run(
         world, values, 1, {0: [effect("set_load", load=load, state="off") for load in shed]}
     )
@@ -391,7 +404,7 @@ def test_evaporator_water_drained_is_duty_over_latent_heat_on_the_ledger(world):
         # E-WATER-RAD is the back-edge of C-WATER-BUDGET: the tank pays for last tick's duty.
         expected_kg += before["evaporator_duty_w"] * DT / LATENT_J_PER_KG
 
-    start = plant.initial_values(world)
+    start = episode_start(world)
     values = run(world, start, 15_000, on_tick=on_tick)
     assert booked > 0
     assert booked * quantum_kg == pytest.approx(expected_kg, abs=quantum_kg)
@@ -401,7 +414,7 @@ def test_evaporator_water_drained_is_duty_over_latent_heat_on_the_ledger(world):
 
 
 def test_feed_off_spends_no_water_and_the_loop_warms(world):
-    values = plant.initial_values(world)
+    values = episode_start(world)
     values = run(world, values, 1, {0: [effect("set_evaporator_feed", vehicle="csm", state="off")]})
     before = values
     values = run(world, values, 3000)
@@ -416,7 +429,7 @@ def test_feed_off_spends_no_water_and_the_loop_warms(world):
 
 
 def test_set_coolant_pump_moves_the_flow_as_a_fraction_of_the_published_rate(world):
-    values = plant.initial_values(world)
+    values = episode_start(world)
     assert values["coolant_flow_kg_s"] == pytest.approx(RATED_FLOW)
     off = run(
         world,
@@ -440,7 +453,7 @@ def test_set_coolant_pump_moves_the_flow_as_a_fraction_of_the_published_rate(wor
 def test_pump_off_raises_the_loop_temperature_through_the_real_step_loop(world):
     """With no flow nothing leaves the loop: the panel and the evaporator take heat only from
     coolant that passes them. Hand bound: after the 8 s spin-down the loop warms at Q/C."""
-    values = plant.initial_values(world)
+    values = episode_start(world)
     start = values["coolant_loop_t"]
     pump_off = {0: [effect("set_coolant_pump", loop="loop_primary", pump="pump_1", state="off")]}
     values = run(world, values, 15_000, pump_off)  # 300 s
@@ -459,7 +472,7 @@ def test_pump_off_raises_the_loop_temperature_through_the_real_step_loop(world):
 
 
 def test_radiator_bypass_takes_the_panel_out_of_the_loop(world):
-    values = plant.initial_values(world)
+    values = episode_start(world)
     values = run(
         world, values, 1, {0: [effect("set_radiator_bypass", loop="loop_primary", state="bypass")]}
     )
@@ -495,7 +508,7 @@ def coast(world, ticks, dt, effects=None):
         lows["zone_csm_cabin_t"] = min(lows["zone_csm_cabin_t"], after["zone_csm_cabin_t"])
         duty.append(after["evaporator_duty_w"])
 
-    start = plant.initial_values(world)
+    start = episode_start(world)
     end = run(world, start, ticks, effects, dt=dt, on_tick=on_tick)
     return start, end, peaks, lows, duty
 
