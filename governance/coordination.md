@@ -201,7 +201,7 @@ hashes are in master §28. Board state: **R2c root passed / full pending**. No f
 reservation or launch, retry, commit or merge follows. Recommend a separately reviewed and
 granted exact-R2c full-suite proposal next. Vehicle issue 39 remains pending.
 
-**CURRENT ALLOCATION: NONE — 23:11 AEDT (master §31).** B-sel1/v5's 20 serial K controls have
+**Previous allocation: NONE — 23:11 AEDT (master §31).** B-sel1/v5's 20 serial K controls have
 been source-reviewed but are not allocated. Exact proposal/manifest and candidate3 identities
 match. Fresh Nyx inspection found adequate sampled capacity, but the submitted all-own-process
 discovery and cleanup scans fail on EACCES for existing systemd/PAM/SSH processes. Vehicle must
@@ -211,6 +211,14 @@ are explicitly dispositioned in §31. Nothing launched, no obsolete ROOT-01 gran
 and no direct owner messages were sent. Emmy retains the existing browser relay. S1, retries,
 full/build/live remain ungranted; ELSPETH priority and Sultai's GPU reservation remain intact.
 John's Option B implementation approval stands; brief v5 remains draft pending final-text approval.
+
+**CURRENT ALLOCATION: NONE — 23:33 AEDT (master §32).** Exact v7 source and the final one-line
+proposal correction are accepted for K. §31's source blockers are resolved. Fresh host capacity
+is healthy and the proposed suite unit is absent, but Vehicle's old polling shell PID 1664354
+still matches v7 admission and would refuse K00. The existing owner must verify its identity,
+retire that specific obsolete watcher and return fresh admission evidence; no package redesign
+or admission bypass is requested. No controls or tests launched, no reservation, no direct owner
+message. Emmy retains the browser relay; K03 still requires explicit independently verified release.
 
 | channel | for |
 |---|---|

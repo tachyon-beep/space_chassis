@@ -1840,3 +1840,66 @@ and Space gets no GPU, one selection and at most two test workers when separatel
 Chassis brief v5 remains an approved draft awaiting John's final-text approval; no adoption follows.
 No reviewed code, control, test or unit was executed here. Only these coordinator records changed;
 the main index SHA256 remains `86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.
+
+## 32. B-sel1/v7 source accepted; stale Vehicle watcher blocks fresh admission — 2026-10-11 23:33 AEDT
+
+**No allocation or launch.** The v7 source corrections satisfy §31 for the submitted K controls,
+but fresh Nyx admission still finds an existing Vehicle-owned shell matching the workload rule.
+Return this operational blocker through Emmy's existing browser relay; no direct owner message
+or old ROOT/R2c grant was sent.
+
+Verified final proposal SHA256 `4fe7c40ca3e094fa64a807605feee7d02c882cc324f3256420f40a082495fdb8`.
+Replacing its single `WorkingDirectory=.../v7` occurrence with `.../v6` reproduces the reviewed
+proposal hash exactly: `ad79fee54f55e2526376b938668059b7aaba3489191bcd68f3787a2f2a16313e`.
+Thus the final proposal differs only by the disclosed directory correction. Manifest SHA256
+`422ff9aa4ed7573fc9e79117f57e7135ac10c7f8cdfde2d44fcee53b78f55b32` and all 26 entries match.
+Supervisor hash `a702a4e1381f39a40385a4dcc4d159b342e13e3ee7c917cc46cc7f6b3314372b`;
+harness `fe6ea874c3de127311b36ac0e514d46975ba2f88f50d0f9f8b0b42f59fcd331a`;
+control plan `d59d65dfa3c7ff840aebfe4e0403d0f3e34308b47c807d948ec2178f769125a8`.
+Launcher and recorder are unchanged. Candidate HEAD, diff and all 92 tree blobs remain the §31
+identities, with no untracked non-ignored files. Neither K nor S1 evidence directory exists.
+
+Read the full v6/v7 reviews and actual v5-to-v7 and v6-to-v7 source changes. All 20 control specs
+are unchanged from v5 except evidence paths; ordering remains serial with K03 last. The existing
+independent reviewer also accepts v7 source for K subject to fresh admission and exclusive allocation.
+Cleanup now excludes unreadable processes only when their readable start time predates run creation;
+newer/unknown ones still fail. Admission separately classifies the narrowly enumerated host processes,
+requires readable argv, and explicitly relies on Governance for exclusive allocation. This is
+acceptable for these fixed payloads, not general proof that an old process cannot acquire a token.
+The actual enclosing service alone is excluded from unit discovery. Decoy unit names are registered
+before launch and recovered/proved by suite prefix.
+
+The 1,800-second suite budget now reserves 120 seconds per post-control check and requires at least
+210 seconds before starting another control. Queries/stops consume the remaining suite budget;
+recovery has 180 seconds, with an outer service RuntimeMaxSec of 2,040 and stop timeout of 30.
+These are the proposed K bounds, not an allocation. Separate payload services retain their §31
+caps/runtime limits. K03's expected exit 4 is not automatic release; explicit owner receipt plus
+independent final unit/cgroup/process/decoy proof remains mandatory.
+
+Residuals: terminal-status acceptance may overshoot its small terminal wait after execution has
+ended; retain this nonblocking timing residual. Misleading "were stopped" exception wording is
+removed. `release_contains` still has no supplied consumer. K02 correctly describes a cleanup-only
+receipt. The reviewed proposal's v6 WorkingDirectory P3 is fixed by the verified one-line correction.
+
+At **12:30:28 UTC / 23:30:28 AEDT**, fresh read-only checks found **31.91 GiB available RAM**,
+**21.1% CPU busy** over two seconds, load1 **5.02**, no Space user services/scopes or Space-named
+containers; the proposed `space-vehicle-b-suite-k1.service` is not-found/inactive. The previously
+unreadable host processes now fit v7's narrow classification, with no unclassified unreadable process.
+
+However **PID 1664354**, bash, PPID 1410330, cwd `/home/john/space_chassis`, belongs to Vehicle
+session `a728e992-9471-46ab-9efe-ce550d7ece5f`. Its argv contains an old polling loop for
+`tasks/b2em98w09.output`, checking `pgrep -f "pytest tests/test_vehicle_config.py -q -x -p no:cacheprovider -k"`
+and sleeping three seconds. It is an old result watcher, not evidence of a currently running test.
+Nevertheless its executable/argv/cwd exactly match v7's documented admission predicate and it is
+not an ancestor of the new systemd-launched supervisor. V7 therefore refuses K00 while it remains.
+The loop can match its own argv, explaining why it can persist. A second read confirmed the shell
+still present with a child and unchanged watcher command. It was not stopped by this coordinator.
+
+Next action for the existing Vehicle owner: verify current PID/start identity and retire this
+specific obsolete watcher through its owning task, preserving the output and unrelated work.
+Do not loosen the admission predicate or modify the approved candidate to accommodate it. Return
+watcher cleanup and refreshed admission/slot evidence for the K grant; no additional source review
+is required if the exact package is unchanged. Capacity snapshots alone are not launch admission.
+ELSPETH priority, Sultai GPU reservation, no GPU, one Space selection, and at most two workers remain.
+S1/retries/full/build/live remain ungranted. Chassis brief stays draft pending John's text approval.
+No reviewed code, controls, tests, collection or unit launch occurred. Main index hash is unchanged.
