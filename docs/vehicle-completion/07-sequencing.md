@@ -57,7 +57,7 @@ re-estimate, decide the paid pilot (residual 5).
 
 | strand | packages |
 |---|---|
-| vehicle D: WP07 flight dynamics (the 6-DOF integrator class in the plant first, then `domains/gnc/`, `domains/rcs/` allocator, `domains/propulsion/` burns) | the long pole; its integrator class is plant work and should start as soon as WP03 has mass properties and jet geometry |
+| vehicle D: WP07 flight dynamics (the 6-DOF integrator class in the plant first, then `domains/gnc/`, `domains/rcs/` allocator, `domains/propulsion/` burns) | the long pole. **Slice 1 (orbit propagation) is already in flight** in the Repo readiness thread's `vehicle/wp07-orbit` worktree since 2026-10-15, accepted against an analytic orbit; the rest starts as WP03 supplies mass properties and jet geometry |
 | vehicle E: WP05 protection and FDIR (`domains/power/` ladder and LCLs, `domains/avionics/` votes and debounces, `domains/structure/` arm and staging, `domains/rcs/` safety ladder) | after WP04 for power; the avionics rules after the states they vote on advance |
 | vehicle F: WP09 faults and instruments (`tools/faults.py` into truth; the instrument layer; crew perception once D-06's display contract is written) | after WP08; the instrument layer is also the performance fork ([05-performance.md](05-performance.md)) |
 | aurora: WP09's window checks; `#26`'s needs if any; the preflight pieces of gate E | as the vehicle lands them |

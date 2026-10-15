@@ -22,7 +22,7 @@ block a package indefinitely, and parallel work does not remove integration cost
 | M3 | WP04 electrical solve | not started | nodal solve, source/load coupling | L | WP02 inputs for power |
 | M3 | WP05 transitions, dwell, protection, FDIR | not started | the discrete state machines, protection | L | WP04 |
 | M3 | WP06 thermal, cabin, consumables, feed rules | not started | the remaining lag, stock and algebraic rules | L | WP02 |
-| M3 | WP07 orbit, attitude, navigation, propulsion dynamics | not started | 6-DOF, propagation, navigation, burns | L–XL | WP03 |
+| M3 | WP07 orbit, attitude, navigation, propulsion dynamics | **slice 1 in flight** (orbit propagation for `gnc.orbital_state`, Repo readiness thread, worktree `vehicle/wp07-orbit`, from 2026-10-15) | the rest: attitude, navigation, allocator, burns | L–XL | WP03 for evidenced inputs; slice 1 can start on the integrator against an analytic orbit |
 | M3 | WP09 execute faults; measured evidence | not started | fault injection; the instrument layer | L | WP01, WP08 |
 | M3 | WP10 conservation and cycle accounting | not started | non-vacuous mass ledgers; energy trend | M | WP01, WP08 |
 | M3 | WP11 coverage and complete-vehicle gate | not started | the coverage matrix; gate V | M–L | WP04–WP10 |
@@ -136,6 +136,11 @@ The deepest hole. Rigid-body 6-DOF: position, velocity, quaternion, body rates; 
 Verlet in coast, RK4 in burns; quaternion renormalised every tick (`plant.md` §3). Orbit propagation
 (`gnc.orbital_state`), navigation covariance (`gnc.nav_covariance`), attitude driven by RCS torques
 (`E-RCS-DYN` with a sensitivity), control allocation (`rcs.attitude_error`), main-engine burns.
+**In flight:** slice 1, the orbit propagation rule for `gnc.orbital_state` (and the attitude/body-rate
+drive if it falls out), taken by the Repo readiness thread on 2026-10-15 in worktree `vehicle/wp07-orbit`;
+vehicle code and tests only. It can be accepted against an analytic orbit before WP03 supplies the
+mission's real state vector (`mission.yaml.initial_state.position_xyz_km` is `UNCONFIGURED`).
+
 **Accepts:** two-body propagation against an analytic orbit over the mission horizon within the
 published precision; torque-free rotation conserves angular momentum; a reference burn reproduces its
 Δv within the evidenced tolerance; the 6-DOF integrator class is added to the plant and the linter.
