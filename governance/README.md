@@ -1,6 +1,6 @@
 # Governance
 
-As of **2026-10-10**, `tachyon-beep/space_chassis` `aurora-port` @ `84b1c49`. Owned by the chassis
+As of **2026-10-10**, `tachyon-beep/space_chassis` `aurora-port` @ `1177d47`. Owned by the chassis
 line. **Verify against the code before trusting any line here.**
 
 This is the single place a new session, agent or person reads first, to learn:
@@ -12,18 +12,21 @@ This is the single place a new session, agent or person reads first, to learn:
 It is meant to become the single source of truth in time. Until it is, **the code, the issue
 trackers and the decision records it points to are authoritative wherever they disagree with it.**
 
-## The two lines
+## One product, two lines
 
-The project divides into exactly two lines of work. There is no third line, and nothing is co-owned
-(John, 2026-10-10).
+**Space Aurora is one product**: a fleet of self-modifying agents and the spacecraft they fly. It is
+built by two development teams, the two lines below, of equal importance and working together in
+parallel; Emmy coordinates them (John, 2026-10-10). What divides is the work, never the product:
+every path, branch and task has exactly one owning line, there is no third line, and nothing is
+co-owned (John, 2026-10-10).
 
 | line | what it is | where it lives | governance |
 |---|---|---|---|
 | **space_chassis** | The AI chassis: the world the fleet of agents lives in. Aurora's harness per agent, the recorder, the pump, the operator services, the containers, the brief, and the vehicle's deployment. | this repository | `chassis/` |
 | **space_vehicle** | The mission simulator: one spacecraft behind per-agent windows. | `tachyon-beep/space_vehicle`, vendored here as `docs/deep_research/vehicle/` | `vehicle/` |
 
-The two lines meet only at the frozen window contract, `docs/diode-contract.md`, and at the
-deployment of the vehicle service. Each line describes its side in its own `interface.md`.
+The two lines' parts of the product meet at the window contract, `docs/diode-contract.md`, and at
+the deployment of the vehicle service. Each line describes its side in its own `interface.md`.
 
 ## Ownership
 

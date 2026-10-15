@@ -36,8 +36,9 @@ key) is the fastest way to see whether the world still works end to end.
 
 ## Governance
 
-`governance/README.md` is the place to start: the project divides into two lines with nothing
-shared, the chassis (this repository, except the vehicle) and the vehicle (`tachyon-beep/space_vehicle`).
+`governance/README.md` is the place to start: Space Aurora is one product, built in parallel by two
+development teams of equal importance, the chassis line (this repository, except the vehicle) and the
+vehicle line (`tachyon-beep/space_vehicle`). Every path and task has exactly one owning line.
 It holds each line's snapshot, decision log, practice, interface and open items, and the rules for
 coordinating between them. The chassis line owns `governance/` except `governance/vehicle/`, which
 the vehicle line writes and the chassis commits verbatim. Nothing in it may reach an image.
@@ -45,7 +46,7 @@ the vehicle line writes and the chassis commits verbatim. Nothing in it may reac
 ## The scope boundary
 
 **This repository builds everything except the vehicle.** Nothing here models physics or names a
-single spacecraft verb. The vehicle lives behind a per-agent directory implemented by someone else;
+single spacecraft verb. The vehicle lives behind a per-agent directory implemented by the vehicle line;
 the only thing the two halves share is `docs/diode-contract.md`, and `contract/fake_diode.py` is a
 fixture that satisfies it and models nothing. A request that sounds like "add a thruster command"
 belongs on the far side of the window, not here.
