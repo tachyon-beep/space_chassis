@@ -753,8 +753,9 @@ def test_the_build_order_is_the_ticks_own_gap_list():
     assert {state.id for state in buckets["ready"]} == advanced, sorted(
         {state.id for state in buckets["ready"]} ^ advanced
     )
-    # 140 -> 150: ADR 0003 quiet coast: the thermal, power and comms rules together (thermal 24 -> 28, comms 10 -> 16).
-    assert sum(len(rows) for rows in buckets.values()) == 150
+    # 140 -> 152: ADR 0003 quiet coast: the thermal, power and comms rules together (thermal 24 -> 28,
+    # comms 10 -> 16, power 14 -> 16).
+    assert sum(len(rows) for rows in buckets.values()) == 152
 
     # Every blocked state is filed under what its *root* owes, and the root is the state an
     # implementer should open. The sentinel's sequencing is deliberately not part of the chain: it
@@ -827,8 +828,8 @@ def test_the_build_order_is_the_ticks_own_gap_list():
     # thresholds do not carry, rather than the domain code the rule bucket was asking it for.
         # 52 -> 53 ready and 45 -> 44 rule: `orbital_state` coasts under `cislunar_point_masses`.
         # 53 -> 54 ready: power's `load_enabled`, the switch map `set_load` writes, is held.
-        # (54, 27, 15, 44) -> (70, 24, 14, 42): ADR 0003 quiet coast: the thermal, power and comms rules together.
-        ) == (70, 24, 14, 42), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
+        # (54, 27, 15, 44) -> (74, 24, 14, 40): ADR 0003 quiet coast: the thermal, power and comms rules together.
+        ) == (74, 24, 14, 40), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
 
 
 def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
@@ -10086,8 +10087,9 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 135 -> 136 in round 40, with the avionics bay's heat rate: the one heated zone whose 360 W no
     # state carried, and the ingredient the loop's collected load was missing.
     # 136 -> 138 in round 41, with the two loops' collected loads: the sums that ingredient fed.
-    # 140 -> 150: ADR 0003 quiet coast: the thermal, power and comms rules together (thermal 24 -> 28, comms 10 -> 16).
-    assert sum(len(rows) for rows in buckets.values()) == 150
+    # 140 -> 152: ADR 0003 quiet coast: the thermal, power and comms rules together (thermal 24 -> 28,
+    # comms 10 -> 16, power 14 -> 16).
+    assert sum(len(rows) for rows in buckets.values()) == 152
 
     # `ready` means what it says: only the classes the reference plant can actually advance.
     # It is no longer only the plant's two integrators — round 20 taught it to evaluate an
@@ -10161,8 +10163,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # reads, and naming it (`radiator_rejection_w`) made the coolant's discharge computable.
     # Post-ejection P00 and active CMC DAP give two more commanded modes a sourced initial.
     # 53 -> 54: power's `load_enabled`, the switch map `set_load` writes, is held.
-    # 54 -> 70: ADR 0003 quiet coast: the thermal, power and comms rules together (62 with power and comms alone).
-    assert len(buckets["ready"]) == 70
+    # 54 -> 74: ADR 0003 quiet coast: the thermal, power and comms rules together.
+    assert len(buckets["ready"]) == 74
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -11393,7 +11395,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "150 states, by what blocks them" in result.stdout
+    assert "152 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -13967,9 +13969,10 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
     assert len(declared) == 10, f"{len(declared)} domains declare one: {[d for d, _ in declared]}"
     # 54 -> 56: the oxygen supply tank's pressure joined the sentinel, and — the same round — the
     # count it is part of is what this assertion exists to notice.
-    # 59 -> 62 with ADR 0003: thermal's three keyed commands (`evaporator_feed`, `coolant_pump`,
-    # `radiator_bypass`) are on the sentinel and declared in its order.
-    assert sum(len(states) for _, states in declared) == 62, "the sentinel's state count moved"
+    # 59 -> 61 with ADR 0003: thermal's three keyed commands (`evaporator_feed`, `coolant_pump`,
+    # `radiator_bypass`) are on the sentinel and declared in its order, and power's `bus_a_load_w`
+    # left it for `fuel_cell`.
+    assert sum(len(states) for _, states in declared) == 61, "the sentinel's state count moved"
 
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
@@ -17615,9 +17618,10 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     )
     result = run_linter(definition)
     assert result.returncode == 1, result.stdout[-900:]
-    # The fixture's figure moved twelve -> fourteen when the vehicle reached 12 (ADR 0003's merges).
+    # The fixture's figure moved twelve -> fourteen when the vehicle reached 12, and the vehicle is at
+    # 13 since the power rules put the bus loads and module current on `fuel_cell` (ADR 0003's merges).
     assert "states 'fourteen nodes carry more than one state'" in result.stdout, result.stdout[-900:]
-    assert "this vehicle has 12 multi-state nodes" in result.stdout, result.stdout[-900:]
+    assert "this vehicle has 13 multi-state nodes" in result.stdout, result.stdout[-900:]
 
     # And the sentinel form, which is the other noun and the other claim.
     other = copy_definition(fixture_dir(tmp_path, "stale-sentinel"))
@@ -17631,7 +17635,7 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     result = run_linter(other)
     assert result.returncode == 1, result.stdout[-900:]
     assert "states 'forty-eight states live on it'" in result.stdout, result.stdout[-900:]
-    assert "this vehicle has 62 states on the sentinel" in result.stdout, result.stdout[-900:]
+    assert "this vehicle has 61 states on the sentinel" in result.stdout, result.stdout[-900:]
 
     # A *digits* figure is read too, so the reader is not tied to the spelling the corpus happens
     # to use today.
@@ -17666,8 +17670,8 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
         "states on the sentinel": _cv.SENTINEL_STATE_FIGURES,
     }
     # 11 -> 10 in round 70, with the source regulator off the fuel cell's node.
-    # 10 -> 12 and 59 -> 62 with ADR 0003's thermal, power and comms rules.
-    expected = {"multi-state nodes": 12, "states on the sentinel": 62}
+    # 10 -> 13 and 59 -> 61 with ADR 0003's thermal, power and comms rules.
+    expected = {"multi-state nodes": 13, "states on the sentinel": 61}
     for tool in sorted((VEHICLE / "tools").glob("*.py")):
         tree = _ast.parse(tool.read_text())
         for node in _ast.walk(tree):
@@ -19764,8 +19768,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # 45 -> 48 in round 80, and this is the largest single move a *value* round has made: three
     # commanded modes the launch checklist publishes a position for, which the hold then carries.
     # 53 -> 54: power's `load_enabled`, the switch map `set_load` writes, is held.
-    # 54 -> 70: ADR 0003 quiet coast: the thermal, power and comms rules together.
-    assert len(advanced) == 70, sorted(advanced)
+    # 54 -> 74: ADR 0003 quiet coast: the thermal, power and comms rules together.
+    assert len(advanced) == 74, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares: 733 W less the 72 W
     # amplifier, which starts off (ADR 0003: heat is summed over the loads `load_enabled` has on).
@@ -21931,13 +21935,13 @@ def test_the_tick_can_read_what_the_build_order_promises():
     assert set(resolved) <= advanced, sorted(set(resolved) - advanced)
 
     # The figures this rests on, so a round that moves them has to say so here.
-    assert len(world.states) == 150
+    assert len(world.states) == 152
     # 139 -> 140: power's `load_enabled`, the switch map `set_load` writes.
     # 38 -> 41 in round 75: the three event-moved states, held by the tick and moved by the effect.
     # 41 -> 45 in round 76 and 45 -> 48 in round 80: the seven positions `mission.yaml#launch_state`
     # now declares, the last three of them read out of the launch checklist.
-    # 54 -> 70: ADR 0003 quiet coast: the thermal, power and comms rules together.
-    assert len(ready) == 70 and len(advanced) == 70
+    # 54 -> 74: ADR 0003 quiet coast: the thermal, power and comms rules together.
+    assert len(ready) == 74 and len(advanced) == 74
 
 
 # ---------------------------------------------------------------------------------------------

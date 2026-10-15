@@ -329,17 +329,21 @@ consumers:
   - id: fuel_cell_o2
     stock: o2_csm
     edge: E-O2-DRAW
-    rate_kg_s: 0.000152690537
+    rate_kg_s: 0.000152691
     derivation:
-      expression: per_joule_kg * demand_w
+      expression: per_amp_kg * demand_w / budget_v
       inputs:
-        per_joule_kg: coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value
+        per_amp_kg: coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value
         demand_w: domains/power/components.yaml:load_budget.csm_total_demand_w
+        budget_v: vehicle.yaml:electrical.fuel_cells.output_v
     provenance:
       basis: derived
       relation: >-
-        the cell's oxygen draw at the CSM's declared 1,723 W demand: 8.8619e-8 kg/J x 1,723 W =
-        1.526905e-4 kg/s, which is 0.550 kg O2 per hour. **This entry said the kg-per-kWh figure was
+        the cell's oxygen draw at the CSM's declared 1,723 W demand, budgeted at the modules' rated
+        29 V: 2.56996e-6 kg/s per ampere x 1,723 W / 29 V = 1.526905e-4 kg/s, which is 0.550 kg O2
+        per hour. **A budget, not the tick**: the plant charges the stock per ampere of the solved
+        module current (`power.fuel_cell_current_a`, ADR 0003 item 3), which at the coast bus's
+        30.4 V is 4.6 % less than this 29 V figure. **This entry said the kg-per-kWh figure was
         "NOT published" and it was one division from three published numbers** — the reactant rate
         per ampere, the module's rated 29 V and the reaction's mass ratio — see
         `coupling.yaml#edge E-FC-DRAW-O2.sensitivity`. What changed the entry
@@ -363,12 +367,13 @@ consumers:
   - id: fuel_cell_h2
     stock: h2_csm
     edge: E-H2-DRAW
-    rate_kg_s: 1.9239018e-05
+    rate_kg_s: 1.92391e-05
     derivation:
-      expression: per_joule_kg * demand_w
+      expression: per_amp_kg * demand_w / budget_v
       inputs:
-        per_joule_kg: coupling.yaml:edges.E-FC-DRAW-H2.sensitivity.value
+        per_amp_kg: coupling.yaml:edges.E-FC-DRAW-H2.sensitivity.value
         demand_w: domains/power/components.yaml:load_budget.csm_total_demand_w
+        budget_v: vehicle.yaml:electrical.fuel_cells.output_v
     provenance:
       basis: derived
       relation: >-
@@ -378,12 +383,13 @@ consumers:
   - id: fuel_cell_product_water
     stock: water_potable
     edge: E-FC-WATER
-    rate_kg_s: 0.000171929544662
+    rate_kg_s: 0.00017193
     derivation:
-      expression: per_joule_kg * demand_w * kg_water_per_kg_o2
+      expression: per_amp_kg * demand_w / budget_v * kg_water_per_kg_o2
       inputs:
-        per_joule_kg: coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value
+        per_amp_kg: coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value
         demand_w: domains/power/components.yaml:load_budget.csm_total_demand_w
+        budget_v: vehicle.yaml:electrical.fuel_cells.output_v
         kg_water_per_kg_o2: coupling.yaml:edges.E-FC-WATER.sensitivity.value
     provenance:
       basis: derived
