@@ -219,9 +219,18 @@ class AgentSide:
         `variables` key while no map is held -- is left as it is. It is decided
         from types alone, before the map is adopted, so no JSON value can make
         it raise. Everything else is rewritten to show the held map, so the file
-        always shows it ("the vehicle never clears it"). The residual is the
-        vehicle's too: a rewrite that remains can still erase a file put in place
-        between its read and its rename.
+        always shows it ("the vehicle never clears it").
+
+        **The fixture still rewrites; the vehicle takes (#39 option B).** The
+        vehicle renames a console with something to claim aside and puts an
+        emptied one back with a link that never replaces a file, so it erases
+        nothing and the console can be briefly absent. Option B's contract
+        package leaves that mechanism to the vehicle and lets the fixture keep
+        tier 1's rule (`governance/vehicle/records/2026-10-14-lane-archive/
+        39-option-b/gate/CONTRACT-PACKAGE-B.md`). So this fixture keeps the
+        residual the vehicle closed: a rewrite can still erase a file put in
+        place between its read and its rename. It serves stub runs, where one
+        scripted writer waits for the cleared console, as the brief asks.
         """
         raw = read_bounded(self.console)
         payload = None

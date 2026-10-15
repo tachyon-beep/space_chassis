@@ -1,12 +1,12 @@
 """The fixture's quiet rule (#39 tier 1): a console with nothing to claim is not rewritten.
 
-`contract/fake_diode.py` is the window the smoke stack mounts, and `docs/diode-contract.md` §2.2 now
-says the vehicle rewrites the console only when it holds something to claim. The fixture models the
-same contract with the same test as the vehicle's `Window.claim` (`vehicle/tools/console.py`,
-`quiet`): an object whose `commands` is exactly `[]` and that already shows the map (its own
-`variables` object, which is adopted, or no `variables` key while no map is held) is left as it is;
-everything else is rewritten to show the held map. The last test here holds the two to one answer,
-shape by shape, by driving both.
+`contract/fake_diode.py` is the window the smoke stack mounts, and `docs/diode-contract.md` §2.2 says
+the vehicle leaves a console with nothing to claim untouched. The fixture uses the same test as the
+vehicle's `Window.claim` (`vehicle/tools/console.py`): an object whose `commands` is exactly `[]` and
+that already shows the map (its own `variables` object, which is adopted, or no `variables` key while
+no map is held) is left as it is. Everything else the vehicle takes by a rename and replaces with an
+emptied console (#39 option B); the fixture, as option B's package allows, rewrites it to show the
+held map. The last test here holds the two to one answer, shape by shape, by driving both.
 """
 
 from __future__ import annotations
@@ -176,8 +176,9 @@ def test_the_fixture_and_the_vehicle_agree_on_what_is_nothing_to_claim(tmp_path,
     """Parity, not a copy of the rule: both windows are driven over the same shapes.
 
     For each shape, with the window holding a map and with it holding none, one vehicle cycle (whose
-    claim is `Window.claim`) and one fixture `consume` must agree on whether the console is
-    rewritten, and on the map each then holds.
+    claim is `Window.claim`) and one fixture `consume` must agree on whether the console is replaced
+    (the vehicle's take and put-back, the fixture's rewrite: a new inode either way), on what the
+    console then shows, and on the map each then holds.
     The vehicle is imported from `vehicle/tools`, as its own referee does; nothing in it is changed.
     """
     tools = str(VEHICLE / "tools")

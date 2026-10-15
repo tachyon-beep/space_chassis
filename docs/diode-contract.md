@@ -27,7 +27,7 @@ For each agent, named `slug`:
 
 ```
 <DIODE_DIR>/<slug>/console.json          agent  -> vehicle   (the only uplink)
-<DIODE_DIR>/<slug>/output/<result>.txt   vehicle -> agent    (one file per command)
+<DIODE_DIR>/<slug>/output/<result>.txt   vehicle -> agent    (one file per verdict)
 <DIODE_DIR>/<slug>/state.json            vehicle -> agent    (published every cycle)
 <DIODE_DIR>/<slug>/HELP.md               vehicle -> agent    (verbs currently open)
 <DIODE_DIR>/<slug>/README.md             vehicle -> agent    (the protocol, in the vehicle's words)
@@ -64,29 +64,52 @@ visible in their work rather than supplied by the world.
 - `commands` is a list of lines: a verb, a space, its arguments.
 - `variables` is a flat map of gate settings the vehicle chooses to honour.
   Persistent — the vehicle never clears it.
-- **Intake is destructive and atomic.** Each cycle the vehicle reads the file. If it holds
-  something to claim, the vehicle rewrites it with `commands` emptied and `variables` preserved,
-  through a temporary file and a rename. "Something to claim" means commands, a file that is not
-  a console, or a console with no `variables` while the vehicle holds a map. A command therefore
-  takes effect **at most once**, even if the vehicle dies mid-cycle: the batch was already claimed.
-  A file whose `commands` is `[]` and which already shows the `variables` is left as it is, and its
-  `variables` are adopted.
-- **Clear before you act.** The claim happens before any command runs. A crash
-  mid-batch loses the rest of that batch; it never replays it.
-- **One malformed element refuses the whole batch.** If any element of
-  `commands` is not a string, none of it runs, and exactly one result file
-  records that. Partial execution of a malformed batch is worse than none.
-- A batch is claimed at the window's next read. **Known residual (vehicle #39):** a file replaced
-  between the vehicle's read and its rewrite of an earlier one can be lost without a result. A
-  take that cannot lose it is planned. Until it lands, write a new batch only after the previous
-  one has been claimed.
-- An agent writing the file in place rather than replacing it may be read
-  half-written. Refusing is correct; the result file says so.
+- **A successful claim takes the console atomically.** At an eligible intake visit, the
+  vehicle inspects `console.json`. It leaves a console untouched only when `commands` is an empty
+  list and either `variables` is an object, or the `variables` key is absent and the vehicle has
+  no known map. A nonempty, missing or null `commands` is never left untouched on either branch.
+  Otherwise it attempts to rename the console aside. Whatever entry occupies the name at the
+  successful rename is the claim; the earlier inspection does not select the batch. The vehicle
+  reads the taken entry without following links. It then attempts to restore an emptied console
+  with the preserved variables, without overwriting a replacement supplied meanwhile. The console
+  may be temporarily absent.
+- **There is no next-read or next-cycle guarantee.** Window checks, recovery, and unfinished
+  claim or durability work can postpone intake. A non-regular file found by the window pre-check
+  causes that window to be skipped; this records a window failure, not a per-command result. A
+  batch submitted during a cycle may be taken in that cycle. A replacement left at `console.json`
+  awaits a later eligible intake attempt. Replacing a batch before it is taken supersedes it.
+  Replace the file rather than writing in place: in-place writes can be read partially, or
+  continue into an already-taken file.
+- **Invalid input is not a batch of executable commands.** A taken input that cannot be decoded
+  as a console, or whose non-null `commands` value is not a list, generates a refusal verdict.
+  Missing or null `commands` supplies no commands. A list containing a non-string element, or
+  exceeding the batch cap, is refused as a whole, with one batch-level verdict. Publication
+  remains subject to §2.3.
+- **Claiming, execution and result publication are separate.** Claimed input batches are not
+  replayed from leftover take files after a process restart. A crash after claiming but before
+  the cycle record becomes durable can lose the batch's results. With a journal, the window
+  directory is synced before taken commands are returned for processing, and retirement must
+  become durable before further intake or map adoption. Without a journal, these barriers are
+  omitted. Host-crash and power-loss persistence depends on the applicable file and directory
+  syncs completing, and on the storage system honouring them.
 
 ### 2.3 `output/` — the downlink
 
-Every command produces exactly one file, whether it succeeded, was refused for
-an unopened gate, hit an allowance, or raised inside the vehicle:
+- **Results are published as files; neither exactly-one nor eventual delivery is
+  guaranteed.** Each published verdict has a result file. A deferred command can produce an
+  acceptance result and a later settlement result. A malformed or over-cap batch produces a
+  batch-level refusal rather than a result for every element. A skipped window, interrupted
+  processing or failed publication can leave no result.
+- **Recovery may republish results.** Retained owed results are retried during publication and
+  at resume. The bounded search for an existing result may miss it, producing another file with
+  the same receipt. Identify duplicate verdicts by their world, window and receipt `seq`, not by
+  filename. At most 256 owed results are retained per window; exceeding that bound abandons the
+  oldest obligation and records the failure. Recovery can also substitute truncated text, or a
+  fingerprint explanation, when the full result was not retained. These mechanisms do not
+  guarantee one file, complete original text, or eventual delivery.
+
+A result file, whether the command succeeded, was refused for an unopened gate, hit an
+allowance, or raised inside the vehicle, is named:
 
 ```
 <UTC stamp>_<slug>_<sanitised command>.txt
@@ -104,8 +127,8 @@ an unopened gate, hit an allowance, or raised inside the vehicle:
 - **Nothing overwrites anything.** Results accumulate. `output/` is append-only
   and the agents clean it up if they want it cleaned.
 - **A refusal is a result.** Unavailable verb, allowance exhausted, bad
-  argument, internal error: one file each, same shape. The agent must read the
-  content; the shape tells it nothing.
+  argument, internal error: each is a verdict published the same way, same shape.
+  The agent must read the content; the shape tells it nothing.
 
 There is no callback, no subscription, and no wait. An agent submits and reads
 later. A command that takes longer than one cycle — a burn, a deploy, a
@@ -290,7 +313,8 @@ can be checked mechanically:
 
 1. a submitted batch is claimed, and the console is left with `variables`
    preserved and `commands` empty;
-2. every command in a batch produces exactly one result file, refusals included;
+2. every command in a batch produces exactly one result file, refusals included —
+   for the batches the probe submits: plain, non-deferred commands with no crash (§2.3);
 3. a non-string element refuses the whole batch and runs none of it;
 4. an unknown verb is refused by name;
 5. a closed gate is refused by name, and its variable is published;
