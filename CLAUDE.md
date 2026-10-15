@@ -12,7 +12,7 @@ python3 -m pytest harness/tests -q                     # one suite: the Aurora h
 python3 -m pytest recorder/tests -q                    # the recorder and the spend caps
 python3 -m pytest pump/tests -q                        # the pump
 python3 -m pytest docs/deep_research/vehicle/tests/test_vehicle_config.py -q   # the vehicle's referee
-python3 -m pytest live -q                              # the live run: builds the image and runs the smoke stack; minutes
+systemd-run --user --scope -p CPUQuota=35% -p MemoryMax=1G -p MemorySwapMax=0 nice -n 19 python3 -m pytest live -q   # the live run, inside its capped scope: builds the images and runs the smoke stacks one at a time; minutes
 
 uvx ruff check . --no-cache                            # ruff is not installed here; uvx fetches it
 uvx ruff format --check . --no-cache

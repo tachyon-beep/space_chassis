@@ -30,6 +30,8 @@ case "$*" in
         exit 0 ;;
     *" ps --format"*)
         printf '%b' "${SERVICES-agent_1\nagent_2\nrecorder_1\nrecorder_2\n}"; exit 0 ;;
+    *"ps -q --filter label=space_chassis.sweep"*)
+        printf '%b' "${RUNNING_SWEEPS:-}"; exit "${RUNNING_SWEEPS_RC:-0}" ;;
     *" ps -q "*)
         for last in "$@"; do :; done
         case " ${ABSENT:-} " in *" $last "*) exit 0 ;; esac
@@ -43,8 +45,8 @@ case "$*" in
     *inspect*.Image*)
         [ -n "${IMAGE_ID:-}" ] || exit 1
         echo "$IMAGE_ID"; exit 0 ;;
-    *"--entrypoint find"*)
-        printf '%b' "${IMAGE_SWEEP:-}"; exit "${IMAGE_SWEEP_RC:-1}" ;;
+    *"space_chassis.sweep="*)
+        printf '%b' "${SWEEP_LIMITS-LIMIT 20000 100000|268435456|0\n}${IMAGE_SWEEP:-}"; exit "${IMAGE_SWEEP_RC:-1}" ;;
     *inspect*.Source*)
         [ -n "${MOUNT_SOURCES:-}" ] || exit 1
         printf '%s' "$MOUNT_SOURCES"; exit 0 ;;
@@ -83,6 +85,7 @@ class Run:
             "CALLS": str(self.calls),
             "STDIN_LOG": str(self.stdin_log),
             "SENTINEL": SENTINEL,
+            "SWEEP_LOCK": str(self.root / "sweep.lock"),
             **extra,
         }
         return subprocess.run(
@@ -223,14 +226,85 @@ def test_a_partial_or_unrun_sweep_is_a_failure_never_an_absence(run):
     assert unprobed in _swept(run, SENTINEL_PATH + "\\n", image="")  # no image to sweep
 
 
+def test_the_image_sweep_is_capped_and_reads_its_caps_back_before_it_searches(run):
+    _swept(run, SENTINEL_PATH + "\\n")
+    line = next(x for x in run.argv_lines() if "space_chassis.sweep=" in x)
+    assert "--cpus 0.2 --memory 256m --memory-swap 256m" in line, line
+    assert "--label space_chassis.sweep=operator" in line, line
+    for path in ("cpu.max", "memory.max", "memory.swap.max"):
+        assert f"/sys/fs/cgroup/{path}" in line, line
+
+
+def test_a_sweep_whose_caps_read_back_wrong_is_a_failure(run):
+    for limits in ("LIMIT max 100000|268435456|0\\n", "LIMIT 20000 100000|max|max\\n", ""):
+        out = run(
+            COMPOSE="docker compose -p probe",
+            AGENTS="agent_1",
+            IMAGE_ID="sha256:img",
+            IMAGE_SWEEP=SENTINEL_PATH + "\\n",
+            IMAGE_SWEEP_RC="0",
+            SWEEP_LIMITS=limits,
+        ).stdout
+        assert "FAIL  agent_1's image sweep did not run under its caps" in out, limits
+        assert "PASS  agent_1 has no vehicle in its image" not in out
+
+
+def test_no_sweep_starts_while_another_sweep_is_running(run):
+    out = run(
+        COMPOSE="docker compose -p probe",
+        AGENTS="agent_1",
+        IMAGE_ID="sha256:img",
+        IMAGE_SWEEP=SENTINEL_PATH + "\\n",
+        IMAGE_SWEEP_RC="0",
+        RUNNING_SWEEPS="cid-orphan\\n",
+    ).stdout
+    assert "FAIL  agent_1 could not be probed for the vehicle" in out
+    assert not any("space_chassis.sweep=" in line for line in run.argv_lines())
+
+
+def test_no_sweep_starts_when_the_running_sweeps_cannot_be_listed(run):
+    out = run(
+        COMPOSE="docker compose -p probe",
+        AGENTS="agent_1",
+        IMAGE_ID="sha256:img",
+        IMAGE_SWEEP=SENTINEL_PATH + "\\n",
+        IMAGE_SWEEP_RC="0",
+        RUNNING_SWEEPS_RC="1",
+    ).stdout
+    assert (
+        "FAIL  agent_1 could not be probed for the vehicle (the running sweeps could not be listed)"
+        in out
+    )
+    assert not any("space_chassis.sweep=" in line for line in run.argv_lines())
+
+
+def test_no_sweep_starts_while_another_run_holds_the_sweep_lock(run):
+    import fcntl
+
+    with open(run.root / "sweep.lock", "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        out = run(
+            COMPOSE="docker compose -p probe",
+            AGENTS="agent_1",
+            IMAGE_ID="sha256:img",
+            IMAGE_SWEEP=SENTINEL_PATH + "\\n",
+            IMAGE_SWEEP_RC="0",
+            SWEEP_LOCK_WAIT="1",
+        ).stdout
+    assert "FAIL  agent_1 could not be probed for the vehicle" in out
+    assert not any("space_chassis.sweep=" in line for line in run.argv_lines())
+
+
 def _sweep_args(run) -> list[str]:
     """The find arguments the script passes, read from the docker call it made."""
     _swept(run, SENTINEL_PATH + "\\n")
     line = next(
-        line for line in run.argv_lines() if " run " in f" {line} " and "--entrypoint find" in line
+        line
+        for line in run.argv_lines()
+        if " run " in f" {line} " and "space_chassis.sweep=" in line
     )
     words = line.split()
-    return words[words.index("sha256:img") + 1 :]
+    return words[words.index("sweep") + 1 :]  # the find arguments follow the sh script's $0
 
 
 def _find_under(args: list[str], root) -> list[str]:

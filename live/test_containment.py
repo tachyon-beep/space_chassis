@@ -1,9 +1,7 @@
 """The first live checks: the image builds, each agent's world is up, and the walls hold (spec 9.6)."""
 
-import subprocess
-
 from probes import postgres_answers, progress
-from stack import REPO, allowed_environment, wait_for
+from stack import wait_for
 
 
 def test_the_image_builds_and_each_agent_s_postgres_answers(stack):
@@ -12,15 +10,7 @@ def test_the_image_builds_and_each_agent_s_postgres_answers(stack):
 
 
 def test_containment_holds_for_every_agent(stack):
-    agents = " ".join(f"agent_{n}" for n in range(1, stack.agents + 1))
-    result = subprocess.run(
-        ["sh", str(REPO / "scripts" / "verify_containment.sh")],
-        cwd=REPO,
-        env=allowed_environment({"COMPOSE": " ".join(stack.compose_command()), "AGENTS": agents}),
-        capture_output=True,
-        text=True,
-        timeout=900,
-    )
+    result = stack.containment_check()
     assert result.returncode == 0, result.stdout + result.stderr
     assert "PASS  agent_3 has no trace of its recorder's real key" in result.stdout
     for n in range(1, stack.agents + 1):

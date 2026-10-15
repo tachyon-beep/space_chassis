@@ -39,7 +39,7 @@ ignore = ["E501", "B008"]
 [tool.pytest.ini_options]
 # One suite: `pytest -q` at this root runs the operator side and the assertions about this
 # repository's own files (tests/), Aurora's harness, recorder and pump with the tests this
-# repository added to them, and the vehicle's referee (344 tests), which lives in its own
+# repository added to them, and the vehicle's referee (525 test functions at the adopted vehicle), which lives in its own
 # repository, mounted here as a git submodule. live/ is not here: it starts containers.
 testpaths = [
     "tests",

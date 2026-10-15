@@ -30,7 +30,8 @@ authoritative.
 - Stage files **by name**, then run the root suite (`python3 -m pytest tests -p no:cacheprovider -n 8`)
   *after* `git add`. The retirement guard scans tracked files only.
 - Run `uvx ruff check . --no-cache` and `uvx ruff format --check . --no-cache`.
-- A change to the image, compose or the vehicle's deployment also runs `python3 -m pytest live -q`.
+- A change to the image, compose or the vehicle's deployment also runs the live suite, inside its
+  capped scope (the live fixtures refuse to start a stack outside one): `systemd-run --user --scope -p CPUQuota=35% -p MemoryMax=1G -p MemorySwapMax=0 nice -n 19 python3 -m pytest live -q`.
   It builds `space-chassis-agent:smoke` and runs its own compose project. The vehicle variant is
   `SmokeStack(window="vehicle")` and `live/test_vehicle.py`.
 - Doc guards: `tests/test_doc_claims.py` (claims the code contradicts), `tests/test_retired.py`,
