@@ -23,11 +23,13 @@ Unchanged, plus one paragraph after the table:
 
 > Archived conversations are bounded. Whenever a conversation starts fresh, the watchdog keeps the
 > newest twenty in `/work/tombstones/` (within 128 MiB) and in the git directory (within 64 MiB)
-> and deletes the older ones. It deletes only the names the harness gives its own archives:
-> `session_<date>_<time>_<micro>.json`, `corrupt_session_<date>_<time>_<micro>.json` and
-> `session_recovery_<n>.json`. Notes, the messages `done` leaves (`incarnation-*.txt`), and any
-> file you name yourself are never touched. A note may name an archive that has since been
-> deleted. The figures and the names are in your `watchdog.py`, and yours to change.
+> and deletes the older ones; the archive just made is always kept, even when it alone is larger
+> than the budget. These names are reserved for the harness's archives, and any file bearing one
+> may be deleted, whoever wrote it: `session_<date>_<time>_<micro>.json`,
+> `corrupt_session_<date>_<time>_<micro>.json` and `session_recovery_<n>.json`. Notes, the
+> messages `done` leaves (`incarnation-*.txt`), and files under any other name are never touched.
+> A note may name an archive that has since been deleted. The figures and the names are in your
+> `watchdog.py`, and yours to change.
 
 ## Sources
 
