@@ -1,29 +1,30 @@
-# AGENTS.md — space_chassis
+# AGENTS.md — aurora/, the Aurora container stream
 
 A world for ten self-modifying agents: a floor of capability, one window outward, and a record they
-cannot reach. This is what an agent needs before touching anything. `CLAUDE.md` covers the same
+cannot reach. This is what an agent needs before touching anything in `aurora/`; the repository's
+three streams and the worktree convention are in `../AGENTS.md`. `CLAUDE.md` covers the same
 ground for Claude Code, `docs/design.md` is the rationale for every decision here, and
 `docs/superpowers/specs/2026-10-09-aurora-port-design.md` is the design of the world as it now is —
 read those before arguing with a rule below.
 
 ## Governance
 
-Start at `governance/README.md`: Space Aurora is one program building one product, with two project
+Start at `../governance/README.md`: Space Aurora is one program building one product, with two project
 teams of equal importance working in parallel; it says who owns what across the two lines of work (the chassis, this
-repository; the vehicle, `tachyon-beep/space_vehicle`), each line's current state, its decisions,
+stream; the vehicle, `../vehicle/`), each line's current state, its decisions,
 how it is worked, and what is open. It is never copied into an image.
 
 ## The scope boundary
 
-**This repository builds everything except the vehicle.** Nothing here models physics or names a
-spacecraft verb. The vehicle answers a per-agent directory from behind `docs/diode-contract.md`, and
+**This stream builds everything except the vehicle.** Nothing here models physics or names a
+spacecraft verb. The vehicle answers a per-agent directory from behind `../docs/diode-contract.md`, and
 that contract is the only thing the two halves share.
 
 | | |
 |---|---|
 | **Here** | the world: `harness/` (Aurora's agent, chassis and watchdog, the seed each agent rewrites), `recorder/`, `pump/`, `services/` (the operator's monitor and review panel), `containers/`, `brief/`, `contract/` (the probe and a fixture that models nothing), the generated compose topology, `live/` and the tests |
-| **The vehicle** | `docs/deep_research/vehicle/` — **its own repository**, `tachyon-beep/space_vehicle`, mounted here as a git submodule: its configuration, reference plant, linter and referee |
-| **The evidence** | `docs/deep_research/*_diode.md` and `integration/` — the corpus the vehicle was built from. **Frozen: read, cite, never edit.** A round that "fixes" one of them is editing the evidence |
+| **The vehicle** | `../vehicle/` — **its own stream** (absorbed from `tachyon-beep/space_vehicle` with its history): its configuration, reference plant, linter and referee |
+| **The evidence** | `../docs/deep_research/*_diode.md` and `integration/` — the corpus the vehicle was built from. **Frozen: read, cite, never edit.** A round that "fixes" one of them is editing the evidence |
 
 A request that sounds like "add a thruster command" belongs on the far side of the window. A request
 that sounds like "the fleet cannot see the window" belongs here.
@@ -31,9 +32,8 @@ that sounds like "the fleet cannot see the window" belongs here.
 ## Getting started
 
 ```sh
-git submodule update --init --recursive     # the vehicle is a submodule; without it, collection is partial
-python3 -m pytest -q -n 8                   # the whole suite; no containers, a few tests use the docker CLI
-uvx ruff check . --no-cache                 # ruff is not installed here; uvx fetches it
+(cd .. && python3 -m pytest -q -n 8)        # the whole suite, both streams, from the root; no containers
+(cd .. && uvx ruff check . --no-cache)      # ruff is not installed here; uvx fetches it
 docker compose --profile fleet config -q    # the topology parses
 sh scripts/prepare_host.sh                  # roster, .env, and the bounded volume images
 python3 scripts/status.py --verbose         # one line per agent, from the record
@@ -43,8 +43,8 @@ python3 -m pytest live -q                   # the smoke stack: three agents, a s
 
 One `pytest` collects every suite: the operator side and the assertions about this repository's own
 files (`tests/`), Aurora's harness, recorder and pump with what this repository added to them
-(`harness/tests`, `recorder/tests`, `pump/tests`), and the vehicle's referee through the submodule
-(`docs/deep_research/vehicle/tests/`). It is minutes, not seconds, and it is the only thing that
+(`harness/tests`, `recorder/tests`, `pump/tests`), and the vehicle stream's referee
+(`../vehicle/tests/`). It is minutes, not seconds, and it is the only thing that
 runs every refusal, so run it before you commit. `live/` is separate because it starts containers.
 
 ## Layout
@@ -60,22 +60,23 @@ runs every refusal, so run it before you commit. `live/` is separate because it 
 | `contract/` | `diode_probe.py` (the instrument against the window) and `fake_diode.py` (a fixture that satisfies the contract and models nothing) |
 | `scripts/` | `prepare_host.sh`, `roster.py`, `volume_images.py`, `build_compose.py`, `status.py`, `journal.py`, `verify_containment.sh` |
 | `live/` | The smoke stack (`stack.py`, the cued `stub_llm.py`) and the checks run against it |
-| `docs/diode-contract.md` | **The interface.** The vehicle's builder implements it; this side probes it. Changing it means changing both halves |
-| `docs/deep_research/` | The corpus (frozen) and `integration/` — the reconciliation register, the canonical vocabulary, the design and review maps |
-| `docs/deep_research/vehicle/` | **The vehicle, as a submodule** of `tachyon-beep/space_vehicle` |
+| `../docs/diode-contract.md` | **The interface.** The vehicle's builder implements it; this side probes it. Changing it means changing both halves |
+| `../docs/deep_research/` | The corpus (frozen) and `integration/` — the reconciliation register, the canonical vocabulary, the design and review maps |
+| `../vehicle/` | **The vehicle stream** |
+| `docs/` | This stream's design record (`design.md`, `brief-claims.md`), plans and ledgers (`superpowers/`, `plans/`) |
 | `tests/` | The suite's root: the operator side and this repository's own files |
 
-## Two repositories, one project
+## Two build streams, one repository
 
-- **Work on the vehicle commits in the vehicle repository.** `cd docs/deep_research/vehicle`, commit
-  there under the vehicle's own law (`vehicle: <the finding>`), and push to its origin. This
-  repository records only the new submodule pointer, in a *separate* commit here.
-- **The vehicle is one of a possible many.** A second vehicle is a second submodule beside it, not a
-  second folder inside it. Anything that assumes exactly one vehicle is a design decision, not a fact.
-- **The reconciliation rows are this repository's.** `docs/deep_research/integration/reconciliation/`
+- **Work on the vehicle commits under `../vehicle/`**, on a `vehicle/…` branch in its own worktree,
+  under the vehicle's own law (`vehicle: <the finding>`). There is no pointer to move: merging the
+  branch is adopting it.
+- **The vehicle is one of a possible many.** A second vehicle is a second stream folder beside
+  `vehicle/`, not a second folder inside it. Anything that assumes exactly one vehicle is a design decision, not a fact.
+- **The reconciliation rows are the chassis line's.** `../docs/deep_research/integration/reconciliation/`
   holds one row per file, and the rows for the vehicle's files are held to the tools by
-  `tests/test_vehicle_reconciliation.py` — because the vehicle's own suite may not read outside its
-  root. When a vehicle figure moves, the row moves on this side.
+  `tests/test_vehicle_reconciliation.py` — because the vehicle's own suite may not read outside
+  `vehicle/`. When a vehicle figure moves, the row moves on this side.
 - **Where the vehicle work stands**: `.scratch/status/VEHICLE_COMPLETENESS_REPORT.md` (the audit,
   the completion criteria and what is outstanding) and `.scratch/apollo/` (the round queue and the
   handovers). Both are gitignored working material, not declarations.

@@ -1,21 +1,23 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working in `aurora/`, the
+repository's Aurora container stream. The repository's map, its three streams and the worktree
+convention are in `../CLAUDE.md`. Paths below are relative to `aurora/`, and the commands run from
+here except the whole suite, which runs from the repository root.
 
 ## Commands
 
 ```sh
-git submodule update --init --recursive                # the vehicle is a submodule; do this first
-python3 -m pytest -q -n 8                              # whole suite (pytest-xdist); no containers, a few tests use the docker CLI
+(cd .. && python3 -m pytest -q -n 8)                   # whole suite, both streams, from the root (pytest-xdist); no containers
 python3 -m pytest tests/test_health.py -q              # one file
 python3 -m pytest harness/tests -q                     # one suite: the Aurora harness
 python3 -m pytest recorder/tests -q                    # the recorder and the spend caps
 python3 -m pytest pump/tests -q                        # the pump
-python3 -m pytest docs/deep_research/vehicle/tests/test_vehicle_config.py -q   # the vehicle's referee
+python3 -m pytest ../vehicle/tests/test_vehicle_config.py -q   # the vehicle stream's referee
 python3 -m pytest live -q                              # the live run: builds the image and runs the smoke stack; minutes
 
-uvx ruff check . --no-cache                            # ruff is not installed here; uvx fetches it
-uvx ruff format --check . --no-cache
+(cd .. && uvx ruff check . --no-cache)                 # ruff is not installed here; uvx fetches it; config is the root pyproject
+(cd .. && uvx ruff format --check . --no-cache)
 
 docker compose --profile fleet config -q               # the topology parses
 sh scripts/prepare_host.sh                             # roster into operator/ and .env; plan, create and check the volume images
@@ -28,7 +30,7 @@ sh scripts/verify_containment.sh --all                 # safety claims vs. a run
 
 The whole suite is one `pytest`: the operator side and the assertions about this repository's own
 files (`tests/`), Aurora's harness, recorder and pump with the tests this repository added to them
-(`harness/tests`, `recorder/tests`, `pump/tests`), and the vehicle's referee through the submodule.
+(`harness/tests`, `recorder/tests`, `pump/tests`), and the vehicle stream's referee (`../vehicle/tests`).
 It is minutes, not seconds; the recorder's deadline tests and the vehicle are most of it. `live/` is
 not in it: it starts containers. The smoke stack `live/stack.py` builds (three agents, their
 recorders, the cued stub model in `live/stub_llm.py`, the contract fixture as the window, a dummy
@@ -36,28 +38,26 @@ key) is the fastest way to see whether the world still works end to end.
 
 ## Governance
 
-`governance/README.md` is the place to start: Space Aurora is one program building one product, with
-two project teams of equal importance working in parallel, the chassis line (this repository, except
-the vehicle) and the vehicle line (`tachyon-beep/space_vehicle`). Every path and task has exactly one
-owning team.
+`../governance/README.md` is the place to start: Space Aurora is one program building one product, with
+two project teams of equal importance working in parallel, the chassis line (`aurora/`, this stream)
+and the vehicle line (`vehicle/`). Every path and task has exactly one owning team.
 It holds each line's snapshot, decision log, practice, interface and open items, and the rules for
 coordinating between them. The chassis line owns `governance/` except `governance/vehicle/`, which
 the vehicle line writes and the chassis commits verbatim. Nothing in it may reach an image.
 
 ## The scope boundary
 
-**This repository builds everything except the vehicle.** Nothing here models physics or names a
+**This stream builds everything except the vehicle.** Nothing here models physics or names a
 single spacecraft verb. The vehicle lives behind a per-agent directory implemented by the vehicle line;
-the only thing the two halves share is `docs/diode-contract.md`, and `contract/fake_diode.py` is a
+the only thing the two halves share is `../docs/diode-contract.md`, and `contract/fake_diode.py` is a
 fixture that satisfies it and models nothing. A request that sounds like "add a thruster command"
 belongs on the far side of the window, not here.
 
-`docs/deep_research/` (~16.4k lines) specifies that far side. Don't read it unless the work is on
-the contract itself; `docs/deep_research/integration/corpus-review.md` is the map. **The vehicle is
-its own repository** (`tachyon-beep/space_vehicle`), vendored here as a git submodule at
-`docs/deep_research/vehicle/` so a checkout of the chassis has a vehicle to run; a second vehicle
-would be a second submodule beside it. Work on the vehicle belongs in that repository.
-`docs/design.md` is the rationale for every decision below, and
+`../docs/deep_research/` (~16.4k lines) specifies that far side. Don't read it unless the work is on
+the contract itself; `../docs/deep_research/integration/corpus-review.md` is the map. **The vehicle is
+its own stream**, `../vehicle/` (absorbed from `tachyon-beep/space_vehicle` with its history); a
+second vehicle would be a second stream folder beside it. Work on the vehicle belongs in that folder,
+on a `vehicle/…` branch. `docs/design.md` is the rationale for every decision below, and
 `docs/superpowers/specs/2026-10-09-aurora-port-design.md` is the design of the world as it now is;
 read them before arguing with one.
 
@@ -77,7 +77,7 @@ agent's: it may rewrite any of it, the watchdog included.
 | `/shared` | one image every agent reads and writes | the fleet |
 | `pump/pump.py` → `/usr/local/bin/pump.py`; `recorder/` → `/usr/local/lib/recorder/` | the scheduler, and the recorder its own container runs | the operator; outside `/work` |
 | `services/` → `/opt/services` | `common`, `health`, `fleet_monitor`, `review`: the operator's monitor and panel | the operator |
-| `docs/deep_research/vehicle/` → `/opt/vehicle` | the vehicle, in its own image `space-chassis-vehicle` (Dockerfile.agent's `vehicle` stage), run by the `vehicle` service with no network; no agent image carries any of it (`agent` is the default stage) | the vehicle's repository |
+| `../vehicle/` → `/opt/vehicle` | the vehicle, in its own image `space-chassis-vehicle` (Dockerfile.agent's `vehicle` stage, which receives it as the named build context `vehicle_src`), run by the `vehicle` service with no network; no agent image carries any of it (`agent` is the default stage), and the agents' build context, `aurora/`, does not contain it | the vehicle stream |
 | `brief/` → `/opt/brief` | what the agents are told, read-only; each claim it and the prompts make is sourced in `docs/brief-claims.md` | the operator |
 | transcripts, `fleet_ledger`, `operator_telemetry`, `operator/journal/` | the record and the operator's view of it; no agent mounts them | the operator |
 
@@ -114,7 +114,7 @@ bare name imports from its own directory in the one merged run. `filterwarnings 
 ["error::DeprecationWarning"]` means any deprecation warning fails the suite.
 
 - `harness/`, `recorder/` and `pump/` are vendored from Aurora at 42faf41 and kept close to it so
-  they can be re-synced; `pyproject.toml` excludes their vendored files from ruff.
+  they can be re-synced; the root `pyproject.toml` excludes their vendored files from ruff.
 - The operator-side code (`services/`, `scripts/`) is **standard library only**. Adding a
   dependency to it is a design change, not a convenience.
 - Every published file goes through `common.write_json_atomic`; every read of an agent-written file

@@ -1,5 +1,12 @@
 # AGENTS.md — the vehicle
 
+> **Since 2026-10-15 this folder is the `vehicle/` stream of the one Space Aurora repository**
+> (`tachyon-beep/space_chassis`), absorbed from `tachyon-beep/space_vehicle` @ `8c6f71d` with its
+> history; see `../governance/plans/2026-10-15-three-stream-restructure.md`. Where the text below
+> says "this repository", read "this folder"; where it says `space_chassis`, read the repository
+> root (`../docs/`, `../aurora/`). Work here on a `vehicle/…` branch in its own worktree. The
+> boundary rule is unchanged: nothing in this folder reads outside it.
+
 This is the vehicle's own repository: the far side of the window `space_chassis` deliberately does
 not contain. It is vendored into `space_chassis` as a git submodule at
 `docs/deep_research/vehicle`, so a checkout of the chassis has a vehicle to run — and a second

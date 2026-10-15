@@ -1,4 +1,4 @@
-# space_chassis
+# aurora/ — the Aurora container stream
 
 A world for ten self-modifying agents, and the record of what they do in it.
 
@@ -9,7 +9,9 @@ spacecraft they are meant to fly. Everything between those two — the control
 layer, the division of labour, the way ten consoles avoid contradicting each
 other — is not provided, because building it is the mission.
 
-**This project builds everything except the vehicle.** The spacecraft lives on
+(This is the `aurora/` stream of the Space Aurora repository; `../README.md` is the map of all three.)
+
+**This stream builds everything except the vehicle.** The spacecraft lives on
 the far side of the window, in a process this repository does not contain. What
 is here is the world around it: each agent's own harness, which it may rewrite
 from end to end; the watchdog that restores it from checkpoints when a rewrite
@@ -187,9 +189,9 @@ agent can read or change any transcript, its own included.
 | `brief/` | What they are told. |
 | `scripts/` | Host preparation, the roster, the volume images, the compose generator, status, the journal, containment checks. |
 | `live/` | The smoke stack and the checks that run against it. |
-| `docs/diode-contract.md` | The interface the vehicle's builder implements. Read this one. |
-| `docs/deep_research/` | The vehicle study (`apollo_diode.md`) and the eleven subsystem studies — power, ECLSS, thermal, GNC, propulsion, RCS, comms, consumables, avionics, structural/sequential events, crew C&W — that specify the far side of that window. `integration/corpus-review.md` says what is in them. |
-| `docs/deep_research/vehicle/` | **The vehicle itself, as a git submodule** of [`tachyon-beep/space_vehicle`](https://github.com/tachyon-beep/space_vehicle): its configuration, its reference plant, its linter and its referee. `git submodule update --init` after cloning; a second vehicle would be a second submodule beside it. |
+| `../docs/diode-contract.md` | The interface the vehicle's builder implements. Read this one. |
+| `../docs/deep_research/` | The vehicle study (`apollo_diode.md`) and the eleven subsystem studies — power, ECLSS, thermal, GNC, propulsion, RCS, comms, consumables, avionics, structural/sequential events, crew C&W — that specify the far side of that window. `integration/corpus-review.md` says what is in them. |
+| `../vehicle/` | **The vehicle itself**, the repository's vehicle stream (absorbed from [`tachyon-beep/space_vehicle`](https://github.com/tachyon-beep/space_vehicle) with its history): its configuration, its reference plant, its linter and its referee. A second vehicle would be a second stream folder beside it. |
 | `docs/design.md` | Why the world is shaped this way. |
 | `docs/superpowers/specs/2026-10-09-aurora-port-design.md` | The design of the port: what came from Aurora, what was kept, what was retired. |
 | `contract/diode_probe.py` | Walks an implementation through the contract and reports. |
