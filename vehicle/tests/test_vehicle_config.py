@@ -10960,7 +10960,7 @@ def test_a_run_can_say_which_scenario_it_is(tmp_path):
     # difficulty knob's own history is about: a name nothing resolves reads exactly like a name
     # that did nothing.
     refused = run_console(
-        "--diode-dir", str(fixture_dir(tmp_path, "phantom")), "--slug", "v2", "--scenario", "phantom", "--cycles", "1"
+        "--diode-dir", str(fixture_dir(tmp_path, "phantom")), "--slug", "v2", "--scenario", "phantom", "--cycles", "1", *CLOCK
     )
     assert refused.returncode == 3, refused.returncode
     assert "is not one of the vehicle's" in refused.stderr, refused.stderr
@@ -25016,7 +25016,7 @@ def test_without_a_state_dir_the_lock_and_the_journal_are_where_they_were(tmp_pa
     Child 4 made such changes twice: the tick row gained `windows` and `published`, and the file gained
     a segment header row before the first tick row (an `event` row, so the tick rows are counted
     without it); its review added `receipt` and `chain` (format v2). #23 added the lag and the
-    carried-forward cost (format v3).
+    carried-forward cost (format v3), and a clean end now closes the segment with a manifest row.
     """
     diode = tmp_path / "diode"
     journal = tmp_path / "j.jsonl"
@@ -25024,7 +25024,10 @@ def test_without_a_state_dir_the_lock_and_the_journal_are_where_they_were(tmp_pa
     assert ran.returncode == 0, ran.stderr[-800:]
     assert (diode / ".executive.lock").exists() and len(tick_rows(journal)) == 2
     rows = tick_rows(journal)
-    assert record_lines(journal)[0]["event"] == "segment" and len(record_lines(journal)) == 3
+    # A segment header first, the two tick rows, and the manifest a clean end closes the segment with (#23).
+    lines = record_lines(journal)
+    assert lines[0]["event"] == "segment" and len(lines) == 4, lines
+    assert lines[-1]["event"] == "manifest" and lines[-1]["ended"] == "clean", lines[-1]
     assert [sorted(row) for row in rows] == [sorted(TICK_ROW_KEYS)] * 2, rows
     assert len({row["boot_id"] for row in rows}) == 1 and [row["tick"] for row in rows] == [1, 2], rows
     assert not list(tmp_path.rglob("journal.*.jsonl")) and not list(tmp_path.rglob("serves.json"))

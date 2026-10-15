@@ -6193,7 +6193,8 @@ def _resume(
         write_boot_marker(executive.state_fd, executive.boot_id)
     except Exception as exc:  # noqa: BLE001 - the refusal names it
         raise ResumeRefused(
-            f"the boot marker {BOOT_FILE} cannot be written into the state directory ({type(exc).__name__}: {exc}); a resume "
+            f"the boot marker {executive.state_dir / BOOT_FILE if executive.state_dir else BOOT_FILE} cannot be written "
+            f"into the state directory ({type(exc).__name__}: {exc}); a resume "
             "that cannot say which boot it is cannot tell a window's last take from an older one"
         ) from exc
     republished: list[dict[str, Any]] = []
