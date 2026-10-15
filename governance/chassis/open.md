@@ -37,7 +37,7 @@ for issues; this file holds the ones that steer the line, and the questions for 
    checkout that tree is the vehicle line's (`8c6f71d`, not the pinned `dd79e76`), so
    `docker compose --profile vehicle build vehicle` there would bake unpinned, unreviewed vehicle
    code. **Until a guard lands, the vehicle image is built only from a checkout whose vehicle is at
-   the gitlink** (the adoption worktree). The guard (build the stage from exactly the gitlink's
+   the gitlink** — no checkout on this host qualifies at present (AUR-GOV-03 v1.1 addendum). The guard (build the stage from exactly the gitlink's
    tree) is chassis work, not yet authorised as an implementation slice.
 4. **Land the port on `main`.** `aurora-port` is 117 commits ahead. The merge is John's call. When
    it lands, close the superseded filigree issues. They are listed in epic `space_chassis-c8e27e645c`

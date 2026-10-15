@@ -1,6 +1,6 @@
 # Coordination between the lines
 
-As of **2026-10-10 20:02 AEDT**, `tachyon-beep/space_chassis` `aurora-port` @ `486960c`. Owned by the chassis
+As of **2026-10-10 20:30 AEDT**, `tachyon-beep/space_chassis` `aurora-port` @ `1effa040`. Owned by the chassis
 line, from a draft by the vehicle line. **Verify against the code before trusting any line here.**
 
 ## Programme leadership — 2026-10-10
@@ -22,10 +22,17 @@ For this documentation checkpoint, owner contact is handled by the coordinating 
 native-browser worker. The documentation writer records proposed follow-ups in the master plan
 and sends no duplicate owner instructions. Line-owned reports remain theirs to write; reading
 them does not ratify a handover or change their status. Emmy's explicit review in master-plan
-section 9 marks **AUR-GOV-02 v1 SUFFICIENT** and **AUR-GOV-03 v1 CORRECTIONS**, with the exact
-report versions, evidence limits and a small chassis addendum requested. AUR-GOV-07 is ready;
-AUR-GOV-04/06 await that addendum's re-check. This neither assigns tasks nor accepts the product
-or transfers custody. Owner reports remain unchanged.
+sections 9–10 marks **AUR-GOV-02 v1 SUFFICIENT** and **AUR-GOV-03 v1.1 SUFFICIENT**, with exact
+report versions, closed correction findings and carried evidence limits. Section 11 now claims
+AUR-GOV-04 for the existing Chassis Code owner and AUR-GOV-07 for the existing Vehicle Code owner;
+AUR-GOV-06 waits for those inputs and separate assignment. The browser worker routes the claims.
+These assignments do not accept the product or transfer custody. Owner reports remain unchanged
+by Emmy's documentation writer. Required validation and coordinator-only commit/publication are
+now authorised; section 11 supersedes the earlier validation-scope blocker without waiving gates.
+Section 12 records the completed checks: root 569 passed, lint/format passed, but the full suite
+failed its vehicle malformed-batch contract probe (1 failed, 1722 passed). The coordinator files
+remain uncommitted and unpublished pending resolution of that required gate; the claims remain
+recorded locally for the browser worker to route.
 
 ## Channels
 

@@ -118,3 +118,68 @@ No hosted CI exists for the chassis. A dry run is not adoption; local receipts a
 **Owner's readiness opinion:** the chassis's known state, in-flight work, authorities and next actions are documented here and in `chassis/*.md`; the custody blockers are the `[f0c915]` identity and John's two host actions. Phase B and plan 9 are in-flight engineering with named owners and authority, not documentation blockers. No custody transfer or offlining is implied.
 
 **Next atomic slices (authorised):** (1) Phase B on the SHA; (2) write plan 9 (no implementation before its reviews). **Awaiting authorisation:** the vehicle build guard; AUR-GOV-04 when its dependencies are met.
+
+---
+
+## Addendum v1.1 — owner corrections after independent review
+
+Observed read-only **2026-10-10 20:07:24 AEDT (+1100)** (09:07:24 UTC). No checkout was reset, no
+image built, nothing cleaned. v1's text above is kept as written; where it conflicts, this addendum
+governs.
+
+```text
+Task ID / state: AUR-GOV-03 / SUBMITTED (v1.1, owner corrections)
+Report version / as-of time / repo and full SHA(s): v1.1, 2026-10-10 20:07:24 AEDT (+1100);
+  aurora-port 486960c515b0d9d3d6e0a677f3c9fec27eb965b0 (v1's commit) before this addendum's commit.
+```
+
+**C1 — v1's as-of time was future-dated.** v1 said "~20:15 AEDT". Its observations were taken
+2026-10-10 between 19:51 and 19:58 AEDT (+1100), and v1 was committed at 19:59:19 +1100
+(`486960c`). Those observations stand as historical at that time; the values below are re-observed
+at 20:07:24 AEDT.
+
+**C2 — build safety: the vehicle checkout must equal the recorded gitlink; no checkout here does.**
+The vehicle image's `vehicle` stage copies the build context's `docs/deep_research/vehicle/`
+working tree, so what it bakes is whatever that checkout holds, not the commit the parent records.
+
+| checkout | branch / HEAD | recorded gitlink at HEAD | vehicle checkout HEAD | equal? |
+|---|---|---|---|---|
+| `/home/john/space_chassis` | `aurora-port` `486960c…` | `dd79e7608c931df9e5273824a3b2b9f396cb7cb7` | `8c6f71ddc44597b204078c12b5232ef47ed5f99a` (the vehicle line's) | **no** |
+| `.claude/worktrees/vehicle-adoption` | `phase-b-dryrun` `39ba76d…` | `dd79e7608c931df9e5273824a3b2b9f396cb7cb7` | `06f08a33933a465cf43420ed2fb3cd0642ed98c3` (the dry run's) | **no** |
+
+v1's §11 advice "build only from the adoption worktree" was wrong: that worktree is at the dry run's
+`06f08a3`. The `space-chassis-vehicle:smoke` image (`24dd2e009177`) was built from it deliberately
+as dry-run evidence and is not a deployable vehicle. `chassis/open.md` P1 item 3 carried the same
+wrong parenthetical and is corrected in this commit.
+
+The precise requirement for a deployable vehicle image, until a guard enforces it:
+1. in the checkout used as the build context, `git -C docs/deep_research/vehicle rev-parse HEAD`
+   equals the object in `git ls-tree HEAD docs/deep_research/vehicle`; **and**
+2. that vehicle working tree has no modified, untracked or ignored files that `.dockerignore` does
+   not exclude. Its patterns (`__pycache__/`, `.pytest_cache/`, `.scratch/`) are root-anchored, so
+   they do not cover the vehicle's own subdirectories; only `__pycache__` is removed afterwards by
+   the stage's `RUN find`. Observed now: both vehicle checkouts have no modified or untracked files
+   (`status --porcelain` empty), but both hold ignored directories (`tests/__pycache__/`,
+   `tools/__pycache__/`, `.pytest_cache/`; the main checkout's also `.scratch/` and `.venv/`) that
+   a build would bake. Not verified by a build (none was run).
+
+**C3 — remote-backed vs local-only refs** (live `git ls-remote origin` at 20:07:24 AEDT):
+
+| ref | full SHA | on `origin` |
+|---|---|---|
+| `aurora-port` | `486960c515b0d9d3d6e0a677f3c9fec27eb965b0` | yes, same SHA (tracks `origin/aurora-port`) |
+| `main` | `fa43b25b0fd7d88a3f5e7feb3338e190078517ce` | yes, same SHA |
+| `vehicle-adoption` | `be63f93402f5bf6662e92e8ce509d55f1bb12a4f` | yes, same SHA |
+| `wip/sv-recorder-opus-20261008` | `7d9564937df988b725e7c409a672ec1fe5455ff1` | yes (remote only; no local branch) |
+| `phase-b-dryrun` | `39ba76d3acc247600cfcbbff458cbcb9aea8b08f` | **no — local only** (by design: a dry run is never a landing) |
+| `vehicle-standalone` | `d5bc44c68e23222d404a0243023e7dc8e7b7881c` | **no — local only** (the vehicle line's) |
+
+v1's "all branches below were pushed by it today" is withdrawn: this session pushed `aurora-port`
+and `vehicle-adoption` today; `main` and the `wip/` branch were not pushed by it; the two local-only
+refs were never pushed.
+
+**Remaining factual uncertainty:** the root-anchoring of `.dockerignore` patterns is from Docker's
+documented matching, not observed in a build; the provenance of `/tmp/head_tree` and of the main
+checkout's ignored `.venv/` and `.scratch/` under the vehicle is unknown to this session; the git
+stash was not inspected. Mirror identity (`[f0c915]`) and host-operation custody remain tracked
+follow-ups, not inventory blockers.
