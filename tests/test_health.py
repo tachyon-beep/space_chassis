@@ -352,3 +352,20 @@ def test_a_transcript_line_larger_than_the_window_still_reads_as_talking(tmp_pat
     assert view["liveness"] == "active"
     assert view["transcript_age"] is not None and view["transcript_age"] < 60
     assert view["signals"]["window"]["truncated"] is True
+
+
+def test_only_a_cap_refusal_close_counts_as_refused_spend():
+    def close(status, refusal=None):
+        event = {"timestamp": at(10), "event": "close", "stream": "core", "status": status}
+        if refusal is not None:
+            event["refusal"] = refusal
+        return event
+
+    events = [
+        close(429, "rate limited: at most 4 request(s) per hour on this socket"),
+        close(503, "fleet ledger unavailable"),
+        close(503, "record_capacity: under 67108864 bytes free for the transcript"),
+        close(503, "deadline_insufficient: 481.0 s gone of a 480 s start allowance"),
+        close(502),
+    ]
+    assert health.spend(events, now=epoch(20))["refused"] == 2

@@ -1702,17 +1702,28 @@ def full_upstream(upstream):
     return upstream
 
 
-def test_a_full_volume_does_not_stop_the_json_transcript_append(
+def test_a_full_volume_withholds_the_reply_and_still_charges_it(
     core_server, transcripts, monkeypatch, capsys, full_upstream
 ):
-    full = _Full(monkeypatch, str(transcripts / "transcript.jsonl"))
+    # John's rule (plan 4b): every reply an agent acts on is on record, so a reply that cannot be
+    # recorded is withheld. The events stay best-effort and still say what happened.
+    raised = []
+
+    def full(fd, data):
+        raised.append(1)
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(proxy, "_os_write", full)
+    monkeypatch.setattr(proxy, "_fenced", set())
     response = _post(core_server, {"model": "m", "messages": []})
-    err = _stderr_until(capsys, "Error writing transcript: [Errno 28]")
-    _assert_forwarded(response)
-    assert full.raised == 1
+    assert response.status_code == 502
+    assert response.json()["error"]["message"].startswith("record_failed")
+    assert raised
     assert _entries(transcripts) == []
-    assert [e["event"] for e in _events(transcripts)] == ["open", "close"]
-    assert "Error writing event" not in err
+    events = _events(transcripts)
+    assert [e["event"] for e in events] == ["open", "close"]
+    assert events[-1]["record"] == "failed"
+    assert "Error writing event" not in capsys.readouterr().err
 
 
 def test_a_full_volume_does_not_stop_the_plain_transcript_append(

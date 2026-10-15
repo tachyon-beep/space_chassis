@@ -449,18 +449,47 @@ def reservation_for(composed_bytes, allowance):
 # refuses it before anything parses it.
 REQUEST_CAPS = (64, 32_768, 131_072)
 RESPONSE_CAPS = (64, 8_192, 32_768)
-_TOKEN = re.compile(rb'"[^"\\]*(?:\\.[^"\\]*)*(?:"|\Z)|[\[{]|[\]}]|[^\s,:\[\]{}"]+', re.S)
+# Everything but strings: one structural byte, or one run of scalar text. No alternative can
+# backtrack, so a search is linear in what it skips.
+_STRUCTURE = re.compile(rb'[\[{]|[\]}]|"|[^\s,:\[\]{}"]+')
+
+
+def _string_end(data, position):
+    """The index just past the closing quote of the string whose body starts at position.
+
+    A quote closes the string when the run of backslashes before it is even. Each quote and each
+    backslash is looked at once, so the walk is linear; a string that never closes runs to the end.
+    """
+    while True:
+        quote = data.find(b'"', position)
+        if quote == -1:
+            return len(data)
+        run = 0
+        back = quote - 1
+        while back >= position and data[back] == 0x5C:
+            run += 1
+            back -= 1
+        position = quote + 1
+        if run % 2 == 0:
+            return position
 
 
 def _structure(data, caps=None):
-    """Walk the tokens of a JSON-ish body: (depth, containers, values, first cap exceeded).
+    """Walk a JSON-ish body: (depth, containers, values, first cap exceeded).
 
-    Strings, with their escapes, are one token each, so punctuation inside them is not structure.
-    Nothing is validated. With caps, the walk stops at the first cap exceeded.
+    A string, escapes and all, is one value, so punctuation inside it is not structure. Nothing is
+    validated. With caps, the walk stops at the first cap exceeded. The security review of 91065d6
+    found the earlier single-regex form quadratic on strings that cannot close; this one is linear.
     """
     depth = deepest = containers = values = 0
-    for match in _TOKEN.finditer(data):
-        first = match.group()[:1]
+    position = 0
+    while True:
+        match = _STRUCTURE.search(data, position)
+        if match is None:
+            break
+        token = match.group()
+        position = match.end()
+        first = token[:1]
         if first in (b"[", b"{"):
             depth += 1
             containers += 1
@@ -469,6 +498,9 @@ def _structure(data, caps=None):
         elif first in (b"]", b"}"):
             depth = max(0, depth - 1)
             continue
+        elif first == b'"':
+            values += 1
+            position = _string_end(data, position)
         else:
             values += 1
         if caps is not None:
@@ -743,21 +775,22 @@ class StreamRegistry:
         self._clock = clock
 
     def _shared_roll(self, now):
-        """Empty the shared pool when the clock hour has turned.
+        """Start the shared pool's new clock hour.
 
-        The pool's window is the clock hour, not a rolling one. A reservation
-        in flight across the boundary is simply forgotten with the old hour's
-        entries; its settle then finds no entry and changes nothing. Called
-        with the lock already held.
+        The pool's window is the clock hour, not a rolling one. Entries are
+        (ticket, tokens, in_flight). A reservation still in flight across the
+        boundary is carried into the new hour, where its settle corrects it
+        (John's decision, plan 4b); a settled or charged entry ages out with its
+        hour. Called with the lock already held.
         """
         hour = int(now // BUDGET_WINDOW)
         if hour != self._shared_hour:
             self._shared_hour = hour
-            self._shared_entries = []
+            self._shared_entries = [entry for entry in self._shared_entries if entry[2]]
 
     def _shared_used(self):
         """Tokens held against the shared pool this hour. Lock already held."""
-        return sum(spent for _, spent in self._shared_entries)
+        return sum(entry[1] for entry in self._shared_entries)
 
     def _prune_histories(self, now):
         """Age out spent stamps and forget the streams left with none.
@@ -879,7 +912,7 @@ class StreamRegistry:
             self._ticket += 1
             ticket = self._ticket
             tokens.append((now, reserved, ticket))
-            self._shared_entries.append((ticket, reserved))
+            self._shared_entries.append((ticket, reserved, True))
         return composed, None, ticket
 
     def settle(self, stream, ticket, tokens):
@@ -898,7 +931,8 @@ class StreamRegistry:
         with self._lock:
             self._shared_roll(self._clock())
             self._shared_entries = [
-                (held, tokens if held == ticket else spent) for held, spent in self._shared_entries
+                (held, tokens, False) if held == ticket else (held, spent, flight)
+                for held, spent, flight in self._shared_entries
             ]
             history = self._token_histories.get(stream)
             if not history:
@@ -907,6 +941,20 @@ class StreamRegistry:
                 (stamp, tokens, held) if held == ticket else (stamp, spent, held)
                 for stamp, spent, held in history
             ]
+
+    def cancel(self, stream, ticket):
+        """Refund a request that never reached the upstream: its reservation and its count."""
+        if ticket is None:
+            return
+        with self._lock:
+            history = self._token_histories.get(stream, [])
+            stamps = [stamp for stamp, _spent, held in history if held == ticket]
+            self._token_histories[stream] = [entry for entry in history if entry[2] != ticket]
+            requests = self._histories.get(stream, [])
+            for stamp in stamps:
+                if stamp in requests:
+                    requests.remove(stamp)
+            self._shared_entries = [entry for entry in self._shared_entries if entry[0] != ticket]
 
     def charge(self, stream, tokens):
         """Record tokens spent on a stream outside any reservation."""
@@ -917,7 +965,7 @@ class StreamRegistry:
             self._ticket += 1
             self._token_histories.setdefault(stream, []).append((now, tokens, self._ticket))
             self._shared_roll(now)
-            self._shared_entries.append((self._ticket, tokens))
+            self._shared_entries.append((self._ticket, tokens, False))
 
     def state(self, streams_enabled=False, console_error=None, now=None):
         """The current streams.json document."""

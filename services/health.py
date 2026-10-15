@@ -171,7 +171,11 @@ def spend(events: list, now: float, window: float = 3600.0) -> dict:
         if when is None or not now - window <= when <= now:
             continue
         total["requests"] += 1
-        if event.get("status") in (429, 503):
+        status = event.get("status")
+        refusal = event.get("refusal") if isinstance(event.get("refusal"), str) else ""
+        # A cap refused it: 429, or the fleet ledger failing closed. A 503 for room on the
+        # transcript volume, or for time, is not a cap.
+        if status == 429 or (status == 503 and "fleet ledger unavailable" in refusal):
             total["refused"] += 1
         usage = event.get("usage")
         tokens = usage.get("total_tokens") if isinstance(usage, dict) else None
