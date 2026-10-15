@@ -416,6 +416,24 @@ def corpus_files(root: Path) -> list[Path]:
     return [path for path in files if _present(path)]
 
 
+def domain_rule_files(root: Path) -> list[Path]:
+    """Every `domains/<name>/rules.py` (D5), sorted as paths, by `corpus_files`' own discipline.
+
+    A rule is physics the configuration does not carry, so a checkpoint's engine identity hashes it
+    beside the corpus (`checkpoint.engine_identity`): a run must not resume across a rule change. The
+    listing is `corpus_files`' — `os.scandir`, an error raising with its path, only absence quiet —
+    so an unreadable `domains/` is never a shorter list of rules either.
+    """
+    found = [
+        Path(entry.path)
+        for domain in _listed(root / "domains")
+        if domain.is_dir()
+        for entry in _listed(Path(domain.path))
+        if entry.name == RULES_FILE
+    ]
+    return [path for path in sorted(found) if _present(path)]
+
+
 def _present(path: Path) -> bool:
     """Whether `path` exists, following links: `False` only for its absence; any other error raises, naming it (`corpus_files`)."""
     try:
@@ -703,6 +721,20 @@ def rule_refusals(root: Path) -> list[tuple[str, str]]:
     Reads only the domain declarations, not the whole world: a rule refusal is a statement about
     `rules.py` and the states it names, and the linter has its own reports for everything else.
     """
+    return _domain_rules(root)[1]
+
+
+def registered_rule_states(root: Path) -> set[str]:
+    """The states an admissible domain rule advances, for `check_vehicle.py`'s undriven-node check.
+
+    `advance()` does not ask a ruled state for an inbound edge — its rule reads what its domain
+    declares — so the linter's "nothing drives it" has to read the same registry, or the two disagree
+    about a held boundary such as `environment_heat_w`.
+    """
+    return set(_domain_rules(root)[0])
+
+
+def _domain_rules(root: Path) -> tuple[dict[str, DomainRule], list[tuple[str, str]]]:
     states: list[State] = []
     domains = root / "domains"
     if domains.is_dir():
@@ -723,7 +755,7 @@ def rule_refusals(root: Path) -> list[tuple[str, str]]:
                             spec=spec,
                         )
                     )
-    return load_rules(root, states)[1]
+    return load_rules(root, states)
 
 
 def rule_readable(
@@ -2883,7 +2915,7 @@ def driver_nodes(world: World, state: State) -> list[str]:
 def state_values(world: World, state: State, value: Any) -> dict[str, Any]:
     """The map entries one state's new value belongs under.
 
-    **The value space was keyed by node, and twelve nodes carry more than one state.** `cabin_atm`
+    **The value space was keyed by node, and thirteen nodes carry more than one state.** `cabin_atm`
     carries four gas masses and a pressure, so `values["cabin_atm"]` held whichever the loader wrote
     last — and the first tick after the plant learned to evaluate derivations set `csm_cabin_o2_kg` to
     the *water vapour's* mass, and `lm_cabin_o2_kg` to the nitrogen's. Two plausible numbers of
@@ -2947,10 +2979,10 @@ def _refuse_shared_node(world: World, state: State, where: str) -> None:
     """Refuse a state whose node carries another state, because the value map cannot hold both.
 
     The map is keyed by node, so two states on one node overwrite each other and whichever advanced
-    first reads the other's number on the next tick. Twelve nodes carry more than one state — ten
+    first reads the other's number on the next tick. Thirteen nodes carry more than one state — ten
     after round 70 took the source regulator off the fuel cell's node, then `load_enabled` joined
-    `load_shed_state`, the bus loads and module current joined `fuel_cell`, and the quiet-coast
-    task model's `ground_received` joined its node;
+    `load_shed_state`, the quiet-coast task model's `ground_received` joined, and the bus loads and
+    module current joined `fuel_cell`;
     `cabin_atm` and `lm_cabin_atm` carry five each. The fix is a key-space change and the reason this
     is a refusal rather than a repair: a value of the wrong quantity is indistinguishable from a
     right one on a panel.

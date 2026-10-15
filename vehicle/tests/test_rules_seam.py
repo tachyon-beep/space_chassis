@@ -1,8 +1,8 @@
 """D5, the domain-rule seam: a rule lives in `domains/<name>/rules.py` and the plant calls it.
 
-`governance/decisions.md` D5 and `plant.md` §2. No vehicle state has a rule yet — none of the
-algebraic states the plant still refuses has inputs evidenced to `docs/evidence.md`'s standard — so
-every rule here is a **fixture**: a writable copy of the definition with a `rules.py` planted in it,
+`governance/decisions.md` D5 and `plant.md` §2. Power, comms and thermal have real rules for the
+quiet coast (ADR 0003), so every rule here is a **fixture** measured against the vehicle without
+power's `bus_b_v` rule: a writable copy of the definition with a `rules.py` planted in it,
 the way the referee's broken-copy tests plant a broken field. Nothing in a fixture is a claim about
 the vehicle; the values are arbitrary and are chosen only to be recognisable.
 """
@@ -89,7 +89,7 @@ BUS_B_PARAMS = "    fixture_open_v: 31.0\n    fixture_drop_v_per_w: 0.001\n"
 
 
 def test_the_vehicle_has_no_rule_yet_and_the_class_refusal_stands(tmp_path):
-    """Adding the seam changes no count: with no `rules.py` the refusals are the ones they were."""
+    """Without its rule, `bus_b_v` is refused by class exactly as it was before the seam."""
     # Power's real rules solve `bus_b_v`; the fixture copy is the vehicle without that one rule.
     world = plant.load_world(definition(tmp_path))
     assert STATE not in world.rules
@@ -166,10 +166,14 @@ def test_a_read_the_domain_does_not_declare_is_a_named_gap(tmp_path):
 
 
 def test_an_input_with_no_value_is_a_gap_that_names_it(tmp_path):
-    # `bus_a_v` is power's own and has no value this tick: its rule is not written.
-    rules = "def bus_b_v(inputs, params, dt):\n    return inputs['bus_a_v']\n\nRULES = {'bus_b_v': bus_b_v}\n"
+    # `source_converter_v` is power's own and has no value this tick: its lag owes `tau_s` (ADR 0003
+    # item 1 takes it off the episode's path). `bus_a_v` was the example until the comms rules gave
+    # bus A its `transmitter_on` and the bus solve a value.
+    rules = "def bus_b_v(inputs, params, dt):\n    return inputs['source_converter_v']\n\nRULES = {'bus_b_v': bus_b_v}\n"
     _, gaps = tick(plant.load_world(definition(tmp_path, rules)))
-    assert gaps[STATE].needs == "bus_a_v" and "has no value this tick" in gaps[STATE].owed
+    assert (
+        gaps[STATE].needs == "source_converter_v" and "has no value this tick" in gaps[STATE].owed
+    )
 
 
 def test_an_unconfigured_parameter_is_refused_rather_than_handed_to_the_rule(tmp_path):

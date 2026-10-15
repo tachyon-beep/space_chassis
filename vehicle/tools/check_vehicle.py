@@ -2124,6 +2124,17 @@ def states_by_node(root: Path) -> dict[str, list[str]]:
     return by_node
 
 
+def ruled_states(root: Path) -> set[str]:
+    """Every state an admissible `domains/<name>/rules.py` advances (`plant.registered_rule_states`).
+
+    Imported here and not at the top because `plant` imports this module.
+    """
+    sys.modules.setdefault("check_vehicle", sys.modules[__name__])
+    import plant
+
+    return plant.registered_rule_states(root)
+
+
 def state_methods(root: Path) -> dict[str, str]:
     """Every state id and its integrator class, across the vehicle."""
     out: dict[str, str] = {}
@@ -2222,6 +2233,7 @@ def check_coupling(
     states_by_node_map: dict[str, list[str]] | None = None,
     state_methods: dict[str, str] | None = None,
     every_state_map: dict[str, list[str]] | None = None,
+    ruled_states: set[str] | None = None,
 ) -> None:
     nodes = doc.get("nodes") or {}
     edges = doc.get("edges") or []
@@ -2802,10 +2814,14 @@ def check_coupling(
         # README already draws for the same reason.
         if node_of[name].get("preloaded"):
             continue
+        # A state a domain rule advances is driven by its rule, which reads what its domain
+        # declares — `advance()` asks it for no inbound edge, and neither does this. The held
+        # environment (`environment_heat_w`, ADR 0003 item 9) is the case: a boundary, not a lag.
         undriven = [
             sid
             for sid in (states_by_node_map or {}).get(name, [])
             if (state_methods or {}).get(sid) in driven_methods
+            and sid not in (ruled_states or set())
         ]
         if undriven:
             report.debt(
@@ -18713,6 +18729,7 @@ def main(argv: list[str] | None = None) -> int:
             states_by_node_map=states_by_node(root),
             state_methods=state_methods(root),
             every_state_map=every_state_on_each_node(root),
+            ruled_states=ruled_states(root),
         )
         schedule = derive_schedule(coupling, report)
     check_range_kinds(registry, report)
