@@ -45,7 +45,7 @@ already landed; `wip/local-state` holds the latest completeness report, filigree
 |---|---|
 | Phase B's rebase onto `aurora/` | the chassis line (inventory record above) |
 | Phase B's full and live gates; tier-1 adoption; Option B's qualification; `#23`'s first test | Phase B: its rebase above; all: CI (D6) and an environment that can build the image |
-| branch protection | nothing: applied on `main` by John on 2026-10-15 (D20), requiring the `required` check |
+| branch protection | nothing: John's ruleset `main` (2026-10-15) requires a pull request and the `required` check, blocks force-push and deletion, exempts no one, and asks **0 approvals** and no resolved conversations: a narrower rule than D20 states, chosen so agent PRs opened under his account can merge |
 | any paid run | the bounded episode's acceptance; then the three stages in D22 |
 | nothing else | — |
 
@@ -55,7 +55,7 @@ already landed; `wip/local-state` holds the latest completeness report, filigree
 |---|---|---|
 | `vehicle/tests/test_vehicle_config.py::test_a_sub_tick_effect_lands_where_a_short_tick_would_have_put_it` is deselected in `ci.yml` (not skipped in the test) | it needs more than 13 GB; a hosted runner has 16 GB shared with the other workers | the vehicle line makes it fit (D6: a smaller horizon or a streamed comparison) and the `--deselect` line is removed |
 | the aurora suite is not held to zero skips | two tests skip by design (`aurora/tests/test_doc_claims.py`) | — |
-| the live smoke stack is not a required check | it builds the image and proves the world, not a change | run `live.yml` by hand before any adoption merge |
+| the live smoke stack is not a required check | it builds the image and proves the world, not a change; first green on a hosted runner on 2026-10-15 (7 min, PR #5) | run `live.yml` by hand before any adoption merge |
 
 ## Decisions since the last status
 
