@@ -653,7 +653,7 @@ def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
     (cwd / "bin").mkdir(parents=True)
     (diode / "served.jsonl").unlink(missing_ok=True)
     globbed = subprocess.run(
-        ["sh", str(REPO / "containers" / "serve_vehicle.sh")],
+        ["sh", str(AURORA / "containers" / "serve_vehicle.sh")],
         cwd=cwd,
         env=dict(base, STUB_HOLD="0", VEHICLE_SLUGS="*"),
         capture_output=True,

@@ -425,7 +425,6 @@ def test_the_live_run_s_scope_command_caps_what_the_conftest_requires():
         "README.md",
         "CLAUDE.md",
         "AGENTS.md",
-        "governance/chassis/practice.md",
         "docker-compose.override.example.yml",
     ):
         assert command in (ROOT / name).read_text(encoding="utf-8"), name
@@ -446,6 +445,12 @@ def test_the_guard_asks_the_daemon_with_a_template_it_can_execute(tmp_path):
     """Needs docker on the host. `.Labels` is a string in `docker ps --format`; `.Label` is the
     lookup. Run against every container the daemon has, so a template error cannot hide behind an
     empty listing."""
+    try:
+        daemon = subprocess.run(["docker", "info"], capture_output=True, timeout=60, check=False)
+    except FileNotFoundError:
+        pytest.skip("no docker on this host")
+    if daemon.returncode != 0:
+        pytest.skip("no docker daemon on this host")
     runner = Runner()
     smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=runner)
     smoke._torn_down = True

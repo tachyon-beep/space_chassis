@@ -370,8 +370,9 @@ def test_an_agent_that_mounts_the_vehicle_s_source_is_a_failure(run):
     for leak in (
         "/home/someone/space_chassis/docs/deep_research/vehicle",
         "/elsewhere/docs/deep_research/vehicle/tools",
-        str(REPO),
-        str(REPO / "docs"),
+        str(REPO.parent / "vehicle"),
+        str(REPO.parent / "vehicle" / "tools"),
+        str(REPO.parent),
         "/",
     ):
         leaked = run(**probe, MOUNT_SOURCES=f"/v/state_x/data {leak} ")

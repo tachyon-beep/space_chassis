@@ -25,6 +25,8 @@
 set -u
 
 PROJECT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# The repository root, whose `vehicle/` stream is the vehicle's source.
+ROOT=$(CDPATH= cd -- "$PROJECT/.." && pwd)
 cd "$PROJECT"
 
 : "${COMPOSE:=docker compose}"
@@ -212,15 +214,16 @@ else:
         ok "$agent mounts nothing of the vehicle's private state"
     fi
     # Nor its source (John, 2026-10-10: no risk of information sharing). The image carries none of
-    # it (6b), so a bind is the one way back: any mount from inside a vehicle checkout, or of a
-    # directory that holds this one's (the repository, docs/, ...). Read from the same sources.
+    # it (6b), so a bind is the one way back: any mount from inside a vehicle checkout (this
+    # repository's `vehicle/`, or an older checkout's `docs/deep_research/vehicle/`), or of a
+    # directory that holds this one's (the repository root, ...). Read from the same sources.
     if [ -z "$sources" ]; then
         bad "$agent's mounts could not be inspected for the vehicle's source"
     else
         exposed=""
         for source in $sources; do
-            case "$source/" in */deep_research/vehicle/*) exposed=$source ;; esac
-            case "$PROJECT/docs/deep_research/vehicle/" in "${source%/}"/*) exposed=$source ;; esac
+            case "$source/" in */deep_research/vehicle/* | "$ROOT/vehicle/"*) exposed=$source ;; esac
+            case "$ROOT/vehicle/" in "${source%/}"/*) exposed=$source ;; esac
         done
         if [ -n "$exposed" ]; then
             bad "$agent mounts the vehicle's source ($exposed)"
