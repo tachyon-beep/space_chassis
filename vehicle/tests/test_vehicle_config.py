@@ -744,7 +744,7 @@ def test_the_build_order_is_the_ticks_own_gap_list():
     assert {state.id for state in buckets["ready"]} == advanced, sorted(
         {state.id for state in buckets["ready"]} ^ advanced
     )
-    assert sum(len(rows) for rows in buckets.values()) == 139
+    assert sum(len(rows) for rows in buckets.values()) == 140
 
     # Every blocked state is filed under what its *root* owes, and the root is the state an
     # implementer should open. The sentinel's sequencing is deliberately not part of the chain: it
@@ -816,7 +816,8 @@ def test_the_build_order_is_the_ticks_own_gap_list():
     # tier that selects `none` — so what blocks it is the ladder's rung-to-class map, a *value* the
     # thresholds do not carry, rather than the domain code the rule bucket was asking it for.
         # 52 -> 53 ready and 45 -> 44 rule: `orbital_state` coasts under `cislunar_point_masses`.
-        ) == (53, 27, 15, 44), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
+        # 53 -> 54 ready: power's `load_enabled`, the switch map `set_load` writes, is held.
+        ) == (54, 27, 15, 44), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
 
 
 def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
@@ -4352,7 +4353,8 @@ def test_the_linter_refuses_a_keyed_state_on_a_node_that_does_not_declare_its_ke
     # difference rather than to count a substring.
     text = (VEHICLE / coupling).read_text()
     on_nodes = re.findall(r"(?:^[ ]+|[,{][ ]*)key_space: by_state\b", text, re.M)
-    assert len(on_nodes) == 5, (
+    # 5 -> 6: `load_shed_state` carries power's `load_enabled` switch map beside the ladder's class.
+    assert len(on_nodes) == 6, (
         f"{len(on_nodes)} nodes declare a key space; a keyed node lost its declaration, or gained "
         "one it does not need"
     )
@@ -10067,7 +10069,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 135 -> 136 in round 40, with the avionics bay's heat rate: the one heated zone whose 360 W no
     # state carried, and the ingredient the loop's collected load was missing.
     # 136 -> 138 in round 41, with the two loops' collected loads: the sums that ingredient fed.
-    assert sum(len(rows) for rows in buckets.values()) == 139
+    assert sum(len(rows) for rows in buckets.values()) == 140
 
     # `ready` means what it says: only the classes the reference plant can actually advance.
     # It is no longer only the plant's two integrators — round 20 taught it to evaluate an
@@ -10140,7 +10142,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 37 -> 38 in round 72: `E-WATER-RAD`'s driver was a crowded node with no name for the state it
     # reads, and naming it (`radiator_rejection_w`) made the coolant's discharge computable.
     # Post-ejection P00 and active CMC DAP give two more commanded modes a sourced initial.
-    assert len(buckets["ready"]) == 53
+    # 53 -> 54: power's `load_enabled`, the switch map `set_load` writes, is held.
+    assert len(buckets["ready"]) == 54
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -11362,7 +11365,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "139 states, by what blocks them" in result.stdout
+    assert "140 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -19699,7 +19702,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # states the effect path owns through a one-way event.
     # 45 -> 48 in round 80, and this is the largest single move a *value* round has made: three
     # commanded modes the launch checklist publishes a position for, which the hold then carries.
-    assert len(advanced) == 53, sorted(advanced)
+    # 53 -> 54: power's `load_enabled`, the switch map `set_load` writes, is held.
+    assert len(advanced) == 54, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares.
     assert values["cabin_heat_csm"] == 733.0
@@ -21853,11 +21857,12 @@ def test_the_tick_can_read_what_the_build_order_promises():
     assert set(resolved) <= advanced, sorted(set(resolved) - advanced)
 
     # The figures this rests on, so a round that moves them has to say so here.
-    assert len(world.states) == 139
+    assert len(world.states) == 140
+    # 139 -> 140: power's `load_enabled`, the switch map `set_load` writes.
     # 38 -> 41 in round 75: the three event-moved states, held by the tick and moved by the effect.
     # 41 -> 45 in round 76 and 45 -> 48 in round 80: the seven positions `mission.yaml#launch_state`
     # now declares, the last three of them read out of the launch checklist.
-    assert len(ready) == 53 and len(advanced) == 53
+    assert len(ready) == 54 and len(advanced) == 54
 
 
 # ---------------------------------------------------------------------------------------------
