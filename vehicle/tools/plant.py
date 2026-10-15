@@ -19,7 +19,7 @@ Why that is worth writing rather than asserting
 "Ready to implement" is a claim, and a claim about a 34-file configuration is worth exactly as
 much as the evidence behind it. The evidence here is mechanical:
 
-  - **the schedule is derivable** — 59 nodes, from `coupling.yaml`'s edges minus its declared
+  - **the schedule is derivable** — 61 nodes, from `coupling.yaml`'s edges minus its declared
     back-edges, with `check_vehicle.derive_schedule` doing the derivation so the plant and the
     linter cannot disagree about the order;
   - **the states are instantiable** — each with a method, a unit and the parameters its method
@@ -2947,9 +2947,9 @@ def _refuse_shared_node(world: World, state: State, where: str) -> None:
     """Refuse a state whose node carries another state, because the value map cannot hold both.
 
     The map is keyed by node, so two states on one node overwrite each other and whichever advanced
-    first reads the other's number on the next tick. Eleven nodes carry more than one state — ten
-    after round 70 took the source regulator off the fuel cell's node, and eleven again once
-    `load_enabled` joined `load_shed_state`;
+    first reads the other's number on the next tick. Twelve nodes carry more than one state — ten
+    after round 70 took the source regulator off the fuel cell's node, eleven once `load_enabled`
+    joined `load_shed_state`, and twelve with the quiet-coast task model's `ground_received`;
     `cabin_atm` and `lm_cabin_atm` carry five each. The fix is a key-space change and the reason this
     is a refusal rather than a repair: a value of the wrong quantity is indistinguishable from a
     right one on a panel.
