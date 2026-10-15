@@ -215,6 +215,21 @@ def test_a_trace_with_missing_ticks_is_an_apparatus_failure(smoke, tmp_path):
     assert any("2 missing" in line for line in record["apparatus"]), record["apparatus"]
 
 
+def test_a_trace_without_its_met0_states_is_an_apparatus_failure(smoke, tmp_path):
+    """Row 0 is the state after tick 0, so a loss chain needs MET 0 to see a tick-0 command move."""
+    with gzip.open(smoke, "rt") as handle:
+        header = json.loads(handle.readline())
+    assert sorted(header["met0"]) == sorted(header["states"])
+
+    def drop(lines):
+        del lines[0]["met0"]
+        return lines
+
+    record = judge(doctored(smoke, tmp_path, drop))
+    assert record["class"] == "apparatus_failure"
+    assert any("MET-0" in line for line in record["apparatus"]), record["apparatus"]
+
+
 def test_a_missing_trace_is_an_apparatus_failure(tmp_path):
     assert judge(tmp_path / "nothing.jsonl.gz")["class"] == "apparatus_failure"
 
@@ -301,9 +316,12 @@ def _hashes(trace: Path) -> list[tuple[int, str]]:
     return [(row["t"], row["h"]) for row in rows]
 
 
-def restart_check(policy: str, ticks: int, stop_at: int, whole: Path, tmp_path: Path) -> None:
+def restart_check(policy: str, ticks: int, stop_at: int, whole, tmp_path: Path) -> None:
     """Stop at `stop_at`, checkpoint with the vehicle's checkpoint tool, resume in a fresh process,
-    and hold the per-tick hash sequence and the outcome record to the uninterrupted run's."""
+    and hold the per-tick hash sequence and the outcome record to the uninterrupted run's.
+
+    `whole` is the uninterrupted run's trace, or a callable that returns it, called after the split
+    run so the two can run side by side."""
     run = tmp_path / "split"
     state = tmp_path / "state"
     tick_args = ["--ticks", str(ticks)] if ticks != spec()["duration_ticks"] else []
@@ -323,6 +341,8 @@ def restart_check(policy: str, ticks: int, stop_at: int, whole: Path, tmp_path: 
     second = _cli("--policy", policy, *tick_args, "--resume", str(state), "--out", str(run))
     assert second.returncode == 0, second.stderr[-2000:]
     split = run / "trace.jsonl.gz"
+    if callable(whole):
+        whole = whole()
     assert _hashes(split) == _hashes(whole)
     expected = ticks if tick_args else None
     split_record = episode_eval.evaluate(split, spec(), expected_ticks=expected)
@@ -452,5 +472,10 @@ def test_policy_d_s_trace_relabelled_as_a_is_still_a_physical_loss(tmp_path_fact
 def test_policy_a_restarted_at_tick_60000_in_a_fresh_process_is_the_same_run(
     tmp_path_factory, tmp_path
 ):
-    whole, _ = full_run("a", tmp_path_factory)
-    restart_check("a", spec()["duration_ticks"], 60_000, whole, tmp_path)
+    restart_check(
+        "a",
+        spec()["duration_ticks"],
+        60_000,
+        lambda: full_run("a", tmp_path_factory)[0],
+        tmp_path,
+    )

@@ -142,7 +142,16 @@ def load_episode(
 
 
 class TraceWriter:
-    def __init__(self, path: Path, episode: Episode, *, append: bool = False) -> None:
+    def __init__(
+        self,
+        path: Path,
+        episode: Episode,
+        *,
+        append: bool = False,
+        met0: dict[str, Any] | None = None,
+    ) -> None:
+        """`met0` is the values before the first tick: its traced states go in the header, so a state a
+        command moves on tick 0 shows as moved (row 0 is already the state after that tick)."""
         self.path = Path(path)
         self.states = [str(s) for s in episode.spec["trace_states"]]
         by_id = {state.id: state for state in episode.world.states}
@@ -163,6 +172,8 @@ class TraceWriter:
             )
         self.handle = gzip.open(self.path, "at" if append else "wt", encoding="utf-8")  # noqa: SIM115
         if not append:
+            if met0 is None:
+                raise ValueError("a new trace records the MET-0 states it starts from")
             quanta = {}
             for state in episode.world.states:
                 if state.method == "stock" and state.spec.get("quantum") is not None:
@@ -178,6 +189,7 @@ class TraceWriter:
                     "policy_sha": episode.policy_sha,
                     "tick_hz": episode.spec.get("tick_hz"),
                     "states": self.states,
+                    "met0": {sid: self.level(met0, state) for sid, state in self.by_id.items()},
                     "quanta": quanta,
                 }
             )
@@ -324,7 +336,8 @@ def run_episode(
     end = int(ticks if ticks is not None else episode.spec["duration_ticks"])
     start = int(episode.spec.get("start_tick", 0))
     values = None
-    writer = TraceWriter(trace_path, episode, append=resume is not None)
+    met0 = None if resume is not None else plant.initial_values(episode.world, episode.scenario)
+    writer = TraceWriter(trace_path, episode, append=resume is not None, met0=met0)
     try:
         if resume is not None:
             start, values = read_batch_checkpoint(episode, resume)
@@ -372,7 +385,7 @@ def trace_from_record(
     dt = plant.tick_seconds(world)
     truth = plant.initial_values(world, episode.scenario)
     through = int(ticks if ticks is not None else episode.spec["duration_ticks"])
-    writer = TraceWriter(trace_path, episode)
+    writer = TraceWriter(trace_path, episode, met0=truth)
     written = 0
     try:
         with console.read_record(Path(state_dir)) as record:
@@ -476,8 +489,16 @@ def evaluate(
             "policy_sha": header.get("policy_sha"),
         }
     )
-    hz = float(spec.get("tick_hz") or header.get("tick_hz") or 50)
-    dt = 1.0 / hz
+    hz = spec.get("tick_hz") or header.get("tick_hz")
+    if not hz:
+        record.update(
+            {
+                "class": "apparatus_failure",
+                "apparatus": ["neither the spec nor the trace gives tick_hz"],
+            }
+        )
+        return record
+    dt = 1.0 / float(hz)
     start = int(spec.get("start_tick", 0))
     duration = int(expected_ticks if expected_ticks is not None else spec["duration_ticks"])
     objective = spec["objective"]
@@ -517,7 +538,10 @@ def evaluate(
     losses: list[dict[str, Any]] = []
     margin_violations: list[dict[str, Any]] = []
     first_moved: dict[str, int] = {}
-    initial_values: dict[str, Any] = {}
+    # MET 0, before the first tick: a state a command moves on tick 0 has moved by row 0.
+    initial_values: dict[str, Any] = dict(header.get("met0") or {})
+    if "met0" not in header:
+        findings.fail("the trace's header carries no MET-0 states (`met0`)")
     mandatory_tick = secondary_tick = None
     delivered_at_deadline = None
     final: dict[str, Any] = {}

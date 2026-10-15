@@ -1,5 +1,7 @@
 # The quiet-coast episode (`../docs/vehicle-completion/09-quiet-coast-episode.md` in the root `docs/`,
-# §1, §2, §5; ADR 0003 `docs/decisions/0003-quiet-coast-model-corrections.md`).
+# §1, §2, §5; ADR 0003 `docs/decisions/0003-quiet-coast-model-corrections.md`). The vehicle itself
+# starts in passive thermal control; this scenario starts it in the sun-on-radiator hot hold, which
+# applies only inside the episode (ADR 0003 item 9, John 2026-10-15: "Hold in episode only").
 #
 # One scenario, four scripted policies (`quiet_coast/policy_{a,b,c,d}.yaml`), one evaluator
 # (`tools/episode_eval.py`). The plant reads `scenario`, `initial` and `verbs` (`plant.load_scenario`);
@@ -175,5 +177,28 @@ episode:
     bus_b_v: [load_enabled, bus_b_load_w, bus_b_v]
     water_cooling_kg: [evaporator_feed, evaporator_duty_w, water_cooling_kg]
 
+  # The feasibility run: the four policies at 120,000 ticks with `tools/episode_eval.py --run`,
+  # on the vehicle at 1d7fbae (the tranche-2 integrate merge) with these thresholds, before any
+  # class was asserted in a test. The policies then stopped playback one tick late (tick N+1), which
+  # C's surplus 1,024 bits exposed; the stops were corrected to N afterwards, and no number in this
+  # file moved. Wall time: 2,835 s per run with four runs at once on a loaded 4-CPU host (23.6 ms a
+  # tick); D alone, later, 4,478 s on the same host under other load. A second run of A-C with the
+  # stops at N, through the opt-in tests, gave the same classes with A and B delivering D1 + D2
+  # exactly (secondary at 90000 and 108000) and C exactly D1, in 2,870-2,907 s each; A stopped at
+  # 60000 and resumed in a fresh process gave the same 120,000 per-tick hashes.
   feasibility:
-    note: FEASIBILITY_PLACEHOLDER
+    vehicle_sha: 1d7fbaeb846483a37366e96fa954862bb0423ab6
+    runs:
+      a: "full_success; D1 at 45000, D1+D2 at 90000; water out 1.151 kg; comm_amp max 286.92 K"
+      b: "full_success; D1 at 45000, D1+D2 at 107999; water out 1.051 kg; bus energy 3.73 MJ (A 4.09)"
+      c: "partial; D1 at 45000, never D1+D2; water out 1.035 kg"
+      d: >-
+        physical_loss; coolant_supply above 10 C from tick 8186, held past its 10 s dwell to 8686
+        (chain coolant_flow_kg_s, evaporator_duty_w, radiator_rejection_w, coolant_loop_t); the
+        cabin leaves 10-30 C at 117052; data objective met regardless
+    margins: >-
+      No margin crossed in A, B or C. Tightest is coolant_supply's 2.8 K at MET 0 (the
+      equilibrium's), the same in all three; buses keep 3.4 V or more over 27 V. Water ends at
+      11.8-12.0 kg against W_min 2.6 kg. A and B separate by delivery tick, water and bus energy,
+      not by margin minima (09 §5 B1).
+    conservation: "o2, h2, cooling_water, data and every other stock pass in all four runs"
