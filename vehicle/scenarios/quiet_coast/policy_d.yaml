@@ -14,6 +14,6 @@ commands:
   - {tick: 0, verb: set_power_amplifier, arguments: {state: "on"}}
   - {tick: 0, verb: set_coolant_pump, arguments: {loop: loop_primary, pump: pump_1, state: "off"}}
   - {tick: 0, verb: play_recorder, arguments: {state: "on"}}
-  - {tick: 90001, verb: play_recorder, arguments: {state: "off"}}
-  - {tick: 90001, verb: set_power_amplifier, arguments: {state: "off"}}
-  - {tick: 90001, verb: set_comm_mode, arguments: {mode: sband_low}}
+  - {tick: 90000, verb: play_recorder, arguments: {state: "off"}}
+  - {tick: 90000, verb: set_power_amplifier, arguments: {state: "off"}}
+  - {tick: 90000, verb: set_comm_mode, arguments: {mode: sband_low}}

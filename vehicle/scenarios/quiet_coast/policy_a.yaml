@@ -1,8 +1,9 @@
 # Policy A: one high-power burst (09 §5). Everything on at MET 0, the whole record in one pass,
 # then the link stands down. Short, high load: the earliest finish, the most evaporator duty.
-# D1 + D2 = 92,160,000 bits at 1,024 bits a tick is 90,000 ticks of playback. The link carries
-# from the tick after the commands (`link_ok` is evaluated before the switch it reads moves), so
-# 90,000 delivering ticks end with tick 90,000 and the stop lands at tick 90,001.
+# D1 + D2 = 92,160,000 bits at 1,024 bits a tick is 90,000 ticks of playback. The playback rate
+# reads the link of the tick before (`link_ok` is evaluated before the switches it reads move), so
+# the record moves one tick behind every command, on and off: commanded at tick 0 and stopped at
+# tick 90,000, it delivers in ticks 1-90,000, exactly D1 + D2.
 policy: a
 name: bursts
 expected_class: full_success
@@ -14,6 +15,6 @@ commands:
   - {tick: 0, verb: set_evaporator_feed, arguments: {vehicle: csm, state: "on"}}
   - {tick: 0, verb: play_recorder, arguments: {state: "on"}}
   # MET 30:00: the record is down; stop and stand the link down.
-  - {tick: 90001, verb: play_recorder, arguments: {state: "off"}}
-  - {tick: 90001, verb: set_power_amplifier, arguments: {state: "off"}}
-  - {tick: 90001, verb: set_comm_mode, arguments: {mode: sband_low}}
+  - {tick: 90000, verb: play_recorder, arguments: {state: "off"}}
+  - {tick: 90000, verb: set_power_amplifier, arguments: {state: "off"}}
+  - {tick: 90000, verb: set_comm_mode, arguments: {mode: sband_low}}

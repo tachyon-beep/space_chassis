@@ -405,10 +405,14 @@ def test_each_policy_reaches_its_class_over_the_whole_episode(policy, tmp_path_f
     for stock in ("o2", "h2", "cooling_water", "data"):
         assert record["conservation"][stock]["verdict"] == "pass", stock
     results = record["objective_results"]
+    d1, d2 = results["d1_bits"], results["d2_bits"]
     if policy in "ab":
         assert results["secondary_met"] and not record["margin_violations"]
+        # The policies stop the playback on the tick the record runs out, not after it.
+        assert results["delivered_bits_at_deadline"] == d1 + d2
     if policy == "c":
         assert results["mandatory_met"] and not results["secondary_met"]
+        assert results["delivered_bits_at_deadline"] == d1
     if policy == "d":
         first = record["first_violation"]
         assert first["state"] == "coolant_loop_t"

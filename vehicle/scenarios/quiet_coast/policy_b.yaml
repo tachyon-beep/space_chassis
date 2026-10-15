@@ -1,9 +1,9 @@
 # Policy B: shed, then play in two windows with a cool-down between (09 §5). Lighting (bus B) and
 # the comm heaters (bus A) are shed first, buying evaporator headroom and water; D1 goes down in a
 # first window, the amplifier rests for 6 min, and D2 goes down in a second. Lower heat, later finish.
-# Each window is 45,000 delivering ticks (46,080,000 bits at 1,024 a tick), plus the one tick the
-# link takes to come up after the commands (see policy A). The sheds keep both buses inside the
-# cells' published current envelope (bus A >= ~800 W, bus B >= ~400 W).
+# Each window is 45,000 ticks (46,080,000 bits at 1,024 a tick), the link one tick behind each
+# command (see policy A). The sheds keep both buses inside the cells' published current envelope
+# (bus A >= ~800 W, bus B >= ~400 W).
 policy: b
 name: spread_and_shed
 expected_class: full_success
@@ -17,12 +17,12 @@ commands:
   # Window 1, MET 0:00-15:00: D1.
   - {tick: 0, verb: set_power_amplifier, arguments: {state: "on"}}
   - {tick: 0, verb: play_recorder, arguments: {state: "on"}}
-  - {tick: 45001, verb: play_recorder, arguments: {state: "off"}}
-  - {tick: 45001, verb: set_power_amplifier, arguments: {state: "off"}}
+  - {tick: 45000, verb: play_recorder, arguments: {state: "off"}}
+  - {tick: 45000, verb: set_power_amplifier, arguments: {state: "off"}}
   # Cool-down, MET 15:00-21:00 (about 1.4 of the amplifier's 265 s time constants).
   # Window 2, MET 21:00-36:00: D2.
   - {tick: 63000, verb: set_power_amplifier, arguments: {state: "on"}}
   - {tick: 63000, verb: play_recorder, arguments: {state: "on"}}
-  - {tick: 108001, verb: play_recorder, arguments: {state: "off"}}
-  - {tick: 108001, verb: set_power_amplifier, arguments: {state: "off"}}
-  - {tick: 108001, verb: set_comm_mode, arguments: {mode: sband_low}}
+  - {tick: 108000, verb: play_recorder, arguments: {state: "off"}}
+  - {tick: 108000, verb: set_power_amplifier, arguments: {state: "off"}}
+  - {tick: 108000, verb: set_comm_mode, arguments: {mode: sband_low}}
