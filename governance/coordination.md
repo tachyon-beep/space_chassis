@@ -150,7 +150,7 @@ Use fresh `phase-b-diag-P-019mkP-r2/arm1` and `/arm2`; retain all failed evidenc
 embedded DIAG-01 label is historical: the owner's outer receipts must identify DIAG-02 and the
 exact reviewed hash. No real test/scope launched here, no broad/R/build/live grant or new writer.
 
-**CURRENT SLOT: FREE / RELEASED — 12:17 AEDT (master §24).** DIAG-02's explicit release and
+**HISTORICAL RELEASE / DRIVER HANDOFF — 12:17 AEDT (master §24).** DIAG-02's explicit release and
 both arms' cleanup are independently verified. Original SIGINT inheritance reproduced the
 unchanged test's 120-second failure; restored SIGINT passed it. Supervision held for both,
 with exact P/vehicle/test, enforced caps and no observed OOM/abort. The causal diagnosis is
@@ -159,6 +159,17 @@ present for review: gate-v2.sh is the previously rejected unchanged version, whi
 single-node/600-second only. Parent browser should request the existing owner's minimal full
 adaptation and exact hash, then fresh review/grant. Root need not repeat. No full/R/build/live
 grant, new writer or real execution by this coordinator.
+
+**CURRENT SLOT: RESERVED FOR CHASSIS P FULL — SPACE-20261011-P-FULL-01, 12:23 AEDT
+(master §25).** Minimal full driver `phase-b-full-P-019mkP/full.py`, exact SHA `2557d326…`,
+is accepted by bounded independent review and 20 passing isolated controls. Exact P/vehicle/test,
+fresh capacity and no competing occupancy verified. Existing owner `[8a7d49]` may run the full
+suite once after parent browser delivery and fresh admission: max two workers total, nice 19,
+verified 2 CPU/8 GiB scope, SIGINT restored, five-second monitoring, existing abort thresholds,
+5,400-second outer deadline and explicit terminal/cleanup/release receipt. No root repeat,
+R/build/live selection or automatic retry. Full evidence path is fresh; preserve all prior failed
+artifacts. No actual test/scope or owner message launched here. Reservation persists until
+explicit owner release is independently verified.
 
 | channel | for |
 |---|---|

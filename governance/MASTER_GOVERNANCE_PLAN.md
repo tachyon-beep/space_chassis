@@ -1427,3 +1427,75 @@ needed:** P/product/tests have not changed and the 592-pass root evidence remain
 The coordinator may grant P full only after that concrete driver review and refreshed capacity.
 No full grant, real test/scope execution, owner/browser message, new writer, R/build/live run,
 product/test edit or automatic retry occurred here. P/R and all failed evidence remain preserved.
+
+## 25. P full-only grant SPACE-20261011-P-FULL-01 — 2026-10-11 12:23 AEDT
+
+**GRANTED under Emmy's delegated authority to the existing Chassis owner**
+`session_019mkPNN5J3Atit9tUA6zrNY` / `[8a7d49]`. **Current slot: RESERVED FOR CHASSIS P FULL;
+awaiting parent browser delivery, not reported running.** This resolves section 24's concrete
+driver prerequisite. DIAG-02 remains released and accepted. No root duplicate is required:
+the original 592-pass root result is retained on the unchanged P tree.
+
+### Exact accepted driver and validation
+
+Driver: `.scratch/phase-b-full-P-019mkP/full.py`, SHA256
+**`2557d326492e27e766dc13850aef68165eaad89119a475208a266de0c721a13f`**.
+Minimal diff: `full.vs-diag-2ead42be.diff`, **101 lines**, SHA256
+`f00ad993b1437f1de384639322af42889ff70b96a077e24f4a4f8318d0292445`.
+Launcher: `.scratch/phase-b-full-P-019mkP/launch.py`, byte-identical to the accepted diagnostic
+launcher, SHA256 `91a813dc8563ce50489e5619e32a23f9f8dfc468571bc1bedfbc0ef66b2c0ccd`.
+
+The submitted diff matches a freshly generated comparison against accepted diagnostic
+supervisor `2ead42be…`. All top-level function ASTs are identical. The adaptation selects only
+the full-suite command, always restores SIGINT, records the supplied grant ID, uses a fresh
+`full/` evidence directory and full-specific scope name, sets **OUTER_DEADLINE=5400 seconds**,
+and records full-suite errors instead of diagnostic-only timeout fields. Accepted admission,
+caps, monitoring, identity, result and cleanup behaviour is preserved. The independent
+read-only reviewer also accepts this bounded adaptation with no remaining blocker.
+
+The coordinator inspected and reran the existing isolated AST/fake controls against this exact
+`full.py`: **20 PASS, 0 failures, rc 0**, matching `controls-full-2557d326.out` byte-for-byte.
+In-memory syntax compilation passed. These controls launch no real scope or test. `full/`
+does not yet exist; the driver's exclusive creation refuses evidence reuse. No actual scope,
+launcher or pytest was executed by this coordinator.
+
+At **12:23:07 AEDT**, successful host queries found no Space scopes or Compose projects and
+no matching Space test/launcher/diagnostic/full/build process. Available RAM **41.3 GiB**,
+sampled CPU busy **13.6%**, load **2.65/2.63/2.65**. Current index/tracked files equal P exactly,
+with no untracked non-ignored paths; vehicle remains clean at the pinned SHA. Test file and
+original failed full log hashes remain unchanged, as does the DIAG-02 explicit release receipt.
+
+### One authorised full selection
+
+From `/home/john/space_chassis`, existing owner runs **once**:
+
+`nice -n 19 python3 .scratch/phase-b-full-P-019mkP/full.py SPACE-20261011-P-FULL-01`
+
+The reviewed driver enters the existing adoption worktree and invokes exactly:
+`python3 -m pytest -q -p no:cacheprovider -n 2`, with no node filter and SIGINT restored by the
+unchanged launcher. It must use exact P **`af671d04908817e914668750b7cd4f6f74034bf4`**, vehicle
+**`f44399645fb2633e695a5d758cb5a41f43fb848c`**, and unchanged vehicle test-file SHA256
+`3b917de30861c432c467d92d6a75b1faf7b31cd0e62626dfde095997110c4a53`. No assertions, product
+source or test timeout may change. Preserve P, R/R2 and every original failed artifact.
+
+Refresh admission immediately before launch: exact identity, no competing Space selection,
+available RAM >=20 GiB, load1 <12, sampled CPU busy <75%. At most **two pytest workers total
+across Space**, **nice 19**, verified per-run scope **CPUQuota=200%, MemoryMax=8G**, no GPU or
+overlap. Require correct scope readback and healthy monitoring before release. Sample every
+five seconds. Abort only owned work on available RAM <12 GiB; CPU busy >85% or load1 >20 for
+three consecutive samples; attributable OOM; failed supervision; or the **5,400-second
+(90-minute) outer safety deadline**. This ceiling is accepted for the full run and changes no
+test timeout; the previous 31-minute run is an estimate, not a cutoff. Protect unrelated work.
+
+Use only fresh `.scratch/phase-b-full-P-019mkP/full/` evidence. Record actual start/end,
+identities/hashes before/after, cap/signal readback, monitoring, raw pytest counts/skips/errors
+and exit, and supervision status separately. **Supervisor exit 0 alone does not mean pytest
+passed.** Failure, abort, drift or uncertain cleanup receives an accurate failed/aborted report;
+no automatic retry or test waiver. The original full failure remains in the record.
+
+At terminal completion, verify the owned scope, launcher, shell, pytest workers/helpers and
+monitor have ended; send an explicit result/cleanup/**release** receipt through parent browser.
+The slot remains reserved until this coordinator verifies that explicit receipt. Unreadable
+state or a missing result is not release. There is **no root repeat, R/build/live grant,
+automatic next selection, new writer, host/security-setting change, commit or merge authority**.
+Parent alone relays the grant; this coordinator sends no owner/browser message.
