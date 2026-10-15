@@ -1,7 +1,9 @@
 # The `wip/` branches pushed under D18: inventory and disposition
 
 2026-10-15. Written by the cloud triage thread from `git fetch origin` against `main` @ `30b9adf`.
-The 17 branches were pushed from John's machine (nyx) by his local session under D18; nothing on
+Origin holds **26** `wip/` branches from this push: the first round of 17 below, then nine more
+(`wip/stashes`, six `wip/vehicle-*` aliases, `wip/host-prep-2026-10-15`, and a second commit on
+`wip/local-state`), listed under "Second round". The branches were pushed from John's machine (nyx) by his local session under D18; nothing on
 them was rewritten, and nothing here deletes them. `wip/*` stay the untouched originals; anything
 re-applied to `main` goes on a new `<stream>/<topic>` branch.
 
@@ -61,14 +63,32 @@ subject, and `git range-diff` shows only README and test-count context changed b
 | `wip/preserve-phase-b-P`, `-R`, `-R2`, `-R2b`, `-R2c` | parentless commits wrapping `refs/preserve/phase-b-*`: whole chassis trees (204 files, pre-restructure layout) for Phase B increments P to R2c. Against `be63f93` they add 10, 13, 17, 17 and 17 files' changes. R2c is identical to `wip/phase-b-adoption-staged` |
 | `wip/preserve-chassis-lane-evidence-2026-10-14` | parentless; 189 files: `.scratch/phase-b-*` gate, diagnosis and review evidence, `.scratch/tier1-brief-draft/`, and five `governance/{chassis,vehicle}/records/` files |
 | `wip/preserve-chassis-lane-status-2026-10-14` | parentless; one file, `governance/chassis/records/2026-10-14-chassis-lane-status.md`, identical to the copy on `main` |
-| `wip/local-state` | one commit on `0036b88` (post-restructure) adding five files under `governance/records/`: `VEHICLE_COMPLETENESS_REPORT-2026-09-23.md`, `filigree-export-2026-10-15.jsonl`, `brief-wording-tier1-v5.md` and its review prompt and review. **These are the latest copies** of the completeness report, the filigree tracker and brief v5; none is on `main` |
+| `wip/local-state` | two commits on `0036b88` (post-restructure). `d230fd0` adds five files under `governance/records/`: `VEHICLE_COMPLETENESS_REPORT-2026-09-23.md`, `filigree-export-2026-10-15.jsonl` (234 records), `brief-wording-tier1-v5.md` and its review prompt and review. **These are the latest copies** of the completeness report, the filigree tracker and brief v5; none is on `main`. `1f01ed4` adds the remaining scratch notes: `CHECKPOINT-2026-10-10-night.md` and `governance-drafts/{README,coordination}.md` |
+
+## Second round
+
+| branch | what it is | disposition |
+|---|---|---|
+| `wip/stashes` | 102 chained commits, oldest first, root `fa3dc34` parentless. Each commit's tree is one dropped stash's tree byte for byte (old layout); its message names the stash sha, branch, base and time, so `git diff <base> <commit>` shows what it held. Selected on nyx from 331 dangling stashes (the pre-commit hook stashes on every commit) by dropping those equal to their base, duplicates, and trees already committed on a ref. Bases: 92 on `aurora-port` (37 at `6135575`), 6 on `phase-b-adoption` (`be63f93`), 2 on `phase-b-dryrun`, 1 each on `vehicle-adoption` and `diag/contract-probe-loss`. The latest (`stash 097`..`102`, 2026-10-12 to 2026-10-15) are successive snapshots of the same governance drafts (`MASTER_GOVERNANCE_PLAN.md`, `coordination.md`, `governance/vehicle/*`, the filigree skill references), which PR #4's governance rewrite has since replaced | recorded only |
+| `wip/vehicle-39-take-by-rename`, `-23-clock-seam`, `-wp01-shared-executive`, `-docked-frame-axis`, `-rcs-command-on-scope`, `-thermal-source-scope` | aliases: the same commits as the unprefixed branches above (`7a87eb8`, `7e2a4b1`, `7290108`, `24688df`, `03b13df`, `c07f0c3`) | as their unprefixed names |
+| `wip/host-prep-2026-10-15` | one commit on `main` `30b9adf` adding `governance/records/host-prep-2026-10-15.md`: nyx's ledger of these pushes and the host step | recorded only |
+
+The vehicle work on nyx lives in the old submodule's git dir (origin `space_vehicle`), so the
+vehicle branches carry only their new commits, in the vehicle's root layout and unrebased; they
+re-apply with `git cherry-pick -X subtree=vehicle`.
 
 `wip/sv-recorder-opus-20261008` (on chassis `fa43b25`, 2026-10-08, 125 files) is also on `origin`
 but was not part of this push; it predates D18 and stays parked, as the restructure plan lists it.
 
-## Not pushed, per the nyx session
+## Still on `space_vehicle` only
 
-The 17 dropped-stash commits, the vehicle branches mirrored to `space_vehicle`, and extra scratch
-notes wait on a decision. The host migration (`volumes/ volume-images/ operator/ .env
-llm_console_seed.json` into `aurora/`) is not done; the session reported 11 unmanaged postgres
-containers running.
+`codex/39-quiet-skip`, `codex/wp08-*`, `codex/wp01-on-issue16`, `codex/window-record-no-seed`,
+`codex/ci-referee-timeout`, `codex/vehicle-delivery-scaffold`, `codex/diag-ingress-trace`. They
+need mirroring here as `wip/vehicle-*` before D21 archives that repository; nyx is pushing them.
+
+## Host step (nyx)
+
+Done, per `host-prep-2026-10-15.md`: with the stack down, `volumes/`, `.env` and
+`llm_console_seed.json` moved into `aurora/`; `volume-images/` and `operator/` never existed and
+`prepare_host.sh` creates them; the checkout is on `main` @ `30b9adf`. 11 unmanaged
+`postgres:16-alpine` containers are listed there and were not touched.
