@@ -28,6 +28,7 @@ import contextlib
 import fnmatch
 import itertools
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -199,20 +200,49 @@ def test_the_vehicle_passes_the_contract_probe(tmp_path):
     skip here is real: no deferring verb is reachable at this phase, so §9 check 9 has nothing to
     test. A test that demanded zero skips would be demanding the probe lie.
     """
-    diode = tmp_path / "diode"
-    console = subprocess.Popen(
-        [
-            sys.executable,
-            str(VEHICLE / "tools" / "console.py"),
-            "--diode-dir",
+    # **What the run leaves behind.** A failure here once left nothing to read: the console's
+    # output went to /dev/null and the window went with pytest's temporary directory, so a missing
+    # result could not be told from a late one. The console's stdout and stderr now always go to
+    # files beside the window, and the host's load is noted. For a diagnosis, CONTRACT_PROBE_EVIDENCE
+    # keeps the whole run (window, output, traces) in a directory of its own, CONTRACT_PROBE_TRACE=1
+    # times every submit, claim and result (`tests/trace_console.py`, the probe's `--trace`, and the
+    # vehicle's own VEHICLE_INGRESS_TRACE where it has one), and CONTRACT_PROBE_VEHICLE points the
+    # run at another vehicle checkout. Unset, the run is the one the suite has always made.
+    evidence = tmp_path
+    if os.environ.get("CONTRACT_PROBE_EVIDENCE"):
+        evidence = (
+            Path(os.environ["CONTRACT_PROBE_EVIDENCE"]) / f"run-{time.time_ns()}-{os.getpid()}"
+        )
+        evidence.mkdir(parents=True)
+    tracing = os.environ.get("CONTRACT_PROBE_TRACE") == "1"
+    vehicle = Path(os.environ.get("CONTRACT_PROBE_VEHICLE") or VEHICLE)
+    diode = evidence / "diode"
+    (evidence / "load.txt").write_text(f"start {os.getloadavg()}\n", encoding="utf-8")
+    console_argv = [
+        str(vehicle / "tools" / "console.py"),
+        "--diode-dir",
+        str(diode),
+        "--slug",
+        "probe_target",
+        "--poll",
+        "0.05",
+    ]
+    console_env = dict(os.environ)
+    if tracing:
+        console_argv = [
+            str(REPO / "tests" / "trace_console.py"),
+            str(evidence / "console-trace.jsonl"),
             str(diode),
-            "--slug",
-            "probe_target",
-            "--poll",
-            "0.05",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+            *console_argv,
+        ]
+        console_env["VEHICLE_INGRESS_TRACE"] = str(evidence / "ingress-trace.jsonl")
+    console_out = (evidence / "console.stdout").open("wb")
+    console_err = (evidence / "console.stderr").open("wb")
+    console = subprocess.Popen(
+        [sys.executable, *console_argv],
+        stdout=console_out,
+        stderr=console_err,
+        env=console_env,
     )
     try:
         # **Unbounded, and killed in the `finally`, because a cycle count is a clock and this test
@@ -251,13 +281,17 @@ def test_the_vehicle_passes_the_contract_probe(tmp_path):
                 "0.3",
                 "--timeout",
                 "15",
+                *(["--trace", str(evidence / "probe-trace.jsonl")] if tracing else []),
             ],
             capture_output=True,
             text=True,
             check=False,
         )
-        assert probe.returncode == 0, probe.stdout[-2500:]
-        assert "0 failed" in probe.stdout, probe.stdout[-2500:]
+        (evidence / "probe.stdout").write_text(probe.stdout, encoding="utf-8")
+        (evidence / "probe.stderr").write_text(probe.stderr, encoding="utf-8")
+        where = f"\n(evidence: {evidence})"
+        assert probe.returncode == 0, probe.stdout[-2500:] + where
+        assert "0 failed" in probe.stdout, probe.stdout[-2500:] + where
         assert "an unknown verb is refused by name" in probe.stdout
         assert "variables survive the claim" in probe.stdout
         # The gate set the probe reads must be the *instantiated* one and nothing else: 226 names,
@@ -272,6 +306,10 @@ def test_the_vehicle_passes_the_contract_probe(tmp_path):
         console.terminate()
         with contextlib.suppress(subprocess.TimeoutExpired):
             console.wait(timeout=10)
+        console_out.close()
+        console_err.close()
+        with (evidence / "load.txt").open("a", encoding="utf-8") as load:
+            load.write(f"end {os.getloadavg()}\n")
 
 
 def test_the_crews_error_model_is_a_distribution(tmp_path):
