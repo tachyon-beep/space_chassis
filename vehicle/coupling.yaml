@@ -223,10 +223,10 @@ nodes:
     kind: flow
     unit: kg O2/s
     note: >-
-      oxygen into the cell, set by its electrical output. The per-joule figure is
-      `domains/power/components.yaml#state fc_o2_draw_kg_s.per_joule_kg`, and everything downstream is
-      the same division: the hydrogen draw over the reaction's 0.126 mass ratio, and the water by
-      stoichiometry. **The note here said the per-joule figure was "not published" and the node's
+      oxygen into the cell, set by the modules' current (ADR 0003 item 3). The per-ampere figure is
+      `E-FC-DRAW-O2`'s (it was a per-joule figure until the quiet-coast power rules), and everything
+      downstream is the same division: the hydrogen draw over the reaction's 0.126 mass ratio, and the
+      water by stoichiometry. **The note here said the per-joule figure was "not published" and the node's
       own reason for existing was that everything downstream becomes derivable once it lands** —
       which is what happened, from three published numbers rather than from a source for the
       per-joule figure itself

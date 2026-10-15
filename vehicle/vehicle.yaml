@@ -1747,8 +1747,9 @@ electrical:
     # **The operating point the reactant chain was missing.** `bus_v` is the rated band and these
     # three are the numbers a division needs: the nominal the band is centred on, the cell count
     # that makes it a per-cell voltage, and the reactant rate per ampere of stack current. Every
-    # consumer derives from them rather than restating them — `per_joule_kg` on `fc_o2_draw_kg_s`,
-    # both reactant edges and the waste-heat edge.
+    # consumer derives from them rather than restating them — both reactant edges (per ampere since
+    # ADR 0003 item 3, so `output_v` no longer enters them), the consumables budgets and the
+    # waste-heat edge.
     output_v: 29
     cells_per_module: 31
     h2_lb_per_h_per_a: 0.00257
@@ -1778,8 +1779,9 @@ electrical:
         denied was one division away from three published numbers.** The per-kWh figure is the
         per-joule figure times 3.6e6, and the per-joule figure is the hydrogen rate divided by the
         module's output voltage — so the reactant chain's last unknown was the *operating point*,
-        not an electrochemistry. 0.3216 kg O2 per kWh and 0.0402 kg H2 per kWh are now derived on
-        `domains/power/components.yaml#state fc_o2_draw_kg_s.per_joule_kg` rather than quoted here.
+        not an electrochemistry. 0.3216 kg O2 per kWh and 0.0402 kg H2 per kWh at 29 V were derived
+        rather than quoted here; since ADR 0003 item 3 the draw is charged per ampere
+        (`coupling.yaml#edges.E-FC-DRAW-O2`), so the per-kWh figure depends on the terminal voltage.
         The source's own oxygen-to-hydrogen ratio is 7.936 where the stoichiometry is exactly 8, and
         **the corpus carried this ratio as 0.125, the rounded 8:1, and its own relation computed
         0.1260 from the molar masses two lines away** — a live contradiction between a value and

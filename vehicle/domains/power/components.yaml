@@ -103,7 +103,12 @@ state:
       Converter regulation lags its setpoint. electrical_diode.md:248 gives a 1.2 kW
       converter with a >=94 % efficiency but no time constant — and its 24-32 V envelope is
       re-anchored to apollo's 27.0-30.5 V band (C-01), so the parameter is owed rather than
-      inherited.
+      inherited. **Off the episode path** (ADR 0003 item 1, option (a) above): `bus_a_v` and
+      `bus_b_v` solve the modules' terminal relation directly, and no edge from `source_converter`
+      reaches a bus or anything else, so the owed `tau_s` blocks nothing the quiet-coast episode
+      needs. The state stays declared, and stays owed, rather than being deleted or given a tau:
+      `tests/test_power_rules.py` holds that nothing reads it, so a reader added later has to
+      answer this question first.
     provenance:
       basis: chosen
       reason: "a regulated converter is a first-order lag by construction; electrical_diode.md:248 gives its rating and efficiency but no time constant, so the class is chosen and the parameter is owed"
