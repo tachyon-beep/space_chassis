@@ -3008,7 +3008,7 @@ def initial_values(world: World, scenario: Scenario | None = None) -> dict[str, 
     A state the configuration has not given a value is left out rather than guessed, and the plant
     refuses by name when a tick reaches it — which is the behaviour the check beside this wants.
 
-    **`internal` is a key space rather than a key.** The sentinel is not a node, and fifty-nine
+    **`internal` is a key space rather than a key.** The sentinel is not a node, and fifty-eight
     states live on it — so `values["internal"]` as a single slot would let every one of them
     overwrite the next, which is why this function and `step()` both used to drop it. Dropping it
     was the workaround, and it cost the command surface a third of its effects: eight of the

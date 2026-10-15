@@ -744,7 +744,7 @@ def test_the_build_order_is_the_ticks_own_gap_list():
     assert {state.id for state in buckets["ready"]} == advanced, sorted(
         {state.id for state in buckets["ready"]} ^ advanced
     )
-    assert sum(len(rows) for rows in buckets.values()) == 140
+    assert sum(len(rows) for rows in buckets.values()) == 142
 
     # Every blocked state is filed under what its *root* owes, and the root is the state an
     # implementer should open. The sentinel's sequencing is deliberately not part of the chain: it
@@ -817,7 +817,10 @@ def test_the_build_order_is_the_ticks_own_gap_list():
     # thresholds do not carry, rather than the domain code the rule bucket was asking it for.
         # 52 -> 53 ready and 45 -> 44 rule: `orbital_state` coasts under `cislunar_point_masses`.
         # 53 -> 54 ready: power's `load_enabled`, the switch map `set_load` writes, is held.
-        ) == (54, 27, 15, 44), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
+        # 54 -> 50 ready, 15 -> 17 edge, 44 -> 48 rule: the power rules. bus_b_load_w and
+        # bus_b_v advance; bus_a_load_w reads comms.transmitter_on, which lands with the comms
+        # rules, so bus A, the cells and the reactant draws wait on it (60/27/15/41 once it does).
+        ) == (50, 27, 17, 48), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
 
 
 def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
@@ -2866,7 +2869,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert "declares 148 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
     assert "derived here as 20 unperturbed, 15 of them `service`" in result.stdout
     # One block deleted is one debt added: the corpus stands at 268, so the ablation is 269.
-    assert "COMPOSES, with 269 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 270 declared debt(s)." in result.stdout
 
     # The failure chains, which are owed *and* refused: the README's front table names fifteen.
     definition = copy_definition(fixture_dir(tmp_path, "no-chains"))
@@ -2888,7 +2891,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "declares no coverage block. The domain publishes 15 channel(s)" in result.stdout
     assert "no fault perturbs 1 of them" in result.stdout
-    assert "COMPOSES, with 269 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 270 declared debt(s)." in result.stdout
 
     # The filter's rates. The block is nested rather than top level, and the obligation is C-07's
     # rather than this check's — which is why the first reading of it in this round was wrong.
@@ -2902,7 +2905,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "domains/gnc/components.yaml:estimator.sub_stepping: is not declared" in result.stdout
     assert "C-07's resolution requires the interface" in result.stdout
-    assert "COMPOSES, with 269 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 270 declared debt(s)." in result.stdout
 
 
 def test_the_readme_s_chain_count_is_held_against_the_file(tmp_path):
@@ -6688,7 +6691,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # Removing this file's own prose obligations takes the headline down by the number of entries
     # that file carries, which is one here — so the figure is the base minus one, and it moves with
     # the base rather than with the runs of fixtures that inject a debt.
-    assert "with 267 declared debt(s)" in result.stdout
+    assert "with 268 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -7099,7 +7102,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 269 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 270 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -7205,7 +7208,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 269 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 270 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -8354,21 +8357,21 @@ def test_the_linter_refuses_a_state_order_over_one_state(tmp_path):
     definition = copy_definition(fixture_dir(tmp_path, "one-state-order"))
     path = definition / "coupling.yaml"
     text = path.read_text()
-    old = """  fuel_cell:
+    # `fuel_cell` carries four states since the quiet-coast power rules; `fc_o2_draw` carries one.
+    old = """  fc_o2_draw:
     domain: power
     kind: flow
-    unit: W
-    apollo: "261-263"
+    unit: kg O2/s
 """
-    new_order = old + """    state_order: [fuel_cell_power_w]
+    new_order = old + """    state_order: [fc_o2_draw_kg_s]
     state_order_note: a fixture's order over the one state this node carries
 """
-    assert old in text, "the fixture no longer matches fuel_cell"
+    assert old in text, "the fixture no longer matches fc_o2_draw"
     path.write_text(text.replace(old, new_order, 1))
 
     out = run_linter(definition).stdout
-    assert "coupling.yaml:node fuel_cell" in out, out[-1200:]
-    assert "carries one state (fuel_cell_power_w) and declares" in out, out[-1200:]
+    assert "coupling.yaml:node fc_o2_draw" in out, out[-1200:]
+    assert "carries one state (fc_o2_draw_kg_s) and declares" in out, out[-1200:]
     assert "Declare the edge, or drop the order" in out, out[-1200:]
 
 
@@ -10069,7 +10072,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 135 -> 136 in round 40, with the avionics bay's heat rate: the one heated zone whose 360 W no
     # state carried, and the ingredient the loop's collected load was missing.
     # 136 -> 138 in round 41, with the two loops' collected loads: the sums that ingredient fed.
-    assert sum(len(rows) for rows in buckets.values()) == 140
+    assert sum(len(rows) for rows in buckets.values()) == 142
 
     # `ready` means what it says: only the classes the reference plant can actually advance.
     # It is no longer only the plant's two integrators — round 20 taught it to evaluate an
@@ -10143,7 +10146,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # reads, and naming it (`radiator_rejection_w`) made the coolant's discharge computable.
     # Post-ejection P00 and active CMC DAP give two more commanded modes a sourced initial.
     # 53 -> 54: power's `load_enabled`, the switch map `set_load` writes, is held.
-    assert len(buckets["ready"]) == 54
+    # 54 -> 50: bus A, the cells and the reactant draws wait on comms.transmitter_on.
+    assert len(buckets["ready"]) == 50
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -10387,23 +10391,21 @@ def test_the_bus_load_is_the_sum_the_inventory_already_states(tmp_path):
     assert sum(int(row["demand_w"]) for row in csm.values()) == 1723
     assert power["load_budget"]["csm_total_demand_w"] == 1723
 
-    state = next(s for s in power["state"] if s["id"] == "bus_a_load_w")
-    provenance = state["provenance"]
-    assert provenance["basis"] == "derived"
-    assert provenance["computes"] == "bus_a_load_w"
-    assert state["bus_a_load_w"] == 1723
-    # Every CSM load is named, and every input is that load's own declared demand.
-    derivation = provenance["derivation"]
-    named = {str(v).rsplit(".", 2)[-2] for v in derivation["inputs"].values()}
-    assert named == set(csm), sorted(set(csm) ^ named)
-    for key, source in derivation["inputs"].items():
-        assert source == f"domains/power/components.yaml:loads.{key}.demand_w", key
+    # ADR 0003 item 2 split the one sum into a load per bus (`domains/power/rules.py`, over the
+    # switches), and the generation is the two added: the 1,723 W is now `fuel_cell_power_w`'s.
+    states = {s["id"]: s for s in power["state"]}
+    bus_a, bus_b = states["bus_a_load_w"]["loads_w"], states["bus_b_load_w"]["loads_w"]
+    assert set(bus_a).isdisjoint(bus_b) and set(bus_a) | set(bus_b) == set(csm)
+    for name, watts in {**bus_a, **bus_b}.items():
+        assert watts == csm[name]["demand_w"], name
+    assert states["fuel_cell_power_w"]["fuel_cell_power_w"] == 1723
+    assert states["fuel_cell_power_w"]["provenance"]["computes"] == "fuel_cell_power_w"
 
-    # The plant computes it, and the number is the inventory's.
+    # The plant computes bus B's share from the switches, and the number is the inventory's.
     plant = _plant()
     world = plant.load_world(VEHICLE)
     values = plant.step(world, plant.initial_values(world), 0.02, [])
-    assert values["bus_a_load_w"] == 1723.0
+    assert values["bus_b_load_w"] == float(sum(bus_b.values())) == 575.0
 
     # And moving one load's demand, in a broken copy, is refused rather than silently summed at the
     # old total — which is what makes this a *derived* value rather than a second declaration of one.
@@ -10416,7 +10418,7 @@ def test_the_bus_load_is_the_sum_the_inventory_already_states(tmp_path):
     path.write_text(text.replace(old, "    demand_w: 320\n", 1))
     result = run_linter(definition)
     assert result.returncode == 1
-    assert "bus_a_load_w.provenance.derivation" in result.stdout, result.stdout[-900:]
+    assert "declares csm_total_demand_w as 1723 and its loads sum to 1743 W" in result.stdout
 
 
 def test_the_structural_differential_is_the_compartments_own_pressure(tmp_path):
@@ -11365,7 +11367,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "140 states, by what blocks them" in result.stdout
+    assert "142 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -11611,7 +11613,7 @@ def test_every_heated_zone_declares_the_state_that_carries_its_heat(tmp_path):
     # The debt is closed, and the check still reports an absent link when one comes back.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 268 declared debt(s)." in intact.stdout
+    assert "COMPOSES, with 269 declared debt(s)." in intact.stdout
     assert "names no heat-rate state" not in intact.stdout
 
     def fixture(name: str, old: str, new: str) -> subprocess.CompletedProcess[str]:
@@ -11707,7 +11709,7 @@ def test_a_loop_s_collected_load_is_the_sum_over_the_zones_that_name_it(tmp_path
     # The note rather than a debt, in the linter's own words, and the count unmoved by it.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 268 declared debt(s)." in intact.stdout
+    assert "COMPOSES, with 269 declared debt(s)." in intact.stdout
     assert (
         "vehicle.yaml#thermal.loops.loop_secondary.load_state: is not declared, and no zone names "
         "this loop" in intact.stdout
@@ -13933,7 +13935,8 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
     assert len(declared) == 10, f"{len(declared)} domains declare one: {[d for d, _ in declared]}"
     # 54 -> 56: the oxygen supply tank's pressure joined the sentinel, and — the same round — the
     # count it is part of is what this assertion exists to notice.
-    assert sum(len(states) for _, states in declared) == 59, "the sentinel's state count moved"
+    # 59 -> 58: bus_a_load_w left the sentinel for `fuel_cell`.
+    assert sum(len(states) for _, states in declared) == 58, "the sentinel's state count moved"
 
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
@@ -14646,7 +14649,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 268 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 269 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -15155,7 +15158,7 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     scalar = [e for e in edges if e.sensitivity.get("value") not in (None, "UNCONFIGURED")]
     tables = [e for e in edges if e.sensitivity.get("regimes")]
     assert len(tables) == 8, f"the regime edges changed: {[e.id for e in tables]}"
-    assert len(scalar) + len(tables) == 69
+    assert len(scalar) + len(tables) == 70  # E-CMD-LOAD, set_load's unity edge
     ready = subprocess.run(
         [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--readiness"],
         capture_output=True,
@@ -15164,7 +15167,7 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     )
     assert ready.returncode == 0, ready.stderr
     found = re.search(r"edges with a sensitivity\s+(\d+) / (\d+)", ready.stdout)
-    assert (int(found.group(1)), int(found.group(2))) == (69, len(edges)), found.group(0)
+    assert (int(found.group(1)), int(found.group(2))) == (70, len(edges)), found.group(0)
 
 
 def test_a_verb_that_starts_a_state_is_declared_rather_than_described(tmp_path):
@@ -17181,12 +17184,12 @@ def test_the_linter_refuses_a_per_domain_paragraph_whose_counts_have_drifted(tmp
     definition = copy_definition(tmp_path / "domain-count")
     path = definition / "README.md"
     text = path.read_text()
-    old = "declares 13 states, 17 thresholds, 5 verbs, 12 faults"
+    old = "declares 16 states, 17 thresholds, 5 verbs, 12 faults"
     assert old in text, "the fixture no longer matches the power clause"
     path.write_text(text.replace(old, "declares 9 states, 17 thresholds, 5 verbs, 12 faults", 1))
     result = run_linter(definition)
     assert result.returncode == 1
-    assert "while `domains/power/` declares 13" in result.stdout, result.stdout[-900:]
+    assert "while `domains/power/` declares 16" in result.stdout, result.stdout[-900:]
 
 
 def test_the_linter_refuses_a_domain_paragraph_with_no_count_clause(tmp_path):
@@ -17223,7 +17226,7 @@ def test_the_linter_refuses_two_count_clauses_for_one_domain(tmp_path):
     definition = copy_definition(tmp_path / "two-clauses")
     path = definition / "README.md"
     text = path.read_text()
-    old = "declares 13 states, 17 thresholds, 5 verbs, 12 faults"
+    old = "declares 16 states, 17 thresholds, 5 verbs, 12 faults"
     assert old in text, "the fixture no longer matches the power clause"
     second = "It also declares 9 states, 17 thresholds, 5 verbs, 12 faults. "
     path.write_text(text.replace(old, second + old, 1))
@@ -17552,12 +17555,12 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     anchor = '"""'
     assert anchor in text
     path.write_text(
-        text.replace(anchor, anchor + "\nA fixture's claim: twelve nodes carry more than one state.\n", 1)
+        text.replace(anchor, anchor + "\nA fixture's claim: nine nodes carry more than one state.\n", 1)
     )
     result = run_linter(definition)
     assert result.returncode == 1, result.stdout[-900:]
-    assert "states 'twelve nodes carry more than one state'" in result.stdout, result.stdout[-900:]
-    assert "this vehicle has 10 multi-state nodes" in result.stdout, result.stdout[-900:]
+    assert "states 'nine nodes carry more than one state'" in result.stdout, result.stdout[-900:]
+    assert "this vehicle has 12 multi-state nodes" in result.stdout, result.stdout[-900:]
 
     # And the sentinel form, which is the other noun and the other claim.
     other = copy_definition(fixture_dir(tmp_path, "stale-sentinel"))
@@ -17571,7 +17574,7 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     result = run_linter(other)
     assert result.returncode == 1, result.stdout[-900:]
     assert "states 'forty-eight states live on it'" in result.stdout, result.stdout[-900:]
-    assert "this vehicle has 59 states on the sentinel" in result.stdout, result.stdout[-900:]
+    assert "this vehicle has 58 states on the sentinel" in result.stdout, result.stdout[-900:]
 
     # A *digits* figure is read too, so the reader is not tied to the spelling the corpus happens
     # to use today.
@@ -17579,11 +17582,11 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     path = digits / "tools" / "faults.py"
     text = path.read_text()
     path.write_text(
-        text.replace(anchor, anchor + "\nA fixture's claim: 12 nodes carry more than one state.\n", 1)
+        text.replace(anchor, anchor + "\nA fixture's claim: 9 nodes carry more than one state.\n", 1)
     )
     result = run_linter(digits)
     assert result.returncode == 1, result.stdout[-900:]
-    assert "states '12 nodes carry more than one state'" in result.stdout, result.stdout[-900:]
+    assert "states '9 nodes carry more than one state'" in result.stdout, result.stdout[-900:]
 
     # And the check's own explanatory prose must not trip it. The first version of the comment above
     # `MULTI_STATE_NODE_FIGURES` wrote both stale figures out in the form the patterns read, and
@@ -17605,8 +17608,9 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
         "multi-state nodes": _cv.MULTI_STATE_NODE_FIGURES,
         "states on the sentinel": _cv.SENTINEL_STATE_FIGURES,
     }
-    # 11 -> 10 in round 70, with the source regulator off the fuel cell's node.
-    expected = {"multi-state nodes": 10, "states on the sentinel": 59}
+    # 11 -> 10 in round 70, with the source regulator off the fuel cell's node; 12 and 58 since
+    # load_enabled joined load_shed_state and the bus loads and module current joined fuel_cell.
+    expected = {"multi-state nodes": 12, "states on the sentinel": 58}
     for tool in sorted((VEHICLE / "tools").glob("*.py")):
         tree = _ast.parse(tool.read_text())
         for node in _ast.walk(tree):
@@ -18244,10 +18248,11 @@ def test_the_fuel_cells_reactant_chain_re_derives_from_the_operating_point():
     # where a `kg/s per W` figure belongs: round 57 found the two the other way round, with a
     # per-joule figure under a `kg O2/s` unit and a tank that would have read it as a flow.
     assert o2["provenance"]["computes"] == "draw_kg_s"
-    assert o2["provenance"]["derivation"]["inputs"]["per_joule_kg"] == (
+    # Per ampere of module current since ADR 0003 item 3 (J-mission EPS handout p. 2.6-21).
+    assert o2["provenance"]["derivation"]["inputs"]["per_amp_kg_s"] == (
         "coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value"
     )
-    assert o2["provenance"]["derivation"]["inputs"]["fuel_cell_power_w"] == "fuel_cell_power_w"
+    assert o2["provenance"]["derivation"]["inputs"]["current_a"] == "fuel_cell_current_a"
 
     # The three consequences, each carrying the state's figure rather than restating it — which is
     # what makes the chain one number in four places instead of four numbers that agree by hand.
@@ -18258,9 +18263,9 @@ def test_the_fuel_cells_reactant_chain_re_derives_from_the_operating_point():
         # division, and the denominator is the module's rated output.
         (
             "E-FC-DRAW-O2",
-            "h2_lb_per_h_per_a * lb_to_kg / seconds_per_hour / output_v / h2_per_o2",
+            "h2_lb_per_h_per_a * lb_to_kg / seconds_per_hour / h2_per_o2",
         ),
-        ("E-FC-DRAW-H2", "per_joule_kg * h2_per_o2"),
+        ("E-FC-DRAW-H2", "per_amp_kg * h2_per_o2"),
         (
             "E-FC-HEAT",
             "enthalpy_j_per_mol_o2 * cells_per_module / "
@@ -19703,7 +19708,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # 45 -> 48 in round 80, and this is the largest single move a *value* round has made: three
     # commanded modes the launch checklist publishes a position for, which the hold then carries.
     # 53 -> 54: power's `load_enabled`, the switch map `set_load` writes, is held.
-    assert len(advanced) == 54, sorted(advanced)
+    # 54 -> 50: bus A, the cells and the reactant draws wait on comms.transmitter_on.
+    assert len(advanced) == 50, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares.
     assert values["cabin_heat_csm"] == 733.0
@@ -21852,17 +21858,21 @@ def test_the_tick_can_read_what_the_build_order_promises():
     # state resolved here is one the tick then advances, and a reading that is not yet there is left
     # absent rather than filled with a declaration's own copy.
     resolved = plant.resolve_declared_states(world, dict(values))
-    assert "fc_o2_draw_kg_s" in resolved and "fc_h2_draw_kg_s" in resolved
+    # The draws are per ampere of the cells' current, which needs bus A's load, which needs
+    # comms.transmitter_on: until the comms rules declare it they are owed, not resolved.
+    if "transmitter_on" in {state.id for state in world.states}:
+        assert "fc_o2_draw_kg_s" in resolved and "fc_h2_draw_kg_s" in resolved
     assert set(resolved) <= ready, sorted(set(resolved) - ready)
     assert set(resolved) <= advanced, sorted(set(resolved) - advanced)
 
     # The figures this rests on, so a round that moves them has to say so here.
-    assert len(world.states) == 140
+    assert len(world.states) == 142
     # 139 -> 140: power's `load_enabled`, the switch map `set_load` writes.
+    # 140 -> 142: `bus_b_load_w` and `fuel_cell_current_a`; ready 54 -> 50 until transmitter_on.
     # 38 -> 41 in round 75: the three event-moved states, held by the tick and moved by the effect.
     # 41 -> 45 in round 76 and 45 -> 48 in round 80: the seven positions `mission.yaml#launch_state`
     # now declares, the last three of them read out of the launch checklist.
-    assert len(ready) == 54 and len(advanced) == 54
+    assert len(ready) == 50 and len(advanced) == 50
 
 
 # ---------------------------------------------------------------------------------------------
