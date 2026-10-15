@@ -121,6 +121,16 @@ allowed only when declared with a named back-edge (`coupling.yaml#cycles`), and 
 state on a delayed cycle must carry hysteresis — dwell alone is a relay oscillation that an
 agent reading 2 Hz telemetry will read as physics (`review-findings.md` §7).
 
+**Where a domain's rule lives (`governance/decisions.md` D5).** A rule — an `algebraic` relation,
+a `discrete` machine's transitions, a `dynamics` state's equations — is code in
+`domains/<name>/rules.py`, beside the YAML: standard-library Python, `RULES = {state_id: rule}`,
+each `rule(inputs, params, dt) -> value`. `inputs` is the snapshot restricted to what the domain
+owns or names in `reads:`/`writes:`, `params` is the state's own declaration with `UNCONFIGURED`
+refused, and returning `None` is a gap. The plant calls it when the frozen order reaches the state.
+The loader and the linter refuse the same things: a rule for a state the domain does not own or no
+domain declares, for an integrator class or a hazard, beside a rule the configuration already
+supplies, and a file that imports anything able to read a clock, randomness or a file.
+
 ---
 
 ## 3. Seven methods, chosen by model form rather than by rate
@@ -201,6 +211,15 @@ to the sensor by design; the plant must still lose the mass. Therefore:
 - **Mass is conserved exactly; energy is not asserted.** The fuel cell has exact
   stoichiometric mass ratios and a float efficiency. Energy gets a tolerance band and a trend,
   never an assertion — the same category error as asserting conservation on thermal margin.
+
+**The ledger (WP10).** Every edge into or out of a stock is its own integer count of the stock's
+quantum each tick, with its own residual accumulator, booked once as a `Transfer`; each stock books
+its count before and after. A transfer between two stocks is computed by the stock it leaves and
+booked by the stock it enters, so both ends hold one integer. Step 5 asserts each count change
+against its transfers with no tolerance, and the published level against the ledger, so the
+observation and its accounting are one pair. A ledger in which nothing moved passes the per-tick
+assertion and fails an acceptance check (`nontrivial=True`), because a conservation check on empty
+flows proves nothing. Energy is reported as a trend against a declared band (`energy_trend`).
 
 ---
 

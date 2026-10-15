@@ -18538,6 +18538,22 @@ def check_console_flags(root: Path, report: Report) -> None:
         )
 
 
+def check_domain_rules(root: Path, report: Report) -> None:
+    """D5: every `domains/<name>/rules.py`, refused by the plant's own loader (`plant.rule_refusals`).
+
+    A rule registered for a state no domain declares, for a state another domain owns, for a class
+    the plant integrates itself, beside a rule the configuration already supplies, or in a file that
+    imports anything that can read a clock, a random source or a file. The loader and the linter
+    call one function, so they cannot disagree about which rules are admissible. Imported here and
+    not at the top because `plant` imports this module.
+    """
+    sys.modules.setdefault("check_vehicle", sys.modules[__name__])
+    import plant
+
+    for where, why in plant.rule_refusals(root):
+        report.refuse(where, why)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check that the vehicle definition composes.")
     parser.add_argument("--dir", default=str(Path(__file__).resolve().parent.parent))
@@ -18712,6 +18728,7 @@ def main(argv: list[str] | None = None) -> int:
     check_provenance_derivations(root, documents, schedule, report)
     check_edge_derivations(coupling or {}, documents, report)
     check_domain_reads(documents, report)
+    check_domain_rules(root, report)
     check_perception_model(documents, report)
     check_component_identity(documents, report)
     # Needs the registry, which is empty when `channels.yaml` refused: without it every `measures`
