@@ -1675,3 +1675,41 @@ next step is preparation and review of an exact-R2c full-suite proposal for a se
 This closure reserves or launches nothing further and permits no retry, commit or merge.
 Only coordinator records changed; the main index SHA256 remains
 `86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.
+
+## 29. Option B allocation preparation and tier-1 brief drafting — 2026-10-11 21:53 AEDT
+
+John, through Emmy, directs this coordinator to use the existing shared-slot allocation authority
+for the existing Vehicle owner's Option B workflow, subject to exact selections/identity, bounded
+run count/deadlines, justified CPU/RAM enforcement, abort/cleanup evidence, independent implementation
+review and fresh capacity/ownership checks before any grant. Option B implementation is already
+authorised; no renewed implementation permission is required. **No allocation or run is granted here.**
+
+Scope-specific reconciliation: P full and R2c root were completed and explicitly released (§§26,28).
+John separately granted tier-1 bounded/full tests at 08:09:55 UTC in the Vehicle transcript; the
+Vehicle owner recorded release at 09:11 UTC. Those grants do not allocate Option B. John approved
+tier-1 publication/merge on green CI and Option B implementation after merge at 09:14:04 UTC
+(Vehicle transcript `a728e992-9471-46ab-9efe-ce550d7ece5f`, line 9378). PR #43 merged at 10:08:46 UTC,
+`f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f`. Earlier statements that the tier choice is pending
+are historical. Issue 42 preference persistence remains a separate undecided package.
+
+At **10:52:31 UTC / 21:52:31 AEDT**, read-only host inspection found **42.43 GiB available RAM**,
+**15.3% sampled CPU busy**, load1 **4.13**, no matching Space pytest/build/launcher processes,
+no listed Space or named Nyx CI/release scopes and no Compose projects. This is preparation evidence,
+not proof that all ELSPETH work is idle, and must be refreshed immediately before a grant/launch.
+ELSPETH keeps priority; Sultai GPU reservation is untouched; Space gets no GPU, one selection,
+maximum two workers total and nice 19. Historical R2c CPU/RAM caps are not an Option B allocation.
+
+Vehicle's existing `b-39-ca87a9` worktree is based on `f75420c`, with two modified files and no
+frozen candidate receipt. Observed `git diff --binary HEAD --` SHA256 at this check:
+`b5981141b99d47c92850970d277f9f591aa36727785544778ab2deed96bf64ea`.
+This observation does not freeze the owner's work. Only design reviews B1–B5 were located;
+the exact implementation needs independent review before tests under this direction.
+
+**Route blocker:** no browser surfaces (`apps=[]`, `browsers=[]`) and no cross-task send tool
+are available in this coordinator session. Emmy's existing browser route must deliver the two
+prepared requests to Vehicle [610587] and Chassis [ad1acf]. No owner message has been delivered here.
+Vehicle is to return a frozen candidate/review and concrete bounded run/supervisor proposal.
+Chassis is to draft the finished tier-1 brief replacement now, including the conflicting next-cycle
+promise at `brief/PROTOCOL.md:59–60`, and return exact target text for John's final-text approval.
+Drafting is already authorised; adopting/publishing final brief text waits for that approval
+under the design spec §6. Existing owner work is not interrupted and no substitute writer is created.
