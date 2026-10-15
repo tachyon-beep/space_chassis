@@ -275,9 +275,10 @@ def test_a_symlinked_directory_inside_the_mirror_is_never_followed(tmp_path: Pat
     swapped = tmp_path / "swapped"
     swapped.mkdir()
     (swapped / "work").symlink_to(mirror / "work")
-    assert health.agent_view(tmp_path / "t", swapped, None, now=0, quiet=60, caps={})[
-        "mirror_age"
-    ] is None
+    assert (
+        health.agent_view(tmp_path / "t", swapped, None, now=0, quiet=60, caps={})["mirror_age"]
+        is None
+    )
 
 
 def test_a_fifo_claim_does_not_block_the_reader(tmp_path: Path):

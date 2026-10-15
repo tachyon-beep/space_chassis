@@ -104,7 +104,10 @@ def test_the_monitor_never_writes_outside_its_telemetry_directory(tmp_path, monk
     before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
     fleet_monitor.publish(["agent_1"], now=time.time())
     after = {p for p in root.rglob("*") if p.is_file()}
-    assert after - set(before) == {root / "telemetry" / "fleet.json", root / "telemetry" / "fleet.jsonl"}
+    assert after - set(before) == {
+        root / "telemetry" / "fleet.json",
+        root / "telemetry" / "fleet.jsonl",
+    }
     for path, content in before.items():
         assert path.read_bytes() == content, path
 

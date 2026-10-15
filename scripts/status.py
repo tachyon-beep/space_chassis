@@ -157,7 +157,7 @@ def _seconds(value: float | None) -> str:
 def _first_line(text: str | None, width: int = 100) -> str:
     if not text:
         return "-"
-    return text.splitlines()[0][:width]
+    return health.printable(text.splitlines()[0][:width])
 
 
 def render(rows: list[dict], verbose: bool) -> str:
@@ -170,7 +170,7 @@ def render(rows: list[dict], verbose: bool) -> str:
         cap = signals["caps"].get("requests")
         container = row["container"]
         parts = [
-            f"{row['name']:<16}",
+            f"{health.printable(row['name']):<16}",
             f"{row['liveness']:<13}",
             f"talked {_seconds(row['transcript_age']):>5} ago",
             f"mirror {_seconds(row['mirror_age']):>5}",

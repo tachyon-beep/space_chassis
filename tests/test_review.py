@@ -52,21 +52,25 @@ def turn_record(
     reasoning: str = "",
     calls: list[dict] | None = None,
     finish: str = "stop",
-    status: int = 200,
+    error: str | None = None,
     usage: dict | None = None,
-    agent: str = "otter",
+    stream: str = "core",
 ) -> dict:
+    """A line in the shape recorder/proxy.py writes: timestamp, stream, request, response."""
     message = response_message or assistant(response_text, calls, reasoning, finish)["message"]
-    return {
-        "at": f"2026-09-12T00:00:{index:02d}Z",
-        "agent": agent,
-        "id": f"req{index}",
-        "status": status,
-        "request": {"model": "stub", "messages": messages, "tools": [{"type": "function"}]},
-        "response": {
+    response = (
+        {"error": {"message": error}}
+        if error is not None
+        else {
             "choices": [{"index": 0, "message": message, "finish_reason": finish}],
             "usage": usage or {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
-        },
+        }
+    )
+    return {
+        "timestamp": f"2026-09-12T00:00:{index:02d}.000000Z",
+        "stream": stream,
+        "request": {"model": "stub", "messages": messages, "tools": [{"type": "function"}]},
+        "response": response,
     }
 
 
@@ -90,14 +94,10 @@ def panel(tmp_path, monkeypatch):
     root = tmp_path / "record"
     (root / "transcripts").mkdir(parents=True)
     (root / "telemetry" / "agents").mkdir(parents=True)
-    (root / "home").mkdir(parents=True)
-    (root / "pump").mkdir(parents=True)
-    (root / "work").mkdir(parents=True)
     monkeypatch.setattr(review, "TRANSCRIPTS_DIR", root / "transcripts")
     monkeypatch.setattr(review, "TELEMETRY_DIR", root / "telemetry")
-    monkeypatch.setattr(review, "HOME_ROOT", root / "home")
-    monkeypatch.setattr(review, "PUMP_ROOT", root / "pump")
-    monkeypatch.setattr(review, "WORK_DIR", root / "work")
+    monkeypatch.setattr(review, "MIRROR_DIR", root / "telemetry" / "agents")
+    monkeypatch.delenv("AGENT_SLUGS", raising=False)
     monkeypatch.setattr(review, "MAX_BYTES", 1 << 20)
     monkeypatch.setattr(review, "CACHE_TURNS", 50)
     monkeypatch.setattr(review, "CONVERSATIONS", {})
@@ -107,12 +107,11 @@ def panel(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Reassembling one turn
 # ---------------------------------------------------------------------------
-def test_a_turn_shows_only_what_was_new_in_it(panel):
-    """Every request repeats the whole conversation; the panel shows the delta.
+def test_a_turn_is_read_from_the_recorder_s_line_shape(panel):
+    """Every request repeats the whole conversation; a turn shows what arrived since the last reply.
 
-    This is the central reconstruction. Turn 1 carried two messages, turn 2
-    carried four, so turn 2's new material is the last two -- and the panel
-    must not re-show the opening the operator already read.
+    The chassis condenses and clips what it sends, so one request is not a prefix of the next;
+    what is new in a request is what follows its last assistant message.
     """
     opening = [{"role": "system", "content": "you are"}, {"role": "user", "content": "go"}]
     second = opening + [
@@ -126,23 +125,34 @@ def test_a_turn_shows_only_what_was_new_in_it(panel):
             turn_record(0, opening, response_text="looking"),
             turn_record(1, second, response_text="still looking"),
         ],
-        events=[
-            {"at": "x", "event": "open", "id": "req0", "messages": 2},
-            {"at": "x", "event": "close", "id": "req0", "status": 200, "duration_seconds": 0.5},
-            {"at": "x", "event": "open", "id": "req1", "messages": 4},
-            {"at": "x", "event": "close", "id": "req1", "status": 200, "duration_seconds": 0.9},
-        ],
     )
     view = review.conversation("otter").refresh(force=True)
     assert len(view.turns) == 2
 
     first, latest = view.turns[0], view.turns[1]
     assert latest["response_text"] == "still looking"
-    assert latest["duration_seconds"] == 0.9
+    assert latest["at"] == "2026-09-12T00:00:01.000000Z"
     assert latest["context_messages"] == 4
-    new_texts = [m["text"] for m in latest["new_messages"]]
-    assert new_texts == ["looking", "again"], new_texts
-    assert first["delta_known"] is False, "the oldest turn cannot be separated from its history"
+    assert [m["text"] for m in latest["new_messages"]] == ["again"]
+    assert latest["usage"]["total_tokens"] == 12
+    assert first["fresh"] is True and latest["fresh"] is False
+
+
+def test_a_fresh_conversation_is_marked_as_a_new_incarnation(panel):
+    opening = [{"role": "system", "content": "you are"}, {"role": "user", "content": "go"}]
+    carried = opening + [{"role": "assistant", "content": "x"}, {"role": "user", "content": "y"}]
+    write_transcript(
+        panel,
+        "otter",
+        [
+            turn_record(0, opening),
+            turn_record(1, carried),
+            turn_record(2, opening),
+        ],
+    )
+    turns = review.conversation("otter").refresh(force=True).turns
+    assert [turn["fresh"] for turn in turns] == [True, False, True]
+    assert turns[0]["system_hash"] == turns[2]["system_hash"]
 
 
 def test_a_tool_call_carries_the_result_that_came_back(panel):
@@ -168,10 +178,6 @@ def test_a_tool_call_carries_the_result_that_came_back(panel):
         [
             turn_record(0, opening, calls=[{"id": "c1", "name": "status"}], finish="tool_calls"),
             turn_record(1, after_call, response_text="understood"),
-        ],
-        events=[
-            {"event": "open", "id": "req0", "messages": 1},
-            {"event": "open", "id": "req1", "messages": 4},
         ],
     )
     view = review.conversation("otter").refresh(force=True)
@@ -208,7 +214,6 @@ def test_a_result_is_matched_by_id_even_when_the_order_is_wrong(panel):
             ),
             turn_record(1, after, response_text="done"),
         ],
-        events=[{"event": "open", "id": "req0", "messages": 1}],
     )
     calls = review.conversation("otter").refresh(force=True).turns[0]["tool_calls"]
     by_name = {call["name"]: call["result"]["display"] for call in calls}
@@ -246,25 +251,23 @@ def test_a_multimodal_message_is_shown_rather_than_blanked(panel):
     assert review.message_text({"content": None}) == ""
 
 
-def test_a_refused_turn_is_shown_with_its_refusal(panel):
+def test_a_refused_turn_shows_the_refusal_and_no_calls(panel):
     """An operator's first question is usually whether the agent is working."""
+    cap = "rate limited: at most 2400 request(s) per hour on this socket"
     write_transcript(
         panel,
         "otter",
-        [turn_record(0, [{"role": "user", "content": "go"}], status=429, response_message={})],
-        events=[
-            {"event": "open", "id": "req0", "messages": 1},
-            {
-                "event": "close",
-                "id": "req0",
-                "status": 429,
-                "refusal": "rate limited: at most 2400 request(s) per hour",
-            },
+        [
+            turn_record(0, [{"role": "user", "content": "go"}], error=cap),
+            turn_record(1, [{"role": "user", "content": "go"}], error="upstream request failed"),
         ],
     )
-    turn = review.conversation("otter").refresh(force=True).turns[0]
-    assert turn["status"] == 429
-    assert "rate limited" in (turn["refusal"] or "")
+    refused, failed = review.conversation("otter").refresh(force=True).turns
+    assert refused["refused"] is True and refused["tool_calls"] == []
+    assert "rate limited" in refused["error"]
+    assert failed["refused"] is False and failed["error"] == "upstream request failed"
+    html = review.render_turn(refused, "otter")
+    assert "rate limited" in html
 
 
 # ---------------------------------------------------------------------------
@@ -359,50 +362,54 @@ def test_paging_walks_backwards_through_the_window(panel):
 # ---------------------------------------------------------------------------
 # The fleet view
 # ---------------------------------------------------------------------------
-def test_the_fleet_view_reads_the_lifecycle_record(panel):
-    """Failures and recoveries are half of what an operator needs."""
+def test_the_fleet_view_reads_the_monitor_s_signals_and_labels_claims(panel):
+    """Liveness and signals are the monitor's; the agent's notes are its claim and say so."""
     slug = "otter"
     write_transcript(panel, slug, [turn_record(0, [{"role": "user", "content": "go"}])])
-    telemetry = panel / "telemetry" / "agents" / slug
-    telemetry.mkdir(parents=True, exist_ok=True)
-    (telemetry / "lifecycle.jsonl").write_text(
-        "\n".join(
-            json.dumps(record)
-            for record in (
-                {"at": "x", "event": "run_start", "agent": slug},
-                {
-                    "at": "x",
-                    "event": "decision",
-                    "agent": slug,
-                    "exit": 43,
-                    "tier": 2,
-                    "action": "restore_floor",
-                },
-                {"at": "x", "event": "handoff", "agent": slug},
-                {"at": "x", "event": "run_end", "agent": slug, "exit": 42, "note": "handing over"},
-            )
-        )
-        + "\n",
+    signals = {
+        "incarnations": 3,
+        "refusals": 2,
+        "tool_errors": 1,
+        "tool_results": 9,
+        "spend": {"requests": 40, "tokens": 900, "refused": 2},
+        "caps": {"requests": 2400, "tokens": 200000000},
+    }
+    (panel / "telemetry" / "fleet.json").write_text(
+        json.dumps(
+            {
+                "at": "x",
+                "agents": [{"slug": slug, "liveness": "capped", "signals": signals}],
+                "summary": {"agents": 1, "capped": 1},
+            }
+        ),
         encoding="utf-8",
     )
-    (panel / "home" / slug / "session").mkdir(parents=True, exist_ok=True)
-    (panel / "home" / slug / "session" / "run.json").write_text(
-        json.dumps({"turn": 7, "context_window": 1000, "context_tokens": 250, "model": "stub"}),
-        encoding="utf-8",
-    )
-    (panel / "pump" / slug).mkdir(parents=True, exist_ok=True)
-    (panel / "pump" / slug / "state.json").write_text(
-        json.dumps({"entries": {"beat": {"running": True}}}), encoding="utf-8"
-    )
+    tombstones = panel / "telemetry" / "agents" / slug / "work" / "tombstones"
+    tombstones.mkdir(parents=True)
+    (tombstones / "recovery_note.txt").write_text("Recovery event 9: <b>restored</b>\n")
 
     row = review.agent_row(slug)
-    assert row["runs"] == 1
-    assert row["last_exit"] == 42
-    assert row["last_tier"] == 2
-    assert row["handoffs"] == 1
-    assert row["context_pressure"] == 0.25
-    assert row["pump_running"] == ["beat"]
-    assert review.pressure_label(row["context_pressure"]) == "25%"
+    assert row["liveness"] == "capped"
+    assert row["signals"]["incarnations"] == 3
+    assert row["claims"]["recovery_note"] == {
+        "value": "Recovery event 9: <b>restored</b>",
+        "claim": "agent",
+    }
+    page = review.render_fleet([row], review.fleet_summary([row])).decode()
+    assert "capped" in page and "the agent&#x27;s own claim" in page
+    assert "<b>restored</b>" not in page, "a claim is text, never markup"
+    agent_page = review.render_agent(row, [], 25, None).decode()
+    assert "Recovery event 9" in agent_page and "the agent&#x27;s own claim" in agent_page
+
+
+def test_a_symlinked_note_in_the_mirror_is_not_followed(panel, tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("operator secret\n")
+    tombstones = panel / "telemetry" / "agents" / "otter" / "work" / "tombstones"
+    tombstones.mkdir(parents=True)
+    (tombstones / "recovery_note.txt").symlink_to(secret)
+    write_transcript(panel, "otter", [turn_record(0, [{"role": "user", "content": "go"}])])
+    assert review.agent_row("otter")["claims"]["recovery_note"]["value"] is None
 
 
 def test_the_panel_finds_agents_without_being_told_them(panel):
@@ -517,7 +524,6 @@ def test_the_routes_serve_html_and_json(panel):
                 response_text="now I know",
             ),
         ],
-        events=[{"event": "open", "id": "req0", "messages": 1}],
     )
 
     with serving() as base:
@@ -549,7 +555,7 @@ def test_the_routes_serve_html_and_json(panel):
 
         status, body, _ = fetch(f"{base}/api/agent/otter/turn/0/raw")
         raw = json.loads(body)
-        assert raw["id"] == "req0"
+        assert raw["timestamp"] == "2026-09-12T00:00:00.000000Z"
         assert raw["request"]["messages"], "the raw record is untruncated"
 
         status, body, _ = fetch(f"{base}/health")
@@ -564,65 +570,28 @@ def test_an_unknown_agent_is_a_404_naming_the_record(panel):
         assert b"no agent named nobody" in failure.value.read()
 
 
+FIXTURE = PROJECT / "tests" / "fixtures" / "aurora_transcript.jsonl"
+
+
 def test_the_panel_renders_what_a_real_run_produced(panel):
-    """The strongest check available without Docker: drive the real stack.
+    """The head of a transcript the real recorder wrote in a live smoke run, against the stub.
 
-    A chassis run through the real recorder writes a transcript this panel has
-    never seen, in the shape a provider actually produced. If the panel can
-    reassemble that, it can reassemble the real thing.
+    The shape is the recorder's, not a builder's guess at it: if the panel reassembles this, it
+    reassembles the real thing.
     """
-    from conftest import Reply, Stack, ToolCall, World  # noqa: PLC0415
+    directory = panel / "transcripts" / "otter"
+    directory.mkdir(parents=True)
+    (directory / "agent_life_transcript.jsonl").write_bytes(FIXTURE.read_bytes())
+    view = review.conversation("otter").refresh(force=True)
+    assert len(view.turns) >= 5
+    assert view.turns[0]["fresh"] is True
+    called = [call for turn in view.turns for call in turn["tool_calls"]]
+    assert called and all(call["name"] for call in called)
+    assert any(call.get("result") for call in called), "a result pairs from the next request"
+    for turn in view.turns:
+        review.render_turn(turn, "otter")
+    review.render_agent(review.agent_row("otter"), view.turns, 25, None)
 
-    world = World(panel.parent / "real-world")
-    # Three turns, because a tool's *result* is carried by the request that
-    # follows it: a run that stops after one call never records one, and a test
-    # built on it would be checking the wrong thing entirely.
-    script = [
-        Reply(
-            tool_calls=[ToolCall("status")],
-            reasoning="I should look at my own numbers before deciding anything.",
-        ),
-        Reply(tool_calls=[ToolCall("write_diary", {"entry": "checked in"})]),
-        Reply(text="Enough looking for now.", finish="stop", repeat=1000),
-    ]
-    with Stack(world, script=script) as stack:
-        stack.run_chassis(timeout=60)
 
-    import review as panel_module  # noqa: PLC0415 -- re-import is the same module
-
-    original = {
-        "TRANSCRIPTS_DIR": panel_module.TRANSCRIPTS_DIR,
-        "TELEMETRY_DIR": panel_module.TELEMETRY_DIR,
-    }
-    panel_module.TRANSCRIPTS_DIR = world.transcripts
-    panel_module.TELEMETRY_DIR = world.telemetry
-    panel_module.CONVERSATIONS.clear()
-    try:
-        view = panel_module.conversation(world.slug).refresh(force=True)
-        assert view.turns, "the panel found no turns in a transcript the real stack wrote"
-
-        # Find the turns by what they did, not by their position: a supervisor
-        # is free to restart a run, so a transcript can hold several runs and
-        # the interesting turn is not always the first.
-        def turn_with(tool: str) -> dict:
-            for turn in view.turns:
-                if any(call["name"] == tool for call in turn["tool_calls"]):
-                    return turn
-            raise AssertionError(f"no turn called {tool}: {[t['tool_calls'] for t in view.turns]}")
-
-        status = turn_with("status")
-        assert "I should look at my own numbers" in status["reasoning"], status
-        called = next(call for call in status["tool_calls"] if call["name"] == "status")
-        assert called.get("result"), "the tool result should be paired from the following request"
-        assert "turn" in called["result"]["display"].lower() or "{" in called["result"]["display"]
-
-        # A second tool, to show the pairing is not a special case for one name.
-        written = next(
-            call for call in turn_with("write_diary")["tool_calls"] if call["name"] == "write_diary"
-        )
-        assert written.get("result"), "the second tool's result was not paired"
-        assert "appended" in written["result"]["display"], written["result"]
-    finally:
-        panel_module.TRANSCRIPTS_DIR = original["TRANSCRIPTS_DIR"]
-        panel_module.TELEMETRY_DIR = original["TELEMETRY_DIR"]
-        panel_module.CONVERSATIONS.clear()
+def test_the_fixture_carries_no_key():
+    assert b"sk-" not in FIXTURE.read_bytes()
