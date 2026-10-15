@@ -2225,3 +2225,102 @@ PR/merge, chassis adoption, build/live and final brief text remain separate. No 
 is reopened and issue 42 remains separate. No execution, collection, test, owner message or source
 change occurred here; only coordinator records changed. Main index SHA256 remains
 `86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.
+
+## 36. S1 accepted and released; Option B final-package preparation next — 2026-10-12 00:23 AEDT
+
+**CURRENT SLOT: FREE / RELEASED — `SPACE-20261011-B-V7-S1-01` complete.** Independently
+verified the owner's raw evidence and current cleanup before accepting the explicit release.
+**Exactly the 25 selected tests passed, actual pytest exit 0, zero failures/errors/skips.**
+This advances candidate3's bounded S1 selection only. No full-gate or other execution grant follows.
+
+### Result and identity verification
+
+Owner prelaunch checks ran 13:15:46–13:15:48 UTC October 11; launch was **13:15:48.192 UTC**
+(00:15:48 AEDT October 12), inside the grant. Outer invocation
+`c121704d83e94f61ba9029f63cf0a11c`, MainPID 479440, with owner transcript readback of the exact
+supervisor/spec command, 900-second runtime, 30-second stop, KillMode=control-group and Nice=19.
+Payload unit `space-vehicle-b-s1-0a704983bae8.service`, invocation
+`5d2bbdd7b7154a9b967f85fa7e22343a`, MainPID 479785. GO at **13:15:51.463**; terminal evidence
+at **13:16:21.498**, cleanup verified on first attempt at **13:16:21.532**, outcome 0 at
+**13:16:21.552 UTC**. Owner observed the outer unit unloaded by **13:16:33 UTC**, with
+Result=success and ExecMainStatus=0. The explicit owner release was written **13:17:14 UTC**.
+
+Raw pytest output says `25 passed in 25.75s`. Independently parsed JUnit: 25 unique cases exactly
+equal to the spec's node IDs, no missing/extra/duplicate case, no failure/error/skipped elements;
+suite counts 25/0/0/0 and time 25.752 seconds. Recorded payload arguments match the exact spec,
+including `-n 2`. TERMINAL.json reports success/exited/0, matching summary and log. No aborts,
+OOM or cgroup read problem; SIGINT restored; readback is cpu.max `200000 100000`, memory.max
+`6442450944`, memory.swap.max `0`. Six samples: minimum available RAM **38,354 MiB**, maximum
+CPU busy **34.0%**, maximum load1 **6.15**. Recorded payload memory peak **586,248,192 bytes**
+(559.09 MiB). This measures S1, not the full suite's memory requirement.
+
+All eight evidence-manifest entries and all 26 source/spec-manifest entries verify. Start records
+match the exact supervisor/launcher/recorder/spec hashes; post-run identity and fresh current
+HEAD/diff/92 tracked blobs match §35. No untracked non-ignored files. Candidate remains uncommitted,
+with only `tools/console.py` and `tests/test_vehicle_config.py` changed. Main index unchanged.
+
+Evidence identities under `B-sel1/`:
+
+| Evidence | SHA256 |
+|---|---|
+| `v7/v7-S1-evidence.SHA256SUMS` | `a72518fd98e589e1d5d8f95b1b2c7e520607f47906379a24ea3e8782593b6f07` |
+| `v7/evidence-S1/junit.xml` | `72a0a99b3727ff38ba6149881c873b1423a277072c14bdc0a16c62d262e863c9` |
+| `v7/evidence-S1/summary.json` | `af5868c13851d2799548009108c03889fd61998dc043fd873eb395d88491bc8a` |
+| `v7/evidence-S1/TERMINAL.json` | `b8294c92adf931012378c8a9ac6cbbf18b90bed1cf1b0cfe155863b71a1772bd` |
+| `v7/evidence-S1/payload.out` | `d97d3108347ad158d4b105905538463c26d8193e33315c75e93f7ed0738e29d5` |
+| `v7/evidence-S1/supervisor.log` | `7c03b1585db6d6beefa72a76a6ab8d3d8e89c4b8f5b6b2dee824e18651adbc33` |
+| `v7/s1-supervisor.out` (empty) | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `v7-S1-prelaunch.txt` | `7d11f97ce4cc911c0c365b51e4cb387fe07fece46bc1843d39a68b6d1df32aed` |
+| `v7-S1-postrun.txt` | `c0b5963133ede7d1778ff4e81411c49105591aa282fd38c827b163effd69d253` |
+| `v7-S1-OWNER-RELEASE.md` | `5d9021cb5047fd47c9553de2594aaf4e1e8adcaf8b12d4473c1ab88e94dea059` |
+
+### Independent release proof
+
+At **13:21:21 UTC October 11 / 00:21:21 AEDT October 12**, successful independent queries find
+both outer and payload units not-found/inactive, empty ControlGroup, absent recorded/derived
+cgroups, no Space user units, no Space app.slice cgroups and no Space-named containers. No process
+carries the payload token, both recorded PIDs are absent, and no associated helper/monitor remains.
+All 11 unreadable own-process environments have readable start ticks older than a conservative
+pre-run lower bound; no unknown newer process remains. Together with the owner's explicit release,
+this proves release under §35. Supervisor success and its cleanup-only receipt were not used as
+substitutes for pytest acceptance or owner release.
+
+### Next action for Emmy's existing Vehicle relay
+
+**Prepare Option B's final integration package and an exact bounded full-development-gate proposal;
+do not execute it yet.** This is continuation of John's approved Option B implementation, not a
+request to approve implementation again. Reconcile candidate3's design/implementation review chain,
+K and S1 evidence; prepare required README round/ADR or other package metadata and final review
+material. Preserve the distinction between 25 selected passes and an as-yet unmeasured full-suite
+count. Freeze any metadata delta explicitly; do not silently change the approved source identity.
+
+The owner's checkpoint 22 already identifies full qualification in Python 3.12 and 3.13 as next.
+Current candidate `CONTRIBUTING.md` requires the full development gate and whole suite with zero
+skips before commit. `governance/vehicle/practice.md` additionally calls for detached exact-head
+qualification in hash-locked environments on both lanes, followed by independent code/evidence
+review. The proposal must reconcile pre-commit validation with final committed-head qualification,
+and give exact commands/selections, frozen source, interpreter/lock identity, fresh separate evidence
+paths, serial lane ordering, at most two workers, explicit resource/deadline/abort/cleanup bounds,
+and expected results. Use the existing repository-defined gate; no new test scope is invented here.
+Full-gate **execution needs a separate allocation** with fresh admission. No such grant is issued.
+
+Prepare the focused `vehicle:` commit message and PR body locally. Actual commit must satisfy
+the repository's gate requirements. Final independent review must cover the actual final diff and
+acceptance evidence; retained candidate3 approval need not be repeated without a delta. Corrective
+deltas need the appropriate confirming review and requalification, never a retry-to-green claim.
+
+**External publication remains a separate John decision for Option B.** Direct transcript evidence
+at 09:11–09:14 UTC shows his "yes agree with both your recs" approved (1) tier-1 push/PR/merge on
+green CI, and (2) Option B code after that merge. It does not establish Option B publication
+approval. Vehicle practice explicitly says "Ask John before external publication"; prepare the
+concrete qualified package before seeking that decision. Its standing green-CI merge rule applies
+once publication is authorised, with required Development checks (3.12, 3.13, readiness diagnostic)
+and independent review/blocker resolution. No direct implementation push to main. The existing
+independent governance reviewer confirms this authority distinction; implementation is not reopened.
+
+After an authorised merge, publish the exact merge-SHA adoption package through the existing
+Vehicle-to-Chassis route. Chassis separately owns its pointer/reconciliation change and adoption
+gates. Chassis brief remains draft awaiting John's final-text approval, and issue 42 is separate.
+ELSPETH priority and Sultai's reservation remain intact. No new writer, direct owner message,
+execution, retry, commit or publication was performed here. Only coordinator records changed;
+main index SHA256 remains `86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.

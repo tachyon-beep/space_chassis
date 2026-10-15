@@ -241,7 +241,7 @@ K03's expected exit 4/no receipt did not itself release the slot. Exact candidat
 S1's separate allocation review is prepared in §34: bound the supervisor externally and require
 actual payload/JUnit success, not supervisor exit alone. **No S1 grant or execution.**
 
-**CURRENT SLOT: RESERVED — `SPACE-20261011-B-V7-S1-01`, 00:11 AEDT October 12 (master §35).**
+**Previous slot: RESERVED — `SPACE-20261011-B-V7-S1-01`, 00:11 AEDT October 12 (master §35).**
 Separate allocation: existing Vehicle owner, one exact 25-test S1 invocation, two workers,
 payload 2 CPUs/6 GiB/no swap/no GPU, outer 900+30-second limit. Launch before **13:25 UTC
 October 11 / 00:25 AEDT October 12**, after fresh admission within 60 seconds. Exact identities,
@@ -251,6 +251,16 @@ outer name, evidence directory and log unused. Actual pytest exit 0 plus exactly
 zero failures/errors/skips required; supervisor success alone is insufficient. Explicit owner
 release and independent cleanup verification required. No retry/full/build/live or direct owner
 message; nothing launched by this coordinator. Emmy retains the single browser relay.
+
+**CURRENT SLOT: FREE / RELEASED — 00:23 AEDT October 12 (master §36).** S1 accepted: actual
+pytest exit 0, exactly 25 selected unique JUnit cases, zero failures/errors/skips, 25.75 seconds;
+caps held, no OOM, peak 559.09 MiB, identities unchanged. Owner release 13:17:14 UTC October 11;
+independent cleanup at 13:21:21 proves both units/cgroups and run PIDs gone, no token holders or
+remaining helpers/monitors, no unknown newer processes. Next: existing Vehicle owner prepares
+final integration material and the repository-defined full two-lane gate proposal; execution
+requires a separate allocation. Implementation approval stands. Option B external publication
+remains a later John decision after the concrete qualified package is ready; tier-1 publication
+approval is not transferred. No new grant, commit, publication or direct owner message here.
 
 | channel | for |
 |---|---|
