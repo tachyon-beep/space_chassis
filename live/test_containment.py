@@ -25,6 +25,7 @@ def test_containment_holds_for_every_agent(stack):
     assert "PASS  agent_3 has no trace of its recorder's real key" in result.stdout
     for n in range(1, stack.agents + 1):
         assert f"PASS  agent_{n} has no vehicle in its image" in result.stdout, n
+        assert f"PASS  agent_{n} mounts nothing of the vehicle's source" in result.stdout, n
 
 
 DEEP_REQUEST = r"""

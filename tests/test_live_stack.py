@@ -314,3 +314,132 @@ def test_a_recreate_value_reaches_compose_exactly_whatever_it_holds(stack):
     # The printed configuration is itself a compose file, so a literal dollar is printed as `$$`;
     # an unescaped `$c` would have been interpolated away.
     assert environment["RECORDER_TOKEN_GLOBAL_HOURLY_MAX"] == awkward.replace("$", "$$")
+
+
+@pytest.fixture
+def vehicle_stack(tmp_path):
+    runner = Runner()
+    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=runner, window="vehicle")
+    yield smoke, runner
+    smoke._torn_down = True
+
+
+def test_a_stack_names_its_window_and_refuses_any_other():
+    with pytest.raises(ValueError, match="window"):
+        stack_module.SmokeStack(3, window="probe")
+
+
+def test_a_vehicle_stack_runs_the_vehicle_in_place_of_the_fixture(vehicle_stack):
+    smoke, runner = vehicle_stack
+    smoke.prepare()
+    smoke.up()
+    argv = runner.calls[-1][0]
+    profiles = [argv[i + 1] for i, word in enumerate(argv) if word == "--profile"]
+    assert profiles == ["fleet", "vehicle"], profiles
+    assert "vehicle" in argv[argv.index("up") :] and "diode" not in argv[argv.index("up") :]
+
+
+def test_the_vehicle_override_runs_the_vehicle_s_smoke_image_on_a_short_poll(vehicle_stack):
+    smoke, _ = vehicle_stack
+    text = smoke.override_text()
+    assert "  vehicle:\n" in text and "  diode:\n" not in text
+    block = text[text.index("  vehicle:\n") :]
+    # The vehicle has its own image (plan 8): the agents' carries nothing of it to serve.
+    assert f"    image: {stack_module.SMOKE_VEHICLE_IMAGE}\n" in block
+    assert stack_module.SMOKE_VEHICLE_IMAGE != "space-chassis-vehicle"
+    assert ":" in stack_module.SMOKE_VEHICLE_IMAGE
+    # A checkpoint every 50 ticks has to come in seconds, not the operator's minutes.
+    assert 'DIODE_POLL_SECONDS: "0.2"' in block
+
+
+def test_the_smoke_build_builds_the_vehicle_s_image_only_when_it_is_the_window(tmp_path):
+    def builds(window):
+        runner = Runner()
+        smoke = stack_module.SmokeStack(3, root=tmp_path / window, runner=runner, window=window)
+        smoke._torn_down = True
+        smoke.build()
+        calls = [argv for argv, _ in runner.calls if "build" in argv]
+        return [argv[argv.index("build") + 1 :] for argv in calls]
+
+    # One build at a time (Governance, 2026-10-11): compose builds the services one call names in
+    # parallel, so the vehicle's image is its own call, after the agents'.
+    assert builds("vehicle") == [["agent_1"], ["vehicle"]]
+    assert builds("diode") == [["agent_1"]]
+
+
+@pytest.mark.parametrize("window", stack_module.WINDOWS)
+def test_every_service_the_smoke_stack_starts_is_capped_and_the_sum_is_in_budget(tmp_path, window):
+    """Needs docker on the host, like `docker compose config -q` in CLAUDE.md: absent, it fails.
+    The caps compose resolves from the base and the override together, for what `up` starts."""
+    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", window=window)
+    smoke._torn_down = True
+    smoke.prepare()
+    result = smoke.compose("config", "--format", "json", check=False)
+    assert result.returncode == 0, result.stderr
+    services = json.loads(result.stdout)["services"]
+    cpus = memory = 0
+    for name in smoke.services():
+        service = services[name]
+        assert float(service["cpus"]) > 0, name
+        assert int(service["mem_limit"]) > 0, name
+        assert service["memswap_limit"] == service["mem_limit"], f"{name} may swap past its cap"
+        cpus += float(service["cpus"])
+        memory += int(service["mem_limit"])
+    assert cpus <= stack_module.STACK_CPUS + 1e-9, cpus
+    assert memory <= stack_module.STACK_MEMORY, memory
+    # Inside Governance's 5 CPUs and 14 GiB, with room left for the host side.
+    assert stack_module.STACK_CPUS < 5 and stack_module.STACK_MEMORY < 14 << 30
+
+
+def test_a_stack_will_not_start_beside_another_smoke_stack(tmp_path):
+    class Busy(Runner):
+        def __call__(self, argv, **kwargs):
+            if argv[:2] == ["docker", "ps"]:
+                self.calls.append((argv, kwargs))
+                running = "space_chassis_smoke_1_vehicle\nspace-chassis\n"
+                return subprocess.CompletedProcess(argv, 0, stdout=running, stderr="")
+            return super().__call__(argv, **kwargs)
+
+    runner = Busy()
+    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=runner)
+    smoke._torn_down = True
+    with pytest.raises(
+        RuntimeError, match="one smoke stack at a time: space_chassis_smoke_1_vehicle"
+    ):
+        smoke.start()
+    assert not any("build" in argv or "up" in argv for argv, _ in runner.calls)
+
+
+def test_a_stack_ignores_its_own_project_and_the_operator_s(tmp_path):
+    class Own(Runner):
+        def __call__(self, argv, **kwargs):
+            if argv[:2] == ["docker", "ps"]:
+                running = f"{smoke.project}\nspace-chassis\n"
+                return subprocess.CompletedProcess(argv, 0, stdout=running, stderr="")
+            return super().__call__(argv, **kwargs)
+
+    smoke = stack_module.SmokeStack(3, root=tmp_path / "smoke", runner=Own())
+    smoke._torn_down = True
+    assert smoke.others_running() == []
+
+
+def test_a_vehicle_stack_has_its_own_project_and_root(tmp_path):
+    diode = stack_module.SmokeStack(3, runner=Runner())
+    vehicle = stack_module.SmokeStack(3, runner=Runner(), window="vehicle")
+    diode._torn_down = vehicle._torn_down = True
+    assert vehicle.project != diode.project and vehicle.project.endswith("_vehicle")
+    assert vehicle.root != diode.root
+
+
+def test_the_vehicle_override_parses_against_the_base_compose(vehicle_stack):
+    """Needs docker on the host, like `docker compose config -q` in CLAUDE.md: absent, it fails."""
+    smoke, _ = vehicle_stack
+    smoke.prepare()
+    real = stack_module.SmokeStack(3, root=smoke.root, window="vehicle")
+    real._torn_down = True
+    result = real.compose("config", "--format", "json", check=False)
+    assert result.returncode == 0, result.stderr
+    vehicle = json.loads(result.stdout)["services"]["vehicle"]
+    assert vehicle["image"] == stack_module.SMOKE_VEHICLE_IMAGE
+    assert vehicle["build"]["target"] == "vehicle"
+    assert vehicle["environment"]["VEHICLE_SLUGS"] == "agent_1,agent_2,agent_3"
