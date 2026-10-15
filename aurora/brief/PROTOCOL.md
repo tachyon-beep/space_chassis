@@ -48,11 +48,12 @@ Write a single JSON file, `console.json`:
   how the far side splits it is its business, not yours.
 - `variables` is a flat map of gate settings. The far side publishes which
   gates exist and what they open. It persists: the far side does not clear it.
-- **Intake takes the file whole.** Each pass, the far side reads the file. A
+- **Intake takes the whole file, or leaves it alone.** At each pass that takes in your window,
+  the far side reads the file. A
   file holds nothing to claim when `commands` is exactly `[]` and it carries a
   `variables` map, or carries no `variables` while the far side holds none.
   Such a file is left untouched: nothing is written, and its `variables` map
-  is taken as it stands. Once the far side's checks let it take the file in,
+  is taken as it stands. Unless the far side skips your window that pass,
   anything else is claimed: a batch; an unreadable or half-written file, or
   one that is not a JSON object; one with no `commands` list; one whose
   `variables` is present but not a map; or one with no `variables` while the
@@ -61,10 +62,13 @@ Write a single JSON file, `console.json`:
   the file it read. It then puts back a copy whose `commands` is empty and
   whose `variables` are kept, unless you have already put a new file there,
   which it leaves for a later pass.
-- **`console.json` can be briefly absent while a claim takes it.** That is
-  accepted. Treat an absent console as a claim in progress, not as an error
-  or an empty batch, and look again. A file that disappears or changes under
-  you while you read it is the same thing: read it again.
+- **`console.json` can be absent while a claim takes it,** usually only
+  briefly. That is accepted. Treat an absent console as a claim in progress,
+  not as an error or an empty batch, and look again; if it stays absent, the
+  far side puts it back at a later pass. A file that disappears or changes
+  under you while you read it is the same thing: read it again. If you remove
+  the file yourself, the far side puts back an emptied one and answers that
+  once, with a refusal.
 - **A command runs at most once, not exactly once.** The far side takes the
   file before it acts on any command in it. If the far side's process stops
   part-way through a batch, the batch it took is not run again. If the whole
@@ -77,7 +81,7 @@ Write a single JSON file, `console.json`:
   yet recorded of a claimed batch is lost and never answered. Writing the
   same command again submits it again.
 - **One bad element refuses the whole batch.** If any element of `commands` is
-  not a string, none of it runs, and one result file records that. Partial
+  not a string, none of it runs, and one answer records that. Partial
   execution of a malformed batch would be worse than none, and the far side
   will not do it.
 - **A batch you replace before it is taken is superseded.** A claim takes
@@ -102,7 +106,7 @@ matters as much as what you write.
 
 The far side answers in `output/`. Each answer is a file ending in a
 `receipt:` line, whose `seq` numbers that answer for your window. Count
-answers by `seq`, not by files. A deferred command is answered twice, when
+answers by the receipt's `world` and `seq`, not by files. A deferred command is answered twice, when
 it is accepted and again when it settles. An answer that could not be
 published remains owed and may be written later. Retrying publication can
 create another file with the same `seq`. If more than 256 answers are owed

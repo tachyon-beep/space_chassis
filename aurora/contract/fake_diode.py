@@ -15,7 +15,7 @@ It implements the contract in `docs/diode-contract.md` and nothing more:
   claim, rewrite it with `commands` emptied and `variables` preserved, via a
   temporary and a rename; a console with nothing to claim is left as it is
   (the vehicle's quiet rule, #39 tier 1);
-* one result file per command, refusals included, named by stamp and command;
+* one result per command, refusals included, named by stamp and command;
 * a closed vocabulary with gates, published every pass so a caller can discover
   what is open;
 * deferral re-dispatched through the gate at delivery rather than captured at

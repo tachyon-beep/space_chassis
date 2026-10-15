@@ -27,7 +27,7 @@ For each agent, named `slug`:
 
 ```
 <DIODE_DIR>/<slug>/console.json          agent  -> vehicle   (the only uplink)
-<DIODE_DIR>/<slug>/output/<result>.txt   vehicle -> agent    (one file per verdict)
+<DIODE_DIR>/<slug>/output/<result>.txt   vehicle -> agent    (result files; see §2.3)
 <DIODE_DIR>/<slug>/state.json            vehicle -> agent    (published every cycle)
 <DIODE_DIR>/<slug>/HELP.md               vehicle -> agent    (verbs currently open)
 <DIODE_DIR>/<slug>/README.md             vehicle -> agent    (the protocol, in the vehicle's words)
@@ -43,7 +43,7 @@ in the agents' containers and are not reachable from them.
 A single shared `console.json` for ten writers is a lost-update race: two agents
 read it, both rewrite it, one batch vanishes, and the record cannot say whose it
 was. Per-agent ingress costs one directory and buys two things the experiment
-needs — reliable transport, and attribution that comes from the operating system
+needs — transport the vehicle alone takes from, and attribution that comes from the operating system
 rather than from a field an agent could write.
 
 Consolidating the ten ingresses into the vehicle's own command queue is the
@@ -83,9 +83,11 @@ visible in their work rather than supplied by the world.
 - **Invalid input is not a batch of executable commands.** A taken input that cannot be decoded
   as a console, or whose non-null `commands` value is not a list, generates a refusal verdict.
   Missing or null `commands` supplies no commands. A list containing a non-string element, or
-  exceeding the batch cap, is refused as a whole, with one batch-level verdict. Publication
-  remains subject to §2.3.
-- **Claiming, execution and result publication are separate.** Claimed input batches are not
+  exceeding the batch cap, is refused as a whole, with one batch-level verdict: partial execution
+  of a malformed batch is worse than none, so refusing is correct and the verdict says so.
+  Publication remains subject to §2.3.
+- **Claiming, execution and result publication are separate.** The take precedes validation
+  and execution of anything taken, so a command takes effect at most once. Claimed input batches are not
   replayed from leftover take files after a process restart. A crash after claiming but before
   the cycle record becomes durable can lose the batch's results. With a journal, the window
   directory is synced before taken commands are returned for processing, and retirement must
