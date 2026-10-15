@@ -113,3 +113,8 @@ def test_the_brief_states_the_archive_bound_the_watchdog_keeps():
 def test_the_root_instructions_point_at_governance():
     for name in ("CLAUDE.md", "AGENTS.md"):
         assert "governance/README.md" in (ROOT / name).read_text(encoding="utf-8"), name
+
+
+def test_the_readme_says_images_built_before_the_split_carry_the_vehicle():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "built before 2026-10-10" in text and "verify_containment.sh" in text

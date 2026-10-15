@@ -40,9 +40,11 @@ case "$*" in
         # A whole archive ends in two zero blocks; a stream cut off mid-way does not.
         [ -n "${TAR_TRUNCATED:-}" ] || head -c 1024 /dev/zero
         exit 0 ;;
-    *" exec "*"/opt/vehicle"*)
-        [ -n "${VEHICLE_SIGHT:-}" ] || exit 1
-        echo "$VEHICLE_SIGHT"; exit 0 ;;
+    *inspect*.Image*)
+        [ -n "${IMAGE_ID:-}" ] || exit 1
+        echo "$IMAGE_ID"; exit 0 ;;
+    *"--entrypoint find"*)
+        printf '%b' "${IMAGE_SWEEP:-}"; exit "${IMAGE_SWEEP_RC:-1}" ;;
     *" exec "*getent*)
         [ -n "${GETENT_RC:-}" ] || exit 1
         echo "rc=$GETENT_RC"; exit 0 ;;
@@ -180,69 +182,79 @@ def test_a_resolver_probe_that_is_missing_its_binary_is_a_failure(run):
     assert "PASS  agent_1 cannot resolve outside names" in result.stdout
 
 
+SENTINEL_PATH = "/usr/local/bin/entrypoint.sh"
+
+
+def _swept(run, sweep, rc="0", image="sha256:img"):
+    env = {
+        "COMPOSE": "docker compose -p probe",
+        "AGENTS": "agent_1",
+        "IMAGE_SWEEP": sweep,
+        "IMAGE_SWEEP_RC": rc,
+    }
+    if image:
+        env["IMAGE_ID"] = image
+    return run(**env).stdout
+
+
 def test_an_agent_that_can_see_the_vehicle_is_a_failure(run):
-    """John, 2026-10-10: no risk of information sharing. An agent's image carries nothing of it."""
-    absent = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", VEHICLE_SIGHT="absent")
-    assert "PASS  agent_1 has no vehicle in its image" in absent.stdout
-    present = run(COMPOSE="docker compose -p probe", AGENTS="agent_1", VEHICLE_SIGHT="present")
-    assert "FAIL  agent_1 can read the vehicle" in present.stdout
-    silent = run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
-    assert "FAIL  agent_1 could not be probed for the vehicle" in silent.stdout
+    """John, 2026-10-10: no risk of information sharing. The agent's image is swept host-side, as
+    root in a throwaway container: the sentinel alone, from a search that completed, is absent."""
+    assert "PASS  agent_1 has no vehicle in its image" in _swept(run, SENTINEL_PATH + "\\n")
+    leaked = _swept(run, SENTINEL_PATH + "\\n/opt/vehicle\\n")
+    assert "FAIL  agent_1 can read the vehicle" in leaked
 
 
-def test_the_vehicle_probe_says_nothing_when_it_cannot_run(run, tmp_path):
-    """The probe's own text, run where none of its tools exist, must not read as an absence."""
-    run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
-    probe = next(line for line in run.argv_lines() if "/opt/vehicle" in line)
-    script = probe.split(" -c ", 1)[1]
-    empty = tmp_path / "empty-path"
-    empty.mkdir()
-    out = subprocess.run(
-        ["/bin/sh", "-c", script],
-        env={"PATH": str(empty)},
-        capture_output=True,
-        text=True,
-        timeout=10,
-    ).stdout.strip()
-    assert out.splitlines()[-1:] != ["absent"], out
+def test_a_partial_or_unrun_sweep_is_a_failure_never_an_absence(run):
+    unprobed = "FAIL  agent_1 could not be probed for the vehicle"
+    # The sentinel, then the search failed part-way: it proves one path, not the whole image.
+    assert unprobed in _swept(run, SENTINEL_PATH + "\\n", rc="1")
+    assert unprobed in _swept(run, SENTINEL_PATH + "\\n", rc="137")
+    assert unprobed in _swept(run, "", rc="0")  # no sentinel: the search did not run as written
+    assert unprobed in _swept(run, SENTINEL_PATH + "\\n", image="")  # no image to sweep
 
 
-def _vehicle_probe(run) -> str:
-    run(COMPOSE="docker compose -p probe", AGENTS="agent_1")
-    probe = next(line for line in run.argv_lines() if "/opt/vehicle" in line)
-    return probe.split(" -c ", 1)[1]
-
-
-def _run_probe_under(script: str, root) -> str:
-    """The probe's own text, with its absolute paths re-rooted at a scratch tree."""
-    rooted = (
-        script.replace("find / ", f"find {root} ")
-        .replace("/usr/local/bin/entrypoint.sh", f"{root}/usr/local/bin/entrypoint.sh")
-        .replace("-path /opt/vehicle", f"-path {root}/opt/vehicle")
+def _sweep_args(run) -> list[str]:
+    """The find arguments the script passes, read from the docker call it made."""
+    _swept(run, SENTINEL_PATH + "\\n")
+    line = next(
+        line for line in run.argv_lines() if " run " in f" {line} " and "--entrypoint find" in line
     )
-    return subprocess.run(
-        ["/bin/sh", "-c", rooted], capture_output=True, text=True, timeout=30
-    ).stdout.strip()
+    words = line.split()
+    return words[words.index("sha256:img") + 1 :]
 
 
-def test_the_vehicle_probe_reports_present_absent_or_nothing(run, tmp_path):
-    """A clean image is absent; a planted vehicle file is present; a search that did not run as
-    written -- here, its sentinel missing -- prints nothing, which the script reports as a failure."""
-    script = _vehicle_probe(run)
+def _find_under(args: list[str], root) -> list[str]:
+    rooted = [
+        str(root)
+        if a == "/"
+        else a.replace(SENTINEL_PATH, f"{root}{SENTINEL_PATH}").replace(
+            "/opt/vehicle", f"{root}/opt/vehicle"
+        )
+        for a in args
+    ]
+    result = subprocess.run(["find", *rooted], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    return [line.removeprefix(str(root)) for line in result.stdout.splitlines()]
+
+
+def test_the_sweep_finds_its_sentinel_and_every_vehicle_file_it_names(run, tmp_path):
+    args = _sweep_args(run)
     root = tmp_path / "image"
     (root / "usr" / "local" / "bin").mkdir(parents=True)
     (root / "usr" / "local" / "bin" / "entrypoint.sh").write_text("#!/bin/sh\n")
-    assert _run_probe_under(script, root) == "absent"
-    (root / "srv").mkdir()
-    (root / "srv" / "plant.md").write_text("hidden truth")
-    assert _run_probe_under(script, root) == "present"
-    (root / "usr" / "local" / "bin" / "entrypoint.sh").unlink()
-    assert _run_probe_under(script, root) == ""
-
-
-def test_a_broken_search_expression_prints_nothing(run, tmp_path):
-    script = _vehicle_probe(run).replace("-xdev", "-xdevv")
-    root = tmp_path / "image"
-    (root / "usr" / "local" / "bin").mkdir(parents=True)
-    (root / "usr" / "local" / "bin" / "entrypoint.sh").write_text("#!/bin/sh\n")
-    assert _run_probe_under(script, root) == ""
+    assert _find_under(args, root) == [SENTINEL_PATH]
+    planted = [
+        "/opt/vehicle",
+        "/usr/local/bin/serve_vehicle.sh",
+        "/srv/a/mission.yaml",
+        "/srv/b/vehicle.yaml",
+        "/srv/c/coupling.yaml",
+        "/srv/d/plant.md",
+        "/srv/e/fault_policy.yaml",
+    ]
+    for path in planted:
+        target = root / path.lstrip("/")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("vehicle")
+    assert sorted(_find_under(args, root)) == sorted([SENTINEL_PATH, *planted])
