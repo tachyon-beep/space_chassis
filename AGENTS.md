@@ -24,8 +24,9 @@ that sounds like "the fleet cannot see the window" belongs here.
 
 ```sh
 git submodule update --init --recursive     # the vehicle is a submodule; without it, collection is partial
+python3 -m pip install -r requirements-dev.txt   # openai/httpx for the chassis, PyYAML, pytest
 python3 -m pytest -q                        # the whole suite, no Docker needed
-uvx ruff check . --no-cache                 # ruff is not installed here; uvx fetches it
+uvx ruff@0.17.0 check . --no-cache          # pinned: 0.16 began formatting Markdown
 docker compose --profile fleet config -q    # the topology parses
 sh scripts/prepare_host.sh                  # directories, ownership, roster, .env
 python3 scripts/status.py --verbose         # one line per agent, from the record

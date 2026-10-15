@@ -6,13 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```sh
 git submodule update --init --recursive                # the vehicle is a submodule; do this first
+python3 -m pip install -r requirements-dev.txt         # openai/httpx for the chassis, PyYAML, pytest
 python3 -m pytest -q                                   # whole suite, no Docker needed
 python3 -m pytest tests/test_chassis.py -q             # one file
 python3 -m pytest tests/test_chassis.py::test_a_conversation_round_trips -q
 python3 -m pytest docs/deep_research/vehicle/tests/test_vehicle_config.py -q   # the vehicle's referee
 
-uvx ruff check . --no-cache                            # ruff is not installed here; uvx fetches it
-uvx ruff format --check . --no-cache
+uvx ruff@0.17.0 check . --no-cache                     # pinned: 0.16 began formatting Markdown
+uvx ruff@0.17.0 format --check . --no-cache
 
 docker compose --profile fleet config -q               # the topology parses
 sh scripts/prepare_host.sh                             # directories, ownership, roster, .env

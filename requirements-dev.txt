@@ -1,0 +1,18 @@
+# What a host needs to run the suite, the endurance harness and the linters.
+#
+# This is not the agents' floor (that is requirements-agent.txt, baked into the
+# image) and it does not add a dependency to the operator-side services. The
+# chassis imports openai and httpx when it opens the model client, and the
+# endurance harness and the suite run the real chassis on the host, so without
+# them every run dies on import, the supervisor reads that as a crash and climbs
+# the ladder, and the verdict fails with zero turns taken. The vehicle's tools
+# need PyYAML and nothing else.
+#
+#   python3 -m pip install -r requirements-dev.txt
+openai<3
+httpx<1
+PyYAML
+pytest
+# Pinned because 0.16 began formatting the code blocks in Markdown files, and a
+# formatter that moves between runs makes `ruff format --check` a coin toss.
+ruff==0.17.0

@@ -10,6 +10,10 @@ target-version = "py312"
 # The vendored crate registry carries whatever Python its crates happen to
 # ship, which is not this project's code and not this project's business.
 exclude = ["vendor", ".scratch", "endurance/runs"]
+# The corpus under docs/deep_research is frozen evidence, and the vehicle inside it is
+# another repository held to its own pyproject. Since 0.16 ruff formats the Python blocks
+# in Markdown too, so without this a format pass would edit the evidence.
+extend-exclude = ["docs/deep_research", "*.md"]
 
 [tool.ruff.lint]
 # The services here are deliberately standard-library-first. E501 is off

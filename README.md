@@ -194,8 +194,9 @@ section.
 ## Verifying the world
 
 ```sh
+python3 -m pip install -r requirements-dev.txt   # once: what the suite and harness import
 python3 -m pytest -q                        # unit and integration, no Docker
-ruff check . && ruff format --check .
+ruff check . && ruff format --check .       # ruff 0.17.0, as requirements-dev.txt pins
 docker compose --profile fleet config -q    # the topology parses
 sh scripts/verify_containment.sh            # against a running stack
 python3 contract/diode_probe.py --diode-dir ./volumes/diode --list

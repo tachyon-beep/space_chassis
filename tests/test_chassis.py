@@ -175,7 +175,9 @@ def test_a_resumed_conversation_appends_the_handoff_rather_than_prepending_it(tm
     assert chassis.Chassis.resume(instance, {}) is True
 
     assert [m["content"] for m in instance.messages[:2]] == ["the opening problem", "working on it"]
-    assert "thermal loop" in instance.messages[-1]["content"], "the handoff is not the newest message"
+    assert "thermal loop" in instance.messages[-1]["content"], (
+        "the handoff is not the newest message"
+    )
     pinned, _ = chassis.selection(instance.messages, budget_tokens=1, chunk_tokens=1)
     assert 0 in pinned, "the opening problem lost the pin it is supposed to have"
 
@@ -198,9 +200,7 @@ def test_the_recap_is_sent_without_being_stored_in_the_conversation(tmp_path):
         if str(m.get("content", "")).startswith(chassis.RECAP_FRAME_PREFIX)
     ], "the recap was stored in the conversation"
     sent = chassis.prepared_view(instance.messages, 100_000, 100, instance.carried)
-    frames = [
-        m for m in sent if str(m.get("content", "")).startswith(chassis.RECAP_FRAME_PREFIX)
-    ]
+    frames = [m for m in sent if str(m.get("content", "")).startswith(chassis.RECAP_FRAME_PREFIX)]
     assert len(frames) == 1, f"the recap was sent {len(frames)} time(s)"
     assert "backup console" in frames[0]["content"]
 
@@ -254,7 +254,9 @@ def test_a_conversation_holding_stored_recap_frames_is_repaired_as_it_is_adopted
     assert instance.messages[-1]["content"] == "the opening problem", (
         "the repair reordered the transcript instead of dropping the frames"
     )
-    assert instance.recap_folded == 1, f"the fold point was not re-anchored: {instance.recap_folded}"
+    assert instance.recap_folded == 1, (
+        f"the fold point was not re-anchored: {instance.recap_folded}"
+    )
     assert {"event": "conversation_repaired", "dropped": 2, "kept": 3} in instance.events
 
 
