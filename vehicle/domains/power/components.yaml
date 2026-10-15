@@ -114,6 +114,17 @@ state:
         activated before launch and rated at 29 +- 2 V each, so the bus is up before the mission
         clock starts and the converter regulates around what they are already making
     tau_s: UNCONFIGURED
+    evidence_question: >-
+      WP02 E-5 (docs/evidence/wp02-electrical.md). **The Apollo CSM has no source converter to
+      take a time constant from**: the fuel cells connect to the main buses through motor switches
+      and their terminal voltage falls with load (AOH SM2A-03-Block II-(1) pp. 2.6-2, 2.6-25,
+      2.6-38). The only figure in reach is electrical_diode.md:248's reference-design target,
+      "regulation transient <10 ms", which is a settling bound for hardware the vehicle does not
+      carry and is under one 20 ms tick. Owed to the operator as a model decision, not a value:
+      (a) replace this lag with the algebraic terminal relation V = E0 - R I on `fc_[n]` (E0
+      32.30 V, R 0.1008 ohm, both derived), or (b) keep a converter and take its tau from a
+      source for a converter. The slow effect Apollo does describe -- voltage recovering as the
+      stack's skin temperature follows the load (p. 2.6-25) -- has no published time constant
     note: >-
       Converter regulation lags its setpoint. electrical_diode.md:248 gives a 1.2 kW
       converter with a >=94 % efficiency but no time constant — and its 24-32 V envelope is
@@ -152,6 +163,15 @@ state:
     method: algebraic
     unit: J
     derate_curve: UNCONFIGURED
+    evidence_question: >-
+      WP02 E-6. What fraction of the CSM entry batteries' 40 Ah is deliverable as a function of
+      pack temperature? Searched: AOH section 2.6, the J-mission EPS handout, TN D-6976 (battery
+      experience report; its entry-battery curves, figs. 4-6, are graphical and not about
+      temperature) and the Apollo 10 consumables analysis. What is published is a rated
+      *minimum* of 40 Ah over a 50-110 F qualified ambient, planned as 40 Ah in flight and 45 Ah
+      postlanding -- a flat floor inside the qualification, and nothing outside it, which is the
+      region the crisis value of E-PLATE-BAT is about. Next source: the CSM/LM Operational Data
+      Book volume I EPS battery pages (not text-extractable from here)
     provenance:
       basis: UNCONFIGURED
       note: >-
@@ -269,6 +289,13 @@ state:
     method: lag
     unit: degC
     initial: UNCONFIGURED
+    evidence_question: >-
+      WP02 E-7. The CSM entry batteries are passively cooled in the CM ("active thermal control
+      was not required because of the mild thermal environment of the CM cabin", TN D-6976
+      p. 5) and qualified for 50-110 F ambient (AOH p. 2.6-17), which bounds the initial at
+      10-43.3 C and gives no value: no CSM battery temperature telemetry or pack thermal mass was
+      found. Both the initial and tau_s need the pack's mass, specific heat and mounting
+      conductance, which is WP02's thermal-aggregation question, not an electrical one
     initial_note: >-
       the pack's temperature at MET 0, owed with its time constant and for the same reason:
       `thermal_diode.md:965` declares every thermal constant unspecified, this state's `tau_s`
@@ -309,6 +336,15 @@ state:
         argument: state
         maps:
           auto: UNCONFIGURED
+        evidence_question: >-
+          WP02 E-8. Apollo's MAIN BUS TIE switches (BAT A/C, BAT B/C) tie the *batteries* to the
+          main buses through motor switches S1 and S2 (AOH p. 2.6-3/4, Fig. 2.6-1 note; J-mission
+          handout p. 2.6-3); section 2.6 describes no direct main-bus-A-to-B tie at all. So this
+          A-B tie and its `auto` have no Apollo article to take a mapping from, and the AUTO
+          position the real switch has is not described in any text reached. A model decision for
+          the operator: keep the A-B tie as the corpus's reference-design `TIE_AB`
+          (electrical_diode.md:252) and say what `auto` means, or re-model the tie as Apollo's
+          battery-to-main-bus tie
         why: >-
           `open` and `closed` are the identity. `auto` is not a position at all: it hands the
           decision to the service, "which closes only when the two buses are within 1 V and no
@@ -375,6 +411,13 @@ state:
     hysteresis: {assert: 26.5, clear: 27.2, dwell_ms: 500}
     band_on: power.dc_bus_a_v
     band_value: UNCONFIGURED
+    evidence_question: >-
+      WP02 E-9. Not a value a source can give: Apollo shed load by crew procedure, not by an
+      automatic ladder. What the sources do give is the envelope the ladder sits in: the DC
+      undervoltage caution at 26.25 V (AOH p. 2.6-5; TN D-7609 p. 8), sustained operation
+      26.5-30.0 V and limits 26.5-31.0 V (J-mission handout p. 2.6-26), and "use batts only when
+      main bus volts < 24.5" in the emergency power-down (Apollo 15 CSM Systems Checklist
+      EMER/1-7). The rung-to-class map remains the decision coupling.yaml#open_debts names
     note: >-
       The ladder's position, and the one band of the four in profiles.yaml that the position
       itself latches on: the top tier, `bus_a_undervoltage` — assert 26.5 V, clear 27.2 V. The
