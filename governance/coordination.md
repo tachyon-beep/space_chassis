@@ -179,7 +179,7 @@ root (592) and full (1,941) evidence only; no R/build/live qualification or next
 Original failed full and paired diagnostics remain separate preserved evidence. Vehicle issue
 39 decisions remain pending; ELSPETH admission still waits for John's root-command output.
 
-**CURRENT SLOT: RESERVED — `SPACE-20261011-R2C-ROOT-01`, 13:58 AEDT (master §27).** John's
+**Previous slot: RESERVED — `SPACE-20261011-R2C-ROOT-01`, 13:58 AEDT (master §27).** John's
 direct instruction authorises the existing chassis owner to run R2c root once. Supervisor
 `6eac1724…` reviewed against accepted `2557d326…`; both files compile and all 20 isolated controls
 pass. Exact tree `148a31c4…` and clean vehicle `f4439964…` verified. Fresh host check at 13:57:45
@@ -190,6 +190,16 @@ SIGINT, five-second monitoring and 600-second test deadline. Owner must refresh 
 then return explicit result/cleanup/release; reservation persists until verified release.
 **Parent browser relay pending; nothing launched here.** This coordinator has no available
 browser surface or cross-task send tool. No full/build/live run or automatic retry is granted.
+
+**CURRENT SLOT: FREE / RELEASED — 14:13 AEDT (master §28).** Parent relayed the owner run
+and explicit release. R2c ROOT-01 accepted: **617 passed, zero failures/errors/skips, pytest exit
+0; supervision held**. Test release 14:08:38, terminal cleanup 14:09:13, owner explicit release
+14:10:34; fresh independent scope/process cleanup verified at 14:12:40. Exact R2c/vehicle and
+reviewed drivers unchanged. Verified 2 CPU/8 GiB caps, eight healthy monitoring samples, and
+successful bounded cleanup including the existing journal-test sleep fixture. Full evidence
+hashes are in master §28. Board state: **R2c root passed / full pending**. No full/build/live
+reservation or launch, retry, commit or merge follows. Recommend a separately reviewed and
+granted exact-R2c full-suite proposal next. Vehicle issue 39 remains pending.
 
 | channel | for |
 |---|---|

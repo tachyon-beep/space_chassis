@@ -1615,3 +1615,63 @@ qualification; full-suite qualification remains pending. There is no full/build/
 automatic next selection, new writer, host/security-setting change, commit or merge authority.
 P's accepted root/full evidence and all failed artifacts remain preserved. Vehicle issue 39
 remains a separate pending product decision.
+
+## 28. R2c root accepted and shared slot released — 2026-10-11 14:13 AEDT
+
+**Current slot: FREE / RELEASED.** Parent Emmy relayed completion and explicit owner release
+for `SPACE-20261011-R2C-ROOT-01`. This coordinator independently reconciled the raw log,
+receipts, monitoring, current candidate and fresh host cleanup. R2c root qualification is
+accepted: **617 passed, zero failures/errors/skips, pytest exit 0; supervision held with no
+abort reasons.** Selection was exactly `python3 -m pytest tests -q -p no:cacheprovider -n 2`.
+Independent raw-progress counting finds 617 passing marks and no other outcomes.
+
+Tests were released at **03:08:38 UTC / 14:08:38 AEDT**, and terminal result plus verified
+cleanup were recorded at **03:09:13 UTC / 14:09:13 AEDT**, 35 seconds later. Owner explicit
+release is recorded at **03:10:34 UTC / 14:10:34 AEDT**, distinct from terminal completion.
+
+Exact identities match before, after and current checkout:
+
+- R2c tree `148a31c4951e43c1cdafdf30c15b029dc7e104a8`; tracked/index state exact, no untracked paths.
+- Clean vehicle `f44399645fb2633e695a5d758cb5a41f43fb848c`.
+- Supervisor `6eac172448026b6f4fe604ba5aa205439d5099c533cf33a1976e08f0a4dfc6b9`.
+- Launcher `91a813dc8563ce50489e5619e32a23f9f8dfc468571bc1bedfbc0ef66b2c0ccd`.
+- Vehicle test-file SHA256 `3b917de30861c432c467d92d6a75b1faf7b31cd0e62626dfde095997110c4a53`.
+
+Caps read back before release as `cpu.max=200000 100000`, `memory.max=8589934592`.
+Eight monitor samples independently aggregate to minimum available RAM **41,705 MiB**, maximum
+CPU busy **22.2%**, maximum load1 **3.07**, and peak sampled scope memory **247,164,928 bytes**.
+No OOM or abort threshold occurred. All observed scope processes had nice 19. The launcher
+restored SIGINT; pytest/xdist did not ignore it. The two ignored-SIGINT samples belong to the
+background shell/sleep fixtures deliberately created by the timed-out-group test.
+
+The bounded scope stop returned zero and removed the remaining `sleep 30` from the unchanged
+`tests/test_journal.py::test_a_stream_that_never_ends_times_out` fixture. The file is identical
+between P and R2c. This retained test-hygiene observation does not invalidate the gate: owned
+cleanup succeeded, and no fixture or product code was changed under this grant.
+
+At **03:12:40 UTC / 14:12:40 AEDT**, independent successful host queries found
+`space-chassis-r2c-root-1791688115.scope` not-found/inactive with empty ControlGroup, its cgroup
+absent, no Space scopes or Compose projects, and no matching owned driver/launcher/pytest/
+worker/helper processes or known remaining sleep PID. The terminal receipt also verifies
+scope termination, ended monitor, shell exit zero and no helpers. Explicit release plus
+verified cleanup supports FREE; process absence alone was not used as release.
+
+Full SHA256 evidence identities under `.scratch/phase-b-R2c-root-019mkP/`:
+
+| evidence | SHA256 |
+|---|---|
+| `RECEIPT-R2C-ROOT-01.md` (explicit release) | `ac0f8d103a0444dae342e63549bbee0b4337b8e27f72f0bf10b60087289de80e` |
+| `R2C-ROOT-01-outer-receipt.log` | `92c709bd17f7d4c1d3125314eb2debc40ff21c02c4c0bdbde4a80789698cee77` |
+| `root/receipt.jsonl` | `df6ab6d4f9b7457bc1c24ad074ea170df60f5222310d3db1947a93b205091352` |
+| `root/pytest.log` | `4ee78bc0044854e43789c0ed631bda8633d6095612b8ea3e7669f6a345970670` |
+| `root/monitor.jsonl` | `d3b0c63695bca8331aaf7bbc210c28e75bc3aeb4e710187151766ee1e1bb4bce` |
+| `root/launcher.json` | `c75c84d4fb22f8e01f97257f682cc61f30b39aa8020f32e4083c3920ce381127` |
+| `root.supervisor.out` | `edd1e841ffd8d8117ef186114dabc1519c967d2eb36011ee748eced2285f5c2d` |
+
+**Board effect:** R2c moves from root pending to **root passed / full pending**. P's separate
+592-root/1,941-full evidence remains preserved. R2c full/build/live gates remain ungranted;
+Phase B is not complete and vehicle issue 39 remains a separate product decision. Recommended
+next step is preparation and review of an exact-R2c full-suite proposal for a separate grant.
+This closure reserves or launches nothing further and permits no retry, commit or merge.
+Only coordinator records changed; the main index SHA256 remains
+`86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.
