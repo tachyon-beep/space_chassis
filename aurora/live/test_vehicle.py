@@ -4,8 +4,8 @@ that resumes the same world, containment with it running, and a stop that reache
 The tests share one vehicle stack and run in file order: the stop is last. Everything is read from
 the host side of the window image and the vehicle's own log -- `.executive.json` in the window
 root, each window's `state.json`, and the telemetry frames, which carry the boot that wrote them.
-The smoke override polls every 0.2 s, so the vehicle's checkpoint (every 50 ticks) comes in
-seconds; a kill after it exercises the cadence checkpoint and the replay from it.
+The vehicle runs on the operator's clock (m=1, k=5, N=50: a cycle every 0.1 s, a checkpoint every
+second); a kill after one exercises the cadence checkpoint and the replay from it.
 """
 
 import json
@@ -111,7 +111,7 @@ def _files(window) -> set:
 
 
 # How often a scan of one window lists it again after a file it listed is gone. A cycle every
-# 0.2 s removes a few names (the temporaries it renames into place, the telemetry it prunes); one
+# 0.1 s removes a few names (the temporaries it renames into place, the telemetry it prunes); one
 # window's scan takes milliseconds, so a scan that needs more than this is not racing a cycle.
 RELISTS = 100
 # How often one file is read again: a temporary read while it was being written, or a read that

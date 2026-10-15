@@ -3686,7 +3686,10 @@ class Executive:
             "summary": self.summary(), "consecutive_backstops": self.backstops_before + 1 if ended == "lag_backstop" else 0,
             "last_cycle_us": self._carried[0] if ran else None, "last_end_lag_us": self._carried[1] if ran else None,
         }
-        self.journal_event(event)
+        # Not advisory, unlike `journal_event`: the manifest is the clean end, and a resume that cannot
+        # read it treats the segment as crashed (the backstop count resets). Its failure is raised.
+        if self.journal is not None and self.journal_dir_fd is not None:
+            append_journal_line(self.journal, event, dir_fd=self.journal_dir_fd)
         return event
 
     # -- the cycle ----------------------------------------------------------------------------
@@ -6734,6 +6737,13 @@ def main(argv: list[str] | None = None, *, pacer: Pacer | None = None) -> int:
                     except RecordUnwritable as exc:
                         # Its event's failed append could not be cut back (J2): the record is unwritable.
                         sys.stderr.write(f"[console] stopped at tick {executive.tick}: {exc}\n")
+                        return 3
+                    except OSError as exc:
+                        # The append was cut back, but the segment has no manifest: it did not end cleanly.
+                        sys.stderr.write(
+                            f"[console] stopped at tick {executive.tick}: the clean end cannot be journaled "
+                            f"({errno_name(exc)}); the next resume reads this segment as one that crashed\n"
+                        )
                         return 3
                     print(f"[console] {clock_line(manifest['summary'])}", flush=True)
                 if backstop is not None:

@@ -99,6 +99,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import math
 import os
 import platform
 import shutil
@@ -135,8 +136,9 @@ def percentiles(xs: list[float]) -> dict[str, float]:
     xs = sorted(xs)
     return {
         "p50_us": round(statistics.median(xs), 1),
-        "p95_us": round(xs[max(0, int(len(xs) * 0.95) - 1)], 1),
-        "p99_us": round(xs[max(0, int(len(xs) * 0.99) - 1)], 1),
+        # Nearest rank, ceil(q·n): with 60 samples p99 is the 60th, the maximum, never the 59th.
+        "p95_us": round(xs[max(0, math.ceil(len(xs) * 0.95) - 1)], 1),
+        "p99_us": round(xs[max(0, math.ceil(len(xs) * 0.99) - 1)], 1),
         "max_us": round(xs[-1], 1),
     }
 

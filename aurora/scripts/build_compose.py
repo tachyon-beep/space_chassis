@@ -326,8 +326,11 @@ def _vehicle(count: int) -> str:
             ("VEHICLE_SLUGS", "${VEHICLE_SLUGS:-${FLEET_SLUGS:-vehicle}}"),
             ("VEHICLE_SCENARIO", "${VEHICLE_SCENARIO:-nominal}"),
             ("VEHICLE_SEED", "${VEHICLE_SEED:-0}"),
-            ("DIODE_POLL_SECONDS", "${DIODE_POLL_SECONDS:-5}"),
             ("VEHICLE_RING_SLOTS", "${VEHICLE_RING_SLOTS:-3000}"),
+            # The clock (#23, ADR 0002 A/B/J): m, k and N; serve_vehicle.sh holds the same defaults.
+            ("VEHICLE_MULTIPLIER", "${VEHICLE_MULTIPLIER:-1}"),
+            ("VEHICLE_CYCLE_TICKS", "${VEHICLE_CYCLE_TICKS:-5}"),
+            ("VEHICLE_CHECKPOINT_TICKS", "${VEHICLE_CHECKPOINT_TICKS:-50}"),
         )
     )
     text += f"    volumes:\n      - {WINDOW_BIND}\n" + _binds("vehicle", None, count)

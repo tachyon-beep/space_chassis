@@ -32602,6 +32602,32 @@ def test_a_backstop_whose_event_the_record_cannot_take_is_a_named_refusal_and_ne
     assert journal_events(state, "manifest") == [], "no clean end follows a record that cannot be restored"
 
 
+def test_a_clean_end_whose_manifest_the_record_cannot_take_is_a_named_refusal_and_not_a_clean_exit(tmp_path, monkeypatch, capsys):
+    """Codex P2 on #9: the manifest *is* the clean end, so its failed append is not advisory.
+
+    An append that fails and is cut back left the run printing its clock summary and exiting 0, with
+    no manifest in the record; the next resume read the segment as crashed. It is the named refusal,
+    exit 3, and no summary line.
+    """
+    _checkpoint, console, _plant, _world = checkpoint_tools()
+    real_append = console.append_journal_line
+
+    def append(path, row, *, dir_fd=None):
+        if row.get("event") == "manifest":
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+        return real_append(path, row, dir_fd=dir_fd)
+
+    state = tmp_path / "state"
+    argv = ["--diode-dir", str(tmp_path / "diode"), "--state-dir", str(state), "--slug", "alpha", "--cycles", "2", *CLOCK]
+    capsys.readouterr()
+    with monkeypatch.context() as patch:
+        patch.setattr(console, "append_journal_line", append)
+        code = console.main(argv, pacer=InjectedClock().pacer(console))
+    out, err = capsys.readouterr()
+    assert code == 3 and "the clean end cannot be journaled (ENOSPC: " in err and "Traceback" not in err, (code, err[-800:])
+    assert journal_events(state, "manifest") == [] and "[console] clock:" not in out, out
+
+
 def test_a_cycles_interior_rows_repeat_its_first_rows_receipt_counter_and_lag_and_the_reader_refuses_one_that_does_not(tmp_path):
     """Candidate 1 (Codex P2): the row invariant includes the counter and the lag, and the reader holds rows 2..k to them.
 
