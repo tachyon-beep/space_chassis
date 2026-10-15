@@ -1756,3 +1756,87 @@ ownership only after corrected supervisor evidence is ready; the earlier capacit
 launch admission. Preserve one Space selection, two workers total, nice 19 and no GPU.
 Chassis owns the final brief draft and Vehicle its contract wording; no final brief approval exists.
 Issue 42 remains separate. No source/spec/owner-report changes were made by this coordinator.
+
+## 31. B-sel1/v5 reviewed; K allocation blocked by Nyx process visibility — 2026-10-11 23:11 AEDT
+
+**No K allocation, reservation or execution.** The current request is Vehicle's 20 serial
+failure-injection controls only, with no pytest. The released R2c ROOT-01 allocation is historical;
+no stale grant or owner instruction was sent, through a browser or any other route. This session's
+browser inventory remains empty and findings return to Emmy for the existing owner relay.
+
+### Exact source and review coverage
+
+Independently verified v5 `PROPOSAL.md` SHA256
+`3c10398f63ba6f9bfb3fe01e3d833b57aa015fd69b0a59734aa27f5d81c5af6a`, and `SHA256SUMS`
+`e66c1223a9147afa56052389a705bf900ee90836c06226e47749890800774c31`, including all 26 entries.
+Candidate HEAD remains `f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f`; diff SHA256 remains
+`0a00336feb10dcd5c8839893cabafbdc5cbea20474f918d76dc1e0eca3f2d01d`. All 92 tracked blobs match
+tree `b447955f60c528e78d05c324ecc4c4317128d1a1`, with no untracked non-ignored files. None of the
+20 control evidence directories or the controls summary exists.
+
+Read the complete v2, v3, v4 and v5 supervisor reviews, the current supervisor, launcher, recorder,
+harness, plan and all control specs, and compared the v4-to-v5 source changes. The v2 baseline
+review was followed by explicit disposition of its eight findings in v3/v4; v5 closes the four
+reported v4 P2s (harness unknown discovery/exception handling, final recorder result, deadline
+checks and K10 injection). This supports the stated source-review termination rule, not runtime
+qualification or a blanket allocation clearance.
+
+The three reported v5 P3s are dispositioned as follows:
+
+- Terminal `show` may finish beyond the terminal-wait budget before being accepted
+  (`supervise.py:495-505`). Accept as a post-control timing residual for K: the payload is already
+  terminal and this does not reopen its systemd runtime limit. Do not claim an exact terminal-wait
+  bound from that loop.
+- Exception recovery may say units "were stopped" without proving successful discovery or stop
+  (`run_controls.py:140-150`). That text is never release evidence. The suite fails and ends;
+  explicit owner release plus independently verified unit/cgroup/process/decoy cleanup is required.
+- The dropped `release_contains` assertion has no consumer in the supplied plan. No K control
+  depends on it. The proposal's K02 claim that the receipt says `exit=3` is inaccurate: current
+  receipts attest cleanup only; K02 checks actual return code, receipt presence and missing summary.
+
+### Concrete host admission blocker
+
+Read-only host checks at **12:09:34 UTC / 23:09:34 AEDT** found 24 logical CPUs, **31.04 GiB
+MemAvailable**, **17.9% CPU busy** over two seconds, load1 **3.95**, and no listed Space user units
+or Space-named containers. Two unrelated containers remain untouched. This is capacity evidence,
+not a launch admission or proof of exclusive ownership.
+
+The same checks, repeated with only access outcomes printed, found uid-1000 processes whose
+`cmdline` is readable but `cwd`, `exe` and `environ` return **EACCES (13)**: PID 1594 (user systemd),
+1623 (sd-pam), and seven SSH processes. This is a current host fact, not a simulated failure.
+`supervise.py:199-209` reads cwd/exe for every same-user process before classifying it; any such
+non-ancestor process causes admission refusal. Its cleanup token scan (`252-264`) and the harness
+scan (`run_controls.py:51-68`) also treat these unreadable environments as unknown. Thus the exact
+package cannot complete a valid K00 on this host; even a pre-launch refusal fails independent
+no-token-process proof. Capacity alone cannot make the submitted admission/cleanup predicates pass.
+The existing independent reviewer `/root/review_governance` confirmed this source mapping and
+returned BLOCK for K allocation, after reading the full review chain and current source.
+
+Return to the existing Vehicle owner for a narrowly scoped process-discovery/ownership-proof
+correction and reviewed delta, preserving fail-closed handling of potentially owned workloads.
+Do not blanket-ignore EACCES, run as root, or weaken host security settings. No implementation
+permission is reopened, and no product code needs to change for this harness issue.
+
+The next allocation proposal also needs an explicit total K deadline and bounded recovery path.
+The current harness has 16 supervisor timeouts of 325 seconds, K08 at 301, K08b/K16 at 275 each,
+and K17 at 299: **6,350 seconds total**, excluding decoy setup, verification and recovery. The
+approximately eight-minute estimate is not an enforced suite deadline. An outer deadline wrapper
+was considered but neither adopted nor run; any supplied wrapper must cover its owned processes
+and preserve systemd cleanup/unknown-state handling. Per-payload RuntimeMaxSec is 95 seconds
+normally, 71 for K08, 45 for K08b/K16, and 69 for K17; stop is 15 seconds and cleanup 60 seconds.
+
+Retain the decoy startup recovery edge (`run_controls.py:94-99`): service creation can succeed
+before a timeout/interrupt prevents the handle reaching the caller. Its 120-second runtime bounds
+the sleep, but control-prefix cleanup does not match `space-decoy-*`. Owner recovery and final
+release proof must include these decoys explicitly. Decoys start before supervisor admission,
+so a future K grant needs fresh allocation-level admission before starting the harness as well.
+
+K03 remains last and intentionally returns 4 without a supervisor release receipt. Even if its
+independent harness checks pass, the shared slot may be released only by the owner's explicit
+receipt plus coordinator-verified absence; unknown proof keeps it held. S1, retries, full suites,
+build and live runs remain ungranted. Proposed payload caps remain 2 CPUs/6 GiB/no swap (K09:
+64 MiB), not R2c's 8 GiB. ELSPETH keeps priority, Sultai's GPU reservation remains untouched,
+and Space gets no GPU, one selection and at most two test workers when separately allocated.
+Chassis brief v5 remains an approved draft awaiting John's final-text approval; no adoption follows.
+No reviewed code, control, test or unit was executed here. Only these coordinator records changed;
+the main index SHA256 remains `86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.

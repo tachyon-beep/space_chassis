@@ -191,7 +191,7 @@ then return explicit result/cleanup/release; reservation persists until verified
 **Parent browser relay pending; nothing launched here.** This coordinator has no available
 browser surface or cross-task send tool. No full/build/live run or automatic retry is granted.
 
-**CURRENT SLOT: FREE / RELEASED — 14:13 AEDT (master §28).** Parent relayed the owner run
+**Previous slot: FREE / RELEASED — 14:13 AEDT (master §28).** Parent relayed the owner run
 and explicit release. R2c ROOT-01 accepted: **617 passed, zero failures/errors/skips, pytest exit
 0; supervision held**. Test release 14:08:38, terminal cleanup 14:09:13, owner explicit release
 14:10:34; fresh independent scope/process cleanup verified at 14:12:40. Exact R2c/vehicle and
@@ -200,6 +200,17 @@ successful bounded cleanup including the existing journal-test sleep fixture. Fu
 hashes are in master §28. Board state: **R2c root passed / full pending**. No full/build/live
 reservation or launch, retry, commit or merge follows. Recommend a separately reviewed and
 granted exact-R2c full-suite proposal next. Vehicle issue 39 remains pending.
+
+**CURRENT ALLOCATION: NONE — 23:11 AEDT (master §31).** B-sel1/v5's 20 serial K controls have
+been source-reviewed but are not allocated. Exact proposal/manifest and candidate3 identities
+match. Fresh Nyx inspection found adequate sampled capacity, but the submitted all-own-process
+discovery and cleanup scans fail on EACCES for existing systemd/PAM/SSH processes. Vehicle must
+return a narrowly corrected, reviewed ownership-proof delta and an explicit total K deadline;
+no blanket permission-error bypass or host security change is authorised. The three review P3s
+are explicitly dispositioned in §31. Nothing launched, no obsolete ROOT-01 grant was relayed,
+and no direct owner messages were sent. Emmy retains the existing browser relay. S1, retries,
+full/build/live remain ungranted; ELSPETH priority and Sultai's GPU reservation remain intact.
+John's Option B implementation approval stands; brief v5 remains draft pending final-text approval.
 
 | channel | for |
 |---|---|
