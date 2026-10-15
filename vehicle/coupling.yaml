@@ -1104,6 +1104,7 @@ edges:
     from: link
     to: cabin_heat_csm
     kind: algebraic
+    reads: amp_dissipation_w
     advances: cabin_heat_csm_w
   - id: E-CABIN-SUPPLY-CSM
     sensitivity:
@@ -1738,6 +1739,7 @@ edges:
     from: coolant_flow
     to: coolant_supply_t
     kind: algebraic
+    reads: coolant_flow_kg_s
     advances: coolant_loop_t
     sensitivity:
       value: 3626.1

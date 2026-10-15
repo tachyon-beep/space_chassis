@@ -2883,7 +2883,7 @@ def driver_nodes(world: World, state: State) -> list[str]:
 def state_values(world: World, state: State, value: Any) -> dict[str, Any]:
     """The map entries one state's new value belongs under.
 
-    **The value space was keyed by node, and eleven nodes carry more than one state.** `cabin_atm`
+    **The value space was keyed by node, and twelve nodes carry more than one state.** `cabin_atm`
     carries four gas masses and a pressure, so `values["cabin_atm"]` held whichever the loader wrote
     last — and the first tick after the plant learned to evaluate derivations set `csm_cabin_o2_kg` to
     the *water vapour's* mass, and `lm_cabin_o2_kg` to the nitrogen's. Two plausible numbers of
