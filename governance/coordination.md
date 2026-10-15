@@ -1,6 +1,6 @@
 # Coordination between the lines
 
-As of **2026-10-10 19:54 AEDT**, `tachyon-beep/space_chassis` `aurora-port` @ `3ec1b4e`. Owned by the chassis
+As of **2026-10-10 20:02 AEDT**, `tachyon-beep/space_chassis` `aurora-port` @ `486960c`. Owned by the chassis
 line, from a draft by the vehicle line. **Verify against the code before trusting any line here.**
 
 ## Programme leadership — 2026-10-10
@@ -21,7 +21,11 @@ acceptance. None has been declared here; recognising leadership requires no owne
 For this documentation checkpoint, owner contact is handled by the coordinating chat's separate
 native-browser worker. The documentation writer records proposed follow-ups in the master plan
 and sends no duplicate owner instructions. Line-owned reports remain theirs to write; reading
-them does not ratify a handover or change their status.
+them does not ratify a handover or change their status. Emmy's explicit review in master-plan
+section 9 marks **AUR-GOV-02 v1 SUFFICIENT** and **AUR-GOV-03 v1 CORRECTIONS**, with the exact
+report versions, evidence limits and a small chassis addendum requested. AUR-GOV-07 is ready;
+AUR-GOV-04/06 await that addendum's re-check. This neither assigns tasks nor accepts the product
+or transfers custody. Owner reports remain unchanged.
 
 ## Channels
 
