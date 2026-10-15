@@ -8530,11 +8530,19 @@ def test_a_crowded_node_is_read_through_the_state_the_edge_names():
         if e.reads:
             drives_from = e.target if e.source in stock_nodes else e.source
             assert owner[e.reads] == drives_from, (e.id, e.reads, drives_from)
+    # ADR 0003's power rules crowded `fuel_cell` again (the two bus loads, the module current and
+    # the power), so its five edges name what they read: each bus its own load, the reactant draws
+    # the current, and the heat the power.
     assert sorted(e.reads for e in world.edges if e.reads) == [
         "amp_dissipation_w",
         "attitude",
+        "bus_a_load_w",
+        "bus_b_load_w",
         "coolant_flow_kg_s",
         "evaporator_duty_w",
+        "fuel_cell_current_a",
+        "fuel_cell_current_a",
+        "fuel_cell_power_w",
         "link_snr",
         "orbital_state",
         "playback_rate",
