@@ -93,3 +93,16 @@ def test_every_default_the_example_states_is_the_one_compose_uses():
         if match and defaults.get(match[1]) and defaults[match[1]] != match[2]:
             wrong.append(f"{match[1]}: example {match[2]}, compose {defaults[match[1]]}")
     assert wrong == []
+
+
+def test_the_brief_states_the_archive_bound_the_watchdog_keeps():
+    # John approved the clause on 2026-10-09; its figures are the seed watchdog's own.
+    text = (ROOT / "brief/WORLD.md").read_text(encoding="utf-8")
+    watchdog = (ROOT / "harness/watchdog.py").read_text(encoding="utf-8")
+    assert "ARCHIVE_KEEP = 20" in watchdog
+    assert "ARCHIVE_TOMBSTONE_BYTES = 128 * 1024 * 1024" in watchdog
+    assert "ARCHIVE_GIT_BYTES = 64 * 1024 * 1024" in watchdog
+    assert "Archived conversations are bounded" in text
+    assert "newest twenty" in text and "128 MiB" in text and "64 MiB" in text
+    for name in ("session_recovery_<n>.json", "corrupt_session_<date>_<time>_<micro>.json"):
+        assert name in text, name
