@@ -263,3 +263,37 @@ def test_the_smoke_review_publishes_no_port(stack):
     review = _resolved(smoke)["review"]
     assert not review.get("ports")
     assert review["image"] == stack_module.SMOKE_IMAGE
+
+
+def test_recreate_restarts_one_service_alone_with_an_extra_override(stack):
+    smoke, runner = stack
+    smoke.prepare()
+    smoke.recreate("recorder_1", {"RECORDER_TOKEN_GLOBAL_HOURLY_MAX": "1"})
+    argv = runner.calls[-1][0]
+    assert argv[-5:] == ["up", "-d", "--force-recreate", "--no-deps", "recorder_1"]
+    extra = smoke.root / "recreate-recorder_1.yml"
+    assert argv[argv.index(str(extra)) - 1] == "-f"
+    assert extra.read_text() == (
+        'services:\n  recorder_1:\n    environment:\n      RECORDER_TOKEN_GLOBAL_HOURLY_MAX: "1"\n'
+    )
+
+
+def test_every_compose_call_after_a_recreate_keeps_its_override(stack):
+    # A later `up` or `exec` without the extra file would describe a different recorder_1.
+    smoke, runner = stack
+    smoke.prepare()
+    smoke.recreate("recorder_1", {"RECORDER_TOKEN_GLOBAL_HOURLY_MAX": "1"})
+    assert str(smoke.root / "recreate-recorder_1.yml") in smoke.compose_command("ps")
+
+
+def test_a_recreate_override_parses_against_the_base_compose(stack):
+    """Needs docker on the host, like `docker compose config -q` in CLAUDE.md: absent, it fails."""
+    smoke, _ = stack
+    smoke.prepare()
+    smoke.recreate("recorder_1", {"RECORDER_TOKEN_GLOBAL_HOURLY_MAX": "1"})
+    real = stack_module.SmokeStack(3, root=smoke.root)
+    real._torn_down = True
+    real.overrides = list(smoke.overrides)
+    result = real.compose("config", check=False)
+    assert result.returncode == 0, result.stderr
+    assert 'RECORDER_TOKEN_GLOBAL_HOURLY_MAX: "1"' in result.stdout

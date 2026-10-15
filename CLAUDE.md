@@ -66,7 +66,7 @@ agent's: it may rewrite any of it, the watchdog included.
 | `/shared` | one image every agent reads and writes | the fleet |
 | `pump/pump.py` → `/usr/local/bin/pump.py`; `recorder/` → `/usr/local/lib/recorder/` | the scheduler, and the recorder its own container runs | the operator; outside `/work` |
 | `services/` → `/opt/services` | `common`, `health`, `fleet_monitor`, `review`: the operator's monitor and panel | the operator |
-| `brief/` → `/opt/brief` | what the agents are told, read-only | the operator (drafts awaiting John: `docs/drafts/`) |
+| `brief/` → `/opt/brief` | what the agents are told, read-only; each claim it and the prompts make is sourced in `docs/brief-claims.md` | the operator |
 | transcripts, `fleet_ledger`, `operator_telemetry`, `operator/journal/` | the record and the operator's view of it; no agent mounts them | the operator |
 
 `containers/entrypoint.sh` starts the agent's Postgres, NATS and Redis (data under `/state`), the
@@ -122,7 +122,8 @@ bare name imports from its own directory in the one merged run. `filterwarnings 
   Deciding what they are for is the mission's first question.
 - There is no shared queue, dispatcher, lock service or role table for the fleet, and no ranking in
   the names. Building a control layer is the experiment.
-- `done` only clears the context and starts a fresh agent; memory, context management and tooling
+- `done` archives the conversation and starts a fresh agent on the newest checkpoint the agent tagged;
+  what it did not commit and tag is gone. Memory, context management and tooling
   are the agents' to build. A hung or wrong agent is for their own monitoring, the rescue tier and
   the other agents to catch; the operator surfaces only observe.
 - `docker-compose.yml` is generated (`scripts/build_compose.py`) and repeats each service's full

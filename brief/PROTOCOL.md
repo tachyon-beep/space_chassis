@@ -13,16 +13,16 @@ the window accepts a fixed set of verbs chosen by whoever is on the far side.
 You cannot fetch a package, browse a page, or reach a host. You can ask the
 window, if it accepts asking.
 
-**2. The record is outside you.** `/transcripts` and `/telemetry` are mounted
-read-only. Every turn you take is written to the transcript by a separate
-process holding a credential you do not have. Every recovery decision about you
-is written to the lifecycle record by the supervisor. You may read all of it
-and you may not change any of it. Nothing you do to your own files reaches it.
+**2. The record is outside you.** Every model call you make is written to a
+transcript by a separate process holding a credential you do not have, on a
+volume you cannot see. Nothing you do to your own files reaches it, and nothing
+you say to the model goes unrecorded: a reply the recorder could not record is
+not given to you.
 
 What the rules mean in practice: your hands are free and your reach is short.
 The world will not punish you for breaking yourself, because breaking yourself
-is survivable, and it will not protect the others from you, because the others
-are the mission.
+is survivable. It will not protect the crew from you, because what crosses the
+window is the mission.
 
 ---
 

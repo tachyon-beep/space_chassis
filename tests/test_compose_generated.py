@@ -157,7 +157,11 @@ def test_only_the_read_only_vendor_mounts_and_the_window_services_short_binds_ar
             if not isinstance(entry, str):
                 continue
             if name in {"diode", "vehicle"}:
-                assert entry == f"{ROOT_PLACEHOLDER}/diode/data:/diode", (name, entry)
+                # The fixture's source, read-only, is the one other short bind the diode takes.
+                allowed = {f"{ROOT_PLACEHOLDER}/diode/data:/diode"}
+                if name == "diode":
+                    allowed.add("./contract/fake_diode.py:/opt/fake/fake_diode.py:ro")
+                assert entry in allowed, (name, entry)
             else:
                 assert entry.endswith(":ro") and entry.split(":")[0] in VENDOR, (name, entry)
 
@@ -263,7 +267,7 @@ def test_the_override_example_is_a_pointer_to_the_generated_smoke_stack() -> Non
 
 
 def test_the_window_binds_its_image_data_not_its_mount_point() -> None:
-    assert SERVICES["diode"]["volumes"] == [f"{ROOT_PLACEHOLDER}/diode/data:/diode"]
+    assert SERVICES["diode"]["volumes"][0] == f"{ROOT_PLACEHOLDER}/diode/data:/diode"
 
 
 @pytest.mark.parametrize("count", [1, 3])
@@ -304,3 +308,19 @@ def test_the_env_example_documents_every_recorder_setting() -> None:
         "RECORDER_OPERATION_TIMEOUT",
     ):
         assert f"{key}=" in text, key
+
+
+def test_the_diode_profile_runs_the_contract_fixture_off_worknet() -> None:
+    # Spec §3 and §5: the `diode` profile is contract/fake_diode.py, whose interface is the
+    # volume, so it joins no network an agent is on; windowside has a gateway (spec §2).
+    diode = SERVICES["diode"]
+    assert diode["entrypoint"] == ["python", "/opt/fake/fake_diode.py"]
+    assert "./contract/fake_diode.py:/opt/fake/fake_diode.py:ro" in diode["volumes"]
+    assert diode["networks"] == ["windowside"]
+
+
+def test_the_review_panel_listens_on_the_port_its_mapping_targets() -> None:
+    # REVIEW_PORT is the host's port; the container always listens where the mapping points.
+    review = SERVICES["review"]
+    assert "REVIEW_PORT" not in review["environment"]
+    assert review["ports"] == ["${REVIEW_BIND:-127.0.0.1}:${REVIEW_PORT:-8090}:8090"]
