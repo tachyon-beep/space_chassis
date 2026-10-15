@@ -769,10 +769,38 @@ components:
     kind: flow
     class: fan
     vehicle: csm
-    cfm: UNCONFIGURED
+    # Per fan. The CM carries two cabin fans, and the figure is each one's: the component is the
+    # article a crew switches, not the pair, so two running fans are twice this.
+    cfm: 86
+    fans_installed: 2
     provenance:
-      basis: UNCONFIGURED
-      note: "the cabin fan's flow is not published. main_propulsion_diode.md:165's principle applies here in a different form: what matters is not the fan's rating but that the same ECS caution light can mean a glycol pump, a water separator or a suit fan (apollo_diode.md:84), so the domain needs a ventilation state without needing its rated flow. **Searched:** `lunar_module_environmental_control_subsystem.pdf` and `csm_ecs_study_guide.pdf` — the only flow either publishes is the suit circuit's 12 cfm at 3.5 psia, which is the suit fan rather than the cabin fan, and the cabin fan's own rating is a motor figure (13,000 rpm, 30 W) with no flow beside it."
+      basis: historical
+      source: >-
+        NASA TN D-6718, "Apollo Experience Report: Command and Service Module Environmental Control
+        System", F. H. Samonski Jr. and E. M. Tucker, March 1972
+        (https://ntrs.nasa.gov/api/citations/19720012252/downloads/19720012252.pdf), printed p. 14,
+        "Environmental Control System Description": the cabin has two axial-flow fans, and "Each
+        fan has a capacity of 86 cu ft/min at 5 psia". Effectivity: Block II CSM, as described by a
+        report written after the Block II flights; the Apollo 11 CSM (CSM-107) is Block II, and
+        no CSM-107-specific fan rating was found
+      note: >-
+        **this entry said the cabin fan's flow was not published.** The search record it carried was
+        real and bounded — `lunar_module_environmental_control_subsystem.pdf` and
+        `csm_ecs_study_guide.pdf` publish the suit circuit's flow and a cabin-fan *motor* figure
+        (13,000 rpm, 30 W) — and the flow was in the CSM ECS experience report, which the folder had
+        cited for its 200 lb/hr loop flow and not read for the fans. Rejected: SM2A-03 Block II
+        Vol. 1 §2.7 p. 2.7-4 gives 150/100 cfm, which is the *post-landing* ventilation fan rather
+        than the cabin fan. Context, not used: Program Apollo Working Paper 1321 (W. E. Ellis, 12 July
+        1967, https://ntrs.nasa.gov/api/citations/19700025125/downloads/19700025125.pdf) p. 10 Table
+        IV gives the two cabin blowers 76 W at 5 psia O2, and pp. 8-9 give 34 W at the blower
+        operating point. Bounds: 86 cfm is a capacity at 5 psia, so the delivered flow at the
+        cabin's 4.8-5.2 psia band is this figure to within the fan curve, which is not published.
+        Consumer: none yet. The ventilation state the fan drives is a rule owed in WP06; the
+        validation case for that rule is that two fans on move 172 cfm, so the 5.9 m3 = 208 ft3
+        cabin turns over in about 1.2 min, and that a fan commanded off moves nothing. Known
+        mismatch, recorded and not fixed here: `fault_policy.yaml`'s ECL-07 binds this component
+        and describes the *suit-circuit* fan (its 85 W is the suit compressor's), so the fault and
+        this article name different machines
   - id: lm_water_separator
     kind: flow
     class: exchanger
@@ -873,7 +901,7 @@ atmosphere_model:
 
 open_debts:
   - "**The oxygen supply tank has a pressure now, and its *rule* is what is owed.** Round 30 found `eclss.o2_supply_pressure_psi` — apollo's 750-950 psi indication, with a low-pressure event and a >5 psi/min fall, perturbed by four declared faults — reading `o2_csm`, the shared oxygen *stock*, in kilograms, because the vehicle had no supply tank at all. Round 32 gave it one: `state o2_supply_pressure_psi`, a lag on the sentinel whose 900 psig starting value is `csm_ecs_study_guide.pdf` **PDF p. 12**'s own working pressure, so the channel is published rather than omitted. **What is still owed is how it moves**: a heated cryogenic tank holds its delivery pressure until the liquid is gone and then falls, so the relation between this state and `o2_csm` is a heater-and-regulator model rather than a gas law — and the *driver* is owed with it, because no edge can reach the sentinel. **Searched:** the ECS study guide end to end (PDF p. 12 is everything it says about the supply: the two cryogenic tanks in the S/M, the 900 psig working pressure, the surge tank's 3.7 lb, the inlet restrictors' 8.2 lb/hr at 900 psig) and `mission_e_consumables.txt`. What would close it: a tank or heater analysis for the S/M cryogenic tanks, or a pressure-versus-contents curve."
-  - "The condensing heat exchanger's removal rate and the ventilation fan's flow are unpublished; both are declared unset above. Without them the humidity stock has no sink and the ventilation state has no magnitude, so the model can express a humid cabin and cannot yet dry it."
+  - "The condensing heat exchanger's removal rate is owed; it is declared unset above. Without it the humidity stock has no sink, so the model can express a humid cabin and cannot yet dry it. The ventilation fan's flow was this debt's other half and is closed: 86 cu ft/min per fan at 5 psia, two fans (TN D-6718 p. 14; see `ventilation_fan`). The exchanger's evidence so far is a design-analysis latent load and an accumulator capacity, which bound the rate and are not it (`docs/evidence/wp02-thermal-eclss-consumables.md`)."
   - "The suit loop is modelled as a single flow channel rather than as a circuit with the PLSS, because apollo publishes suit_loop_flow_cfm and nothing about the portable life support's own consumables. EVA is therefore a phase whose atmosphere consequences are not yet modelled."
   - "**The cabin leak is declared per cabin now, and one of the two is borrowed.** Round 67 split
     `vehicle.yaml#consumables.leak` into `csm_kg_per_h: 0.023` and `lm_kg_per_h: 0.0226796`, so that
