@@ -815,7 +815,8 @@ def test_the_build_order_is_the_ticks_own_gap_list():
     # `band_value` is a third `UNCONFIGURED` and it lands on `load_shed_class`, whose one band is the
     # tier that selects `none` — so what blocks it is the ladder's rung-to-class map, a *value* the
     # thresholds do not carry, rather than the domain code the rule bucket was asking it for.
-        ) == (52, 27, 15, 45), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
+        # 52 -> 53 ready and 45 -> 44 rule: `orbital_state` coasts under `cislunar_point_masses`.
+        ) == (53, 27, 15, 44), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
 
 
 def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
@@ -2863,8 +2864,8 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "declares 148 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
     assert "derived here as 20 unperturbed, 15 of them `service`" in result.stdout
-    # One block deleted is one debt added: the corpus stands at 273, so the ablation is 274.
-    assert "COMPOSES, with 274 declared debt(s)." in result.stdout
+    # One block deleted is one debt added: the corpus stands at 270, so the ablation is 271.
+    assert "COMPOSES, with 271 declared debt(s)." in result.stdout
 
     # The failure chains, which are owed *and* refused: the README's front table names fifteen.
     definition = copy_definition(fixture_dir(tmp_path, "no-chains"))
@@ -2886,7 +2887,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "declares no coverage block. The domain publishes 15 channel(s)" in result.stdout
     assert "no fault perturbs 1 of them" in result.stdout
-    assert "COMPOSES, with 274 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 271 declared debt(s)." in result.stdout
 
     # The filter's rates. The block is nested rather than top level, and the obligation is C-07's
     # rather than this check's — which is why the first reading of it in this round was wrong.
@@ -2900,7 +2901,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "domains/gnc/components.yaml:estimator.sub_stepping: is not declared" in result.stdout
     assert "C-07's resolution requires the interface" in result.stdout
-    assert "COMPOSES, with 274 declared debt(s)." in result.stdout
+    assert "COMPOSES, with 271 declared debt(s)." in result.stdout
 
 
 def test_the_readme_s_chain_count_is_held_against_the_file(tmp_path):
@@ -6685,7 +6686,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # Removing this file's own prose obligations takes the headline down by the number of entries
     # that file carries, which is one here — so the figure is the base minus one, and it moves with
     # the base rather than with the runs of fixtures that inject a debt.
-    assert "with 272 declared debt(s)" in result.stdout
+    assert "with 269 declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -7096,7 +7097,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 274 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 271 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -7202,7 +7203,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 274 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 271 declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -8464,10 +8465,11 @@ def test_a_crowded_node_is_read_through_the_state_the_edge_names():
     removed by nothing in the model. The edge now names `csm_cabin_co2_kg` and the driver resolves to
     the mass.
 
-    The four edges whose named state is itself blocked resolve to `None` still, and that is the
+    The edges whose named state is itself blocked resolve to `None` still, and that is the
     honest boundary: `reads:` chooses *which* state, and whether that state has a value is the state's
-    own debt — `tx_power` owes a `command_value` mapping, `attitude` and `orbital_state` are
-    `dynamics` with no incoming edge. Naming the right state does not invent its value.
+    own debt — `tx_power` owes a `command_value` mapping, `attitude` is `dynamics` with no incoming
+    edge. Naming the right state does not invent its value. (`orbital_state` was the fourth until it
+    gained a start vector and a rule: it has a value now, the position-and-velocity record.)
     """
     import sys as _sys
 
@@ -10138,7 +10140,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 37 -> 38 in round 72: `E-WATER-RAD`'s driver was a crowded node with no name for the state it
     # reads, and naming it (`radiator_rejection_w`) made the coolant's discharge computable.
     # Post-ejection P00 and active CMC DAP give two more commanded modes a sourced initial.
-    assert len(buckets["ready"]) == 52
+    assert len(buckets["ready"]) == 53
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -10181,7 +10183,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # `load_shed_class` declares the band it flips on and now owes `band_value` as well, and what
     # blocks it is the ladder's rung-to-class map — a declaration the thresholds do not carry —
     # rather than the domain code this bucket was asking it for.
-    assert len(buckets["rule"]) == 45, "just under a third of the vehicle is domain code"
+    # 45 -> 44 with `orbital_state`, the first `dynamics` state with a rule the plant carries.
+    assert len(buckets["rule"]) == 44, "just under a third of the vehicle is domain code"
     # Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
@@ -11605,7 +11608,7 @@ def test_every_heated_zone_declares_the_state_that_carries_its_heat(tmp_path):
     # The debt is closed, and the check still reports an absent link when one comes back.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 273 declared debt(s)." in intact.stdout
+    assert "COMPOSES, with 270 declared debt(s)." in intact.stdout
     assert "names no heat-rate state" not in intact.stdout
 
     def fixture(name: str, old: str, new: str) -> subprocess.CompletedProcess[str]:
@@ -11701,7 +11704,7 @@ def test_a_loop_s_collected_load_is_the_sum_over_the_zones_that_name_it(tmp_path
     # The note rather than a debt, in the linter's own words, and the count unmoved by it.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 273 declared debt(s)." in intact.stdout
+    assert "COMPOSES, with 270 declared debt(s)." in intact.stdout
     assert (
         "vehicle.yaml#thermal.loops.loop_secondary.load_state: is not declared, and no zone names "
         "this loop" in intact.stdout
@@ -12596,7 +12599,7 @@ def test_every_stock_declares_where_it_starts():
     # while `telemetry_rate` and `antenna_selection` are sentinel states and seed under their ids
     # alone.
     # P00 computer mode and CMC-owned RCS mode each add a seeded state key.
-    assert len(on_nodes) == 74, f"{len(on_nodes)} node keys carry a value"
+    assert len(on_nodes) == 75, f"{len(on_nodes)} node keys carry a value"
     # And the map a tick actually starts from is that seed plus the declared arithmetic, so the
     # resolved states are a strict superset and every one of them is `algebraic`.
     assert seeded_integrators.keys() < seeded.keys(), "the resolution added nothing to the seed"
@@ -14640,7 +14643,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     )
 
     # And the count is the honest one, not the inflated one.
-    assert "with 273 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 270 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -14817,7 +14820,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     # prose obligation in `coupling.yaml#open_debts` for the three bands whose vocabulary is wider
     # than their comparator. The round adds a field to four states; nothing was answered, so nothing
     # fell.
-    assert owed == "273", "the view must agree with the headline count"
+    assert owed == "270", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -16648,7 +16651,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 273 declared debt(s)",
+        "COMPOSES, with 270 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -16656,7 +16659,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 273 declared debt(s)",
+        "COMPOSES, with 270 declared debt(s)",
         composes=True,
     )
 
@@ -16671,7 +16674,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 274 declared debt(s)" in out, out[-300:]
+    assert "with 271 declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -16830,7 +16833,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 274 declared debt(s)" in out, out[-400:]
+    assert "with 271 declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -16977,7 +16980,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 274 declared debt(s)" in out, out[-400:]
+    assert "with 271 declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -16987,7 +16990,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 273 declared debt(s)",
+        "COMPOSES, with 270 declared debt(s)",
         composes=True,
     )
 
@@ -17129,7 +17132,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 273 declared debt(s)",
+        "COMPOSES, with 270 declared debt(s)",
         composes=True,
     )
 
@@ -19225,6 +19228,154 @@ def test_the_transfer_is_sized_to_the_moon_s_own_distance_at_the_arrival_epoch()
     assert "discriminator" in elements["owed"]["free_return"]
 
 
+def _trajectory():
+    import sys as _sys
+
+    if str(VEHICLE / "tools") not in _sys.path:
+        _sys.path.insert(0, str(VEHICLE / "tools"))
+    import trajectory
+
+    return trajectory
+
+
+def test_the_declared_start_vector_is_a_free_return():
+    """The six numbers the plant starts from go round the Moon and come home, with no burn.
+
+    The conic `osculating_elements` describes reaches the Moon's centre, and flown under the Moon's
+    gravity it hits the surface. The vector declared beside it is the free return solved from it,
+    and this flies that vector from MET 0 under both bodies' gravity: closest approach at the
+    phase ladder's 73.0 h, hundreds of kilometres above the surface, and a return conic whose
+    vacuum perigee is the design's 40 km rather than one that misses the Earth or strikes it steeply.
+    """
+    trajectory = _trajectory()
+    got = trajectory.fly_declared(VEHICLE)
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    design = mission["initial_state"]["free_return_design"]
+    assert got["periselene_met_h"] == pytest.approx(73.0, abs=0.05), got
+    assert 600.0 < got["periselene_alt_km"] < 1000.0, got
+    assert got["periselene_alt_km"] == pytest.approx(design["solution"]["periselene_alt_km"], abs=0.05)
+    assert got["return_perigee_alt_km"] == pytest.approx(design["return_perigee_alt_km"], abs=1.0), got
+
+    # And the conic it replaced is the defect it was replaced for: the same elements aimed by the
+    # analytic mirror plane nearest the Moon's orbit, flown the same way, do not pass the Moon.
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    gravity = trajectory.Gravity.from_vehicle(vehicle)
+    osc = mission["initial_state"]["osculating_elements"]
+    r, v = trajectory._start(gravity.mu_earth, osc, 2.311, 46.617, 1.0)
+    moon_r, moon_v = trajectory.moon_at_met0(vehicle, mission)
+    conic = trajectory.flyby(
+        gravity,
+        r,
+        v,
+        moon_r,
+        moon_v,
+        moon_radius_m=1737.4e3,
+        earth_radius_m=6378.137e3,
+    )
+    assert conic["periselene_alt_km"] < 0.0, conic
+
+
+def test_the_plant_and_the_design_agree_on_a_coast():
+    """One gravity model, two integrators, and an hour in which they must not part.
+
+    The design propagates with RK4 at seconds; the plant advances `orbital_state` with velocity
+    Verlet at the tick. A start state solved in one and flown in the other is only the same
+    trajectory if the two integrate the same field to the same answer, and the first hour from
+    perigee is where the field changes fastest.
+    """
+    trajectory = _trajectory()
+    vehicle, mission = trajectory.load(VEHICLE)
+    gravity = trajectory.Gravity.from_vehicle(vehicle)
+    r0, v0 = trajectory.declared_start(mission)
+    m0, mv0 = trajectory.moon_at_met0(vehicle, mission)
+
+    r, v, mr, mv = list(r0), list(v0), list(m0), list(mv0)
+    dt = 0.02
+    for _ in range(int(3600 / dt)):
+        r, v, mr, mv = trajectory.verlet(gravity, r, v, mr, mv, dt)
+    rr, vv, mr2, mv2 = list(r0), list(v0), list(m0), list(mv0)
+    for _ in range(720):
+        rr, vv, mr2, mv2 = trajectory.rk4(gravity, rr, vv, mr2, mv2, 5.0)
+
+    assert max(abs(a - b) for a, b in zip(r, rr, strict=True)) < 10.0, (r, rr)
+    assert max(abs(a - b) for a, b in zip(v, vv, strict=True)) < 0.01, (v, vv)
+    # And the vehicle went somewhere: an hour from perigee climbs more than ten thousand kilometres.
+    assert trajectory._norm(r) - trajectory._norm(r0) > 10_000e3
+
+
+def test_a_real_tick_advances_orbital_state():
+    """`orbital_state` is seeded from the declared vector and moves by its own velocity each tick.
+
+    It was one of the four `dynamics` states with no value; it is the first of them a tick
+    advances, and the advance is the coast: no gap is recorded against it and the position after
+    three ticks is the start plus three ticks of velocity, to within what gravity bends in 60 ms.
+    """
+    trajectory = _trajectory()
+    import plant
+
+    world = plant.load_world(VEHICLE)
+    values = plant.initial_values(world)
+    state = next(s for s in world.states if s.id == "orbital_state")
+    start = plant.state_level(values, state)
+    r0, v0 = trajectory.declared_start(trajectory.load(VEHICLE)[1])
+    assert start["position_m"] == pytest.approx(r0)
+    dt = plant.tick_seconds(world)
+    for _ in range(3):
+        values = plant.step(world, values, dt, [])
+    after = plant.state_level(values, state)
+    for i in range(3):
+        assert after["position_m"][i] == pytest.approx(r0[i] + 3 * dt * v0[i], abs=1.0)
+    assert after["velocity_m_s"] != pytest.approx(v0, abs=1e-6), "gravity did nothing"
+
+
+def test_a_thrust_on_orbital_state_is_refused_rather_than_flown_without_a_direction(monkeypatch):
+    """A force the plant can read and cannot point is a refusal naming `attitude`, not a guess.
+
+    The main engine's thrust reaches `orbital_state` through an edge, and its direction is the
+    attitude's, whose rule is owed. Integrating it along the velocity, or any other default, would
+    be a trajectory nobody declared; the refusal names what it needs and the state holds.
+    """
+    import plant
+
+    world = plant.load_world(VEHICLE)
+    values = plant.initial_values(world)
+    state = next(s for s in world.states if s.id == "orbital_state")
+    incoming = [e for e in world.edges if e.target == state.node]
+    assert incoming, "nothing drives vehicle_dynamics any more; the fixture no longer applies"
+    monkeypatch.setattr(plant, "edge_driver", lambda *args, **kwargs: 98_000.0)
+    with pytest.raises(plant.Unconfigured) as refused:
+        plant.advance_trajectory(world, state, values, incoming, 0.02, "orbital_state")
+    assert refused.value.needs == "attitude"
+
+
+def test_the_linter_refuses_a_start_vector_that_is_not_its_design(tmp_path):
+    """The vector, the design figures and the flight are held to each other on every run.
+
+    Two fixtures. A velocity moved by a metre per second no longer comes from the recorded node,
+    argument of perigee and speed scale, so the six numbers have left their explanation. And a
+    recorded return perigee the flight does not reproduce is a figure from somewhere else.
+    """
+    definition = copy_definition(fixture_dir(tmp_path, "moved-vector"))
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    old = "  velocity_xyz_m_s: [-8393.743, 5816.3481, 3964.3329]\n"
+    assert old in text, "the fixture no longer matches the declared vector"
+    path.write_text(text.replace(old, "  velocity_xyz_m_s: [-8392.743, 5816.3481, 3964.3329]\n", 1))
+    result = run_linter(definition)
+    assert result.returncode != 0
+    assert "have moved apart" in result.stdout, result.stdout[-1500:]
+
+    definition = copy_definition(fixture_dir(tmp_path, "wrong-return"))
+    path = definition / "mission.yaml"
+    text = path.read_text()
+    old = "      return_perigee_alt_km: 40.2\n"
+    assert old in text, "the fixture no longer matches the recorded solution"
+    path.write_text(text.replace(old, "      return_perigee_alt_km: 60.2\n", 1))
+    result = run_linter(definition)
+    assert result.returncode != 0
+    assert "solution.return_perigee_alt_km" in result.stdout, result.stdout[-1500:]
+
+
 def test_the_linter_refuses_a_transfer_sized_to_the_moon_s_mean_distance(tmp_path):
     """A mean where an epoch belongs is the defect, and the check now measures the right radius.
 
@@ -19548,7 +19699,7 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # states the effect path owns through a one-way event.
     # 45 -> 48 in round 80, and this is the largest single move a *value* round has made: three
     # commanded modes the launch checklist publishes a position for, which the hold then carries.
-    assert len(advanced) == 52, sorted(advanced)
+    assert len(advanced) == 53, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares.
     assert values["cabin_heat_csm"] == 733.0
@@ -21706,7 +21857,7 @@ def test_the_tick_can_read_what_the_build_order_promises():
     # 38 -> 41 in round 75: the three event-moved states, held by the tick and moved by the effect.
     # 41 -> 45 in round 76 and 45 -> 48 in round 80: the seven positions `mission.yaml#launch_state`
     # now declares, the last three of them read out of the launch checklist.
-    assert len(ready) == 52 and len(advanced) == 52
+    assert len(ready) == 53 and len(advanced) == 53
 
 
 # ---------------------------------------------------------------------------------------------
