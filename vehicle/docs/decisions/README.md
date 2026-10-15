@@ -24,6 +24,10 @@ lag ceiling, no catch-up burst, shed-dilate-stop, freeze on downtime, MET-as-UTC
 K's mechanics, L(a), M, and the encoder swap accepted under the owner's
 delegation; chassis review pending. WP08's children are named in
 it and `tools/measure_clock.py` reads its figures).
+[0003](0003-quiet-coast-model-corrections.md) — model corrections for the quiet-coast episode: no
+source converter, flown bus routing, reactants per ampere, pump as flow, three defect fixes
+(accepted 2026-10-15 under D1); the episode's scope and the thermal lumps are the operator's
+(proposed).
 
 The table lists design questions, not extra product features. Link each
 record from its public work package. The roadmap can proceed through research
