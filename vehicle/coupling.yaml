@@ -286,6 +286,12 @@ nodes:
     kind: flow
     unit: W
     apollo: "261-263"
+    # What the three modules deliver: the load on each main bus, their sum, and the module current
+    # those loads draw. Four states, so every edge leaving this node names the one it reads.
+    state_order: [bus_a_load_w, bus_b_load_w, fuel_cell_power_w, fuel_cell_current_a]
+    state_order_note: >-
+      the bus loads are the switches' sums, the generation is the two added, and the current is each
+      bus's solve at its own load, so each reads only the ones before it (`domains/power/rules.py`)
   # **The converter is a different article, and it was riding on the cell's node.**
   #
   # `source_converter_v` is a voltage and `fuel_cell` is declared in watts, so the two were never
@@ -639,6 +645,7 @@ edges:
         regulated output the bus sees. What would close it: a source-resistance figure for the
         1.2 kW converter, or a measured regulation transient against load
   - id: E-FC-BUSB
+    reads: bus_b_load_w   # what fuel cell 3 delivers is bus B's load; `bus_b_v`'s rule solves the voltage from it
     from: fuel_cell
     to: bus_b
     kind: algebraic
@@ -655,6 +662,7 @@ edges:
         and it cannot give the two sources separate failure modes while one `fuel_cell` node stands
         for all three modules
   - id: E-FC-BUS
+    reads: bus_a_load_w   # what fuel cells 1 and 2 deliver is bus A's load; `bus_a_v`'s rule solves the voltage from it
     from: fuel_cell
     to: bus_a
     kind: algebraic
@@ -784,6 +792,7 @@ edges:
         loss in the separator would be a second quantity on a separate edge, and none is
         declared, so none is assumed
   - id: E-FC-HEAT
+    reads: fuel_cell_power_w   # the node carries four states since the bus loads and current joined it
     from: fuel_cell
     to: coldplate_t
     kind: rate
@@ -1584,31 +1593,32 @@ edges:
             rather than a reclose
 
   - id: E-FC-DRAW-O2
+    reads: fuel_cell_current_a   # per ampere of module current (ADR 0003 item 3), not per watt
     from: fuel_cell
     to: fc_o2_draw
     kind: rate
     advances: fc_o2_draw_kg_s
     sensitivity:
-      value: 8.8619e-08
-      unit: "kg/s per W"
+      value: 2.56996e-06
+      unit: "kg/s per A"
       basis: derived
       derivation:
-        expression: h2_lb_per_h_per_a * lb_to_kg / seconds_per_hour / output_v / h2_per_o2
+        expression: h2_lb_per_h_per_a * lb_to_kg / seconds_per_hour / h2_per_o2
         inputs:
           h2_lb_per_h_per_a: vehicle.yaml:electrical.fuel_cells.h2_lb_per_h_per_a
           lb_to_kg: 0.45359237
           seconds_per_hour: 3600
-          output_v: vehicle.yaml:electrical.fuel_cells.output_v
           h2_per_o2: coupling.yaml:edges.E-H2-FC.sensitivity.value
       at: nominal
       relation: >-
         the consume side of E-O2-FC: one kilogram of oxygen per kilogram of oxygen, at the rate the
-        cell's own operating point fixes. It carries the state's figure rather than restating it,
-        so the edge and the state cannot disagree about what a joule costs. Faraday's floor is
-        still exact and still the check on it — a cell moving four electrons per O2 draws
-        0.032 / (4 * 96485.33212 * V_cell) kg/J, which at the module's 29 V over 31 cells is
-        8.863e-08 kg/J, and the derived 8.8619e-08 sits 0.01 % away from it because the ratio step
-        divides by 0.126 where Faraday's own arithmetic divides by 0.1260
+        modules' current fixes. **Per ampere** (ADR 0003 item 3): the J-mission EPS handout
+        (1 Oct 1971) p. 2.6-21 publishes O2 = 2.04e-2 x I lb/h and H2 = 2.57e-3 x I lb/h per fuel
+        cell, and this is the hydrogen figure over the reaction's 0.126 mass ratio, 0.020397 lb/h per
+        ampere, 0.01 % from the table's 0.0204. It was 8.8619e-08 kg/s per W, the same figure divided
+        by a fixed 29 V, which undercounted by 7 % at a 27 V terminal. Faraday's floor is still the
+        check: four electrons per O2 is 0.032 / (4 * 96485.33212) = 8.2914e-8 kg/s per ampere per
+        cell, times 31 cells in series is 2.5703e-6 kg/s per module ampere, 0.01 % from this value
       note: >-
         **this edge was declared UNCONFIGURED and "staying that way", and it was one division
         away from three published numbers.** The claim was that the only missing scalar was "the
@@ -1622,26 +1632,27 @@ edges:
         which is why this one was left unset, and why the lesson is that "unpublished" needs the
         same reader as any other claim
   - id: E-FC-DRAW-H2
+    reads: fuel_cell_current_a   # per ampere of module current, as E-FC-DRAW-O2
     from: fuel_cell
     to: fc_h2_draw
     kind: rate
     advances: fc_h2_draw_kg_s
     sensitivity:
-      value: 1.1166e-08
-      unit: "kg/s per W"
+      value: 3.23815e-07
+      unit: "kg/s per A"
       basis: derived
       derivation:
-        expression: per_joule_kg * h2_per_o2
+        expression: per_amp_kg * h2_per_o2
         inputs:
-          per_joule_kg: coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value
+          per_amp_kg: coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value
           h2_per_o2: coupling.yaml:edges.E-H2-FC.sensitivity.value
       at: nominal
       relation: >-
-        the oxygen edge's figure times the reaction's 0.126 mass ratio, which is the same answer as
-        the published hydrogen rate divided by the same 29 V: 0.00257 lb/hr per ampere is
-        1.116602e-8 kg per joule, or 0.0402 kg H2 per kWh. Two routes to one number, and the edge
-        carries the one that keeps it joined to the oxygen edge, so a drift in either the operating
-        point or the stoichiometry moves both
+        the oxygen edge's figure times the reaction's 0.126 mass ratio, which is the published
+        hydrogen rate itself: 0.00257 lb/h per ampere (J-mission EPS handout p. 2.6-21; Mission E
+        consumables analysis) is 3.23815e-7 kg/s per ampere. Two routes to one number, and the edge
+        carries the one that keeps it joined to the oxygen edge, so a drift in the stoichiometry
+        moves both
       note: >-
         separate from the oxygen edge and deliberately not folded into it: the two gases are
         separate stocks, either can limit the cell, and a fleet that has run out of one has not
