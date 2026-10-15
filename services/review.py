@@ -615,18 +615,6 @@ def position_label(index: int, loaded: int, approximate_total: int | None) -> st
     return f"turn {index + 1} of about {approximate_total}"
 
 
-def pressure_label(pressure) -> str:
-    """How full the conversation is against the window it is sent in.
-
-    Worth showing because it is the number that predicts, better than anything
-    else here, when an agent is about to start losing the beginning of its own
-    conversation. An em dash means the checkpoint has not said yet.
-    """
-    if not isinstance(pressure, float | int):
-        return "—"
-    return f"{int(round(pressure * 100))}%"
-
-
 def page(title: str, body: str, *, refresh: int | None = None) -> bytes:
     meta = f'<meta http-equiv="refresh" content="{refresh}">' if refresh else ""
     return (
@@ -637,13 +625,23 @@ def page(title: str, body: str, *, refresh: int | None = None) -> bytes:
     ).encode()
 
 
+def _claim_cell(claim: dict | None, cap: int = SUMMARY_CAP) -> str:
+    value = claim.get("value") if isinstance(claim, dict) else None
+    if value is None:
+        return "<span class=meta>—</span>"
+    text = str(value).splitlines()[0] if str(value) else ""
+    return f"<span class=warn title='{esc(CLAIM)}'>{esc(text[:cap])}*</span>"
+
+
 def render_fleet(rows: list[dict], summary: dict) -> bytes:
+    states = ", ".join(f"{count} {state}" for state, count in summary["liveness"].items() if count)
     head = (
         "<h1>space_chassis — the fleet</h1>"
-        f"<p class=note>{esc(summary['agents'])} agent(s), {esc(summary['runs'])} run(s), "
+        f"<p class=note>{esc(summary['agents'])} agent(s): {esc(states) or 'none seen'}; "
         f"{esc(summary['turns'])} turn(s) in view, "
         f"{summary['bytes'] / 1e6:.1f} MB of transcript. Read-only: this panel opens the "
-        "record, and nothing it does can change it.</p>"
+        "record, and nothing it does can change it. Liveness and signals are the monitor's, "
+        f"from the recorders' transcripts; * marks {esc(CLAIM)}.</p>"
     )
     if not rows:
         return page(
@@ -652,40 +650,47 @@ def render_fleet(rows: list[dict], summary: dict) -> bytes:
             "conversation appears here.</p>",
             refresh=10,
         )
-    cells = "".join(
-        "<tr>"
-        f"<td><a href='/agent/{esc(r['slug'])}'>{esc(r['slug'])}</a></td>"
-        f"<td>{esc(r['runs'])}</td>"
-        f"<td>{esc(r['turns_loaded'])}{'…' if r['more_available'] else ''}</td>"
-        f"<td class='{'ok' if r['last_exit'] in (0, 42) else 'bad' if r['last_exit'] else 'meta'}'>"
-        f"{esc(r['last_exit'])}</td>"
-        f"<td>{esc(r['last_tier'])}</td>"
-        f"<td>{pressure_label(r['context_pressure'])}</td>"
-        f"<td>{', '.join(esc(x) for x in r['pump_running']) or '—'}</td>"
-        f"<td>{r['transcript_bytes'] / 1e6:.1f} MB</td>"
-        "</tr>"
-        for r in rows
-    )
+
+    def cells(r: dict) -> str:
+        signals = r["signals"]
+        spend = signals.get("spend") if isinstance(signals.get("spend"), dict) else {}
+        caps = signals.get("caps") if isinstance(signals.get("caps"), dict) else {}
+        state = r["liveness"]
+        kind = "ok" if state == "active" else "bad" if state == "stale" else "warn"
+        return (
+            "<tr>"
+            f"<td><a href='/agent/{esc(r['slug'])}'>{esc(r['slug'])}</a></td>"
+            f"<td class={kind}>{esc(state)}</td>"
+            f"<td>{esc(signals.get('incarnations', '—'))}</td>"
+            f"<td>{esc(spend.get('requests', '—'))}/{esc(caps.get('requests', '—'))}</td>"
+            f"<td>{esc(signals.get('refusals', '—'))}</td>"
+            f"<td>{esc(signals.get('tool_errors', '—'))}/{esc(signals.get('tool_results', '—'))}</td>"
+            f"<td>{esc(r['turns_loaded'])}{'…' if r['more_available'] else ''}</td>"
+            f"<td>{r['transcript_bytes'] / 1e6:.1f} MB</td>"
+            f"<td>{_claim_cell(r['claims'].get('recovery_note'))}</td>"
+            "</tr>"
+        )
+
     table = (
-        "<table><tr><th>agent</th><th>runs</th><th>turns</th><th>last exit</th><th>tier</th>"
-        "<th>window</th><th>scheduled</th><th>transcript</th></tr>" + cells + "</table>"
+        "<table><tr><th>agent</th><th>liveness</th><th>incarnations</th><th>hour / cap</th>"
+        "<th>refusals</th><th>tool errors</th><th>turns</th><th>transcript</th>"
+        "<th>last note*</th></tr>" + "".join(cells(r) for r in rows) + "</table>"
     )
     return page("space_chassis — the fleet", head + table, refresh=15)
 
 
 def render_turn(turn: dict, slug: str, position: str | None = None) -> str:
     pos = position or f"#{turn['index']}"
-    status = turn.get("status")
-    status_class = "ok" if status == 200 else ("bad" if status and status >= 400 else "meta")
     usage = turn.get("usage") or {}
     tokens = usage.get("total_tokens")
-    pieces = [
-        f"<b>{esc(pos)}</b> ",
-        f"<span class=meta>{esc(turn['at'])}</span> ",
-        f"<span class={status_class}>status {esc(status)}</span> ",
-    ]
-    if turn.get("duration_seconds") is not None:
-        pieces.append(f"<span class=meta>{turn['duration_seconds']}s</span> ")
+    pieces = [f"<b>{esc(pos)}</b> ", f"<span class=meta>{esc(turn['at'])}</span> "]
+    if turn.get("stream") not in (None, health.CORE):
+        pieces.append(f"<span class=meta>stream {esc(turn['stream'])}</span> ")
+    if turn.get("fresh"):
+        pieces.append("<span class=ok>new conversation</span> ")
+    if turn.get("error") is not None:
+        label = "refused" if turn.get("refused") else "error"
+        pieces.append(f"<span class=bad>{label}: {esc(turn['error'])}</span> ")
     if tokens:
         pieces.append(
             f"<span class=meta>{esc(tokens)} tokens "
@@ -699,8 +704,6 @@ def render_turn(turn: dict, slug: str, position: str | None = None) -> str:
         pieces.append(f"<span class=meta>→ {names}</span>")
     if turn.get("reasoning"):
         pieces.append(" <span class=meta>[thought]</span>")
-    if turn.get("refusal"):
-        pieces.append(f" <span class=bad>{esc(turn['refusal'])}</span>")
 
     if turn.get("unparseable"):
         return (
@@ -745,11 +748,6 @@ def render_turn(turn: dict, slug: str, position: str | None = None) -> str:
         body.append(f"<pre class=task>{esc(message.get('text'))}</pre>")
     if not body:
         body.append("<p class=note>This turn carries no new text.</p>")
-    if not turn.get("delta_known"):
-        body.append(
-            "<p class=note>This is the oldest turn in the loaded window, so what was new in "
-            "it cannot be separated from what came before.</p>"
-        )
     if turn.get("tools_offered"):
         names = ", ".join(esc(n) for n in (turn.get("tools_offered_names") or []) if n)
         body.append(
@@ -768,21 +766,23 @@ def render_turn(turn: dict, slug: str, position: str | None = None) -> str:
 
 def render_agent(row: dict, turns: list[dict], limit: int, before: int | None) -> bytes:
     slug = row["slug"]
+    signals = row["signals"]
+    spend = signals.get("spend") if isinstance(signals.get("spend"), dict) else {}
     head = [
         f"<h1>{esc(slug)}</h1>",
         "<p class=note>",
-        f"{esc(row['runs'])} run(s) · last exit "
-        f"<span class='{'ok' if row['last_exit'] in (0, 42) else 'meta'}'>"
-        f"{esc(row['last_exit'])}</span>",
-        f" · tier {esc(row['last_tier'])}",
+        f"{esc(row['liveness'])} · {esc(signals.get('incarnations', '—'))} incarnation(s) · "
+        f"{esc(spend.get('requests', '—'))} request(s) this hour · "
+        f"{esc(signals.get('refusals', '—'))} refusal line(s)",
         f" · {row['transcript_bytes'] / 1e6:.1f} MB of transcript",
         f" · <a href='/'>fleet</a> · <a href='/api/agent/{esc(slug)}'>json</a>",
         "</p>",
     ]
-    if row.get("last_note"):
+    note = row["claims"].get("recovery_note", {}).get("value")
+    if note:
         head.append(
-            f"<p class=note>the last run ended: {esc(row['last_note'])} "
-            "(this is the supervisor's record, not the agent's account)</p>"
+            f"<p class=warn>last recovery note*: {esc(note[:TEXT_CAP])}<br>"
+            f"<span class=meta>* {esc(CLAIM)}: written inside the agent's container</span></p>"
         )
     if row.get("transcript_error"):
         head.append(f"<p class=bad>{esc(row['transcript_error'])}</p>")
