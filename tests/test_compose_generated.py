@@ -337,3 +337,41 @@ def test_the_review_panel_listens_on_the_port_its_mapping_targets() -> None:
     review = SERVICES["review"]
     assert "REVIEW_PORT" not in review["environment"]
     assert review["ports"] == ["${REVIEW_BIND:-127.0.0.1}:${REVIEW_PORT:-8090}:8090"]
+
+
+def _sources(body: dict) -> list[str]:
+    return [
+        entry["source"] if isinstance(entry, dict) else entry.rsplit(":", 1)[0]
+        for entry in body.get("volumes") or []
+    ]
+
+
+def test_only_the_vehicle_mounts_its_state() -> None:
+    # The checkpoints, the lock and the durable record: hashes, lineage and hidden truth.
+    for name, body in SERVICES.items():
+        if name == "vehicle":
+            continue
+        assert not [s for s in _sources(body) if "/vehicle_state/" in s], name
+    state = [
+        entry
+        for entry in SERVICES["vehicle"]["volumes"]
+        if isinstance(entry, dict) and entry["target"] == "/state"
+    ]
+    assert len(state) == 1 and "/vehicle_state/data" in state[0]["source"]
+    assert state[0].get("read_only") in (None, "false", False)
+
+
+def test_the_vehicle_state_is_not_the_window() -> None:
+    sources = _sources(SERVICES["vehicle"])
+    window = [s for s in sources if "/diode/" in s]
+    state = [s for s in sources if "/vehicle_state/" in s]
+    assert window and state
+    for w in window:
+        for s in state:
+            assert not s.startswith(w.rstrip("/") + "/") and not w.startswith(s.rstrip("/") + "/")
+
+
+def test_the_vehicle_service_runs_under_an_init() -> None:
+    # The console installs no SIGTERM handler; as PID 1 it would ignore docker stop.
+    assert SERVICES["vehicle"]["init"] in (True, "true")
+    assert SERVICES["vehicle"]["environment"]["VEHICLE_STATE_DIR"] == "/state"
