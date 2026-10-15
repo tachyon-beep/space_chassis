@@ -135,11 +135,11 @@ def agent_row(
     view = health.agent_view(
         volumes / f"transcripts_{slug}" / "data",
         volumes / f"telemetry_{slug}" / "data",
-        volumes / "diode" / "data" / slug / "output",
         now=now,
         quiet=quiet,
         caps=caps,
         pump_state=volumes / f"pump_{slug}" / "data" / "state.json",
+        window=(volumes / "diode" / "data", slug),
     )
     return {"slug": slug, "name": name, **view, "container": container}
 
