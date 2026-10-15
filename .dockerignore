@@ -20,6 +20,8 @@ site/
 .git/
 .github/
 .scratch/
+# The smoke stack builds after it prepares, so its scratch root is beside the context.
+.smoke-*/
 __pycache__/
 *.py[cod]
 .ruff_cache/
