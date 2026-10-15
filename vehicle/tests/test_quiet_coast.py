@@ -177,6 +177,20 @@ def test_the_smoke_run_is_judged_on_its_own_trace_and_every_stock_conserves(smok
     assert record["margins_min"]["coolant_supply"]["margin"] > 0
 
 
+def test_a_shed_by_command_is_not_mistaken_for_a_shed_with_no_rule(world, tmp_path):
+    """Policy B's `set_load` writes `load_enabled`, which shares its node with `load_shed_class`.
+    The trace reads each state by its own key, so the switch map is not read as the ladder's
+    class and the smoke run is a clean `timeout`, with the shed loads off in the trace."""
+    trace = tmp_path / "trace.jsonl.gz"
+    episode_eval.run_episode(episode(world, "b"), trace, ticks=SMOKE_TICKS)
+    record = judge(trace)
+    assert record["class"] == "timeout", record["apparatus"]
+    _, rows = episode_eval.read_trace(trace)
+    switches = rows[0]["s"]["load_enabled"]
+    assert switches["csm_lighting"] == switches["csm_comm_heaters"] == "off"
+    assert all(row["s"].get("load_shed_class") is None for row in rows)
+
+
 def doctored(smoke: Path, tmp_path: Path, edit) -> Path:
     with gzip.open(smoke, "rt") as handle:
         lines = [json.loads(line) for line in handle]

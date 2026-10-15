@@ -152,6 +152,7 @@ class TraceWriter:
                 "episode.trace_states", f"names {missing}, which no domain declares"
             )
         self.by_id = {sid: by_id[sid] for sid in self.states}
+        self.world = episode.world
         self.previous: dict[str, Any] | None = None
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # Held open for the run, one line a tick, and closed by `close()` in the runner's `finally`.
@@ -186,13 +187,28 @@ class TraceWriter:
             json.dumps(row, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
         )
 
+    def level(self, values: dict[str, Any], state: plant.State) -> Any:
+        """A state's own value: by its id, or on the sentinel, or by a node only it occupies.
+
+        Not `plant.state_level`, whose node fallback on a node several states share hands back
+        another state's value: `load_shed_class`, which never advances, read `load_shed_state`'s
+        key once `set_load` wrote it, and a switch map looked like a shed with no rule.
+        """
+        if state.id in values:
+            return values[state.id]
+        if state.node == "internal":
+            return (values.get("internal") or {}).get(state.id)
+        if len(self.world.states_on(state.node)) == 1:
+            return values.get(state.node)
+        return None
+
     def segment(self, number: int, start_tick: int) -> None:
         self._line({"segment": number, "start_tick": start_tick})
 
     def on_tick(
         self, tick: int, values: dict[str, Any], ledger: plant.Ledger, gaps: list[plant.Gap]
     ) -> None:
-        current = {sid: plant.state_level(values, state) for sid, state in self.by_id.items()}
+        current = {sid: self.level(values, state) for sid, state in self.by_id.items()}
         if self.previous is None:
             changed = current
         else:
