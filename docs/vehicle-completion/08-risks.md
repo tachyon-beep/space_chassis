@@ -8,7 +8,7 @@ likelihood. Each row names an owner and what would show it has happened.
 | risk | effect | owner | signal | response |
 |---|---|---|---|---|
 | **A physical input has no applicable source** (converter impedance, thermal node aggregation, RCS jet geometry and impulse, helium feed were already named as research blockers on 2026-10-04) | the dependent domain never passes V; a bounded episode that depends on it cannot be accepted | vehicle; John for scope | a WP02/WP03 child closes as "no applicable source" | the value stays `UNCONFIGURED`; the question goes to John as a scope decision with the options: accept a declared approximation with provenance `chosen` and a stated bound, narrow the vehicle's objective, or leave the state out of V's scope |
-| **The local-only work is lost** before it is pushed (`#39` Option B, `#23`, Phase B, brief v5) | weeks of reviewed work redone | John (residual 1) | a disk or `/tmp` loss on his workstation | push now (D11) |
+| **The local-only work is lost** before it is pushed (`#39` Option B, `#23`, Phase B, brief v5) | weeks of reviewed work redone | a session on John's machine (approved, D18) | a disk or `/tmp` loss on his workstation | push now (D11) |
 | **The complete vehicle misses live real time** (20 ms per tick with instruments and ten windows) | a slower-than-real-time world or a native port | vehicle; John for the target | `plant.py --mission` trend in CI artifacts crossing ~10 ms before WP09 | the route in [05-performance.md](05-performance.md); the fork (native core vs `m < 1`) is John's |
 | **Review depth collapses back into rounds** once the slot regime is gone | throughput falls again | governance | more than two review rounds on a PR | the stopping rule; CI carries the mechanical checks |
 | **The referee cannot run in CI** (memory, time) | gate D unenforced again | vehicle | red or timed-out lanes | fix the > 13 GB test; split the referee by domain |
@@ -32,10 +32,10 @@ likelihood. Each row names an owner and what would show it has happened.
 
 | dependency | needed for | state |
 |---|---|---|
-| a session on John's machine | pushing local work; killing the watcher; the host migration into `aurora/` | waits on residual 1 |
+| a session on John's machine | pushing local work; killing the watcher; the host migration into `aurora/` | approved (D18); not yet run |
 | an environment that can build the image | live checks, Phase B acceptance, the bounded episode | the project has no environment selected (readiness review) |
-| John's confirmation of the caps | any paid run | residual 2 |
-| branch protection | gate D enforced | residual 3 |
+| the caps | any paid run | confirmed (D19) |
+| branch protection | gate D enforced | approved (D20), after root CI is green |
 | the frozen corpus and primary Apollo sources | M2 | available; applicability per question |
 | an independent physics reviewer per M3 package | gate V | assigned when each package is claimed |
 
@@ -59,7 +59,7 @@ These are not open now. Each is named here so that nobody treats it as already d
 | when | decision |
 |---|---|
 | a WP02/WP03 question closes with no applicable source | accept a `chosen` approximation with a bound, narrow the objective, or leave the state out of V |
-| the bounded episode is accepted | run a paid pilot on it (residual 5): budget, model, fleet size, stop criteria |
+| the bounded episode is accepted | the 10-minute smoke and 60-minute coordination tests (D22): model, fleet size and stop criteria per stage |
 | the complete vehicle misses 20 ms per tick after optimisation | native core, or `m < 1` |
 | WP12 needs faster replay than measured | re-decide the 300-second target |
 | any change to the vehicle's objective or evidence standard | his alone |

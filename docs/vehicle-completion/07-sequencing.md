@@ -22,7 +22,7 @@ day one.
 
 | step | who | output |
 |---|---|---|
-| Push the local-only work (D11) | a session on John's machine, after residual 1 | `wip/vehicle/39-option-b`, `wip/vehicle/23-clock-seam`, `wip/aurora/phase-b`, the brief v5 and `.scratch` evidence under `governance/*/records/` where small |
+| Push the local-only work (D11) | a session on John's machine, approved, D18 | `wip/vehicle/39-option-b`, `wip/vehicle/23-clock-seam`, `wip/aurora/phase-b`, the brief v5 and `.scratch` evidence under `governance/*/records/` where small |
 | Root CI (D6) | governance or aurora stream | `.github/workflows/{vehicle,aurora,docs}.yml`; the first green run on `main` |
 | Recreate the vehicle's issues here (D10) | governance stream | #1–#13, #19–#30, #35, #39, #40, #42 as `stream:vehicle` issues with links back |
 | Housekeeping (D17) | the session on John's machine | watcher killed; `#23` committed |
@@ -51,7 +51,7 @@ in `coupling.yaml`.
 Exit: the **bounded quiet-coast episode** (D14): two scripted policies meet a declared objective by
 different trajectories through the real executive; conservation runs on non-trivial transfers;
 restart mid-episode resumes; the evaluator decides independently of receipts. Then the tranche review:
-re-estimate, decide the paid pilot (residual 5).
+re-estimate, plan the smoke and coordination tests (D22).
 
 ## Tranche 3: breadth (L–XL, as many worktrees as there are evidenced domains)
 

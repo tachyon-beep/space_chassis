@@ -38,15 +38,20 @@ ones that genuinely need him are listed last.
 | D16 | **Spend caps:** the shipped recorder defaults (`aurora/.env.example`: 200,000,000 tokens per agent-hour, 2,000,000,000 per fleet-hour) are working figures for stub and smoke runs. No model-backed run starts until John confirms or replaces them (residual 2). | governance | Spending money is John's call; stub runs cost nothing | `aurora/.env.example` |
 | D17 | **Housekeeping on John's machine:** kill the obsolete watcher PID 1605464; recreate nothing under `/tmp` (D8 retires its only user); `#23` becomes a commit (D11). | governance; carried out by whoever next works on that machine | Answers the vehicle lane's four questions (`vehicle/records/2026-10-14-vehicle-lane-status.md` §5) | — |
 
-## Residual decisions for John
+## 2026-10-15 — John's answers to the residual decisions
 
-Only these need him. Each can be answered with one word.
+John, in the Space Aurora project (2026-10-15 04:28 UTC): "1. yes please, 2. yes, that's consistent
+with what I've seen in other aurora containers, 3. yes please, 4, approved, 5. yes initially a 10
+minute smoke test and then a 60 minute test to make sure the agents can coordinate and get the
+mission under way, then a final full test".
 
-1. **Push local work:** may a session on your machine push the local-only work in D11 to `wip/` branches?
-2. **Spend caps:** are the shipped defaults in D16 your figures?
-3. **Branch protection** on `main`, requiring CI once it is green?
-4. **Archive `tachyon-beep/space_vehicle`** once its issues are recreated here?
-5. **Paid pilot:** run a model-backed pilot on the first bounded episode (D14) before full V/M acceptance?
+| # | decision | who | where |
+|---|---|---|---|
+| D18 | **Push the local-only work.** A session on John's machine pushes `#39` Option B, `#23` candidate 3a, Phase B's P and R2c, the tier-1 brief v5 and the `.scratch` evidence to `wip/` branches as D11 lays out. | John | `status.md`; `docs/vehicle-completion/04-integration.md` §1 |
+| D19 | **Spend caps confirmed:** the shipped recorder defaults (`aurora/.env.example`: 2,400 requests and 200,000,000 tokens per agent-hour; 2,000,000,000 tokens per fleet-hour) are the figures. Closes spec §10.3 and D16. | John | `aurora/.env.example` |
+| D20 | **Branch protection on `main`**, requiring the root CI checks once D6's workflows are green, one approving review, and resolved conversations. A repository setting only John can make; the governance stream asks for it when CI is green. Closes vehicle `#15`. | John | `docs/vehicle-completion/06-verification.md` |
+| D21 | **Archive `tachyon-beep/space_vehicle`** once its open issues are recreated here (D10). The governance stream recreates the issues and tells John when the archive can be set. | John | `coordination.md` |
+| D22 | **Model-backed trials proceed in three stages**, each gated on the one before: a **10-minute smoke test** (the fleet starts, reaches the window, spends within caps); a **60-minute coordination test** (the agents coordinate and get the mission under way); then **the full test**. The first two run on the bounded episode as soon as it is accepted (D14), under the caps in D19 and the preflight in `completion.md` gate E; the full test waits on M. Each stage's protocol, stop criteria and evaluator are written before it runs (`docs/plans/2026-10-04-vehicle-to-green-programme.md` §7). | John | `docs/vehicle-completion/04-integration.md` §8; `08-risks.md` |
 
-Decision points that will need him later, at the moment they arise, are listed in
-`docs/vehicle-completion/08-risks.md` (for example, a physical input with no evidence).
+No residual decisions are open. Decision points that will arise later are listed in
+`docs/vehicle-completion/08-risks.md`.

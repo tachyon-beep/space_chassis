@@ -41,22 +41,21 @@ The full picture and the plan: [`docs/vehicle-completion/`](../docs/vehicle-comp
 | tier-1 brief wording v5 | `.scratch/tier1-brief-draft/` | with the tier-1 adoption |
 | the chassis lane's evidence | `refs/preserve/chassis-lane-evidence-2026-10-14` | `aurora/`'s records where small |
 
-Blocked on residual decision 1 (a session on his machine pushes them).
+Approved (D18); waits for a session on his machine to push them.
 
 ## What is blocked, and on whom
 
 | item | blocked on |
 |---|---|
-| everything in the table above | John: residual 1 |
+| everything in the table above | a session on John's machine (approved, D18) |
 | Phase B's full and live gates; tier-1 adoption; Option B's qualification; `#23`'s first test | the push above, then CI (D6) and an environment that can build the image |
-| branch protection | John: residual 3 |
-| any paid run | John: residual 2 |
+| branch protection | root CI green first (D20) |
+| any paid run | the bounded episode's acceptance; then the three stages in D22 |
 | nothing else | — |
 
 ## Decisions since the last status
 
-2026-10-15: restrictions lifted; D1–D17 in [`decisions.md`](decisions.md). Residual decisions for
-John: five, listed there.
+2026-10-15: restrictions lifted; D1–D17 in [`decisions.md`](decisions.md). John answered the five residual decisions the same day: D18–D22. None is open.
 
 ## History
 

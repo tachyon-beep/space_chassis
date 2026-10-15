@@ -16,7 +16,7 @@ block a package indefinitely, and parallel work does not remove integration cost
 |---|---|---|---|---|---|
 | M1 | WP01 executive and ingress | **closed** | — | — | — |
 | M1 | WP08 clock, persistence, continuity | 5 of 12 children merged | `#23`, `#25`–`#30` | M (code largely written for `#23`) | — |
-| M1 | `#39` claim race | tier 1 merged; Option B written, unqualified | qualify and merge Option B; chassis adopts | S | Option B pushed (residual 1) |
+| M1 | `#39` claim race | tier 1 merged; Option B written, unqualified | qualify and merge Option B; chassis adopts | S | Option B pushed (D18) |
 | M2 | WP02 electrical, thermal, consumables evidence | not started | every unset input in those domains | L–XL | — |
 | M2 | WP03 flight, propulsion, RCS evidence | not started | effectivity, geometry, impulse, mass properties | L–XL | — |
 | M3 | WP04 electrical solve | not started | nodal solve, source/load coupling | L | WP02 inputs for power |

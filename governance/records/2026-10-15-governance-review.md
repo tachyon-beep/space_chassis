@@ -168,6 +168,8 @@ and the programme documents it writes under `docs/` (`decisions.md` D12, D13).
 
 ## Residual decisions for John
 
+*Answered by John the same day, 04:28 UTC: all five yes (`../decisions.md` D18–D22).*
+
 Kept to what genuinely needs him; everything else was decided under his 2026-10-15 instruction and is
 open to his revision in `decisions.md`.
 

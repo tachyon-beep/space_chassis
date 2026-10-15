@@ -59,7 +59,7 @@ written; its blocker was process, not engineering.
 | [08-risks.md](08-risks.md) | Risks, assumptions, open issues, dependencies, and the decisions that will come back to John |
 
 Decisions taken for this suite are in [`governance/decisions.md`](../../governance/decisions.md)
-(2026-10-15, D3–D9, D14). The governance review that preceded it is
+(2026-10-15, D3–D9, D14, and John's answers D18–D22). The governance review that preceded it is
 [`governance/records/2026-10-15-governance-review.md`](../../governance/records/2026-10-15-governance-review.md).
 
 ## How to keep it true

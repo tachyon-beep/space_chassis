@@ -17,7 +17,7 @@ gate E, the accepted experiment apparatus.
 
 ## The adoption steps, in order
 
-### 1. Push the staged work (D11; needs residual decision 1)
+### 1. Push the staged work (D11; approved, D18)
 
 From John's machine: Phase B's P (`refs/preserve/phase-b-P-af671d04`) and R2c
 (`refs/preserve/phase-b-R2c-148a31c4`) as commits on `wip/aurora/phase-b`; the tier-1 brief v5; the
@@ -88,9 +88,13 @@ fields), and `brief/WORLD.md`'s description of telemetry quality matches what th
 After V and M (`vehicle/docs/completion.md`): exact vehicle, chassis and image SHAs recorded
 together; containment and diode probes on the built stack; the campaign-ready chassis (caps,
 transcripts, journal, operator stop); a bounded stub preflight, then a model-backed preflight under
-the confirmed caps (residual 2); a fixed trial protocol and an objective evaluator that reads the
+the confirmed caps (D19); a fixed trial protocol and an objective evaluator that reads the
 vehicle's private evidence, never agents' self-report (`docs/plans/2026-10-04-vehicle-to-green-programme.md`
 §7). A vehicle PR never claims E.
+
+John's trial plan (D22) is three stages, each gated on the last: a 10-minute smoke test, a 60-minute
+coordination test in which the agents get the mission under way, then the full test. The first two
+run on the bounded episode once it is accepted; the full test waits on gate M.
 
 ## The bounded episode's chassis needs (D14)
 
@@ -105,4 +109,4 @@ remains is the live run on a built image, which needs an environment that can bu
 ## Chassis questions settled by D15
 
 Each agent mounts its own transcript read-only; `scripts/journal.py --every 300` becomes a compose
-service; the base-image pin lands with Phase B. The cap figures remain John's (D16).
+service; the base-image pin lands with Phase B. The cap figures are confirmed (D19).
