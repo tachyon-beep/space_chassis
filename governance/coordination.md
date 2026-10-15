@@ -212,13 +212,25 @@ and no direct owner messages were sent. Emmy retains the existing browser relay.
 full/build/live remain ungranted; ELSPETH priority and Sultai's GPU reservation remain intact.
 John's Option B implementation approval stands; brief v5 remains draft pending final-text approval.
 
-**CURRENT ALLOCATION: NONE — 23:33 AEDT (master §32).** Exact v7 source and the final one-line
+**Previous allocation: NONE — 23:33 AEDT (master §32).** Exact v7 source and the final one-line
 proposal correction are accepted for K. §31's source blockers are resolved. Fresh host capacity
 is healthy and the proposed suite unit is absent, but Vehicle's old polling shell PID 1664354
 still matches v7 admission and would refuse K00. The existing owner must verify its identity,
 retire that specific obsolete watcher and return fresh admission evidence; no package redesign
 or admission bypass is requested. No controls or tests launched, no reservation, no direct owner
 message. Emmy retains the browser relay; K03 still requires explicit independently verified release.
+
+**CURRENT SLOT: RESERVED — `SPACE-20261011-B-V7-K1`, 23:44 AEDT (master §33).** The exact v7
+package is granted to the existing Vehicle owner for one harness invocation, at most 20 serial
+failure-injection controls, K03 last, no pytest. Obsolete watcher cleanup and unchanged identities
+are independently verified. Fresh 12:43:41 UTC admission: 37.76 GiB available, CPU 21.8%, load1
+5.92, no predicate matches/unclassified processes/Space units or containers; suite unit absent.
+**Launch before 13:00:00 UTC October 11 / 00:00:00 AEDT October 12**, after owner refresh within
+60 seconds of launch. Exact command, per-payload caps, suite/recovery/outer deadlines and evidence
+requirements are in §33. Expiry never releases launched/uncertain work. Explicit owner release
+plus coordinator-verified cleanup is mandatory, including after expected K03 exit 4/no receipt.
+No S1, retry, full/build/live, adoption or brief-text approval follows. Emmy retains the existing
+browser relay; nothing launched and no direct owner message sent by this coordinator.
 
 | channel | for |
 |---|---|

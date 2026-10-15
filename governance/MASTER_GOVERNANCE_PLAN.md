@@ -1903,3 +1903,116 @@ is required if the exact package is unchanged. Capacity snapshots alone are not 
 ELSPETH priority, Sultai GPU reservation, no GPU, one Space selection, and at most two workers remain.
 S1/retries/full/build/live remain ungranted. Chassis brief stays draft pending John's text approval.
 No reviewed code, controls, tests, collection or unit launch occurred. Main index hash is unchanged.
+
+## 33. V7 K-only allocation granted; shared slot reserved — 2026-10-11 23:44 AEDT
+
+**CURRENT SLOT: RESERVED — `SPACE-20261011-B-V7-K1`.** Under the existing delegated authority,
+grant the existing Vehicle owner `session_01GRfs7dVMu4v5airK6q3w9C` / session
+`a728e992-9471-46ab-9efe-ce550d7ece5f` exactly **one v7 K harness invocation**, at most the
+20 serial controls in the reviewed plan, with K03 last. No pytest, collection, S1, retry, full suite,
+build or live run follows. Emmy retains the existing browser relay; no direct owner message or
+execution occurred in this coordination turn.
+
+**Launch expiry: 2026-10-11 13:00:00 UTC / 2026-10-12 00:00:00 AEDT.** If not launched by then,
+the launch permission expires; report NOT STARTED and return for refreshed admission/allocation.
+Expiry never releases a launched or uncertain run. Once launched, hold the slot until explicit
+owner release and coordinator-verified cleanup. No other Space selection is allocated concurrently.
+
+### Cleanup and admission verified
+
+Read the owner retirement receipt and matching transcript evidence: the owner revalidated PID
+1664354/startticks 53945734/UID 1000/PPID 1410330, preserved its output, and reports TERM to that
+PID alone at 12:40:03 UTC, followed by absence at 12:40:15. Independently confirmed PID absent,
+parent 1410330 still present, and unrelated watcher 1605464 still present at fresh inspection.
+The latter does not match admission and remains outside this grant; no cleanup of it is required.
+Original and preserved output bytes match SHA256
+`2fa18ba6805656128e5d45a0c259b5a63b7ae0921ebe5c14e03d178b3b818ef9`.
+Retirement `RECORD.md`: `95cbecdad7c80776c47c1e71499755ebc3e813ec054bacc8b74514b46a0ae245`;
+owner admission snapshot: `b72674606c3d9b27712d12cf1e60ddd9cba78bdcf06edd57c97e858c689f44ba`.
+
+Independent read-only Nyx check at **12:43:41 UTC / 23:43:41 AEDT**: 24 logical CPUs,
+**37.76 GiB available**, **21.8% CPU busy** over two seconds, load1 **5.92**; no v7 predicate
+matches or unclassified unreadable processes, no Space user units or Space-named containers.
+The nine protected host processes fit v7's narrow classification. Proposed suite unit is
+not-found/inactive with empty ControlGroup. Two unrelated containers and interactive/MCP processes
+remain untouched. Existing allocation records and the waiting owner's receipt identify no other
+active Space grant. Discovery is a secondary check, not the source of exclusive allocation.
+
+### Frozen grant identities
+
+- Proposal SHA256: `4fe7c40ca3e094fa64a807605feee7d02c882cc324f3256420f40a082495fdb8`.
+- Manifest SHA256: `422ff9aa4ed7573fc9e79117f57e7135ac10c7f8cdfde2d44fcee53b78f55b32`;
+  all 26 entries independently reverified. Script/plan identities and accepted residuals are §32.
+- Candidate HEAD: `f75420cee5a1c7d4cd4ccb1ab8e95e5a9b96944f`.
+- Candidate diff SHA256: `0a00336feb10dcd5c8839893cabafbdc5cbea20474f918d76dc1e0eca3f2d01d`.
+- Candidate tree: `b447955f60c528e78d05c324ecc4c4317128d1a1`; all 92 tracked blobs reverified,
+  no untracked non-ignored paths. K and S1 evidence directories still absent.
+
+Immediately before the suite launch (within 60 seconds), the owner must independently refresh
+identity, evidence freshness, slot ownership and v7 admission: MemAvailable >=16 GiB, CPU busy
+<=50% over two seconds (unknown refuses), load1 <=12, no competing Space selection/process/unit/
+container, and the exact suite name unused. Do not start after a failed/unknown check or alter the
+reviewed predicates to pass. Admission must precede the harness because it creates decoys before
+per-control admission. No overlapping Space work may be launched by either owner during this grant.
+
+### Exact one-shot command for the owner
+
+After the checks above, execute once as the existing unprivileged owner on Nyx, with the working
+user systemd bus. These commands produce the same argv as the reviewed proposal; no source change:
+
+```sh
+K_V7=/home/john/space_chassis/.scratch/wp01-handoff/diag-contract-probe/B-sel1/v7
+mkdir -p "$K_V7/controls-evidence"
+systemd-run --user --no-block --collect --unit=space-vehicle-b-suite-k1 -p RuntimeMaxSec=2040 -p KillMode=control-group -p TimeoutStopSec=30 -p Nice=19 -p Environment=CUDA_VISIBLE_DEVICES= -p "WorkingDirectory=$K_V7" -p "StandardOutput=file:$K_V7/controls-evidence/harness.out" -p "StandardError=file:$K_V7/controls-evidence/harness.out" /usr/bin/python3 "$K_V7/run_controls.py" "$K_V7/controls.json"
+```
+
+Require a fresh evidence directory, no reused unit and no rerun after any result. A failed launch
+must be reconciled as possibly created until successful unit/cgroup/process queries prove otherwise.
+Record UTC launch time and outer unit InvocationID, MainPID, ControlGroup and property readback.
+
+### Bounds, abort and release
+
+K contains no test workers. Retain the program maximum of two workers and one Space selection.
+The outer harness and payload services use Nice=19, and all reviewed payloads use no GPU.
+Each serial payload service has CPUQuota=200%, MemoryMax=6G, MemorySwapMax=0, OOMPolicy=stop;
+K09 deliberately uses 64M. Payload cap readback precedes GO. These are per-payload caps; the outer
+harness/control clients and tiny sleep decoys are not collectively covered by that memory/CPU cap.
+Do not describe it as an aggregate 6-GiB cgroup ceiling. ELSPETH retains priority, Sultai's GPU
+reservation is untouched, and no host security changes or privilege escalation are authorised.
+
+Suite budget is 1,800 seconds, with a 120-second post-control reserve and a 210-second minimum
+remaining before another control starts. Each supervisor timeout is at most its declared bound
+(325 seconds normally; K08 301, K08b/K16 275, K17 299), further reduced by the remaining suite
+budget/reserve. Recovery is bounded to 180 seconds, ending by 1,980 seconds under the reviewed
+normal scheduling assumptions. Outer RuntimeMaxSec is 2,040 seconds and TimeoutStopSec 30:
+the operational outer deadline is **launch + 2,070 seconds (34.5 minutes)**. Separate payload
+units retain RuntimeMaxSec 95 normally, 71 for K08, 45 for K08b/K16, 69 for K17, with 15-second
+stop; the owned decoy unit has RuntimeMaxSec 120. Missing deadline evidence is failure, not pass.
+
+Per-control admission/pre-GO health checks and five-second monitoring remain enforced. MemAvailable
+below 10 GiB, attributable unexpected OOM, lost supervision/ownership or deadline failure aborts
+owned work; CPU >85% (unknown counts high) or load1 >20 for three samples also aborts. Expected
+injected OOM/deadline/interrupt/refusal results count only with their exact cause assertions and
+independent cleanup checks. Do not confuse a deliberate control failure with permission to retry.
+If ELSPETH needs the slot or monitoring/cleanup becomes uncertain, stop only this allocation's
+outer/control/decoy units and preserve the evidence; keep the slot held pending reconciliation.
+
+Return the 20 per-control rows/checks, raw harness output and status, all available supervisor
+logs/receipts/summaries, caps/signals/samples/terminal evidence, suite token/final recovery proof,
+actual start/end times, and unchanged before/after identities. Acceptance requires exactly the
+intended controls, every expected assertion, and clean final proof; wrapper exit or unit absence
+alone is insufficient. A missing/partial report, unknown discovery, timeout or unmatched cause
+is not qualification.
+
+**K03 is last and deliberately returns 4 with no supervisor release receipt.** Its expected result
+does not release the slot. The owner must return an explicit result/cleanup/RELEASE receipt after
+the suite ends. This coordinator independently verifies the outer unit and every logged control/
+owned decoy unit are absent/inactive with absent cgroups, no owned token/helper/decoy processes,
+and no live monitor or harness remains. Only then mark the slot FREE. Failed/unknown proof keeps
+it HELD and is escalated through Emmy; no blanket stop or change to unrelated processes.
+
+K success would qualify these supervision controls only. It does not qualify candidate3's vehicle
+tests, grant S1, advance chassis adoption, approve final brief text or close issue 42. No execution,
+control, test, collection, commit or owner source edit was performed by this coordinator; only
+coordinator records changed. Main index SHA256 remains
+`86487638e8c0ae03e2c8739565e25d819e157e95967f4c17c5d1fc7c7623ac2a`.
