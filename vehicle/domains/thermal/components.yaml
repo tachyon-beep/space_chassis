@@ -40,8 +40,13 @@ natural_rate_hz: 1
 # rather than driven by a voltage, and until the edge existed this domain's pump states had no path
 # from the executive. `check_domain_reads` is what forced the declaration — the edge is the graph's
 # half and this list is the domain's, and the two are held equal.
+#
+# `load_shed_state` arrived with ADR 0003: power's `load_enabled` (one position per load, moved by
+# `set_load`) lives there, and the zone heat rates are sums over the loads it has on. No edge
+# carries it, because a command lands at step 1 before any node walks, so the value read is this
+# tick's whatever the schedule; the linter counts the read as declared-without-an-edge.
 reads: [fuel_cell, bus_a, bus_b, avionics_compute, link, instrumentation, rcs_thrust,
-        structure_config, water_cooling, command_executive]
+        structure_config, water_cooling, command_executive, load_shed_state]
 writes: [coolant_flow, coolant_supply_t, coldplate_t, radiator_eq, radiator_reject, loop_transport,
          cabin_zone_t, lm_cabin_zone_t, cabin_heat_csm, cabin_heat_lm, cabin_eq_csm,
          cabin_eq_lm, environment_heat, service_bay_heat, descent_bay_heat,
@@ -58,7 +63,8 @@ writes: [coolant_flow, coolant_supply_t, coldplate_t, radiator_eq, radiator_reje
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [heater_bank_duty, comm_amp_t, avionics_bay_heat_w, loop_primary_load_w, loop_lm_load_w]
+internal_order: [heater_bank_duty, coolant_pump, evaporator_feed, radiator_bypass, comm_amp_t,
+                 avionics_bay_heat_w, loop_primary_load_w, loop_lm_load_w]
 internal_order_note: >-
   the heater is a decision and the amplifier's temperature is what the decision is about;
   nothing on this sentinel feeds the other within a tick, and the order says which is read
@@ -74,19 +80,19 @@ state:
     method: algebraic
     unit: W
     total_w: 733
+    # The rule (`domains/thermal/rules.py`) sums these over the loads `power.load_enabled` has on,
+    # this tick. Each figure is the power inventory's `demand_w`, copied so the rule can read it
+    # (a rule reads only its own state's declaration); `tests/test_thermal_rules.py` holds every
+    # entry equal to `domains/power/components.yaml#loads.<id>.demand_w` and the key set equal to
+    # `heat_inputs.csm_cabin`, so the copy cannot drift. `total_w` is the same sum with every load
+    # on, which `check_thermal_heat_inputs` still holds against the inventory.
+    heat_loads_w: {csm_cabin_fan: 60, csm_suit_fan: 85, csm_co2_scrubber: 80, csm_lighting: 100,
+                   csm_sband_transceiver: 36, csm_sband_power_amplifier: 72, csm_heaters: 300}
+    # One load is not its nameplate. The power amplifier is the heat it actually dissipates, comms' `amp_dissipation_w`: 72 W of dc in less 11.2 W of RF that leaves the
+    # vehicle while the transmitter is on, and nothing while it is off (ADR 0003 item 5).
+    dissipation_loads: {csm_sband_power_amplifier: amp_dissipation_w}
     provenance:
       basis: derived
-      computes: total_w
-      derivation:
-        expression: "csm_cabin_fan + csm_suit_fan + csm_co2_scrubber + csm_lighting + csm_sband_transceiver + csm_sband_power_amplifier + csm_heaters"
-        inputs:
-          csm_cabin_fan: domains/power/components.yaml:loads.csm_cabin_fan.demand_w
-          csm_suit_fan: domains/power/components.yaml:loads.csm_suit_fan.demand_w
-          csm_co2_scrubber: domains/power/components.yaml:loads.csm_co2_scrubber.demand_w
-          csm_lighting: domains/power/components.yaml:loads.csm_lighting.demand_w
-          csm_sband_transceiver: domains/power/components.yaml:loads.csm_sband_transceiver.demand_w
-          csm_sband_power_amplifier: domains/power/components.yaml:loads.csm_sband_power_amplifier.demand_w
-          csm_heaters: domains/power/components.yaml:loads.csm_heaters.demand_w
       relation: >-
         the sum of the `demand_w` of the seven loads `heat_inputs.csm_cabin` assigns to this zone:
         cabin fan 60, suit fan 85, CO2 scrubber 80, lighting 100, S-band transceiver 36, S-band
@@ -103,21 +109,13 @@ state:
     method: algebraic
     unit: W
     total_w: 827
+    # As `cabin_heat_csm_w`: summed over the enabled loads.
+    heat_loads_w: {lm_cabin_fan: 62, lm_suit_fan: 85, lm_co2_scrubber: 80, lm_lighting: 40,
+                   lm_sband_transmitter: 20, lm_sband_high_power: 90, lm_guidance_computer: 150,
+                   lm_instrumentation: 100, lm_heaters: 200}
+    dissipation_loads: {}
     provenance:
       basis: derived
-      computes: total_w
-      derivation:
-        expression: "lm_cabin_fan + lm_suit_fan + lm_co2_scrubber + lm_lighting + lm_sband_transmitter + lm_sband_high_power + lm_guidance_computer + lm_instrumentation + lm_heaters"
-        inputs:
-          lm_cabin_fan: domains/power/components.yaml:loads.lm_cabin_fan.demand_w
-          lm_suit_fan: domains/power/components.yaml:loads.lm_suit_fan.demand_w
-          lm_co2_scrubber: domains/power/components.yaml:loads.lm_co2_scrubber.demand_w
-          lm_lighting: domains/power/components.yaml:loads.lm_lighting.demand_w
-          lm_sband_transmitter: domains/power/components.yaml:loads.lm_sband_transmitter.demand_w
-          lm_sband_high_power: domains/power/components.yaml:loads.lm_sband_high_power.demand_w
-          lm_guidance_computer: domains/power/components.yaml:loads.lm_guidance_computer.demand_w
-          lm_instrumentation: domains/power/components.yaml:loads.lm_instrumentation.demand_w
-          lm_heaters: domains/power/components.yaml:loads.lm_heaters.demand_w
       relation: >-
         as the CSM's, over the nine loads `heat_inputs.lm_cabin` assigns: cabin fan 62, suit fan 85,
         CO2 scrubber 80, lighting 40, S-band transmitter 20, S-band high-power amplifier 90,
@@ -129,16 +127,16 @@ state:
     method: algebraic
     unit: K
     total_k: 286.21
+    # The rule is `coolant_loop_t + cabin_heat_csm_w / conductance_w_per_k`, this tick: the supply
+    # the loop actually holds and the heat the enabled loads actually make. `total_k` stays the
+    # design point (the declared 7.2 C supply, every load on) that `check_cabin_equilibrium` holds.
+    # The conductance is `zone_csm_cabin_t`'s, copied for the rule; the thermal rules test holds the
+    # two equal.
+    heat_state: cabin_heat_csm_w
+    supply_state: coolant_loop_t
+    conductance_w_per_k: 125
     provenance:
       basis: derived
-      computes: total_k
-      derivation:
-        expression: "(supply_c + kelvin_offset) + cabin_heat_csm_w / conductance_w_per_k"
-        inputs:
-          supply_c: vehicle.yaml:thermal.loops.loop_primary.supply_c
-          kelvin_offset: 273.15
-          cabin_heat_csm_w: domains/thermal/components.yaml:state.cabin_heat_csm_w.total_w
-          conductance_w_per_k: domains/thermal/components.yaml:state.zone_csm_cabin_t.conductance_w_per_k
       relation: >-
         the equilibrium the cabin relaxes toward: the loop's mixed supply plus the rise the
         compartment's own equipment causes. Every term is declared elsewhere — the supply is
@@ -155,16 +153,14 @@ state:
     method: algebraic
     unit: K
     total_k: 286.97
+    # As `cabin_eq_csm_k`, except the supply. The LM loop has no temperature state (the LM is
+    # unpowered cargo in this episode), so its supply is the loop's declared `supply_c`, 7.2 C =
+    # 280.35 K (`vehicle.yaml#thermal.loops.loop_lm.supply_c`, itself `chosen`).
+    heat_state: cabin_heat_lm_w
+    supply_k: 280.35
+    conductance_w_per_k: 125
     provenance:
       basis: derived
-      computes: total_k
-      derivation:
-        expression: "(supply_c + kelvin_offset) + cabin_heat_lm_w / conductance_w_per_k"
-        inputs:
-          supply_c: vehicle.yaml:thermal.loops.loop_lm.supply_c
-          kelvin_offset: 273.15
-          cabin_heat_lm_w: domains/thermal/components.yaml:state.cabin_heat_lm_w.total_w
-          conductance_w_per_k: domains/thermal/components.yaml:state.zone_lm_cabin_t.conductance_w_per_k
       relation: >-
         as the CSM's, over the LM cabin's larger heat load: 827 W over the same 125 W/K conductance is
         6.616 K above the same 280.35 K supply. The two cabins differ by 0.75 K at equilibrium, and
@@ -199,16 +195,12 @@ state:
     method: algebraic
     unit: W
     total_w: 630.0
+    # As `cabin_heat_csm_w`: summed over the enabled loads.
+    heat_loads_w: {csm_coolant_pump_1: 250, csm_coolant_pump_2: 250, csm_rcs_heaters: 80,
+                   csm_comm_heaters: 50}
+    dissipation_loads: {}
     provenance:
       basis: derived
-      computes: total_w
-      derivation:
-        expression: "csm_coolant_pump_1 + csm_coolant_pump_2 + csm_rcs_heaters + csm_comm_heaters"
-        inputs:
-          csm_coolant_pump_1: domains/power/components.yaml:loads.csm_coolant_pump_1.demand_w
-          csm_coolant_pump_2: domains/power/components.yaml:loads.csm_coolant_pump_2.demand_w
-          csm_rcs_heaters: domains/power/components.yaml:loads.csm_rcs_heaters.demand_w
-          csm_comm_heaters: domains/power/components.yaml:loads.csm_comm_heaters.demand_w
       relation: >-
         the sum of the `demand_w` of the four loads `heat_inputs.csm_service_bay` assigns: coolant
         pump 1 at 250, pump 2 at 250, the RCS heaters at 80 and the comm heaters at 50. Algebraic
@@ -218,29 +210,22 @@ state:
     method: algebraic
     unit: W
     total_w: 180.0
+    # As `cabin_heat_csm_w`: summed over the enabled loads.
+    heat_loads_w: {lm_landing_radar: 120, lm_rcs_heaters: 60}
+    dissipation_loads: {}
     provenance:
       basis: derived
-      computes: total_w
-      derivation:
-        expression: "lm_landing_radar + lm_rcs_heaters"
-        inputs:
-          lm_landing_radar: domains/power/components.yaml:loads.lm_landing_radar.demand_w
-          lm_rcs_heaters: domains/power/components.yaml:loads.lm_rcs_heaters.demand_w
       relation: "the landing radar at 120 W and the descent stage's RCS heaters at 60, which is all `heat_inputs.lm_descent_bay` assigns"
   - id: avionics_bay_heat_w
     node: internal
     method: algebraic
     unit: W
     total_w: 360
+    # As `cabin_heat_csm_w`: summed over the enabled loads.
+    heat_loads_w: {csm_imu: 90, csm_guidance_computer: 150, csm_instrumentation: 120}
+    dissipation_loads: {}
     provenance:
       basis: derived
-      computes: total_w
-      derivation:
-        expression: "csm_imu + csm_guidance_computer + csm_instrumentation"
-        inputs:
-          csm_imu: domains/power/components.yaml:loads.csm_imu.demand_w
-          csm_guidance_computer: domains/power/components.yaml:loads.csm_guidance_computer.demand_w
-          csm_instrumentation: domains/power/components.yaml:loads.csm_instrumentation.demand_w
       relation: >-
         the sum of the `demand_w` of the three loads `heat_inputs.csm_avionics_bay` assigns: the IMU,
         the guidance computer and the instrumentation, 360 W. Algebraic because the rate follows
@@ -268,15 +253,11 @@ state:
     method: algebraic
     unit: W
     total_w: 1723
+    # The rule sums these zone heat rates *this tick*; `total_w` is the same sum with every load
+    # on, which `check_thermal_heat_inputs` holds against the zones that name `loop_primary`.
+    zone_heat_states: [cabin_heat_csm_w, service_bay_heat_w, avionics_bay_heat_w]
     provenance:
       basis: derived
-      computes: total_w
-      derivation:
-        expression: "cabin_heat_csm_w + service_bay_heat_w + avionics_bay_heat_w"
-        inputs:
-          cabin_heat_csm_w: domains/thermal/components.yaml:state.cabin_heat_csm_w.total_w
-          service_bay_heat_w: domains/thermal/components.yaml:state.service_bay_heat_w.total_w
-          avionics_bay_heat_w: domains/thermal/components.yaml:state.avionics_bay_heat_w.total_w
       relation: >-
         **the loop's collected load, which the domain's own debt said was "a sum over `heat_inputs`
         that nothing evaluates".** It is the sum of the three zone heat rates whose zones name
@@ -317,34 +298,51 @@ state:
         360,000/125 = 2,880 s
       note: "the cabin air alone is 2.4 kg (5.9 m3 at 5 psia and 295 K) and would have a thermal mass of 1,724 J/K, 0.5 % of the lumped value — which is why a bare-air cabin model has a time constant of seconds and is wrong. The structure, the equipment and the ECS water are the mass."
   - id: zone_csm_avionics_t
-    method: lag
+    # **A heat balance rather than a lag (ADR 0003 items 10-11).** The plate has two inputs, the
+    # avionics bay's heat and the coolant reaching it, and a `lag` relaxes toward one driver; its
+    # rule is `C dT/dt = Q_bay - G * f * (T - T_coolant)`, explicit, where `f` is the loop's flow as
+    # a fraction of the published 200 lb/hr (no flow, no coolant through the plate) and
+    # `T_coolant` is `loop_transport_t`, the coolant `E-TRANSPORT-PLATE` already carries here.
+    method: dynamics
     node: coldplate_t
     unit: K
-    initial: UNCONFIGURED
-    initial_note: >-
-      the coldplate's temperature at MET 0. No source in the corpus reaches it: this zone's time
-      constant is derived from a *chosen* conductance sized so an 800 W electronics load sits
-      about 6 K above the plate, and that rise is stated against an ambient rather than
-      measured. `thermal_diode.md:965` declares every thermal constant unspecified, and a
-      launch-day coldplate temperature is that same missing analysis
-    tau_s: 406
+    initial: 283.0568
+    initial_provenance:
+      basis: derived
+      relation: >-
+        the plate's own equilibrium at MET 0 (ADR 0003 item 10, the `zone_radiator_t` idiom): the
+        coolant at 280.35 K (`loop_transport_t.initial`) plus the 360 W of the three avionics-bay
+        loads, all on at MET 0, over the chosen 133 W/K: 280.35 + 360/133 = 283.0568 K.
+        `tests/test_thermal_rules.py` holds it as the rule's fixed point. No source gives a
+        launch-day coldplate temperature (`docs/evidence/wp02-thermal-eclss-consumables.md` T1)
+    heat_state: avionics_bay_heat_w
+    coolant_state: loop_transport_t
+    flow_state: coolant_flow_kg_s
+    rated_flow_kg_s: 0.025199576111111112
     lumped_mass_kg: 60
     specific_heat_j_per_kg_k: 900
     conductance_w_per_k: 133
     provenance:
+      basis: chosen
+      reason: >-
+        chosen, pending operator, ADR 0003 item 11. No source reached gives a coldplate node capacity or a plate-to-coolant
+        conductance (T1). C = 60 kg aluminium-equivalent x 900 J/kg-K = 54,000 J/K and G = 133 W/K
+        (an 800 W electronics load about 6 K above the coolant) are the values this state already
+        carried, kept and relabelled rather than re-picked. The constraint ADR 0003 item 11 sets is
+        the flown coast rejection of 1,170-1,470 W (SP-368 p. 525). The steady rejection equals the
+        collected load whatever C and G are, so the aggregate cannot move them. What it bounds is
+        the temperature they imply: at the flown load the plate sits Q_bay/G = 2.7 K above the
+        coolant, far inside its 50 C limit (`avionics_plate_high`), and C/G = 406 s is the time
+        constant the episode design (09 §2) was sized on
+      bound: "G in (0, inf): the steady plate rise is Q_bay/G; C/G = 406 s; only the transient depends on C"
+      source_audit:
+        candidate_document: TIR 580-S-7159
+        evidence_status: index_only
+        missing: coldplate node capacity and plate-to-coolant conductance
+    rated_flow_provenance:
       basis: derived
-      computes: tau_s
-      derivation:
-        expression: lumped_mass_kg * specific_heat_j_per_kg_k / conductance_w_per_k
-        inputs:
-          lumped_mass_kg: domains/thermal/components.yaml:state.zone_csm_avionics_t.lumped_mass_kg
-          specific_heat_j_per_kg_k: domains/thermal/components.yaml:state.zone_csm_avionics_t.specific_heat_j_per_kg_k
-          conductance_w_per_k: domains/thermal/components.yaml:state.zone_csm_avionics_t.conductance_w_per_k
-      relation: >-
-        C/G, with every term a field: C = 60 kg aluminium-equivalent x 900 J/kg-K = 54,000 J/K;
-        G = 133 W/K, sized so an 800 W electronics load sits about 6 K above the plate.
-        54,000/133 = 406.0 s
-      note: "apollo_diode.md:97: electronics were directly cooled by coldplates, so the coldplate and its boxes are one lump"
+      relation: "200 lb/hr x 0.45359237 / 3600 = 0.0252 kg/s, `vehicle.yaml#thermal.loops.loop_primary.nominal_flow_lb_per_h`; the same figure `coolant_flow_kg_s.initial` derives"
+    note: "apollo_diode.md:97: electronics were directly cooled by coldplates, so the coldplate and its boxes are one lump"
   - id: zone_csm_service_t
     initial: UNCONFIGURED
     initial_note: >-
@@ -444,74 +442,103 @@ state:
     method: algebraic
     unit: K
     total_k: 322.06
+    # **The radiator at the loop's temperature (`E-RAD-THERM`'s rejection law).** The rule solves
+    # for the mean temperature of the glycol in the panel, `T_m`, from the loop's own balance:
+    # the coolant enters at `T_ri = coolant_loop_t + load / (m_dot * c_p)` and leaves cooled by what
+    # the panel rejects, so `T_m = T_ri - (eps * sigma * A * T_m^4 - Q_env) / (2 * m_dot * c_p)`,
+    # solved by bisection. With no flow through the panel (pump off or `set_radiator_bypass`
+    # bypass) it is the panel's own sink, `(Q_env / (eps * sigma * A))^0.25`, where it rejects
+    # nothing. `zone_radiator_t` relaxes toward it.
+    load_state: loop_primary_load_w
+    supply_state: coolant_loop_t
+    flow_state: coolant_flow_kg_s
+    environment_state: environment_heat_w
+    bypass_state: radiator_bypass
+    loop: loop_primary
+    # The published 200 lb/hr (`coolant_flow_kg_s.rated_flow_kg_s`): below it the panel and the
+    # evaporator take heat only from the share of the coolant that passes them.
+    rated_flow_kg_s: 0.025199576111111112
+    emissivity: 0.85
+    area_effective_m2: 8.1
+    stefan_boltzmann: 5.670374419e-08
+    specific_heat_j_per_kg_k: 3626.1
     provenance:
       basis: derived
-      computes: total_k
-      derivation:
-        expression: "((environment_heat_w + load_w) / (emissivity * stefan_boltzmann * area_effective_m2)) ** 0.25"
-        inputs:
-          environment_heat_w: domains/thermal/components.yaml:state.environment_heat_w.total_w
-          load_w: domains/thermal/components.yaml:state.loop_primary_load_w.total_w
-          emissivity: domains/thermal/components.yaml:radiator_model.csm.emissivity
-          stefan_boltzmann: 5.670374419e-08
-          area_effective_m2: domains/thermal/components.yaml:radiator_model.csm.area_effective_m2
       relation: >-
-        the temperature at which the panel's own emission carries what it absorbs plus what the loop
-        hands it: (2,477 + 1,723) / (0.85 x 5.670374419e-8 x 8.1) = 1.0758e10, and its fourth root is
-        322.06 K. The corpus's own design point checks it the other way — 2,588 W rejected at 285 K
-        over the same emissivity and the same effective area is 2,575 W, which is the figure
-        `radiator_model.csm` was sized from — so the equilibrium and the rating are one relation
-        read in two directions
+        the panel's law, `Q = eps * sigma * A_eff * T^4 - Q_env`, from `radiator_model.csm`
+        (eps 0.85, A_eff 8.1 m2) and `vehicle.yaml#thermal.loops.loop_primary.specific_heat_j_per_kg_k`
+        (3,626.1 J/kg-K), all copied for the rule and held equal to their homes by
+        `tests/test_thermal_rules.py`. `total_k` is the figure this state carried until ADR 0003:
+        the temperature at which the panel alone carries 1,723 W against the 2,477 W hold, 322.06
+        K. It was the defect `09-quiet-coast-episode.md` §3 names: 25 K hotter than the loop's own
+        22.8-23.9 C radiator inlet, while `E-WATER-RAD` charged evaporator water for the same load.
+        It stays as the design-point figure the old relation computed and is not the tick's value
       note: >-
-        **the equilibrium the panel relaxes toward, which is what its driver edge never had.**
-        `E-ENV-RAD` drove a lag in K from a W node, so the plant refused it and `zone_radiator_t`
-        had no rule at all; the node's own `state_order` already said the surface temperature is
-        what the rejection is a function of, and this is what the surface temperature is a function
-        of. The declaration is the *steady* temperature for the declared operating point: the panel
-        starts at 285 K, its design linearisation point, so the first few hundred seconds are a
-        warm-up in which the surface is below equilibrium and the rejection is correspondingly
-        small — a transient the channel below shows rather than one this state hides
+        Under the declared hot hold (ADR 0003 item 9) and the MET-0 load the panel's glycol sits
+        near 296 K and the panel rejects about 500 W net. The evaporator carries the rest, which is
+        the episode's scarcity
   - id: zone_radiator_t
     method: lag
     node: radiator_reject
     unit: K
-    initial: 322.06
-    initial_source: domains/thermal/components.yaml:state.radiator_eq_t.total_k
+    initial: 295.65
     initial_provenance:
-      basis: derived
-      relation: >-
-        the panel starts where its own law says it settles for the declared operating point:
-        `radiator_eq_t` is (2,477 W absorbed + 1,723 W of loop load) over (0.85 x 5.670374419e-8 x
-        8.1), and its fourth root is 322.06 K. **It started at 285 K until round 45** — the
-        temperature the radiator's own rating is written at, which is the *design* point with no
-        absorbed load — and that is not an equilibrium for the environment this corpus declares:
-        the panel would warm for its 300 s time constant, and for the first minutes the coolant
-        return would sit at ~25 C, above its own 5-15 C band and over its own >20 C warning. A cold
-        panel in full sun is a real condition (it is F-13's, one attitude change away), but it is
-        not MET 0: the vehicle begins in the attitude its environment state describes
+      basis: chosen
+      reason: >-
+        chosen, pending operator, ADR 0003 item 10: the panel starts where its own law settles for
+        the MET-0 operating point. It is the fixed point of a quartic with no closed form, so it
+        cannot be an `initial_derivation`; it is computed by `radiator_eq_t`'s rule and held to
+        0.01 K by `tests/test_thermal_rules.py`: `radiator_eq_t`'s fixed point with the loop at its 280.35 K supply, 0.0252 kg/s of
+        flow, the 2,477.02 W hold, and the MET-0 collected load of 1,651 W (every CSM load on,
+        the power amplifier's transmitter off, so its 72 W is not dissipated). It was 322.06 K
+        until ADR 0003, the temperature at which the panel *alone* carries the whole load, which is
+        not where a panel with a working evaporator settles. `tests/test_thermal_rules.py` holds it
+        as the fixed point of the rules
     tau_s: 300
     provenance:
       basis: derived
       relation: "the panel's own lumped mass over its radiation conductance: a 9.1 m2 aluminium panel at 2.7 kg/m2 is 25 kg = 22,500 J/K, and its linearised radiation conductance at 285 K is 4 x 2,588/285 = 36 W/K, giving 625 s. Chosen at 300 s because the linearised conductance overstates damping at the cold end; the value sits inside the range the two estimates bracket."
       note: "the radiator itself is an observable with no command interface (simulator-design.md:158) — it has a temperature and a rejection curve, and nothing an agent can command acts on it directly"
   - id: comm_amp_t
-    method: lag
+    # **A heat balance on the amplifier's own lump (ADR 0003 items 5, 10-11).** `C dT/dt = P -
+    # G (T - T_plate)`, explicit, where `P` is comms' `amp_dissipation_w`: the amplifier's 72 W of
+    # dc input less its 11.2 W of RF while the transmitter is on, and zero while it is off. It was
+    # a `lag` with no driver and a rise sized for a 250 W dissipation the amplifier does not have.
+    method: dynamics
     node: internal
     unit: K
-    initial: UNCONFIGURED
-    initial_note: >-
-      the travelling-wave tube's case temperature at MET 0. Its *rise* is declared — 250 W
-      through 17 W/K is about 15 K above the coldplate — but not the coldplate's own starting
-      temperature, which is the avionics zone's debt above. The two are one analysis, and this
-      is the state the flagship chain overheats, so a guessed starting temperature is a guessed
-      margin on the chain
-    tau_s: 265
-    provenance:
+    initial: 283.0568
+    initial_provenance:
       basis: derived
-      relation: "C/G. C = 5 kg travelling-wave tube assembly = 4,500 J/K; G = 17 W/K, sized so a 250 W dissipation runs about 15 K above the coldplate. tau = 4,500/17 = 265 s"
-      note: "apollo_diode.md:106 publishes comm_amp_c with a >60 C event. It gets its own node rather than sharing the avionics lump because it is the component the flagship chain overheats, and its smaller mass is what makes it the first to go"
+      relation: >-
+        the amplifier's equilibrium at MET 0 (ADR 0003 item 10): the transmitter is off at MET 0
+        (`comms.transmitter_on`), so it dissipates nothing and sits at the coldplate's own
+        equilibrium, 283.0568 K (`zone_csm_avionics_t.initial`)
+    dissipation_state: amp_dissipation_w
+    plate_state: zone_csm_avionics_t
+    lumped_mass_kg: 5
+    specific_heat_j_per_kg_k: 900
+    conductance_w_per_k: 17
+    provenance:
+      basis: chosen
+      reason: >-
+        chosen, pending operator, ADR 0003 item 11. No source reached gives the travelling-wave tube assembly's capacity or its
+        conductance to the plate (T1). C = 5 kg x 900 J/kg-K = 4,500 J/K and G = 17 W/K are the
+        values this state carried, kept and relabelled. With the dissipation now derived from the
+        amplifier's input and efficiency (60.8 W), the steady rise above the plate is 60.8/17 =
+        3.6 K, not the 15 K the 250 W sizing implied. The flown aggregate (SP-368 p. 525) bounds the
+        loop and not this lump, so it does not constrain C or G
+      bound: "G in (0, inf): the steady rise is P/G; C/G = 265 s"
+    note: "apollo_diode.md:106 publishes comm_amp_c with a >60 C event. It gets its own node rather than sharing the avionics lump because it is the component the flagship chain overheats, and its smaller mass is what makes it the first to go"
   - id: coolant_loop_t
-    method: lag
+    # **The loop's heat balance (`E-PUMP-COOL`, `E-RAD-THERM`).** One well-mixed lump at the
+    # supply station, the evaporator's outlet: `C dT/dt = Q_load - Q_rad - Q_evap`, explicit, with
+    # `C` the loop's coolant mass times its specific heat. `Q_rad` is `radiator_rejection_w` while
+    # coolant flows through the panel and zero when it does not (pump off, or the bypass valve at
+    # `bypass`); `Q_evap` is `evaporator_duty_w`. With the evaporator holding the outlet, the loop
+    # relaxes to its 280.35 K setpoint with the time constant `C / (m_dot * c_p)` = 1,042 s, one
+    # loop transit; with the pump off nothing leaves it and it warms at `Q_load / C`.
+    method: dynamics
     node: coolant_supply_t
     unit: K
     initial: 280.35
@@ -524,18 +551,36 @@ state:
       basis: derived
       relation: >-
         the loop starts at its declared supply temperature, 7.2 C = 280.35 K
-        (`vehicle.yaml#thermal.loops.loop_primary.supply_c`). The supply is the defensible starting
-        point because it is the temperature the evaporator holds and the one the loads see: the
-        radiator's outlet sits at 5-15 C, either side of the supply depending on the load, and the
-        hot side at 22.8-23.9 C, so neither of those is a starting point — one is what the loop is
-        cooled back to and the other is what the loads make of it
-    tau_s: 45
+        (`vehicle.yaml#thermal.loops.loop_primary.supply_c`). It is also the balance's own
+        equilibrium at MET 0 (ADR 0003 item 10): the evaporator is fed and holds its outlet at that
+        setpoint (`evaporator_duty_w.outlet_setpoint_k`)
+    load_state: loop_primary_load_w
+    flow_state: coolant_flow_kg_s
+    rejection_state: radiator_rejection_w
+    evaporator_state: evaporator_duty_w
+    bypass_state: radiator_bypass
+    loop: loop_primary
+    # The published 200 lb/hr (`coolant_flow_kg_s.rated_flow_kg_s`): below it the panel and the
+    # evaporator take heat only from the share of the coolant that passes them.
+    rated_flow_kg_s: 0.025199576111111112
+    heat_capacity_j_per_k: 95185.125
     provenance:
       basis: derived
-      relation: "the loop's own mass over its mixing conductance: 25 L of 62.5/37.5 glycol-water at 1,050 kg/m3 is 26.25 kg, with c_p the loop's own derived 3,626.1 J/kg-K, so C = 94,500 J/K; at the published 200 lb/hr = 0.0252 kg/s the through-flow refreshes that mass every 1,042 s, and one well-mixed volume has a mixing time constant near C/(2 x mdot x c_p) = 94,500/181 = 522 s. Chosen at 45 s because the loop is modelled as well mixed at each node, and this entry represents only the sensor and mixing lag rather than the transit."
-      note: "the transit is the delay element below, not this lag. Two different things that a single lumped node would fuse into one wrong number."
+      relation: >-
+        C = the loop's coolant mass x its specific heat: 26.25 kg
+        (`vehicle.yaml#thermal.loops.loop_primary.coolant_mass_kg`, 25 L at 1,050 kg/m3) x 3,626.1
+        J/kg-K (`specific_heat_j_per_kg_k`, derived from TN D-6718's own load, flow and rise) =
+        95,185.125 J/K. It was a `lag` with `tau_s: 45`, a sensor-and-mixing constant nothing
+        derived, driven by `E-PUMP-COOL`, which owed its value. A lag relaxes toward one driver and
+        the loop has three heat terms, so it is a balance now
+      note: "the transit is the delay element `loop_transport_t`, not this balance. Two different things that a single lumped node would fuse into one wrong number."
   - id: coolant_flow_kg_s
-    method: lag
+    # **The pump as flow (ADR 0003 item 4).** The rule relaxes the flow toward `f * rated_flow`
+    # with the pump's spin-up constant, `f` being 1 while a primary-loop pump is commanded on
+    # (`coolant_pump`) and powered (`power.load_enabled[<its load>]`), and 0 otherwise. One running
+    # pump moves the published 200 lb/hr; the primary loop's second pump is its standby, not a
+    # second 200 lb/hr. No rated speed is needed.
+    method: dynamics
     node: coolant_flow
     unit: "kg/s"
     initial: 0.025199576111111112
@@ -551,10 +596,19 @@ state:
         the loop starts at its published flow: 200 lb/hr (`vehicle.yaml#thermal.loops`), which
         is the 0.0252 kg/s this state's own relation above quotes and the figure the loop's
         mixing time constant is derived from
+    rated_flow_kg_s: 0.025199576111111112
+    pump_state: coolant_pump
+    pump_loads: {pump_1: csm_coolant_pump_1, pump_2: csm_coolant_pump_2}
     tau_s: 8
     provenance:
       basis: chosen
       reason: "pump spin-up: a centrifugal pump reaches speed in a few seconds, and 8 s is long enough that a bus sag lasting one tick cannot produce an instant flow loss. This is the lag that makes the flagship chain a ramp rather than a step"
+      note: >-
+        `rated_flow_kg_s` is the published 200 lb/hr (TN D-6718 p. 11), the same derivation as
+        `initial`. `pump_loads` is `components.pump_1.power_load` and `pump_2.power_load`, copied for
+        the rule. The pumps are 200 V 3-phase ac machines (AOH SM2A-03 Vol. 1 p. 2.7-24), so the dc
+        bus voltage does not set their speed: `E-BUS-PUMP`'s volts-to-flow gain is not read by
+        this rule
   - id: pump_1_speed_rpm
     initial: UNCONFIGURED
     initial_note: >-
@@ -573,12 +627,15 @@ state:
     # that carries it. It is optional here and load-bearing where it is written.
     moved_by:
       - "command:set_coolant_pump"
+    # **ADR 0003 item 4: the pump's command moves flow, not this speed.** `set_coolant_pump` writes
+    # `coolant_pump`, which `coolant_flow_kg_s` reads; this state stays declared, and owed, because
+    # the speed and the flow together are the diagnosis (`thermal.pump_[n]_speed_rpm`). Until this
+    # mapping's `on` was owed, the verb was refused outright.
     command_value:
       - verb: set_coolant_pump
         argument: state
-        maps:
-          "on": UNCONFIGURED
-          "off": 0
+        computed: "the shaft speed follows the pump's commanded state; the rated speed is owed"
+        selects: coolant_pump
         why: >-
           a commanded-off pump coasts to zero, so `off` is the only value the corpus can supply.
           `on` relaxes toward the pump's rated speed, which is published nowhere: the channel's own
@@ -627,43 +684,31 @@ state:
     node: radiator_reject
     unit: W
     total_w: 1723.13
+    # **The law at the panel's temperature this tick (`E-RAD-THERM`).** `eps * sigma * A_eff *
+    # zone_radiator_t^4 - environment_heat_w`. The panel follows the glycol in it
+    # (`radiator_eq_t`), so this is the rejection at the loop's temperature.
+    surface_state: zone_radiator_t
+    environment_state: environment_heat_w
+    emissivity: 0.85
+    area_effective_m2: 8.1
+    stefan_boltzmann: 5.670374419e-08
     provenance:
       basis: derived
-      computes: total_w
-      derivation:
-        expression: "emissivity * stefan_boltzmann * area_effective_m2 * radiator_eq_k ** 4 - environment_heat_w"
-        inputs:
-          emissivity: domains/thermal/components.yaml:radiator_model.csm.emissivity
-          stefan_boltzmann: 5.670374419e-08
-          area_effective_m2: domains/thermal/components.yaml:radiator_model.csm.area_effective_m2
-          radiator_eq_k: domains/thermal/components.yaml:state.radiator_eq_t.total_k
-          environment_heat_w: domains/thermal/components.yaml:state.environment_heat_w.total_w
       relation: >-
-        the law `radiator_model` states, read at the equilibrium temperature: 0.85 x 5.670374419e-8
-        x 8.1 x 322.06^4 = 4,200.13 W of emission, less the 2,477 W the environment puts in, is
-        **1,723.13 W** — which is the loop's collected load, and has to be: at equilibrium a radiator
-        passes exactly what it receives, so this state and `loop_primary_load_w` are one relation
-        read in two directions rather than two figures that happen to agree
-      note: >-
-        **the steady rejection.** The *instantaneous* one — the same law at the surface temperature
-        this tick — is what `thermal.radiator_rejection_w`'s channel row computes, and the two
-        differ during the panel's warm-up. It is this state that `coolant_return_c` reads, because
-        the return is what the loop settles at. Algebraic because rejection is a function of the
-        current surface temperature, not an integral of it — which is exactly why C-RAD-COOL is an
-        algebraic loop solved to consistency rather than a delayed cycle"
+        the law `radiator_model` states, read at the panel's temperature: eps 0.85 and A_eff 8.1 m2
+        from `radiator_model.csm`, copied for the rule and held equal by `tests/test_thermal_rules.py`.
+        `total_w` is the figure the old derivation gave at the old 322.06 K equilibrium (0.85 x
+        5.670374419e-8 x 8.1 x 322.06^4 - 2,477 = 1,723.13 W, the panel carrying the whole load),
+        kept as that design figure. Algebraic because rejection is a function of the current surface
+        temperature, not an integral of it
   - id: loop_lm_load_w
     node: internal
     method: algebraic
     unit: W
     total_w: 1007
+    zone_heat_states: [cabin_heat_lm_w, descent_bay_heat_w]
     provenance:
       basis: derived
-      computes: total_w
-      derivation:
-        expression: "cabin_heat_lm_w + descent_bay_heat_w"
-        inputs:
-          cabin_heat_lm_w: domains/thermal/components.yaml:state.cabin_heat_lm_w.total_w
-          descent_bay_heat_w: domains/thermal/components.yaml:state.descent_bay_heat_w.total_w
       relation: >-
         as `loop_primary_load_w`, over the two zones that name `loop_lm`: the LM cabin's 827 W and
         the descent stage's 180 W, which is the LM's whole declared demand, 1,007 W
@@ -674,6 +719,119 @@ state:
     provenance:
       basis: chosen
       reason: "heater duty is commanded and then limited by the zone's own hard limits; there is no state to integrate, and treating it as a state would let a heater command persist through a mode change"
+      note: >-
+        not in the quiet-coast closure (ADR 0003): `set_heater` carries `duty` as an integer, and a
+        commanded state's effect is a mapping from an enum argument's values, which the linter holds
+        (`check_command_values`). The heater bank's heat is in the cabin sum at its `demand_w` while
+        `csm_heaters` is enabled, so `set_load csm_heaters off` is the closure's heater lever
+  - id: evaporator_duty_w
+    # **The glycol evaporator (ADR 0003 item 5).** Off unless `set_evaporator_feed` has the CSM's
+    # feed on and there is water. It activates when its inlet (the radiator's outlet,
+    # `T_ro = coolant_loop_t + (Q_load - Q_rad) / (m_dot * c_p)`) rises above
+    # `actuation_k`, then holds its outlet at `outlet_setpoint_k` until the inlet falls back
+    # below the setpoint: `duty = clamp(m_dot * c_p * (T_ro - outlet_setpoint_k), 0,
+    # capacity_w)`. Its previous value is the latch. `E-WATER-RAD` charges the water for it.
+    # `dynamics` rather than `algebraic` because of that latch: a state that reads its own last
+    # value needs a seeded starting one, and the plant seeds `dynamics` states and not `algebraic`.
+    method: dynamics
+    node: radiator_reject
+    unit: W
+    initial: 1145.2
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        chosen, pending operator, ADR 0003 item 10: the evaporator's duty at the model's own MET-0
+        equilibrium, the collected load less the panel's rejection at `zone_radiator_t.initial`:
+        1,651 - 505.8 = 1,145.2 W. Held to the rules' fixed point by `tests/test_thermal_rules.py`
+    feed_state: evaporator_feed
+    vehicle: csm
+    supply_state: coolant_loop_t
+    load_state: loop_primary_load_w
+    flow_state: coolant_flow_kg_s
+    rejection_state: radiator_rejection_w
+    bypass_state: radiator_bypass
+    loop: loop_primary
+    # The published 200 lb/hr (`coolant_flow_kg_s.rated_flow_kg_s`): below it the panel and the
+    # evaporator take heat only from the share of the coolant that passes them.
+    rated_flow_kg_s: 0.025199576111111112
+    water_state: water_cooling_kg
+    specific_heat_j_per_kg_k: 3626.1
+    capacity_w: 2345
+    actuation_k: 282.55
+    outlet_setpoint_k: 280.35
+    provenance:
+      basis: historical
+      source: >-
+        SM2A-03 Block II Vol. 1 §2.7 ECS (AOH, ibiblio `aoh-v1-2-07-ecs.pdf`), p. 2.7-18: when the
+        coolant entering the evaporator "rises to 48 to 50.5 F, the evaporator mode of cooling is
+        initiated", and the steam pressure valve is then positioned for "a coolant outlet
+        temperature between 38 to 45 F". `actuation_k` is 49 F = 9.4 C = 282.55 K, the figure
+        `vehicle.yaml#thermal.loops.loop_primary.evaporator_actuation_c` already carries from NR
+        ch. 14 ("evaporator actuating above 49 F"), inside the AOH's 48-50.5 F. `outlet_setpoint_k`
+        is 45 F = 7.2 C = 280.35 K, the top of the AOH's outlet band and the loop's declared mixed
+        supply (`supply_c`). `capacity_w` is `components.evaporator_csm.rejection_w` (NR, about
+        8,000 Btu/hr), copied for the rule and held equal by `tests/test_thermal_rules.py`
+      note: >-
+        searched once for ADR 0003 (2026-10-15): the activation setpoint is sourced, not chosen
+  - id: evaporator_feed
+    method: discrete
+    node: internal
+    unit: "map[vehicle,enum[on,off]]"
+    initial: {csm: "on", lm: "off"}
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        chosen, pending operator. The CSM's glycol evaporator is fed at MET 0 because the episode's
+        environment is the declared sun-on-radiator hold (ADR 0003 item 9), in which the radiator
+        alone cannot carry the load; the launch checklist's evaporator switch positions were not
+        read. The LM's sublimator is off because the LM is unpowered cargo (09 §4)
+    moved_by: ["command:set_evaporator_feed"]
+    command_value:
+      - verb: set_evaporator_feed
+        argument: state
+        key: vehicle
+        why: "the feed is on or off per vehicle; `evaporator_duty_w` reads the CSM's element and spends no water while it is off"
+    provenance:
+      basis: apollo
+      ref: "apollo_diode.md:239"
+  - id: coolant_pump
+    method: discrete
+    node: internal
+    unit: "map[pump_id,enum[on,off]]"
+    initial: {pump_1: "on", pump_2: "off", pump_lm: "off"}
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        chosen, pending operator. The primary loop runs on one pump (TN D-6718 p. 11, "the primary
+        loop uses a centrifugal pump to circulate 200 lb/hr") and the second pump in the package is
+        its standby; the LM's pump is off with the LM. The launch checklist's pump selection was
+        not read
+    moved_by: ["command:set_coolant_pump"]
+    command_value:
+      - verb: set_coolant_pump
+        argument: state
+        key: pump
+        why: "one element per pump; `coolant_flow_kg_s` flows the published 200 lb/hr while a primary-loop pump is on and powered, and nothing otherwise"
+    provenance:
+      basis: chosen
+      reason: "ADR 0003 item 4: the pump's state is on or off, and the loop's flow is a fraction of the published 200 lb/hr, not a speed"
+  - id: radiator_bypass
+    method: discrete
+    node: internal
+    unit: "map[loop_id,enum[radiator,bypass]]"
+    initial: {loop_primary: radiator, loop_secondary: radiator}
+    initial_provenance:
+      basis: chosen
+      reason: "chosen, pending operator: the loops flow through their radiators at MET 0; the launch checklist's valve positions were not read"
+    moved_by: ["command:set_radiator_bypass"]
+    command_value:
+      - verb: set_radiator_bypass
+        argument: state
+        key: loop
+        why: "one element per loop; at `bypass` the coolant does not pass through the panel, so the loop rejects nothing through it and the panel falls to its own sink"
+    provenance:
+      basis: apollo
+      ref: "apollo_diode.md:239"
 
 # --------------------------------------------------------------------------------------
 # Components.
