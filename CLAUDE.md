@@ -22,6 +22,7 @@ Start at `governance/README.md`. Every path and task has one owning line: the ch
 ## Commands (from the root)
 
 ```sh
+make setup                 # once: pip install -r requirements-dev.txt
 make test                  # the one suite, both streams: python3 -m pytest -q -n 8; no containers
 make test-aurora           # aurora/ only
 make test-vehicle          # vehicle/ only

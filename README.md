@@ -16,6 +16,7 @@ window's contract: the vehicle implements it, the container probes it) and `docs
 ## Running it
 
 ```sh
+make setup         # once: pip install -r requirements-dev.txt (openai, httpx, PyYAML, pytest, ruff)
 make test          # the one suite: both streams (python3 -m pytest -q -n 8); no containers
 make test-aurora   # the container stream only
 make test-vehicle  # the vehicle stream only (its referee and linter)
