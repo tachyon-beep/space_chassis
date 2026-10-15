@@ -131,13 +131,24 @@ available; no new user decision or framework work is needed. Existing owner only
 browser route only. Corrected hash review precedes any renewed diagnostic grant. No broad
 rerun, R/build/live run or new writer is authorised.
 
-**CURRENT SLOT: FREE / RELEASED — 12:02 AEDT (master §22).** Reviewed r2 supervisor
+**HISTORICAL HOLD — 12:02 AEDT (master §22; superseded by §23 below).** Reviewed r2 supervisor
 `d90fb3de…`: process-sampling and monitor-boundary fixes are present, but renewal remains held
 because exception reporting can still bypass cleanup and failed state reads after failed stop
 can skip owned-scope escalation. Isolated controls confirmed both paths. Request only these
 remaining cleanup corrections from the existing owner via parent browser; no new user decision
 or framework expansion. Capacity/occupancy and exact P/vehicle/test identities remain suitable;
 no new test/scope was observed or launched. No renewed diagnostic or broad/R/build/live grant.
+
+**CURRENT SLOT: RESERVED FOR CHASSIS DIAGNOSTICS — SPACE-20261011-P-DIAG-02, 12:08 AEDT
+(master §23).** Both bounded cleanup blockers are fixed in supervisor `2ead42be…`; independent
+source review and rerun of its 20 isolated controls pass. Fresh capacity and exact P/vehicle/test
+identities permit renewal for the existing owner `[8a7d49]`, pending parent browser delivery.
+One old-SIGINT arm, then one corrected arm only after the expected original failure and verified
+cleanup; unchanged node/assertions/timeouts, max two workers, nice 19, per-run 2 CPU/8 GiB,
+five-second monitoring, 600-second outer deadline and explicit release accounting remain.
+Use fresh `phase-b-diag-P-019mkP-r2/arm1` and `/arm2`; retain all failed evidence. The supervisor's
+embedded DIAG-01 label is historical: the owner's outer receipts must identify DIAG-02 and the
+exact reviewed hash. No real test/scope launched here, no broad/R/build/live grant or new writer.
 
 | channel | for |
 |---|---|

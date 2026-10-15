@@ -1276,3 +1276,88 @@ the blocker. No test or scope was launched by this review, and no owner/browser 
 sent. Parent browser relay should request only these two remaining cleanup corrections and a
 new exact hash for bounded recheck. No renewed diagnostic, broad, R/build/live or retry grant
 has been issued. No new user decision is required for these already-authorised corrections.
+
+## 23. Renewed diagnostic grant SPACE-20261011-P-DIAG-02 — 2026-10-11 12:08 AEDT
+
+**GRANTED under Emmy's delegated authority to existing Chassis owner**
+`session_019mkPNN5J3Atit9tUA6zrNY` / `[8a7d49]`. **Current slot: RESERVED FOR CHASSIS
+DIAGNOSTICS; awaiting parent browser delivery, not reported running.** This replaces the
+section 22 hold for the narrow two-arm diagnostic only. DIAG-01 remains released, with zero
+pytest attempts; its supervisor abort and the original failed full gate remain preserved.
+No broad rerun, R/build/live selection, product/test edit, new writer or host/security change.
+
+### Exact repair and independent evidence
+
+Reviewed supervisor `.scratch/phase-b-diag-P-019mkP-r2/diag.py`, SHA256
+**`2ead42bee98575b0d44b734c13aaf082dc7323ca70414b9b4c5a1b4ba6e1d94e`**.
+Previous supervisor is preserved as `diag-d90fb3de.py` at the exact section 22 hash.
+Launcher `launch.py` is unchanged, SHA256
+`91a813dc8563ce50489e5619e32a23f9f8dfc468571bc1bedfbc0ef66b2c0ccd`.
+
+Both remaining cleanup blockers are **fixed**: `record_failure()` makes reporting best-effort
+so it cannot bypass subsequent cleanup; `terminate_scope()` attempts bounded stop and owned
+SIGKILL unless termination is positively established, including when state queries fail.
+Cleanup acceptance additionally requires its termination result. Earlier process-sampling and
+monitor-boundary fixes remain in place. This coordinator and the independent read-only reviewer
+find no remaining blocker within this bounded recheck.
+
+The coordinator inspected `controls.py`: it extracts the two functions from the actual parsed
+supervisor, uses fake process/control/clock/I/O functions, and checks their integration in the
+module. Running those isolated controls against the exact hash above returned **20 PASS,
+0 failures, rc 0**, byte-for-byte matching `controls-2ead42be.out`. In-memory syntax compilation
+also passed. No actual scope, launcher or pytest was executed by this validation. The fake
+clock's two 15-second waits do not establish total real cleanup wall time: real bounded
+systemctl calls have their own timeouts. Actual run supervision/cleanup still needs receipts.
+
+At **12:08:14 AEDT**, successful host queries found no Space scopes, no matching Space
+test/launcher/diagnostic/build process and no Compose projects. Available RAM **41.4 GiB**,
+sampled CPU busy **13.6%**, load **2.39/2.50/2.71**. Exact P index/tracked files are unchanged,
+with no untracked non-ignored paths, and vehicle is clean at the pinned SHA. The new evidence
+parent has no arm directories. Old arm 1 receipt, explicit release and original full log hashes
+still match the preceding records. Staging was preserved.
+
+### Authorised pair and release conditions
+
+Use only the reviewed supervisor/launcher above, with fresh admission before each arm, on:
+
+- P tree `af671d04908817e914668750b7cd4f6f74034bf4`.
+- Vehicle `f44399645fb2633e695a5d758cb5a41f43fb848c`.
+- Test file SHA256 `3b917de30861c432c467d92d6a75b1faf7b31cd0e62626dfde095997110c4a53`.
+- Node `docs/deep_research/vehicle/tests/test_vehicle_config.py::test_a_run_ending_cleanly_checkpoints_its_last_completed_cycle_and_an_interrupt_mid_cycle_does_not`.
+
+Run **once per arm**, sequentially, from the existing owner's session:
+
+1. `nice -n 19 python3 .scratch/phase-b-diag-P-019mkP-r2/diag.py arm1`
+2. Only after arm 1's unchanged test reproduces the original SIGINT/120-second timeout,
+   supervision holds, exact identity remains and cleanup is verified:
+   `nice -n 19 python3 .scratch/phase-b-diag-P-019mkP-r2/diag.py arm2`
+
+The supervisor enters the adoption root and runs the same exact node with
+`-q -p no:cacheprovider -n 2`. Arm 1 preserves inherited ignored SIGINT; arm 2 changes only
+SIGINT restoration at the launcher. Preserve every assertion and timeout. Compare raw pytest
+exit/count/failure site as well as supervision: the supervisor's exit 0 alone is not a test pass.
+An unexpected arm-1 outcome, diagnostic abort, identity drift or uncertain cleanup stops the
+pair; no repeated attempt is authorised. Arm 2 is expected to pass the same unchanged node,
+but its actual outcome must be recorded without retry.
+
+Maximum **two pytest workers total across Space**, **nice 19**, verified per-run scope
+**CPUQuota=200%, MemoryMax=8G**, no GPU or overlap. Before each arm require available RAM
+>=20 GiB, load1 <12, CPU busy <75%, no competing selection, exact identities and verified
+limits/healthy monitoring before go. Sample every five seconds; abort only owned work if RAM
+<12 GiB, busy >85% or load1 >20 for three samples, attributable OOM, observation failure or
+the **600-second outer deadline**. The outer deadline does not modify any test timeout.
+
+Use the fresh `r2/arm1` and `r2/arm2` evidence paths; never reuse old arm1 or invent arm1b.
+The reviewed supervisor still contains the historical DIAG-01 label. **Do not change its hash
+just for that label:** the owner's outer start/result/release receipt must explicitly identify
+**DIAG-02**, this exact supervisor hash and these new arm paths. This section is the governing
+renewal; embedded historical labels do not revive DIAG-01 or grant retries.
+
+After both arms or any earlier stop, verify the owned scope, launcher, shell, workers, helper
+and monitor have ended, then send an explicit result/cleanup/**release** receipt through the
+parent browser route. Preserve both signal records, logs, identities and raw outcomes. Hold
+the reservation if cleanup cannot be verified; an unreadable state is not proof of release.
+Only this coordinator may mark the slot free after verifying that receipt. The original failed
+full result remains unqualified. Any broad rerun requires a separate review/readiness decision
+and fresh grant. Parent alone sends the browser message; no owner message or real test/scope
+was launched by this coordinator.
