@@ -11,6 +11,7 @@ fixture's evidence is kept then.
 This directory is not in `testpaths`: a bare `pytest -q` never starts a container.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -66,7 +67,13 @@ def _only(smoke: SmokeStack) -> None:
 def _assert_inside_the_host_scope() -> None:
     """pytest and the docker clients it runs are the host side of the live run's budget: this
     process must be in a cgroup that caps them -- itself or an ancestor, read from the kernel, not
-    taken on trust -- with no swap past the memory cap."""
+    taken on trust -- with no swap past the memory cap.
+
+    The budget is the shared host's. A GitHub Actions runner (the manual live-stack workflow) is a
+    disposable machine of its own, with no user systemd to make the scope, so the host-side check
+    is the one thing it skips; every container's own caps are still read and held."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        return
     cpus, memory, swap = effective_limits(own_cgroup())
     inside = 0 < cpus <= HOST_CPUS + 1e-9 and 0 < memory <= HOST_MEMORY and swap == 0
     assert inside, (
