@@ -331,7 +331,9 @@ def run_episode(
     return values
 
 
-def trace_from_record(episode: Episode, state_dir: Path, trace_path: Path) -> int:
+def trace_from_record(
+    episode: Episode, state_dir: Path, trace_path: Path, *, ticks: int | None = None
+) -> int:
     """A window run's trace, regenerated from the executive's own record in its private `/state`.
 
     The window run's executive (`tools/console.py`) keeps a durable record, one row per tick with the
@@ -343,13 +345,17 @@ def trace_from_record(episode: Episode, state_dir: Path, trace_path: Path) -> in
 
     A tick whose hash disagrees ends the trace with a `replay_mismatch` line, which the evaluator
     reads as an apparatus failure: the record and the scenario are not one run (the executive did not
-    start from this scenario's MET 0, or the record is not the vehicle's). Returns the ticks written.
+    start from this scenario's MET 0, or the record is not the vehicle's). The replay stops after
+    `ticks` (default the episode's duration), because the executive runs on past the episode. Read
+    the record of a stopped executive: a live journal's last line can be partial. Returns the ticks
+    written.
     """
     import console  # the executive's record reader; imported here so a batch run never loads it
 
     world = episode.world
     dt = plant.tick_seconds(world)
     truth = plant.initial_values(world, episode.scenario)
+    through = int(ticks if ticks is not None else episode.spec["duration_ticks"])
     writer = TraceWriter(trace_path, episode)
     written = 0
     try:
@@ -358,6 +364,8 @@ def trace_from_record(episode: Episode, state_dir: Path, trace_path: Path) -> in
                 for kind, row, _end in record.lines(segment):
                     if kind != "row" or row["tick"] < 1:
                         continue
+                    if written >= through:
+                        return written
                     if row["tick"] != written + 1:
                         writer._line(
                             {
@@ -884,7 +892,7 @@ def main(argv: list[str] | None = None) -> int:
         run_dir = args.out or VEHICLE / ".scratch" / "episodes" / args.run / args.policy
         trace = run_dir / "trace.jsonl.gz"
         if args.from_record is not None:
-            written = trace_from_record(episode, args.from_record, trace)
+            written = trace_from_record(episode, args.from_record, trace, ticks=args.ticks)
             print(f"replayed {written} tick(s) of the record in {args.from_record} -> {trace}")
             return _judge_and_write(trace, episode.spec, run_dir / "outcome.json", args)
         began = time.monotonic()

@@ -323,6 +323,45 @@ def test_a_run_restarted_from_a_checkpoint_in_a_fresh_process_is_the_same_run_sm
     restart_check("a", SMOKE_TICKS, SMOKE_TICKS // 2, smoke, tmp_path)
 
 
+def test_a_window_run_s_record_replays_into_the_same_trace_and_a_foreign_start_is_refused(
+    world, tmp_path
+):
+    """The window run's trace comes from the executive's private record (`--from-record`): replayed
+    from the scenario's MET 0, every tick's hash held to the record's. A real executive runs 100 ticks;
+    a scenario that starts where it started (the declared vehicle) replays all of them, and the
+    quiet-coast scenario, whose MET 0 the executive did not start from, is refused at its first tick."""
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    diode.mkdir()
+    ran = subprocess.run(
+        [
+            sys.executable, str(VEHICLE / "tools" / "console.py"), "--diode-dir", str(diode),
+            "--state-dir", str(state), "--slug", "alpha", "--multiplier", "50", "--cycle-ticks", "5",
+            "--checkpoint-ticks", "50", "--cycles", "20", "--scenario", "nominal", "--seed", "0",
+            "--ring-slots", "10",
+        ],
+        capture_output=True, text=True, timeout=600, check=False,
+    )  # fmt: skip
+    assert ran.returncode == 0, ran.stderr[-2000:]
+    plain_doc = yaml.safe_load(SCENARIO.read_text())
+    plain_doc["initial"] = {}
+    plain = tmp_path / "plain.yaml"
+    plain.write_text(yaml.safe_dump(plain_doc))
+    policy = tmp_path / "policy_z.yaml"
+    policy.write_text("policy: z\ncommands: []\n")
+    replayed = episode_eval.load_episode(plain, policy, world=world)
+    assert (
+        episode_eval.trace_from_record(replayed, state, tmp_path / "plain.jsonl.gz", ticks=100)
+        == 100
+    )
+    header, rows = episode_eval.read_trace(tmp_path / "plain.jsonl.gz")
+    assert header["replay_mismatches"] == [] and [row["t"] for row in rows] == list(range(100))
+    foreign = tmp_path / "qc.jsonl.gz"
+    assert episode_eval.trace_from_record(episode(world, "a"), state, foreign, ticks=100) == 0
+    record = episode_eval.evaluate(foreign, spec(), expected_ticks=100)
+    assert record["class"] == "apparatus_failure"
+    assert any("record replay stopped at its tick 1" in line for line in record["apparatus"])
+
+
 # -------------------------------------------------------------------------------------------------
 # The full episode: opt-in
 # -------------------------------------------------------------------------------------------------
