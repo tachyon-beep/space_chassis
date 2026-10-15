@@ -53,6 +53,9 @@ DUMMY_KEY = "sk-smoke-dummy"
 WINDOWS = ("diode", "vehicle")
 # The vehicle checkpoints every 50 ticks; at the operator's 5 s poll that is minutes per check.
 VEHICLE_SMOKE_POLL = "0.2"
+# A seed no window has any reason to contain, so live/test_vehicle.py can look for it in every file
+# an agent can read: the world's identity belongs in the window root's .executive.json alone.
+SMOKE_VEHICLE_SEED = "8675309"
 
 
 def allowed_environment(extra: dict | None = None) -> dict:
@@ -190,6 +193,7 @@ class SmokeStack:
                 f"    image: {SMOKE_VEHICLE_IMAGE}",
                 "    environment:",
                 f'      DIODE_POLL_SECONDS: "{VEHICLE_SMOKE_POLL}"',
+                f'      VEHICLE_SEED: "{SMOKE_VEHICLE_SEED}"',
             ]
         lines += [
             "  fleet_monitor:",

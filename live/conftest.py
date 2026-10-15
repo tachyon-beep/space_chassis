@@ -1,4 +1,5 @@
-"""The live suite's one stack: three agents, built and started once for the session.
+"""The live suite's stacks: three agents, built and started once for the session, with the contract
+fixture as the window; and, for live/test_vehicle.py, the same fleet with the vehicle as the window.
 
 agent_3's recorder is capped at four requests an hour, so it is refused on its fifth call and spends
 the run in the watchdog's pause loop (spec 9.7); agent_1 and agent_2 run on the stub at its normal
