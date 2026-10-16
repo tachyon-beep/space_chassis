@@ -354,6 +354,30 @@ def run_episode(
     return values
 
 
+def _admitted(scenario: plant.Scenario, verb: str) -> bool:
+    try:
+        scenario.admit(verb)
+    except plant.EffectRefused:
+        return False
+    return True
+
+
+def _record_scenario(episode: Episode, state_dir: Path) -> dict[str, Any] | None:
+    """The `identity.scenario_file` of the world in `state_dir`'s newest verifying checkpoint, or None.
+
+    None where the world names no scenario (the declared vehicle) or no checkpoint can be read: the
+    replay's hashes are then what holds the record to the episode's MET 0."""
+    try:
+        loaded = checkpoint.choose_generation(
+            Path(state_dir), checkpoint.Compatibility.current(episode.world)
+        )
+    except (checkpoint.CheckpointRefused, OSError):
+        return None
+    if loaded is None:
+        return None
+    return loaded.body["identity"].get("scenario_file")
+
+
 def trace_from_record(
     episode: Episode, state_dir: Path, trace_path: Path, *, ticks: int | None = None
 ) -> int:
@@ -382,6 +406,20 @@ def trace_from_record(
     writer = TraceWriter(trace_path, episode, met0=truth)
     written = 0
     try:
+        # The world's own statement of the scenario it started from (`console.py --scenario-file`,
+        # `identity.scenario_file`): a world started from another file is not this episode's run.
+        started_from = _record_scenario(episode, Path(state_dir))
+        if started_from is not None and started_from.get("sha256") != episode.scenario_sha:
+            writer._line(
+                {
+                    "replay_mismatch": 0,
+                    "why": (
+                        f"the executive started from scenario {started_from.get('name')!r} (sha256 "
+                        f"{started_from.get('sha256')}), not this episode's (sha256 {episode.scenario_sha})"
+                    ),
+                }
+            )
+            return written
         with console.read_record(Path(state_dir)) as record:
             for segment in console.concatenated(record.segments):
                 for kind, row, _end in record.lines(segment):
@@ -401,6 +439,16 @@ def trace_from_record(
                         plant.Effect(offset, verb, dict(arguments))
                         for offset, verb, arguments in row["effects"]
                     ]
+                    # 09 §6: "a refused verb is applied" is an apparatus failure, whatever it did.
+                    refused = [e.verb for e in effects if not _admitted(episode.scenario, e.verb)]
+                    if refused:
+                        writer._line(
+                            {
+                                "replay_mismatch": row["tick"],
+                                "why": f"the record applies {refused}, which the episode's verbs refuse",
+                            }
+                        )
+                        return written
                     ledger = plant.Ledger()
                     gaps: list[plant.Gap] = []
                     truth = plant.step(world, truth, dt, gaps, effects or None, ledger=ledger)
@@ -893,7 +941,16 @@ def main(argv: list[str] | None = None) -> int:
         "--out", type=Path, help="the run's directory (trace.jsonl.gz, outcome.json)"
     )
     parser.add_argument("--evaluate", type=Path, metavar="TRACE", help="judge an existing trace")
-    parser.add_argument("--scenario", type=Path, help="the scenario file for --evaluate")
+    parser.add_argument(
+        "--scenario",
+        type=Path,
+        help="the scenario file for --evaluate, or in place of --run's scenarios/<name>.yaml",
+    )
+    parser.add_argument(
+        "--policy-file",
+        type=Path,
+        help="a policy file in place of --policy's scenarios/<name>/policy_<id>.yaml",
+    )
     parser.add_argument("--expect", choices=CLASSES, help="exit 1 unless the outcome is this class")
     parser.add_argument(
         "--from-record",
@@ -908,10 +965,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    def files() -> tuple[Path, Path]:
+        """The scenario and the policy: named by --run and --policy, or given as files."""
+        if not (args.run or args.scenario) or not (args.policy or args.policy_file):
+            parser.error("--run (or --scenario) and --policy (or --policy-file), or --evaluate")
+        named = scenario_paths(args.run or "quiet_coast", args.policy or "a")
+        return args.scenario or named[0], args.policy_file or named[1]
+
     if args.emit_policy:
-        if not args.run or not args.policy:
-            parser.error("--emit-policy needs --run and --policy")
-        print(json.dumps(policy_document(*scenario_paths(args.run, args.policy)), indent=2))
+        print(json.dumps(policy_document(*files()), indent=2))
         return 0
 
     if args.evaluate is not None:
@@ -919,11 +981,9 @@ def main(argv: list[str] | None = None) -> int:
         spec = yaml.safe_load(scenario.read_text())["episode"]
         out = args.out or args.evaluate.with_name("outcome.json")
     else:
-        if not args.run or not args.policy:
-            parser.error("--run and --policy, or --evaluate")
-        scenario, policy = scenario_paths(args.run, args.policy)
+        scenario, policy = files()
         episode = load_episode(scenario, policy)
-        run_dir = args.out or VEHICLE / ".scratch" / "episodes" / args.run / args.policy
+        run_dir = args.out or VEHICLE / ".scratch" / "episodes" / episode.name / episode.policy_id
         trace = run_dir / "trace.jsonl.gz"
         if args.from_record is not None:
             written = trace_from_record(episode, args.from_record, trace, ticks=args.ticks)
