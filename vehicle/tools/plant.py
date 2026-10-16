@@ -849,11 +849,18 @@ class RuleInputs(Mapping[str, Any]):
 class RuleParams(Mapping[str, Any]):
     """The state's own declaration, read-only, with `UNCONFIGURED` refused rather than returned."""
 
-    __slots__ = ("_spec", "_where")
+    __slots__ = ("_spec", "_where", "why_none")
 
     def __init__(self, spec: dict[str, Any], where: str) -> None:
         self._spec = spec
         self._where = where
+        self.why_none: str | None = None
+
+    def no_value(self, why: str) -> None:
+        """A rule's honest `None`, with the reason the gap should carry: `return params.no_value(...)`.
+        A bare `None` is still a gap; this one says which declared limit the tick fell outside."""
+        self.why_none = str(why)
+        return None
 
     def __getitem__(self, key: str) -> Any:
         if key not in self._spec:
@@ -891,6 +898,8 @@ def call_rule(world: World, state: State, values: dict[str, Any], dt: float) -> 
         # gap: it stops the tick, naming the file it came from.
         raise RuntimeError(f"{rule.source}: the rule for {state.id!r} raised {exc!r}") from exc
     if value is None:
+        if params.why_none:
+            raise Unconfigured(where, f"its rule ({rule.source}) has no value this tick: {params.why_none}")
         raise Unconfigured(where, f"its rule ({rule.source}) returned no value this tick")
     return value
 
