@@ -5669,7 +5669,11 @@ def test_an_irreversible_event_cannot_fire_without_a_valid_arm_token(tmp_path):
 
     armed = run("arm_event event=pyro_fire")
     assert "refused: INTERLOCK UNEVALUATED" in armed, armed
-    for name in arm["interlocks"]:
+    # ADR 0004: the refusal lists the interlocks whose chain cannot be read, and none of these three
+    # can be: two watch template families, and `latch_disagreement` is gated by an owed latch count.
+    unreadable = [n for n in arm["interlocks"] if _plant.resolve_interlock(world, n)[0] is None]
+    assert unreadable == arm["interlocks"], unreadable
+    for name in unreadable:
         assert name in armed, (name, armed)
     assert "Token:" not in armed and window.arms == {}, armed
 
@@ -5687,7 +5691,9 @@ def test_an_irreversible_event_cannot_fire_without_a_valid_arm_token(tmp_path):
     assert "not the outstanding token" in wrong and "UNEVALUATED" not in wrong, wrong
     right = run("execute_event event=pyro_fire arm_token=0123456789abcdef")
     assert "refused: INTERLOCK UNEVALUATED" in right, right
-    for name in fire["interlocks"]:
+    unreadable = [n for n in fire["interlocks"] if _plant.resolve_interlock(world, n)[0] is None]
+    assert unreadable == fire["interlocks"], unreadable
+    for name in unreadable:
         assert name in right, (name, right)
     assert "no arm token has been consumed" in right, right
     assert window.arms == {"pyro_fire": "0123456789abcdef"}, "the refusal must not consume the token"
@@ -14212,8 +14218,11 @@ def test_the_water_cycle_edges_have_the_right_way_round(tmp_path):
     # The discharge computes, and it is the *target* that drives it: the radiator's wattage sets
     # how fast the water goes.
     edge = next(e for e in world.edges if e.id == "E-WATER-RAD")
+    # The target node carries three states, so the driver is the state the edge `reads:`, keyed by
+    # its own id; the node's key is never read as one of its states (`plant.state_level`).
+    assert edge.reads == "evaporator_duty_w"
     flux = plant.stock_flux(
-        world, edge, {edge.source: 100.0, edge.target: 1000.0}, 1.0, driver_node=edge.target
+        world, edge, {edge.source: 100.0, edge.reads: 1000.0}, 1.0, driver_node=edge.target
     )
     assert flux == pytest.approx(4.0816e-4, rel=1e-3)
 
@@ -16162,8 +16171,9 @@ def test_the_console_applies_the_effect_and_says_what_changed(tmp_path):
     states became — `set_rcs_mode` writes a state on the sentinel, and the frame carries it.
 
     **What changed (ADR 0001 choice C).** The old version of this test closed the bus tie and read
-    `bus_tie=closed` back. `set_bus_tie` declares `tie_dv_limit`, a threshold on `power.dc_bus_a_v`
-    whose source state has no rule, so the executive cannot guard the command and refuses it
+    `bus_tie=closed` back. `set_bus_tie` declares `tie_dv_limit`, a threshold on the difference between
+    the buses expressed against `power.dc_bus_a_v`, which nothing computes, so the executive cannot
+    guard the command and refuses it
     `INTERLOCK UNEVALUATED`; the tie stays `open` in the ring. And `set_coolant_pump`, the old
     NOT IMPLEMENTED case, declares interlocks too, so the owed-value refusal is proved on `point_hga`
     — interlock-free, and its `link_snr.command_value.selects` is owed (`domains/comms/components.yaml`).
@@ -16182,7 +16192,8 @@ def test_the_console_applies_the_effect_and_says_what_changed(tmp_path):
         assert len(bodies) == 1, bodies
         return bodies[0]
 
-    # The post-extraction tie starts open, and stays open: the command cannot be guarded.
+    # The post-extraction tie starts open, and stays open: the command cannot be guarded (ADR 0004:
+    # `tie_dv_limit` compares the difference between the buses, which nothing computes).
     tied = run("set_bus_tie tie=csm_tie_ab state=closed")
     assert "refused: INTERLOCK UNEVALUATED" in tied and "tie_dv_limit" in tied, tied
     assert "succeeded" not in tied, tied
@@ -22190,9 +22201,9 @@ def test_a_command_whose_interlock_cannot_be_evaluated_is_refused_in_every_windo
 
     `set_bus_tie` declares one interlock, `tie_dv_limit` (`domains/power/commands.yaml`), which
     watches `power.dc_bus_a_v` (`domains/power/profiles.yaml`), a reading of `bus_a_v`. Since ADR
-    0003's power rules the state has a value every tick, and the comparator still cannot run: band
-    and dwell evaluation is WP05's, so the refusal names the reading it has and the comparison it
-    lacks. The reference console applied the command anyway and labelled nothing, which is the
+    0003's power rules the state has a value every tick, and the comparator still cannot run: the
+    threshold's `point_units` say it compares the *difference* between the two buses, which nothing
+    computes, so ADR 0004 leaves it unevaluated and the refusal names that link. The reference console applied the command anyway and labelled nothing, which is the
     alternative the ADR rejected. `bus_tie_closed` starts `open` (`domains/power/components.yaml`),
     and it must still read `open` in both rings afterwards.
 
@@ -22222,8 +22233,7 @@ def test_a_command_whose_interlock_cannot_be_evaluated_is_refused_in_every_windo
         assert len(bodies) == 1, bodies
         assert "refused: INTERLOCK UNEVALUATED" in bodies[0], bodies[0]
         assert "tie_dv_limit" in bodies[0] and "power.dc_bus_a_v" in bodies[0], bodies[0]
-        assert "bus_a_v" in bodies[0] and "has a reading this tick" in bodies[0], bodies[0]
-        assert "is not implemented in this slice (WP05)" in bodies[0], bodies[0]
+        assert "V of difference between the two buses" in bodies[0], bodies[0]
         assert "succeeded" not in bodies[0]
         assert receipt_of(bodies[0])["state"] == "refused"
         assert newest_frame(diode / slug)["values"]["power.bus_tie_state"] == "open", slug
@@ -23817,8 +23827,10 @@ def test_a_refusal_never_prints_a_live_value(tmp_path):
     A refusal is a result file an agent reads, and a live value of a state or a point in it is truth
     published outside the instrument (`plant.md` §7). `set_relief_valve` declares `cabin_dp_low`,
     whose point `structure.cabin_dp_psi` reads `cabin_dp_psi`, a state with a value at t=0 — so this
-    is the case where the number would have leaked. The refusal now says the point has a reading and
-    that comparing it is WP05's, and nothing more.
+    is the case where the number would have leaked. Under ADR 0004 the refusal names the link that
+    fails — the threshold's `point_units` say `psid`, not the channel's `psi`, so the executive does
+    not compare it — and nothing more. (A tripped refusal carries no value either:
+    `tests/test_interlocks.py`.)
     """
     console, _plant, world = console_tools()
     structure = yaml.safe_load((VEHICLE / "domains" / "structure" / "commands.yaml").read_text())
@@ -23834,7 +23846,7 @@ def test_a_refusal_never_prints_a_live_value(tmp_path):
     executive.cycle()
     body = results_of(diode / "alpha")[0]
     assert "INTERLOCK UNEVALUATED" in body and "cabin_dp_low" in body, body
-    assert "has a reading this tick" in body, body
+    assert "`point_units` say it compares 'psid, against a nominal 5'" in body, body
     assert repr(truth_value) not in body and f"{truth_value:.3f}"[:5] not in body, body
     assert not re.search(r"holds \S", body), body
 

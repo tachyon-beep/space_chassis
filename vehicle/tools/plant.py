@@ -1509,6 +1509,204 @@ def crew_coverage(root: Path) -> list[dict[str, Any]]:
     return summary
 
 
+def point_reading(
+    world: World, channel: str, values: dict[str, Any], readings: dict[str, Any] | None = None
+) -> Any:
+    """One channel's reading this tick, by `emit_frame`'s three answers, or `None` where it omits it.
+
+    An evaluable `derivation` is evaluated at this tick's readings; otherwise a channel whose unit is its
+    source's is the source's value; otherwise there is no reading. `readings` is the numeric part of
+    `values`, which a caller reading many channels builds once; a single read builds what it needs.
+    """
+    point = world.points.get(channel)
+    if point is None or "[" in channel:
+        return None
+    source = point.get("from")
+    if not isinstance(source, str):
+        return None
+    state = next((s for s in world.states if s.id == source), None)
+    derivation = point.get("derivation")
+    if isinstance(derivation, dict) and derivation.get("expression"):
+        if readings is None:
+            readings = {
+                key: value
+                for key, value in values.items()
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+            }
+        value, _why = derivation_value(derivation, world.documents, readings)
+        if value is not None:
+            return value
+    row = world.channels.get(channel) or {}
+    source_unit = (
+        state.unit if state is not None else (world.nodes.get(source) or {}).get("unit") or ""
+    )
+    if str(row.get("unit") or "").strip().lower() != str(source_unit or "").strip().lower():
+        return None
+    return state_level(values, state) if state is not None else values.get(source)
+
+
+# ------------------------------------------------------------------------------------------------
+# **Interlocks** (ADR 0004, narrowing ADR 0001 choice C): a verb's declared interlock is evaluated
+# against its threshold's own band and dwell where the chain from the interlock to a reading can be
+# read, and refused as unevaluated where it cannot. The dwell is history, so it lives in the truth
+# under `INTERLOCK_DWELL`: per threshold, the consecutive ticks its reading has been past `assert`,
+# updated at the end of every tick (`step`), checkpointed and hashed with everything else, and so
+# carried by a restart and reproduced by a replay of the record with nothing added to either.
+# ------------------------------------------------------------------------------------------------
+
+INTERLOCK_DWELL = "__interlock_dwell"
+
+
+@dataclass(frozen=True)
+class Interlock:
+    """A declared interlock resolved to the threshold it names, with the reading it watches."""
+
+    name: str
+    threshold: str
+    point: str
+    comparator: str
+    assert_value: float
+    dwell_us: int
+
+
+def resolve_interlock(world: World, name: str) -> tuple[Interlock | None, str | None]:
+    """The interlock as a readable threshold, or the first link of its chain that cannot be read.
+
+    The chain is the registry's: the interlock names a threshold (`profiles.yaml`, by its id or its
+    domain-qualified id), the threshold watches a point with a comparator, a numeric `assert` and an
+    assert dwell, and the point is a reading of a state (`point_reading`). A point that declares
+    `inputs` with prose for arithmetic is an estimate nothing can compute, so it is not readable even
+    where `from` names a state of the same unit: the state is one of its inputs, not the estimate.
+    """
+    bare = name.split(".", 1)[1] if "." in name else name
+    threshold = None
+    for document, content in sorted(world.documents.items()):
+        if not document.endswith("profiles.yaml") or not isinstance(content, dict):
+            continue
+        threshold = next(
+            (
+                row
+                for row in content.get("thresholds") or []
+                if isinstance(row, dict) and str(row.get("id")) in (name, bare)
+            ),
+            None,
+        )
+        if threshold is not None:
+            break
+    if threshold is None:
+        return None, f"`{name}` resolves to no threshold this executive can read"
+    tid = str(threshold.get("id"))
+    point = str(threshold.get("point") or "")
+    comparator = threshold.get("comparator")
+    level = threshold.get("assert")
+    if comparator not in ("above", "below"):
+        return None, f"`{name}` is threshold `{tid}`, whose comparator {comparator!r} is not above or below"
+    if not isinstance(level, (int, float)) or isinstance(level, bool):
+        return None, (
+            f"`{name}` is threshold `{tid}`, whose band is {level!r}: a threshold with no assert value "
+            "has nothing to compare a reading against"
+        )
+    dwell_ms = threshold.get("dwell_assert_ms", 0) or 0
+    if not isinstance(dwell_ms, (int, float)) or isinstance(dwell_ms, bool) or dwell_ms < 0:
+        return None, f"`{name}` is threshold `{tid}`, whose assert dwell {dwell_ms!r} is not a duration"
+    row = world.points.get(point)
+    if row is None or "[" in point:
+        return None, (
+            f"`{name}` watches `{point}`, which is not a channel the frame publishes — a template "
+            "family or an unregistered point — so there is no reading to compare"
+        )
+    source = row.get("from")
+    state = next((s for s in world.states if s.id == source), None)
+    if state is None:
+        return None, (
+            f"`{name}` watches `{point}`, read from `{source}`, which is not a state the plant advances"
+        )
+    # A threshold that is not a plain level on its channel says so, in the two fields the linter
+    # reads as that statement (`check_vehicle.py`, the band check). `gated_by` is a condition on when
+    # the threshold applies, which nothing declares as data, so it is not evaluated. `point_units`
+    # whose leading unit (before the first `,` or `:`) is not the channel's own names another quantity
+    # (a difference between buses, a rate, a draw above a configured one), which nothing computes;
+    # comparing the channel's level against that `assert` would guard the wrong quantity.
+    if threshold.get("gated_by"):
+        return None, (
+            f"`{name}` is threshold `{tid}`, gated by {str(threshold['gated_by'])!r}, a condition no "
+            "field declares, so this executive cannot tell when it applies"
+        )
+    units = threshold.get("point_units")
+    channel_unit = str((world.channels.get(point) or {}).get("unit") or "").strip()
+    if units is not None:
+        leading = re.split(r"[,:]", str(units), maxsplit=1)[0].strip()
+        if not channel_unit or leading.lower() != channel_unit.lower():
+            return None, (
+                f"`{name}` is threshold `{tid}` on `{point}` ({channel_unit or 'no unit'}), but its "
+                f"`point_units` say it compares {str(units)!r}, a quantity nothing computes"
+            )
+    derivation = row.get("derivation")
+    evaluable = isinstance(derivation, dict) and bool(derivation.get("expression"))
+    if row.get("inputs") and not evaluable:
+        return None, (
+            f"`{name}` watches `{point}`, an estimate over {list(row['inputs'])} whose arithmetic is "
+            "prose, so nothing can compute the reading it compares"
+        )
+    return (
+        Interlock(
+            name=name,
+            threshold=tid,
+            point=point,
+            comparator=str(comparator),
+            assert_value=float(level),
+            dwell_us=int(round(float(dwell_ms) * 1000)),
+        ),
+        None,
+    )
+
+
+def watched_interlocks(world: World) -> list[Interlock]:
+    """Every readable threshold some verb names as an interlock, once each, in threshold order."""
+    cached = world.__dict__.get("_watched_interlocks")
+    if cached is not None:
+        return cached
+    found: dict[str, Interlock] = {}
+    for spec in world.verbs.values():
+        named = (spec or {}).get("interlocks")
+        for name in named if isinstance(named, list) else []:
+            interlock, _problem = resolve_interlock(world, str(name))
+            if interlock is not None:
+                found.setdefault(interlock.threshold, interlock)
+    watched = [found[key] for key in sorted(found)]
+    world.__dict__["_watched_interlocks"] = watched
+    return watched
+
+
+def interlock_past(interlock: Interlock, reading: Any) -> bool | None:
+    """Whether a reading is past the threshold's assert value; None where there is no number."""
+    if not isinstance(reading, (int, float)) or isinstance(reading, bool):
+        return None
+    if interlock.comparator == "above":
+        return reading > interlock.assert_value
+    return reading < interlock.assert_value
+
+
+def _with_interlock_dwell(world: World, values: dict[str, Any]) -> dict[str, Any]:
+    """The tick's values with every watched threshold's consecutive past-assert count advanced."""
+    watched = watched_interlocks(world)
+    if not watched:
+        return values
+    previous = values.get(INTERLOCK_DWELL) or {}
+    counts: dict[str, int] = {}
+    for interlock in watched:
+        past = interlock_past(interlock, point_reading(world, interlock.point, values))
+        counts[interlock.threshold] = int(previous.get(interlock.threshold, 0)) + 1 if past else 0
+    return {**values, INTERLOCK_DWELL: counts}
+
+
+def interlock_tripped(world: World, interlock: Interlock, values: dict[str, Any]) -> bool:
+    """Tripped: the reading has been past its assert value for at least the assert dwell (at least one
+    tick when the dwell is zero), by the counts the last tick left in the truth."""
+    count = int((values.get(INTERLOCK_DWELL) or {}).get(interlock.threshold, 0))
+    return count >= 1 and count * _tick_us(tick_seconds(world)) >= interlock.dwell_us
+
+
 def emit_frame(
     world: World,
     *,
@@ -3393,6 +3591,9 @@ def step(
     for stock in {line.stock for line in book.lines}:
         book.observed[stock] = committed.get(stock)
     assert_conservation(book)
+    # The interlocks' dwell history (ADR 0004): per watched threshold, the consecutive ticks its
+    # reading has been past its assert value, carried in the truth so a checkpoint and a replay hold it.
+    committed = _with_interlock_dwell(world, committed)
     # 6. Instruments: T -> A. One-way, and the quality function cannot see the faults.
     # 7. Compare-point: `state_hash(committed)` is a hash over canonically-encoded state, and the
     #    caller takes it every tick — `--determinism` is the caller that does, and

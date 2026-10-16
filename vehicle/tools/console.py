@@ -268,8 +268,11 @@ from plant import (  # noqa: E402
     emit_frame,
     gate_instantiations,
     initial_values,
+    interlock_tripped,
     load_scenario,
     load_world,
+    point_reading,
+    resolve_interlock,
     state_hash,
     state_level,
     step,
@@ -4553,42 +4556,23 @@ class Executive:
     def interlock_reason(self, name: str) -> str:
         """Why one declared interlock cannot be evaluated this tick, from the configuration.
 
-        The chain is the registry's own: the interlock names a threshold (`profiles.yaml`), the
-        threshold watches a point, the point is a reading of a state, and the state either has a
-        value this tick or does not. Threshold evaluation against the comparator is WP05's in every
-        case; the sentence says which link is missing *first*, because that is what an implementer
-        reads. `tie_dv_limit` → `power.dc_bus_a_v` → `bus_a_v`, an `algebraic` state with no rule, is
-        the case the ADR names. **The sentence never carries the value**: a refusal is a result file
+        The chain is the registry's own: the interlock names a threshold (`profiles.yaml`) with a
+        comparator, a band and a dwell, the threshold watches a point, the point is a reading of a
+        state, and the state either has a value this tick or does not. Where the whole chain reads,
+        `validate` evaluates it (ADR 0004); this sentence is for the rest, and says which link is
+        missing *first*, because that is what an implementer reads. **The sentence never carries the value**: a refusal is a result file
         an agent reads, and a live reading in it is truth published outside the instrument
         (`plant.md` §7) — the point *has* a reading or has none, and that is all a refusal may say.
         """
-        threshold = None
-        bare = name.split(".", 1)[1] if "." in name else name
-        for document, content in sorted(self.world.documents.items()):
-            if not document.endswith("profiles.yaml") or not isinstance(content, dict):
-                continue
-            for row in content.get("thresholds") or []:
-                if isinstance(row, dict) and str(row.get("id")) in (name, bare):
-                    threshold = row
-                    break
-            if threshold is not None:
-                break
-        if threshold is None:
-            return f"`{name}` resolves to no threshold this executive can read"
-        point = str(threshold.get("point") or "")
-        row = self.world.points.get(point)
-        if row is None:
-            return (
-                f"`{name}` watches `{point}`, which is not a channel the frame publishes — a "
-                "template family or an unregistered point — so there is no reading to compare"
-            )
-        source = str(row.get("from") or "")
+        # ADR 0004: the chain is `plant.resolve_interlock`'s, which `validate` evaluates where it reads;
+        # this is the sentence for an interlock where it does not.
+        interlock, problem = resolve_interlock(self.world, name)
+        if interlock is None:
+            return problem or f"`{name}` resolves to no threshold this executive can read"
+        point = interlock.point
+        source = str((self.world.points.get(point) or {}).get("from") or "")
         state = next((s for s in self.world.states if s.id == source), None)
-        if state is None:
-            return (
-                f"`{name}` watches `{point}`, read from `{source}`, which is not a state the plant "
-                "advances"
-            )
+        assert state is not None  # resolve_interlock refuses a point read from no state
         if state_level(self.truth, state) is None:
             if state.method == "algebraic":
                 why = "its algebraic rule is UNCONFIGURED"
@@ -4601,9 +4585,8 @@ class Executive:
                 f"value this tick: {why}"
             )
         return (
-            f"`{name}` watches `{point}`, read from `{source}`, which has a reading this tick, but "
-            "comparing it against the threshold's band and dwell is not implemented in this slice "
-            "(WP05)"
+            f"`{name}` watches `{point}`, read from `{source}`, whose state has a value this tick and whose "
+            "channel arithmetic gives no reading from it"
         )
 
     def validate(self, window: Window, command: str, settling: dict[str, Any] | None = None) -> Verdict:
@@ -4693,11 +4676,35 @@ class Executive:
 
         interlocks = spec.get("interlocks")
         declared = [str(i) for i in interlocks] if isinstance(interlocks, list) else []
+        # ADR 0004 (narrowing ADR 0001 choice C): an interlock whose chain reads is evaluated against
+        # its threshold's band and dwell, with the dwell history the truth carries; one whose chain
+        # does not read is refused as unevaluated, as before. Never the value: a refusal is a result
+        # file an agent reads, and a live reading in it is truth outside the instruments.
+        unreadable = []
+        tripped = []
+        for name in declared:
+            interlock, _problem = resolve_interlock(self.world, name)
+            if interlock is None or point_reading(self.world, interlock.point, self.truth) is None:
+                unreadable.append(name)
+            elif interlock_tripped(self.world, interlock, self.truth):
+                tripped.append(interlock)
+        if tripped and not unreadable:
+            named = ", ".join(
+                f"`{interlock.name}` (threshold `{interlock.threshold}` on `{interlock.point}`)" for interlock in tripped
+            )
+            return refused(
+                f"refused: INTERLOCK TRIPPED. {verb!r} is interlocked by {named}: the reading has been past its "
+                "threshold for at least the threshold's declared dwell, so the command is not accepted "
+                "(ADR 0004). Nothing has been staged"
+                + (" and no arm token has been consumed" if verb == "execute_event" else "")
+                + ".\n"
+            )
+        declared = unreadable
         if declared:
             reasons = "\n".join(f"  - {self.interlock_reason(name)}" for name in declared)
             return refused(
                 f"refused: INTERLOCK UNEVALUATED. {verb!r} declares {len(declared)} interlock(s) "
-                "and this executive cannot evaluate them, so it must not accept the command "
+                "this executive cannot evaluate, so it must not accept the command "
                 "(ADR 0001 choice C: a command it cannot guard is a command it must not accept — "
                 f"the same rule an owed dwell is refused by):\n{reasons}\n"
                 "Threshold evaluation is WP05's; a point with no value is owed by the model that "
@@ -4836,9 +4843,16 @@ class Executive:
             )
         else:
             window.accepted += 1
+            guards = spec.get("interlocks")
+            guards = [str(g) for g in guards] if isinstance(guards, list) else []
             verdict.body = (
                 f"accepted: {verb!r}. Authority {spec.get('authority')}, phase {self.phase}, gate "
-                f"{gate_variable!r} open, no interlocks declared. "
+                f"{gate_variable!r} open, "
+                + (
+                    f"interlock(s) {', '.join(guards)} evaluated and none tripped (ADR 0004). "
+                    if guards
+                    else "no interlocks declared. "
+                )
             )
         if staged is None:
             verdict.body += (
