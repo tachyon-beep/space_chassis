@@ -14741,9 +14741,16 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     assert paired, "no threshold pair is reported — is the fixture still unconfigured?"
     # Every collapsed pair is reported once, at the `assert`, and never also at the `clear`.
     assert all(".assert" in line for line in paired), paired[:2]
-    assert not any(line.rstrip().endswith(".clear: is UNCONFIGURED") for line in owed), (
+    # A `clear` reported on its own is one whose `assert` is set — `tx_power_high`'s, since ADR 0004
+    # operator item 2 — never one whose pair is already counted at the `assert`.
+    paired_at = {line.split(".assert:")[0].strip() for line in paired}
+    alone = [line for line in owed if line.rstrip().endswith(".clear: is UNCONFIGURED")]
+    assert not [line for line in alone if line.split(".clear:")[0].strip() in paired_at], (
         "a `clear` is still reported separately from its `assert`"
     )
+    assert [line.strip() for line in alone] == [
+        "- domains/comms/profiles.yaml.thresholds[5].clear: is UNCONFIGURED"
+    ], alone
 
     # And the count is the honest one, not the inflated one.
     assert "with 265 declared debt(s)" in result.stdout, result.stdout[-400:]
