@@ -10,11 +10,10 @@ every agent's mounts.
 **The scenario overlay exists** (`console.py --scenario-file`, passed as `VEHICLE_SCENARIO_FILE` by
 `containers/serve_vehicle.sh` and declared in compose): the world starts at the quiet-coast scenario's
 MET 0 and holds its verb allow-list, and the evaluator replays the record from that MET 0.
-**Still marked strict xfail, for one named reason:** the executive evaluates the interlocks it can
-read (vehicle ADR 0004) and takes `set_evaporator_feed`, but refuses `set_power_amplifier` with
-INTERLOCK UNEVALUATED, because `tx_power_high` has no band and `power.load_margin_low` watches a prose
-estimate, so policy A's amplifier never comes on. `tests/test_quiet_coast_window.py` shows the same run without Docker. When it passes,
-remove the mark.
+No xfail: the executive evaluates the interlocks of every verb policy A sends (vehicle ADR 0004),
+with the ADR's three `chosen` operator items, which John decided on 2026-10-16; without them `set_power_amplifier` is
+refused INTERLOCK UNEVALUATED and this fails. `tests/test_quiet_coast_window.py` shows the same run,
+shortened and with a SIGKILL, without Docker.
 
 It runs on the vehicle's smoke stack (`vehicle_stack`, after live/test_vehicle.py, whose world it
 replaces), needs Docker and the vehicle image, and runs 40 minutes of mission time at m = 1: about
@@ -26,7 +25,6 @@ import shutil
 import subprocess
 import sys
 
-import pytest
 from stack import REPO, wait_for
 
 sys.path.insert(0, str(REPO / "scripts"))
@@ -38,6 +36,8 @@ SLUG = "agent_1"
 SCENARIO_IN_IMAGE = "/opt/vehicle/scenarios/quiet_coast.yaml"
 EVIDENCE = REPO / ".scratch" / "live-evidence" / "quiet_coast_a"
 START_SECONDS = 180
+# 50 s after policy A's recorder is empty; batch-judged `full_success` with the frozen scenario.
+LATE_STAND_DOWN = 92500
 
 
 def _emptied(directory) -> None:
@@ -68,10 +68,6 @@ def _fresh_world(stack) -> None:
     stack.recreate("vehicle", {"VEHICLE_SCENARIO_FILE": SCENARIO_IN_IMAGE})
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the window refuses set_power_amplifier: INTERLOCK UNEVALUATED (tx_power_high, power.load_margin_low; ADR 0004)",
-)
 def test_policy_a_through_the_window_is_judged_full_success_on_the_vehicle_s_own_record(
     vehicle_stack,
 ):
@@ -91,7 +87,16 @@ def test_policy_a_through_the_window_is_judged_full_success_on_the_vehicle_s_own
         timeout=120,
         check=True,
     )
-    policy = episode_driver.Policy.from_document(json.loads(emitted.stdout))
+    document = json.loads(emitted.stdout)
+    # The stand-down moved from tick 90,000 to `LATE_STAND_DOWN`. The recorder holds exactly D1 + D2,
+    # which policy A plays from tick 0 to 90,000; through the window the opening commands land some
+    # ticks after MET 0 (the world is running before the driver first sees it), and a stand-down that
+    # landed sooner after its own tick would leave the last kilobits unplayed: `partial` by a cycle's
+    # timing, not by the policy. Later, the recorder runs dry first and the delivery is whole.
+    for row in document["commands"]:
+        if row["tick"] == 90000:
+            row["tick"] = LATE_STAND_DOWN
+    policy = episode_driver.Policy.from_document(document)
     driver = episode_driver.Driver(window, policy)
     wall = policy.duration_ticks / policy.tick_hz
     assert driver.run(poll_seconds=0.05, timeout=wall + 600), (driver.sent, driver.log[-3:])
