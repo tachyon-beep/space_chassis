@@ -331,6 +331,8 @@ def _vehicle(count: int) -> str:
             ("VEHICLE_MULTIPLIER", "${VEHICLE_MULTIPLIER:-1}"),
             ("VEHICLE_CYCLE_TICKS", "${VEHICLE_CYCLE_TICKS:-5}"),
             ("VEHICLE_CHECKPOINT_TICKS", "${VEHICLE_CHECKPOINT_TICKS:-50}"),
+            # An episode's scenario overlay, a file in the image; empty serves the declared vehicle.
+            ("VEHICLE_SCENARIO_FILE", "${VEHICLE_SCENARIO_FILE:-}"),
         )
     )
     text += f"    volumes:\n      - {WINDOW_BIND}\n" + _binds("vehicle", None, count)

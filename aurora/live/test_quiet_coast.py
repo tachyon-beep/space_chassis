@@ -7,14 +7,13 @@ own record: the executive's private state directory, which the vehicle service a
 here reads a result file. The outcome record is written to the operator's evidence directory, outside
 every agent's mounts.
 
-**Not runnable yet, and marked so (strict xfail).** The window run has to start a fresh world at the
-quiet-coast scenario's MET 0: its initial overrides (the hot hold's environment and radiator, the
-recorder's D1 + D2) and its verb allow-list. `vehicle/tools/console.py` starts every world from the
-declared vehicle; it has no scenario overlay. The interface this test assumes is
-`VEHICLE_SCENARIO_FILE`, passed by `containers/serve_vehicle.sh` to the console, naming a scenario
-under `/opt/vehicle/scenarios/`; until the vehicle has it, the evaluator refuses the record at its
-first tick (the replay from the scenario's MET 0 disagrees with the record's hash) and the test fails
-as expected. When it passes, remove the mark.
+**The scenario overlay exists** (`console.py --scenario-file`, passed as `VEHICLE_SCENARIO_FILE` by
+`containers/serve_vehicle.sh` and declared in compose): the world starts at the quiet-coast scenario's
+MET 0 and holds its verb allow-list, and the evaluator replays the record from that MET 0.
+**Still marked strict xfail, for one named reason:** the executive refuses `set_power_amplifier` and
+`set_evaporator_feed` with INTERLOCK UNEVALUATED (ADR 0001 choice C), so policy A's amplifier never
+comes on. `tests/test_quiet_coast_window.py` shows the same run without Docker. When it passes,
+remove the mark.
 
 It runs on the vehicle's smoke stack (`vehicle_stack`, after live/test_vehicle.py, whose world it
 replaces), needs Docker and the vehicle image, and runs 40 minutes of mission time at m = 1: about
@@ -70,7 +69,7 @@ def _fresh_world(stack) -> None:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="console.py cannot start a world from a scenario overlay yet (VEHICLE_SCENARIO_FILE)",
+    reason="the window refuses set_power_amplifier and set_evaporator_feed: INTERLOCK UNEVALUATED (WP05)",
 )
 def test_policy_a_through_the_window_is_judged_full_success_on_the_vehicle_s_own_record(
     vehicle_stack,
