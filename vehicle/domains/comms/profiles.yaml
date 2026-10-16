@@ -153,13 +153,29 @@ thresholds:
   - id: tx_power_high
     point: comm.tx_power_w
     comparator: above
-    assert: UNCONFIGURED
+    # ADR 0004 operator item 2, decided by John 2026-10-16: one constant ceiling, the highest DC
+    # input the CSM chain is configured to draw, in place of a limit per transmitter and mode. Under
+    # the inventory's reading (`domains/comms/components.yaml#tx_power`: transceiver 36 W always,
+    # amplifier 72 W more while on) that is 36 + 72 = 108 W, which the model's chain reaches and never
+    # exceeds, so the guard trips only on a draw above every configured one (a hot amplifier, which
+    # the model does not yet produce). Open question: apollo_diode.md:157 reads "72 W input for the
+    # S-band power amplifier", and if that 72 W already includes the 36 W transceiver the ceiling is
+    # 72 W, and the inventory and `tx_power`'s rule change with it. `clear` stays owed: ADR 0004 does
+    # not evaluate a clear, and no source gives one.
+    assert: 108
     clear: UNCONFIGURED
     dwell_assert_ms: 2000
     dwell_clear_s: 10
     latched: true
     severity: CAUTION
-    point_units: "W DC, above the configured draw for the selected transmitter and mode"
+    point_units: "W: the transmit chain's DC input, against the highest draw configured for it"
+    assert_provenance:
+      basis: chosen
+      reason: >-
+        ADR 0004 operator item 2: a constant ceiling at the chain's highest configured draw, the
+        sourced 36 W transceiver plus 72 W amplifier inputs (apollo_diode.md:157, vehicle.yaml#comms.
+        transmitters), rather than the per-mode limit the note below asks for; 72 W if the
+        amplifier's figure includes the transceiver
     provenance:
       basis: apollo
       ref: "apollo_diode.md:168"

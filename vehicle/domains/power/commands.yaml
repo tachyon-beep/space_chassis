@@ -130,7 +130,14 @@ commands:
       priority: {type: enum, values: [P0, P1, P2, P3], optional: true}
     authority: A2
     gate: {kind: preference, variable: load_<load>_enable}
-    interlocks: [lcl_overcurrent]
+    # ADR 0004 operator item 3, decided by John 2026-10-16: no interlock. It was
+    # `[lcl_overcurrent]`, a per-load current-limiting switch that is this model's choice, not
+    # Apollo's (`components.yaml#lcl`: "Apollo had mechanical breakers plus the PDU"), watching a
+    # template family the frame does not publish with a 2 ms dwell inside a 20 ms tick, so the verb
+    # could never be guarded and was always refused. ADR 0003 left the bus tie and the load-shed
+    # ladder, which have no Apollo automatic counterpart, outside the episode; this follows it.
+    # `set_breaker` keeps the interlock, because the LCL is what it commands.
+    interlocks: none
     conflict_domain: power.load_<load>
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]

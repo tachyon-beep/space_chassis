@@ -31,7 +31,7 @@ source converter, flown bus routing, reactants per ampere, pump as flow, three d
 [0004](0004-interlock-evaluation.md) — interlock evaluation, narrowing 0001 choice C: a declared
 interlock whose threshold, band, dwell and reading resolve is evaluated, with its dwell history in the
 truth; one that does not resolve is still refused unevaluated (accepted 2026-10-16 under D1; three
-operator items for the episode's unreadable interlocks proposed, awaiting John).
+operator items for the episode's unreadable interlocks decided by John 2026-10-16).
 
 The table lists design questions, not extra product features. Link each
 record from its public work package. The roadmap can proceed through research

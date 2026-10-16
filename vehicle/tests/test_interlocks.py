@@ -46,10 +46,10 @@ def bodies(window: Path) -> list[str]:
         ("coolant_supply_high", "coolant_supply_high", None),
         ("res.cooling_water_reserve", "cooling_water_reserve", None),
         ("pump_no_flow", "pump_no_flow", None),
-        # Not readable, and not given a band here: the band is UNCONFIGURED.
-        ("tx_power_high", None, "whose band is 'UNCONFIGURED'"),
-        # Not readable: the point is an estimate over two channels with prose for arithmetic.
-        ("power.load_margin_low", None, "whose arithmetic is prose"),
+        # ADR 0004 operator items 1 and 2 (chosen; decided by John 2026-10-16): a constant ceiling, and the margin
+        # as the rated output of bus A's two modules less its load.
+        ("tx_power_high", "tx_power_high", None),
+        ("power.load_margin_low", "load_margin_low", None),
         # Not readable: a template family's point (and a 2 ms dwell inside a 20 ms tick).
         ("lcl_overcurrent", None, "template family"),
         # Not readable: a threshold that says it compares another quantity than its channel's level
@@ -125,7 +125,16 @@ def test_a_tripped_interlock_refuses_by_name_and_never_says_the_value(world, tmp
     assert "290" not in body and "16.85" not in body and "500" not in body, body
 
 
-def test_one_unreadable_interlock_still_refuses_the_command_as_unevaluated(world, tmp_path):
+def test_the_load_margin_is_bus_a_s_rated_generation_less_its_load(world):
+    """ADR 0004 operator item 1: two 1,420 W modules on bus A (AOH p. 2.6-2; TN D-7609 p. 5), less
+    the bus's load, and no longer the cells' output published under the margin's name."""
+    values = plant.initial_values(world)
+    load = values["bus_a_load_w"]
+    assert plant.point_reading(world, "power.load_margin_w", values) == pytest.approx(2840.0 - load)
+    assert plant.point_reading(world, "power.load_margin_w", values) != values.get("fuel_cell_power_w")
+
+
+def test_the_amplifier_s_interlocks_are_all_evaluated_and_it_is_taken(world, tmp_path):
     built = executive(world, tmp_path)
     try:
         submit(tmp_path / "diode" / "alpha", ["set_power_amplifier state=on"])
@@ -133,11 +142,25 @@ def test_one_unreadable_interlock_still_refuses_the_command_as_unevaluated(world
         (body,) = bodies(tmp_path / "diode" / "alpha")
     finally:
         built.close()
+    assert "state=accepted" in body and "evaluated and none tripped" in body, body
+
+
+def test_one_unreadable_interlock_still_refuses_the_command_as_unevaluated(world, tmp_path):
+    # `set_absorber_path` declares `co2_caution`, which reads, and `co2_absorber_low`, whose point is
+    # read from no state the plant advances. No scenario: the quiet coast's verbs do not include it.
+    built = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
+    built.attach("alpha")
+    try:
+        submit(tmp_path / "diode" / "alpha", ["set_absorber_path vehicle=csm path=secondary"])
+        built.cycle()
+        (body,) = bodies(tmp_path / "diode" / "alpha")
+    finally:
+        built.close()
     assert "refused: INTERLOCK UNEVALUATED" in body, body
-    assert "declares 2 interlock(s) this executive cannot evaluate" in body, body
-    assert "tx_power_high" in body and "load_margin_low" in body
-    # The two readable ones are evaluated, not listed as unevaluable.
-    assert "comm_amp_high`" not in body and "bus_a_undervoltage`" not in body, body
+    assert "declares 1 interlock(s) this executive cannot evaluate" in body, body
+    assert "co2_absorber_low" in body, body
+    # The readable one is evaluated, not listed as unevaluable.
+    assert "co2_caution" not in body, body
 
 
 def test_an_operator_s_closed_interlock_still_wins(world, tmp_path):

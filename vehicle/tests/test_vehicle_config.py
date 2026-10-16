@@ -15377,9 +15377,10 @@ def test_interlocks_is_a_list_or_the_sentinel_and_nothing_else(tmp_path):
     assert len(verbs) == 59, len(verbs)
     sentinel = sorted(v for v, s in verbs.items() if s.get("interlocks") == "none")
     guarded = sorted(v for v, s in verbs.items() if isinstance(s.get("interlocks"), list))
-    # 23 -> 24: comms' `play_recorder` (ADR 0003) declares the sentinel.
-    assert len(sentinel) == 24, sentinel
-    assert len(guarded) == 35, guarded
+    # 23 -> 24: comms' `play_recorder` (ADR 0003) declares the sentinel; 24 -> 25: power's `set_load`
+    # (ADR 0004 operator item 3: its `lcl_overcurrent` watched a template family no tick publishes).
+    assert len(sentinel) == 25, sentinel
+    assert len(guarded) == 34, guarded
     assert not [v for v, s in verbs.items() if isinstance(s.get("interlocks"), str) and v not in sentinel]
     for name in guarded:
         assert verbs[name]["interlocks"], f"{name} declares an empty guard list; write `none`"

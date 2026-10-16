@@ -1,7 +1,7 @@
 # 0004 — Interlock evaluation: evaluate what can be read, refuse what cannot
 
 - Status: accepted (maintainer, narrowing ADR 0001 choice C for the bounded episode, D14); the
-  operator items under §Operator items are proposed, awaiting John
+  operator items under §Operator items are decided by John (2026-10-16 20:41Z)
 - Date: 2026-10-16
 - Decision owner: vehicle maintainer, under D1 (`governance/decisions.md`) and open to the operator's
   revision
@@ -96,18 +96,43 @@ Limitations, stated rather than modelled:
   a stopped pump through the window is blocked. No policy in the episode restarts one. The condition
   is owed as a declared field.
 
-## Operator items (proposed, awaiting John)
+## Operator items (decided by John, 2026-10-16 20:41Z)
 
-The episode's verbs that stay refused under this decision, and the recommended answer for each. Each
-is a `chosen` value or a structural change, not evidence:
+The episode's verbs that stay refused under the decision above, and the answer for each, as John
+chose them ("Chosen values", 2026-10-16 20:41Z). Each is a `chosen` value or a structural change,
+not evidence. They are implemented in their own commit on top of the decision, which stands without
+them.
 
-1. `power.load_margin_w`: an evaluable expression, the rated output of the fuel-cell modules on bus A
-   minus the bus load, from the sourced rating in `docs/evidence/wp02-electrical.md`. This also stops
-   the frame publishing generation as margin.
-2. `tx_power_high`: a band labelled `chosen`, bounded by the sourced 72 W amplifier input. Open
-   question: whether that 72 W includes the 36 W transceiver.
-3. `set_load` drops `lcl_overcurrent`, on ADR 0003's precedent: the load-shed ladder and the bus tie
-   have no Apollo automatic counterpart, because Apollo protected loads with circuit breakers.
+1. **`power.load_margin_w` becomes an evaluable expression** (`domains/power/points.yaml`): the rated
+   output of the two fuel-cell modules on main bus A less the bus's load,
+   `fc_1.rated_w + fc_2.rated_w - bus_a_load_w`. `rated_w` is 1,420 W per module, the top of the AOH
+   p. 2.6-2 normal envelope (WP02 E-1), and the routing is the flown normal one (TN D-7609 p. 5).
+   It reads from `bus_a_load_w` instead of `fuel_cell_power_w`, so the frame stops publishing the
+   cells' output under the margin's name: the same edit fixes the frame defect above, and cannot be
+   split from it. What it omits: a module's capacity above its normal envelope, a failed or switched
+   module (the routing is static), and bus B. `domains/power/components.yaml#fuel_cell_power_w`'s note speaks
+   of "three 1,420 W modules against this figure", a whole-vehicle margin; the interlock's inputs
+   were bus A's, and this follows them.
+2. **`tx_power_high` gets `assert: 108`** (`domains/comms/profiles.yaml`, `assert_provenance.basis:
+   chosen`): one constant ceiling at the chain's highest configured DC input, the sourced 36 W
+   transceiver plus 72 W amplifier as the inventory and `tx_power`'s rule read them. A ceiling at
+   72 W would trip 2 s after the amplifier came on under that reading and then refuse turning it
+   off, so 72 W is the ceiling only if the open question resolves the other way: whether
+   apollo_diode.md:157's 72 W already includes the transceiver. The threshold's note still asks
+   for a limit per transmitter and mode; a constant is the narrower guard. `point_units` now opens
+   with the channel's unit, because the comparison is against the channel's level. `clear` stays
+   owed. The model never draws above 108 W (no hot-amplifier draw yet), so in this model the
+   guard never trips. Found on the way: `comm.tx_power_w`'s registry range is [0, 100] W, and the
+   chain reads 108 W with the amplifier on.
+3. **`set_load` declares no interlock** (`domains/power/commands.yaml`). Its `lcl_overcurrent`
+   watches a per-load current-limiting switch that is this model's choice, not Apollo's
+   (`components.yaml#lcl`: "Apollo had mechanical breakers plus the PDU"), on a template family
+   with a 2 ms dwell inside a 20 ms tick, so the verb could never be guarded. ADR 0003 left the bus
+   tie and the load-shed ladder, which have no Apollo automatic counterpart, outside the episode;
+   this follows that precedent. `set_breaker` keeps the interlock.
+
+With the three, `set_power_amplifier` and `set_load` are evaluated, and policies A, B and C reach
+their batch classes through the window (`aurora/tests/test_quiet_coast_window.py`).
 
 ## Acceptance and consequences
 
@@ -118,8 +143,8 @@ is a `chosen` value or a structural change, not evidence:
   operator's closed interlock still wins.
 - `aurora/tests/test_quiet_coast_window.py`: through the real executive, with a SIGKILL and a resume,
   every tick of the record replays to its hash. That includes the dwell counts. Policy D reaches its
-  physical loss of the coolant loop. Policy A's `full_success` stays a strict xfail until the operator
-  items are decided, because `set_power_amplifier` is refused unevaluated.
+  physical loss of the coolant loop. Without the operator items, policy A is a `timeout` there,
+  because `set_power_amplifier` is refused unevaluated; with them, A and B are `full_success` and C `partial`.
 - The referee's tests that asserted the old "has a reading this tick ... not implemented in this slice
   (WP05)" sentence (`set_bus_tie`'s `tie_dv_limit`, `set_relief_valve`'s `cabin_dp_low`) now assert
   the link this decision names: a difference between buses, and `psid` against `psi`. The arm and
