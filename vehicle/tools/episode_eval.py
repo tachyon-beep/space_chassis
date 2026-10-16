@@ -202,17 +202,11 @@ class TraceWriter:
     def level(self, values: dict[str, Any], state: plant.State) -> Any:
         """A state's own value: by its id, or on the sentinel, or by a node only it occupies.
 
-        Not `plant.state_level`, whose node fallback on a node several states share hands back
-        another state's value: `load_shed_class`, which never advances, read `load_shed_state`'s
-        key once `set_load` wrote it, and a switch map looked like a shed with no rule.
+        `plant.state_level`, which no longer falls back to the key of a node several states share:
+        `load_shed_class`, which never advances, used to read `load_shed_state`'s key once `set_load`
+        wrote it, and a switch map looked like a shed with no rule (`tests/test_state_level.py`).
         """
-        if state.id in values:
-            return values[state.id]
-        if state.node == "internal":
-            return (values.get("internal") or {}).get(state.id)
-        if len(self.world.states_on(state.node)) == 1:
-            return values.get(state.node)
-        return None
+        return plant.state_level(values, state)
 
     def segment(self, number: int, start_tick: int) -> None:
         self._line({"segment": number, "start_tick": start_tick})

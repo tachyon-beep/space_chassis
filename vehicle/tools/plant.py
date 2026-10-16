@@ -201,6 +201,9 @@ class State:
     method: str
     unit: str
     spec: dict[str, Any]
+    # Whether another state shares this one's coupling node: set by `World` from its own states, so a
+    # state built outside a world (a referee's toy) reads as alone. `state_level` reads it.
+    shared: bool = field(default=False, compare=False, repr=False)
 
     @property
     def owed(self) -> list[str]:
@@ -307,6 +310,15 @@ class World:
     # domain -> every key a rule of that domain may read, mapped to the state it names (or `None`
     # for a node key): the domain's own states and nodes, and what `reads:` and `writes:` declare.
     rule_reads: dict[str, dict[str, State | None]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Which states share a coupling node, for `state_level`'s fallback: a node key on a shared node
+        # is never one state's value, so a state there is read by its own id only.
+        on_node: dict[str, int] = {}
+        for state in self.states:
+            on_node[state.node] = on_node.get(state.node, 0) + 1
+        for state in self.states:
+            state.shared = state.node != "internal" and on_node[state.node] > 1
 
     def states_on(self, node: str) -> list[State]:
         return [s for s in self.states if s.node == node]
@@ -2939,8 +2951,13 @@ def state_values(world: World, state: State, value: Any) -> dict[str, Any]:
 def state_level(values: dict[str, Any], state: State) -> Any:
     """A state's own current value, by its own key first and its node's second.
 
-    The order matters while the two key spaces coexist: a multi-state node has no node key at all, and
-    a single-state node's two keys are the same number by construction.
+    The order matters while the two key spaces coexist: a single-state node's two keys are the same
+    number by construction, and **a node several states share is never read by its node key.** Its
+    node key, when there is one, is a keyed state's container (`_stage_element` writes
+    `values[node][state.id]`), so the fallback handed a sibling's value to a state that had none of
+    its own: `load_shed_class`, which never advances, read `{"load_enabled": {...}}` once `set_load`
+    wrote it — a switch map where a shed class belongs. A shared state with no value of its own has
+    none (`state.shared`, set by `World`).
     """
     if state.id in values:
         return values[state.id]
@@ -2949,6 +2966,8 @@ def state_level(values: dict[str, Any], state: State) -> Any:
         # hand back the whole map — which is what the first channel-keyed frame did, publishing
         # `avionics.clock_offset_ms` as six accumulators at once.
         return (values.get("internal") or {}).get(state.id)
+    if state.shared:
+        return None
     return values.get(state.node)
 
 
