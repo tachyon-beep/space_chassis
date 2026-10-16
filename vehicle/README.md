@@ -237,8 +237,11 @@ well past it: what remains is not a domain but the **plant**, and the debts are 
 
 Two counts, and the difference is deliberate. The **265** is every obligation the linter can name:
 **183** literal `UNCONFIGURED` scalars and **82** prose obligations in `open_debts` and edge records.
-The plant independently reports **183** literal unset scalars, matching that subtotal; the linter
-also names the **82** prose obligations. Graph sensitivities are reported against their owning
+The plant independently reports **182** literal unset scalars, matching that subtotal but for one:
+`tx_power_high` (ADR 0004 operator item 2) has its `assert` now and owes only its `clear`. The linter
+reported the unset pair as one missing limit and reports the lone `clear` as one, so its 265 did not
+move; the plant counts literal fields, so its figure fell by one. The linter also names the **82**
+prose obligations. Graph sensitivities are reported against their owning
 edges rather than added a second time. Until round 46 the scalar subtotal was
 itself incomplete: the domain files were walked for unset values by `check_domain` and the coupling
 graph by its edge walk, so every literal `UNCONFIGURED` was counted *except the eleven in the two

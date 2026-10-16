@@ -7,14 +7,13 @@ own record: the executive's private state directory, which the vehicle service a
 here reads a result file. The outcome record is written to the operator's evidence directory, outside
 every agent's mounts.
 
-**Not runnable yet, and marked so (strict xfail).** The window run has to start a fresh world at the
-quiet-coast scenario's MET 0: its initial overrides (the hot hold's environment and radiator, the
-recorder's D1 + D2) and its verb allow-list. `vehicle/tools/console.py` starts every world from the
-declared vehicle; it has no scenario overlay. The interface this test assumes is
-`VEHICLE_SCENARIO_FILE`, passed by `containers/serve_vehicle.sh` to the console, naming a scenario
-under `/opt/vehicle/scenarios/`; until the vehicle has it, the evaluator refuses the record at its
-first tick (the replay from the scenario's MET 0 disagrees with the record's hash) and the test fails
-as expected. When it passes, remove the mark.
+**The scenario overlay exists** (`console.py --scenario-file`, passed as `VEHICLE_SCENARIO_FILE` by
+`containers/serve_vehicle.sh` and declared in compose): the world starts at the quiet-coast scenario's
+MET 0 and holds its verb allow-list, and the evaluator replays the record from that MET 0.
+No xfail: the executive evaluates the interlocks of every verb policy A sends (vehicle ADR 0004),
+with the ADR's three `chosen` operator items, which John decided on 2026-10-16; without them `set_power_amplifier` is
+refused INTERLOCK UNEVALUATED and this fails. `tests/test_quiet_coast_window.py` shows the same run,
+shortened and with a SIGKILL, without Docker.
 
 It runs on the vehicle's smoke stack (`vehicle_stack`, after live/test_vehicle.py, whose world it
 replaces), needs Docker and the vehicle image, and runs 40 minutes of mission time at m = 1: about
@@ -26,7 +25,6 @@ import shutil
 import subprocess
 import sys
 
-import pytest
 from stack import REPO, wait_for
 
 sys.path.insert(0, str(REPO / "scripts"))
@@ -38,6 +36,8 @@ SLUG = "agent_1"
 SCENARIO_IN_IMAGE = "/opt/vehicle/scenarios/quiet_coast.yaml"
 EVIDENCE = REPO / ".scratch" / "live-evidence" / "quiet_coast_a"
 START_SECONDS = 180
+# 50 s after policy A's recorder is empty; batch-judged `full_success` with the frozen scenario.
+LATE_STAND_DOWN = 92500
 
 
 def _emptied(directory) -> None:
@@ -68,10 +68,6 @@ def _fresh_world(stack) -> None:
     stack.recreate("vehicle", {"VEHICLE_SCENARIO_FILE": SCENARIO_IN_IMAGE})
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="console.py cannot start a world from a scenario overlay yet (VEHICLE_SCENARIO_FILE)",
-)
 def test_policy_a_through_the_window_is_judged_full_success_on_the_vehicle_s_own_record(
     vehicle_stack,
 ):
@@ -91,7 +87,16 @@ def test_policy_a_through_the_window_is_judged_full_success_on_the_vehicle_s_own
         timeout=120,
         check=True,
     )
-    policy = episode_driver.Policy.from_document(json.loads(emitted.stdout))
+    document = json.loads(emitted.stdout)
+    # The stand-down moved from tick 90,000 to `LATE_STAND_DOWN`. The recorder holds exactly D1 + D2,
+    # which policy A plays from tick 0 to 90,000; through the window the opening commands land some
+    # ticks after MET 0 (the world is running before the driver first sees it), and a stand-down that
+    # landed sooner after its own tick would leave the last kilobits unplayed: `partial` by a cycle's
+    # timing, not by the policy. Later, the recorder runs dry first and the delivery is whole.
+    for row in document["commands"]:
+        if row["tick"] == 90000:
+            row["tick"] = LATE_STAND_DOWN
+    policy = episode_driver.Policy.from_document(document)
     driver = episode_driver.Driver(window, policy)
     wall = policy.duration_ticks / policy.tick_hz
     assert driver.run(poll_seconds=0.05, timeout=wall + 600), (driver.sent, driver.log[-3:])

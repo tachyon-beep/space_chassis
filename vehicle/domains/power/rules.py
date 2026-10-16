@@ -79,14 +79,53 @@ def _bus(params, load_w):
     )
 
 
+def why_unsolved(load_w, cells_in_parallel, open_circuit_v, resistance_ohm, envelope_a):
+    """The named gap behind `solve_bus`'s None: past the cells' maximum power, or a module current
+    outside the published normal envelope (AOH p. 2.6-2: 400-1,420 W a module), where the secant is
+    an extrapolation. Below the envelope is the case a light bus meets: under 400 W a module, so
+    under 800 W on two-module bus A and 400 W on bus B."""
+    n = float(cells_in_parallel)
+    r_bus = float(resistance_ohm) / n
+    e0 = float(open_circuit_v)
+    p = float(load_w)
+    if e0 * e0 - 4.0 * r_bus * p < 0.0:
+        return (
+            f"a load of {p:.0f} W is more than {cells_in_parallel} module(s) can deliver "
+            f"(E0^2 / (4 R/n) = {e0 * e0 / (4.0 * r_bus):.0f} W)"
+        )
+    low, high = (float(x) for x in envelope_a)
+    current = 2.0 * p / (e0 + (e0 * e0 - 4.0 * r_bus * p) ** 0.5)
+    per_module = current / n
+    side = "below" if per_module < low else "above"
+    edge = low if per_module < low else high
+    return (
+        f"a load of {p:.0f} W puts each of {cells_in_parallel} module(s) at {per_module:.2f} A, "
+        f"{side} the published normal envelope's {edge:.3f} A (400-1,420 W a module, AOH p. 2.6-2), "
+        "where the terminal relation is an extrapolation of its secant (WP02 E-2)"
+    )
+
+
+def _bus_v(params, load_w):
+    solved = _bus(params, load_w)
+    if solved is None:
+        return params.no_value(
+            why_unsolved(
+                load_w,
+                params["cells_in_parallel"],
+                params["cell_open_circuit_v"],
+                params["cell_resistance_ohm"],
+                params["cell_current_envelope_a"],
+            )
+        )
+    return solved[1]
+
+
 def bus_a_v(inputs, params, dt):
-    solved = _bus(params, inputs["bus_a_load_w"])
-    return None if solved is None else solved[1]
+    return _bus_v(params, inputs["bus_a_load_w"])
 
 
 def bus_b_v(inputs, params, dt):
-    solved = _bus(params, inputs["bus_b_load_w"])
-    return None if solved is None else solved[1]
+    return _bus_v(params, inputs["bus_b_load_w"])
 
 
 def fuel_cell_current_a(inputs, params, dt):
@@ -101,7 +140,14 @@ def fuel_cell_current_a(inputs, params, dt):
             params["cell_current_envelope_a"],
         )
         if solved is None:
-            return None
+            why = why_unsolved(
+                inputs[str(bus["load"])],
+                bus["cells_in_parallel"],
+                params["cell_open_circuit_v"],
+                params["cell_resistance_ohm"],
+                params["cell_current_envelope_a"],
+            )
+            return params.no_value(f"{bus['load']}: {why}")
         total += solved[0]
     return total
 

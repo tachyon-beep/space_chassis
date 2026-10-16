@@ -28,7 +28,9 @@ byte flipped in the header is caught by the copy the hash does cover. The one he
 copy cannot protect is `format`, which is read before anything else because it says how to read
 the rest — so a wrong `format` is held to the body too (the refusal rule under "The read" below).
 
-**What the body carries** is ADR 0002 G's list, section by section: `identity`; `run` (scenario,
+**What the body carries** is ADR 0002 G's list, section by section: `identity` (with
+`scenario_file`, the overlay's name and SHA-256, only for a world started from one: `console.py
+--scenario-file`); `run` (scenario,
 seed, phase, `phase_entry_seq`, the tripped interlocks, `--max-batch`, the allowance ceiling);
 `clock` (`m`, `k`, `N`, the burst bound, the lag ceiling: the run inputs ADR 0002 A, B and J name,
 required with no default, which a resume inherits unless the operator names another — `clock_problem`
@@ -150,6 +152,8 @@ MAX_CYCLE_NS = 60_000_000_000
 MULTIPLIER_TEXT = re.compile(r"[1-9][0-9]*/[1-9][0-9]*")
 RNG_VERSION = 1
 SPEND_PLACEHOLDER_VERSION = 0
+# A scenario file's SHA-256, as `identity.scenario_file` carries it.
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 
 # -- encoding ---------------------------------------------------------------------------------
@@ -435,6 +439,13 @@ def capture_state(executive: Any, compat: Compatibility, *, git_commit: str | No
         # Results durable in the record and not confirmed written (format v2, child 3's addendum B4).
         "obligations": list(getattr(executive, "obligations", None) or []),
     }
+    # The scenario overlay a window run started from (`console.py --scenario-file`): its name and the
+    # SHA-256 of the file's bytes. Identity, so the header carries it and a resume is held to it. Only a
+    # world that started from one carries the key; a world without it is the declared vehicle, which is
+    # every checkpoint written before scenarios existed, byte for byte.
+    scenario_file = getattr(executive, "scenario_identity", None)
+    if scenario_file is not None:
+        body["identity"]["scenario_file"] = {"name": str(scenario_file["name"]), "sha256": str(scenario_file["sha256"])}
     # Through the encoding and back: the caller gets a copy that shares nothing with the live
     # object, and a value the format cannot carry is refused here, not at the write.
     return decode(encode(body))
@@ -479,6 +490,7 @@ def restore_state(executive: Any, body: dict[str, Any]) -> None:
         )
     state = body["executive"]
     executive.world_id = body["identity"]["world_id"]
+    executive.scenario_identity = body["identity"].get("scenario_file")
     executive.scenario = run["scenario"]
     executive.seed = run["seed"]
     executive.phase_entry_seq = run["phase_entry_seq"]
@@ -629,6 +641,17 @@ def _structure_problem(body: Any) -> tuple[str, str] | None:
                 return f"{section}.{key}", f"`{section}.{key}` is a JSON {type(body[section][key]).__name__}, not {_kind_name(kind)}"
     if body["identity"]["tick"] != body["executive"]["tick"]:
         return "executive.tick", "the identity and the executive disagree about the tick"
+    if "scenario_file" in body["identity"]:
+        # Optional (absent: the declared vehicle), and whole when present: a name and a SHA-256.
+        scenario_file = body["identity"]["scenario_file"]
+        if (
+            not isinstance(scenario_file, dict)
+            or set(scenario_file) != {"name", "sha256"}
+            or not isinstance(scenario_file["name"], str)
+            or not isinstance(scenario_file["sha256"], str)
+            or SHA256_HEX.fullmatch(scenario_file["sha256"]) is None
+        ):
+            return "identity.scenario_file", "`identity.scenario_file` is not a scenario's name and SHA-256"
     for index, entry in enumerate(body["segments"]):
         where = f"segments[{index}]"
         if not isinstance(entry, dict):

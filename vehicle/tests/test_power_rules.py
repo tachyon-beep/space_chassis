@@ -195,6 +195,26 @@ def test_the_solve_refuses_a_load_the_cells_cannot_deliver_or_an_extrapolation()
     assert rules.solve_bus(1600.0, 2, E0, R, envelope) is not None
 
 
+def test_a_bus_below_the_module_minimum_is_a_named_gap_not_a_bare_none(world):
+    """The cell solve has no value under 400 W a module (AOH p. 2.6-2's normal minimum), so under
+    800 W on two-module bus A and 400 W on bus B; the gap says that, rather than "no value"."""
+    rules = rules_module()
+    for state, key, light, cells in (("bus_a_v", "bus_a_load_w", 780.0, 2), ("bus_b_v", "bus_b_load_w", 380.0, 1)):
+        params = plant.RuleParams(spec_of(world, state), f"state {state}")
+        assert getattr(rules, state)({key: light}, params, DT) is None
+        assert f"a load of {light:.0f} W puts each of {cells} module(s) at" in params.why_none
+        assert "below the published normal envelope's 12.903 A" in params.why_none, params.why_none
+        heavy = plant.RuleParams(spec_of(world, state), f"state {state}")
+        assert getattr(rules, state)({key: E0**2 / (4 * R / cells) + 1.0}, heavy, DT) is None
+        assert "more than" in heavy.why_none and "can deliver" in heavy.why_none, heavy.why_none
+    # And the plant's gap carries the reason.
+    values = dict(plant.initial_values(world), bus_a_load_w=780.0)
+    state = next(s for s in world.states if s.id == "bus_a_v")
+    with pytest.raises(plant.Unconfigured) as refused:
+        plant.call_rule(world, state, values, DT)
+    assert "has no value this tick: a load of 780 W" in str(refused.value), refused.value
+
+
 def test_the_buses_start_inside_the_flown_envelope(world):
     """ADR 0003 acceptance: bus A starts inside 26.5-31 V, and so does bus B."""
     after, gaps = tick(world, plant.initial_values(world))

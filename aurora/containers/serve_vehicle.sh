@@ -42,6 +42,10 @@
 #   VEHICLE_MULTIPLIER  m, mission seconds per wall second               (1)
 #   VEHICLE_CYCLE_TICKS  k, ticks per claim and publication              (5)
 #   VEHICLE_CHECKPOINT_TICKS  N, ticks between checkpoints               (50)
+#   VEHICLE_SCENARIO_FILE  an episode's overlay, a file in the image     (none)
+#                       (e.g. /opt/vehicle/scenarios/quiet_coast.yaml): `--scenario-file`, which
+#                       starts a new world at the scenario's MET 0 and holds its verb list. It is
+#                       the world's identity too: a restart names the same file or refuses (exit 3).
 #
 # The clock (vehicle ADR 0002 A, B, J; #23), which replaced `--poll`: a serving start must name m, k
 # and N, which have no default in the console because the stack that starts the vehicle owns them.
@@ -104,6 +108,9 @@ set -- \
     --cycle-ticks "$VEHICLE_CYCLE_TICKS" \
     --checkpoint-ticks "$VEHICLE_CHECKPOINT_TICKS" \
     --cycles 0
+if [ -n "${VEHICLE_SCENARIO_FILE:-}" ]; then
+    set -- "$@" --scenario-file "$VEHICLE_SCENARIO_FILE"
+fi
 for slug in $SLUGS; do
     # The window directory, created here rather than left to the console, so a missing mount point
     # fails for a reason that names it.
