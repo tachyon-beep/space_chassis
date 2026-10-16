@@ -46,6 +46,7 @@ jobs:
         if: ${{ failure() }}
         run: |
           for log in aurora/.scratch/live-evidence/*; do
+            [ -f "$log" ] || continue
             echo "::group::$log"; tail -n 80 "$log"; echo "::endgroup::"
           done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
