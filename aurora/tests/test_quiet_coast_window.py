@@ -21,13 +21,16 @@ that did not continue the killed one bit for bit is an apparatus failure; the te
 record to two boots and replays it a second time to the same trace hash, with every conservation
 verdict passing.
 
-**The class is not `full_success` yet, and the test says why.** The executive refuses two of policy A's
-verbs, `set_power_amplifier` and `set_evaporator_feed`, with INTERLOCK UNEVALUATED: each declares
-interlocks on thresholds, and an executive that cannot compare a threshold must not accept a command it
-guards (ADR 0001 choice C; threshold evaluation is WP05's). The batch run never meets that gate, since
-it applies the scripted effects through `plant.step`. So the window run's amplifier never comes on and
-the class is `timeout`. One test asserts the transport and exactly that gap; the `full_success`
-assertion is a strict xfail naming it. The run is made once per session and shared.
+**Interlocks (ADR 0004).** The executive evaluates a declared interlock whose chain reads (threshold,
+band, dwell, reading), with the dwell count in the hashed truth, and refuses INTERLOCK UNEVALUATED a
+verb any of whose interlocks does not read. The batch run never meets that gate, since it applies the
+scripted effects through `plant.step`. `set_evaporator_feed` and `set_coolant_pump` are evaluated and
+taken; `set_power_amplifier` is still refused, because `tx_power_high` has no band and
+`power.load_margin_low` watches a prose estimate. So policy A's amplifier never comes on and its class
+is `timeout`: one test asserts the transport and exactly that gap, and the `full_success` assertion is
+a strict xfail naming it. Policy D (the pump stopped at MET 0) needs no amplifier, and its physical
+loss of the coolant loop is a real assertion, on a run killed and resumed past the point where the
+coolant-supply interlock's dwell count is accumulating. Each run is made once per session and shared.
 
 **The full episode** (`QUIET_COAST_FULL=1`): the frozen scenario and policy A as they are, 120,000
 ticks; at the default m = 2 that is 1,000 s of wall time if the host keeps up.
@@ -182,7 +185,6 @@ def drive_and_judge(
     )
     assert emitted.returncode == 0, emitted.stderr
     policy = episode_driver.Policy.from_document(json.loads(emitted.stdout))
-    assert policy.duration_ticks == ticks
     executive = Executive(tmp_path, scenario)
     window = executive.diode / SLUG
     executive.start()
@@ -206,11 +208,15 @@ def drive_and_judge(
                 time.sleep(0.02)
             assert driver.sent == sum(1 for at, _ in policy.commands if at == 0), driver.log
             executive.kill()
-        assert driver.run(poll_seconds=0.02, timeout=wall + 900, until_tick=ticks), (
-            driver.sent,
-            driver.log[-3:],
-            executive.tail(),
-        )
+        # On to the end of the judged run: every command due by then submitted (a policy's later
+        # commands, past a shortened run's end, are never due).
+        give_up = time.monotonic() + wall + 900
+        while (episode_driver.mission_tick(window) or 0) < ticks:
+            assert time.monotonic() < give_up, (driver.sent, driver.log[-3:], executive.tail())
+            driver.step()
+            time.sleep(0.02)
+        due = sum(1 for at, _ in policy.commands if at < ticks)
+        assert driver.sent >= due, (driver.sent, due, driver.log)
     finally:
         code = executive.stop()
     assert code == 0, (executive.exits, executive.tail())
@@ -237,16 +243,26 @@ def segments(state: Path) -> list[str]:
     return [boot for _tick, boot in sorted(heads)]
 
 
-# The verbs of policy A that declare interlocks the executive cannot evaluate yet (ADR 0001 choice C:
-# "a command it cannot guard is a command it must not accept"; threshold evaluation is WP05's). The
-# batch run applies scripted effects through `plant.step` and never meets this gate; the window does.
-INTERLOCKED = ("set_power_amplifier", "set_evaporator_feed")
+POLICY_D = VEHICLE / "scenarios" / "quiet_coast" / "policy_d.yaml"
+# Policy D's loss through the window: the coolant supply past 10 C from about tick 8,470 and held past
+# its 10 s dwell by about tick 8,970 with the amplifier refused (8,686 in batch with it on); judged at
+# 9,500 ticks, which is the loss and a margin, not the episode.
+D_TICKS = 9500
+# The one verb of the quiet-coast policies whose interlocks still cannot be read (ADR 0004): its four
+# are power.bus_a_undervoltage and thermal.comm_amp_high (evaluated), tx_power_high (band UNCONFIGURED)
+# and power.load_margin_low (an estimate with prose for arithmetic).
+UNREADABLE = "set_power_amplifier"
+UNREADABLE_REASON = (
+    "ADR 0004: set_power_amplifier's interlocks tx_power_high (band UNCONFIGURED) and "
+    "power.load_margin_low (point power.load_margin_w is a prose estimate) cannot be read, so the "
+    "window refuses it INTERLOCK UNEVALUATED and the amplifier never comes on"
+)
 
 
 @dataclasses.dataclass
 class WindowRun:
     record: dict
-    again: dict
+    again: dict | None
     exits: list[int]
     boots: list[str]
     sent: list[str]
@@ -255,10 +271,16 @@ class WindowRun:
 
 
 def window_run(
-    tmp_path_factory, name: str, scenario_and_policy, ticks: int, kill_at: int
+    tmp_path_factory,
+    name: str,
+    scenario_and_policy,
+    ticks: int,
+    kill_at: int,
+    *,
+    twice: bool = True,
 ) -> WindowRun:
     """One window run per session, shared by every xdist worker under a lock (as `test_quiet_coast`'s
-    batch runs are): driven, killed and resumed, judged, and judged again from the same record."""
+    batch runs are): driven, killed and resumed, judged, and (`twice`) judged again from the same record."""
     root = tmp_path_factory.getbasetemp().parent / "quiet_coast_window"
     root.mkdir(exist_ok=True)
     run = root / name
@@ -274,12 +296,15 @@ def window_run(
             record, executive, log = drive_and_judge(
                 run, scenario, policy_file, ticks, kill_at=kill_at
             )
-            again = run / "again"
-            replayed = evaluator(
-                "--scenario", str(scenario), "--policy-file", str(policy_file),
-                "--from-record", str(executive.state), "--ticks", str(ticks), "--out", str(again),
-            )  # fmt: skip
-            assert replayed.returncode == 0, replayed.stderr
+            again = None
+            if twice:
+                replayed = evaluator(
+                    "--scenario", str(scenario), "--policy-file", str(policy_file),
+                    "--from-record", str(executive.state), "--ticks", str(ticks),
+                    "--out", str(run / "again"),
+                )  # fmt: skip
+                assert replayed.returncode == 0, replayed.stderr
+                again = json.loads((run / "again" / "outcome.json").read_text())
             outputs = {
                 path.name: path.read_text()
                 for path in sorted((executive.diode / SLUG / "output").glob("*.txt"))
@@ -288,7 +313,7 @@ def window_run(
                 json.dumps(
                     {
                         "record": record,
-                        "again": json.loads((again / "outcome.json").read_text()),
+                        "again": again,
                         "exits": executive.exits,
                         "boots": segments(executive.state),
                         "sent": [line for entry in log for line in entry["lines"]],
@@ -301,15 +326,22 @@ def window_run(
 
 
 @pytest.fixture(scope="module")
-def short_run(tmp_path_factory) -> WindowRun:
-    return window_run(tmp_path_factory, "short", shortened, SHORT_TICKS, SHORT_TICKS * 2 // 5)
+def short_a(tmp_path_factory) -> WindowRun:
+    return window_run(tmp_path_factory, "short_a", shortened, SHORT_TICKS, SHORT_TICKS * 2 // 5)
+
+
+@pytest.fixture(scope="module")
+def run_d(tmp_path_factory) -> WindowRun:
+    return window_run(
+        tmp_path_factory, "d", lambda _run: (SCENARIO, POLICY_D), D_TICKS, 4000, twice=False
+    )
 
 
 def assert_the_transport(run: WindowRun, ticks: int) -> None:
     """What a window run shows whatever its class: the record is whole and replays from the scenario's
     MET 0 to the record's own hash on every tick across the SIGKILL (a mismatch is an apparatus
-    finding), the resumed boot is on the same record, every stock conserves, and every command has its
-    one result."""
+    finding, and the interlocks' dwell counts are in the hashed truth), the resumed boot is on the same
+    record, every stock conserves, and every command has its one result."""
     record = run.record
     assert record["apparatus"] == [], record["apparatus"]
     assert record["ticks"] == {"start": 0, "expected": ticks, "rows": ticks}
@@ -320,46 +352,72 @@ def assert_the_transport(run: WindowRun, ticks: int) -> None:
         )
     assert -signal.SIGKILL in run.exits, run.exits
     assert len(run.boots) >= 2, run.boots
-    # The record replays to the same trace a second time: the run is a function of its record.
-    assert run.again["trace_hash"] == record["trace_hash"]
+    if run.again is not None:
+        # The record replays to the same trace a second time: the run is a function of its record.
+        assert run.again["trace_hash"] == record["trace_hash"]
     assert len(run.outputs) == len(run.sent), (sorted(run.outputs), run.sent)
 
 
-def refused_unevaluated(run: WindowRun) -> list[str]:
-    return sorted(
-        {
-            verb
-            for name, text in run.outputs.items()
-            for verb in INTERLOCKED
-            if f"_{verb}_" in name and "INTERLOCK UNEVALUATED" in text
-        }
+def refusals(run: WindowRun) -> dict[str, str]:
+    """Each refused command's verb and the refusal's kind, from the result files."""
+    found = {}
+    for name, text in run.outputs.items():
+        if "state=refused" in text:
+            kind = text.split(".", 1)[0].removeprefix("refused: ")
+            verb = next(
+                (
+                    v
+                    for v in (
+                        "set_power_amplifier",
+                        "set_evaporator_feed",
+                        "set_coolant_pump",
+                        "set_load",
+                    )
+                    if f"_{v}_" in name
+                ),
+                name,
+            )
+            found[verb] = kind
+    return found
+
+
+def test_policy_a_through_the_window_survives_a_sigkill_and_its_record_replays(short_a):
+    """The transport holds. The evaporator's interlocks are evaluated and the feed is taken; the
+    amplifier's are not all readable, so it is refused, nothing is delivered and the run is a `timeout`."""
+    assert_the_transport(short_a, SHORT_TICKS)
+    assert refusals(short_a) == {UNREADABLE: "INTERLOCK UNEVALUATED"}, refusals(short_a)
+    assert short_a.record["class"] == "timeout", short_a.record["first_violation"]
+    assert short_a.record["objective_results"]["delivered_bits_at_deadline"] == 0
+
+
+@pytest.mark.xfail(strict=True, reason=UNREADABLE_REASON)
+def test_policy_a_through_the_window_is_judged_full_success(short_a):
+    assert short_a.record["class"] == "full_success", short_a.record["first_violation"]
+    assert short_a.record["objective_results"]["delivered_bits_at_deadline"] == 2 * SHORT_D
+
+
+def test_policy_d_through_the_window_loses_the_coolant_loop_after_a_sigkill(run_d):
+    """Policy D stops the pump at MET 0 (its interlocks evaluated, inside their bands) and the loop
+    overheats: a physical loss on the coolant supply, with the chain the batch run gives, judged on the
+    record of a run killed at tick 4,000 and resumed."""
+    assert_the_transport(run_d, D_TICKS)
+    assert refusals(run_d) == {UNREADABLE: "INTERLOCK UNEVALUATED"}, refusals(run_d)
+    record = run_d.record
+    assert record["class"] == "physical_loss", (record["apparatus"], record["first_violation"])
+    first = record["first_violation"]
+    assert first["state"] == "coolant_loop_t" and 8000 < first["tick"] < D_TICKS, first
+    moved = {link["state"]: link["first_moved_tick"] for link in first["chain"]}
+    assert (
+        moved["coolant_pump"]
+        <= moved["coolant_flow_kg_s"]
+        <= moved["coolant_loop_t"]
+        <= first["tick"]
     )
-
-
-def test_policy_a_through_the_window_survives_a_sigkill_and_its_record_replays(short_run):
-    """The transport holds today. The class does not: the executive refuses the two interlocked verbs
-    (WP05), so the amplifier never comes on, nothing is delivered and the run is a `timeout`."""
-    assert_the_transport(short_run, SHORT_TICKS)
-    assert short_run.record["class"] == "timeout", short_run.record["first_violation"]
-    assert refused_unevaluated(short_run) == sorted(INTERLOCKED)
-    assert short_run.record["objective_results"]["delivered_bits_at_deadline"] == 0
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="WP05: the window executive refuses set_power_amplifier and set_evaporator_feed with "
-    "INTERLOCK UNEVALUATED (ADR 0001 choice C), so the amplifier never comes on",
-)
-def test_policy_a_through_the_window_is_judged_full_success(short_run):
-    assert short_run.record["class"] == "full_success", short_run.record["first_violation"]
-    assert short_run.record["objective_results"]["delivered_bits_at_deadline"] == 2 * SHORT_D
 
 
 @pytest.mark.skipif(not FULL, reason="the 120,000-tick window run is opt-in: QUIET_COAST_FULL=1")
+@pytest.mark.xfail(strict=True, reason=UNREADABLE_REASON)
 def test_policy_a_through_the_window_over_the_whole_episode(tmp_path_factory):
     run = window_run(tmp_path_factory, "full_a", lambda _run: (SCENARIO, POLICY_A), 120_000, 60_000)
     assert_the_transport(run, 120_000)
-    assert run.record["class"] == "full_success", (
-        run.record["first_violation"],
-        refused_unevaluated(run),
-    )
+    assert run.record["class"] == "full_success", (run.record["first_violation"], refusals(run))

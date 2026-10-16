@@ -10,9 +10,10 @@ every agent's mounts.
 **The scenario overlay exists** (`console.py --scenario-file`, passed as `VEHICLE_SCENARIO_FILE` by
 `containers/serve_vehicle.sh` and declared in compose): the world starts at the quiet-coast scenario's
 MET 0 and holds its verb allow-list, and the evaluator replays the record from that MET 0.
-**Still marked strict xfail, for one named reason:** the executive refuses `set_power_amplifier` and
-`set_evaporator_feed` with INTERLOCK UNEVALUATED (ADR 0001 choice C), so policy A's amplifier never
-comes on. `tests/test_quiet_coast_window.py` shows the same run without Docker. When it passes,
+**Still marked strict xfail, for one named reason:** the executive evaluates the interlocks it can
+read (vehicle ADR 0004) and takes `set_evaporator_feed`, but refuses `set_power_amplifier` with
+INTERLOCK UNEVALUATED, because `tx_power_high` has no band and `power.load_margin_low` watches a prose
+estimate, so policy A's amplifier never comes on. `tests/test_quiet_coast_window.py` shows the same run without Docker. When it passes,
 remove the mark.
 
 It runs on the vehicle's smoke stack (`vehicle_stack`, after live/test_vehicle.py, whose world it
@@ -69,7 +70,7 @@ def _fresh_world(stack) -> None:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="the window refuses set_power_amplifier and set_evaporator_feed: INTERLOCK UNEVALUATED (WP05)",
+    reason="the window refuses set_power_amplifier: INTERLOCK UNEVALUATED (tx_power_high, power.load_margin_low; ADR 0004)",
 )
 def test_policy_a_through_the_window_is_judged_full_success_on_the_vehicle_s_own_record(
     vehicle_stack,
