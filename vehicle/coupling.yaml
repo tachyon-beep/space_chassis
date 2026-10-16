@@ -1883,7 +1883,7 @@ edges:
       at: "S-band amplifier on"
       note: >-
         closed by landing `domains/comms/`. The edge is the vehicle's one bidirectional coupling
-        that is not a fault at all: switching the power amplifier on is a 36 W step on the bus,
+        that is not a fault at all: switching the power amplifier on is a 72 W step on the bus,
         and apollo_diode.md:1140 and :1158 are explicit that this "is the trigger that exposes a
         latent problem, never the root fault". That is what makes `set_power_amplifier` the most
         consequential non-actuator verb on the vehicle — a command that can start a cascade with
@@ -2486,7 +2486,7 @@ cycles:
     delay_ticks: 1
     closing_mechanism: >-
       the amplifier's DC input is a bus load, and the bus voltage sets the transmitter's output:
-      switching the power amplifier on is a 36 W step on the bus, and a sagging bus is a weaker
+      switching the power amplifier on is a 72 W step on the bus, and a sagging bus is a weaker
       link
     note: >-
       **Found by deriving the schedule, not by reading the graph.** `E-AMP-LOAD` and `E-BUS-COMM`

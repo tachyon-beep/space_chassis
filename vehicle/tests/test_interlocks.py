@@ -65,6 +65,7 @@ def test_each_episode_interlock_resolves_or_names_the_link_that_does_not_read(
     if threshold is not None:
         assert interlock is not None and problem is None, problem
         assert interlock.threshold == threshold
+        assert interlock.key.endswith("." + threshold)
         assert interlock in plant.watched_interlocks(world)
     else:
         assert interlock is None and words in problem, problem
@@ -75,18 +76,18 @@ def test_the_dwell_count_lives_in_the_truth_and_advances_only_while_the_reading_
     dt = plant.tick_seconds(world)
     values = plant.initial_values(world)
     values = plant.step(world, values, dt, [], None, ledger=plant.Ledger())
-    assert values[plant.INTERLOCK_DWELL]["coolant_supply_high"] == 0
+    assert values[plant.INTERLOCK_DWELL]["thermal.coolant_supply_high"] == 0
     hot = {**values, "coolant_loop_t": 290.0}  # 16.85 C, past the 10 C assert
     assert plant.interlock_past(interlock, plant.point_reading(world, interlock.point, hot))
-    counts = dict(values[plant.INTERLOCK_DWELL], coolant_supply_high=499)
+    counts = {**values[plant.INTERLOCK_DWELL], "thermal.coolant_supply_high": 499}
     after = plant._with_interlock_dwell(world, {**hot, plant.INTERLOCK_DWELL: counts})
-    assert after[plant.INTERLOCK_DWELL]["coolant_supply_high"] == 500
+    assert after[plant.INTERLOCK_DWELL]["thermal.coolant_supply_high"] == 500
     # 500 ticks of 20 ms is the declared 10 s dwell: tripped at 500, not at 499.
     assert plant.interlock_tripped(world, interlock, after)
     assert not plant.interlock_tripped(world, interlock, {**hot, plant.INTERLOCK_DWELL: counts})
     # Back inside the band, the count starts again.
     cool = plant._with_interlock_dwell(world, {**after, "coolant_loop_t": 280.0})
-    assert cool[plant.INTERLOCK_DWELL]["coolant_supply_high"] == 0
+    assert cool[plant.INTERLOCK_DWELL]["thermal.coolant_supply_high"] == 0
     # The count is part of what the compare-point hashes.
     assert plant.state_hash(after) != plant.state_hash({**after, plant.INTERLOCK_DWELL: counts})
 
@@ -111,18 +112,107 @@ def test_a_readable_interlock_inside_its_band_lets_the_command_through(world, tm
     assert "state=accepted" in body and "INTERLOCK" not in body, body
 
 
+def run(built, tmp_path, command: str) -> str:
+    submit(tmp_path / "diode" / "alpha", [command])
+    built.cycle()
+    (body,) = bodies(tmp_path / "diode" / "alpha")
+    for path in (tmp_path / "diode" / "alpha" / "output").glob("*.txt"):
+        path.unlink()
+    return body
+
+
+def trip(world, built, overrides: dict, name: str) -> None:
+    """Put the reading past its threshold and the dwell count past its dwell, and check it trips."""
+    interlock, problem = plant.resolve_interlock(world, name)
+    assert interlock is not None, problem
+    counts = {**(built.truth.get(plant.INTERLOCK_DWELL) or {}), interlock.key: 10**6}
+    built.truth = {**built.truth, **overrides, plant.INTERLOCK_DWELL: counts}
+    assert plant.interlock_tripped(world, interlock, built.truth), name
+
+
 def test_a_tripped_interlock_refuses_by_name_and_never_says_the_value(world, tmp_path):
+    # Stopping the evaporator under a hot loop is the direction `coolant_supply_high` guards.
     built = executive(world, tmp_path)
     try:
-        built.truth = {**built.truth, "coolant_loop_t": 290.0, plant.INTERLOCK_DWELL: {"coolant_supply_high": 500}}
-        submit(tmp_path / "diode" / "alpha", ["set_evaporator_feed vehicle=csm state=on"])
-        built.cycle()
-        (body,) = bodies(tmp_path / "diode" / "alpha")
+        built.truth = {
+            **built.truth,
+            "coolant_loop_t": 290.0,
+            plant.INTERLOCK_DWELL: {"thermal.coolant_supply_high": 500},
+        }
+        body = run(built, tmp_path, "set_evaporator_feed vehicle=csm state=off")
     finally:
         built.close()
     assert "refused: INTERLOCK TRIPPED" in body and "coolant_supply_high" in body, body
     assert "thermal.coolant_supply_c" in body and "state=refused" in body
     assert "290" not in body and "16.85" not in body and "500" not in body, body
+
+
+# ADR 0004 §Direction: an interlock guards a direction of its verb, and the safing direction — the
+# recovery from the very condition the guard watches — is taken while the guard is tripped.
+SAFING = [
+    # (interlock, truth past its threshold, the safing command taken, the guarded command refused)
+    (
+        "coolant_supply_high",
+        {"coolant_loop_t": 290.0},
+        "set_evaporator_feed vehicle=csm state=on",
+        "set_evaporator_feed vehicle=csm state=off",
+    ),
+    (
+        "coolant_supply_high",
+        {"coolant_loop_t": 290.0},
+        "set_coolant_pump loop=loop_primary pump=pump_2 state=on",
+        "set_coolant_pump loop=loop_primary pump=pump_1 state=off",
+    ),
+    (
+        "pump_no_flow",
+        {"coolant_flow_kg_s": 0.0},
+        "set_coolant_pump loop=loop_primary pump=pump_2 state=on",
+        "set_coolant_pump loop=loop_primary pump=pump_1 state=off",
+    ),
+    (
+        "thermal.comm_amp_high",
+        {"comm_amp_t": 340.0},
+        "set_power_amplifier state=off",
+        "set_power_amplifier state=on",
+    ),
+    (
+        "power.bus_a_undervoltage",
+        {"bus_a_v": 20.0},
+        "set_power_amplifier state=off",
+        "set_power_amplifier state=on",
+    ),
+    (
+        "power.load_margin_low",
+        {"bus_a_load_w": 2800.0},
+        "set_power_amplifier state=off",
+        "set_power_amplifier state=on",
+    ),
+]
+
+
+@pytest.mark.parametrize(("name", "overrides", "safing", "guarded"), SAFING)
+def test_the_safing_direction_is_taken_while_tripped(world, tmp_path, name, overrides, safing, guarded):
+    built = executive(world, tmp_path)
+    try:
+        trip(world, built, overrides, name)
+        taken = run(built, tmp_path, safing)
+        trip(world, built, overrides, name)
+        refused = run(built, tmp_path, guarded)
+    finally:
+        built.close()
+    assert "state=accepted" in taken and "INTERLOCK" not in taken, taken
+    assert "refused: INTERLOCK TRIPPED" in refused and name.rpartition(".")[2] in refused, refused
+
+
+def test_the_dwell_map_is_keyed_by_domain_qualified_threshold_id(world):
+    """Two domains may each declare a bare id; their counts must never be one count."""
+    keys = [interlock.key for interlock in plant.watched_interlocks(world)]
+    assert len(keys) == len(set(keys))
+    assert all("." in key for key in keys), keys
+    values = plant.step(
+        world, plant.initial_values(world), plant.tick_seconds(world), [], None, ledger=plant.Ledger()
+    )
+    assert set(values[plant.INTERLOCK_DWELL]) == set(keys)
 
 
 def test_the_load_margin_is_bus_a_s_rated_generation_less_its_load(world):

@@ -15512,6 +15512,36 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
     )
 
 
+    # ADR 0004 §Direction, in this test because the reconciliation README (frozen corpus) states this
+    # file's test count: `set_evaporator_feed`'s two guards protect opposite directions, so its
+    # `interlocks_when` is a list whose conditions each name the `interlocks` they cover. A list
+    # condition that names none, names a guard the verb does not declare, or covers a guard a second
+    # time is refused; HELP says which value each guard applies to.
+    generated = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "generate_help.py"), "--dir", str(VEHICLE)],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    assert "`coolant_supply_high` — only when `state` is `off`" in generated, generated[-800:]
+    assert "`res.cooling_water_reserve` — only when `state` is `on`" in generated
+
+    old = "      - interlocks: [res.cooling_water_reserve]\n"
+
+    def listed(name: str, new: str, needle: str, replaced: str = old) -> None:
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / "domains" / "thermal" / "commands.yaml"
+        text = path.read_text()
+        assert replaced in text, f"the fixture no longer matches {replaced!r}"
+        path.write_text(text.replace(replaced, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    listed("unknown-guard", "      - interlocks: [pump_no_flow]\n", "which is not one of the verb's `interlocks`")
+    listed("twice", "      - interlocks: [coolant_supply_high]\n", "already covers; one guard has one condition")
+    listed("absent", "      - argument_note: x\n", "In the list form each condition names the guards it covers")
+
+
 def test_a_command_value_says_which_argument_carries_the_value():
     """The rule proved the verb could say *a* value, and nothing said what each value becomes.
 

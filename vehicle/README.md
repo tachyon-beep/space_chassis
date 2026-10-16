@@ -6192,7 +6192,7 @@ registered, gated, phased, interlocked, documented in `HELP.md`, reached by an e
 declarations that close it are not new numbers; each is the verb's own help read back:
 
 - `instrumentation_power` ← `set_instrumentation_mode`, which "changes the vehicle's power draw".
-- `tx_power` ← `set_power_amplifier`, "a 36 W step on the bus and a 4x RF gain".
+- `tx_power` ← `set_power_amplifier`, "a 72 W step on the bus … and a 4x RF gain".
 - `link_snr` ← `select_antenna` ("the members are 26.7 dB and 2 dB apart") and `point_hga`.
 - `nav_solution` ← `load_state_vector`, "this changes what the vehicle believes", and
   `select_nav_source`.

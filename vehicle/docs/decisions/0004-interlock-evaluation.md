@@ -62,14 +62,19 @@ below.
    per-minute change against a level. Comparing the channel's level against either `assert` would
    guard the wrong quantity, so both stay unevaluated. The rule is conservative by construction: a
    spelling difference (`psid` against the channel's `psi`, for `cabin_dp_low`) also leaves a
-   threshold unevaluated, and that refuses more, never less. The reading is `plant.point_reading`, which applies `emit_frame`'s three
+   threshold unevaluated, which refuses the direction it guards more, never less (§Direction keeps
+   the other direction open). The reading is `plant.point_reading`, which applies `emit_frame`'s three
    answers to one channel.
 2. **The dwell is history in the truth.** At the end of every tick (`plant.step`), the plant advances
-   `values["__interlock_dwell"][threshold]`: the consecutive ticks the reading has been past `assert`.
+   `values["__interlock_dwell"][domain.threshold]`: the consecutive ticks the reading has been past `assert`.
    It is reset to 0 inside the band or when there is no number. Every readable threshold some verb
    names is tracked (`plant.watched_interlocks`). The count is checkpointed and hashed with the rest
    of the truth, so a restart carries it and a replay of the record reproduces it. Nothing was added
-   to the checkpoint, the record or the evaluator for this.
+   to the checkpoint, the record or the evaluator for this. The key is the domain-qualified
+   threshold id (`thermal.coolant_supply_high`), because a bare id is unique only within its
+   domain's `profiles.yaml`; a bare interlock name that two domains declare does not resolve, and
+   the refusal says to qualify it. A domain answers to its folder and its channel prefix alike
+   (`res.cooling_water_reserve` is consumables'), as the linter resolves it.
 3. **Tripped** means count × tick ≥ the assert dwell, with count ≥ 1 (so a zero dwell trips after one
    tick past the band). `Executive.validate` refuses a verb with `INTERLOCK TRIPPED`, naming the
    interlock, its threshold and its point, and never the reading. This happens at acceptance and
@@ -80,6 +85,42 @@ below.
    the tripped check: a command one of whose guards cannot be evaluated is not accepted.
 5. **The operator's `--closed-interlock` still wins.** It closes the verb in the capability snapshot
    before any of this is asked.
+6. **An interlock guards a direction of its verb, not the verb** (§Direction, from the review of
+   this decision). Tripped and unevaluated are asked only of the interlocks that guard *this*
+   command, given its arguments, so the safing direction is always admitted.
+
+### Direction
+
+As first written, a tripped interlock refused its verb whatever the arguments, and that blocked
+recovery exactly when it was needed: under `coolant_supply_high`, `set_coolant_pump ... state=on` and
+`set_evaporator_feed csm on` — the two ways to cool a hot loop — were refused; `pump_no_flow` refused
+the restart of the pump whose stop had tripped it; and `set_power_amplifier state=off` was refused
+once `comm_amp_high`, `bus_a_undervoltage` or `load_margin_low` tripped, though switching the
+amplifier off is the remedy for all three. A guard that refuses its own remedy is not conservative.
+So a verb says which of its arguments' values each interlock guards, in `interlocks_when` (already
+the propulsion arm/safe form, now honoured by the executive): a condition names an enum argument and
+the values for which its interlocks apply, and a list of conditions names the interlocks each one
+covers (`interlocks: [...]`), so one verb can guard each direction with a different interlock. An
+interlock no condition covers guards every command of the verb, as before. The linter checks that a
+condition's argument is an enum, its values are the argument's, and in the list form that each
+interlock is covered at most once. As declared:
+
+| verb | interlock | guards | always admitted |
+|---|---|---|---|
+| set_power_amplifier | all four | `state=on` | `state=off` |
+| set_coolant_pump | `pump_no_flow`, `coolant_supply_high` | `state=off` | `state=on` |
+| set_coolant_loop | `pump_no_flow` | `mode=isolated` | the other modes |
+| set_evaporator_feed | `coolant_supply_high` | `state=off` | `state=on` |
+| set_evaporator_feed | `res.cooling_water_reserve` | `state=on` | `state=off` |
+| set_radiator_bypass | `coolant_supply_high` | `state=bypass` | `state=radiator` |
+| set_radiator_bypass | `coolant_supply_low` | `state=radiator` | `state=bypass` |
+| arm_engine | the three feed guards | `state=armed` | `state=safe` |
+
+The same rule applies to UNEVALUATED: a safing command needs no guard, so an unreadable interlock
+that guards only the other direction does not refuse it. The accepted result says which it was
+("evaluated and none tripped", or "guard the other direction of this verb, not this one"). HELP
+prints each interlock with the values it applies to. The verbs outside the episode keep
+whole-verb guards until each is read the same way; the rule refuses more for them, not less.
 
 Limitations, stated rather than modelled:
 - The `clear` value, `dwell_clear_s` and `latched` are not evaluated. A threshold trips while its
@@ -90,11 +131,10 @@ Limitations, stated rather than modelled:
   already past its band.
 - `pump_no_flow`'s note says it is "evaluated only while the pump is commanded on". That condition
   is prose in `point_units` (`L/min, evaluated only while ...`), not a `gated_by` field, so the
-  threshold is evaluated unconditionally. That direction is safe: a condition on when a threshold
-  applies can only narrow when it trips, so ignoring it refuses more, never less. The cost is that a
-  stopped pump's zero flow trips it after 4 s, and `set_coolant_pump` is then refused, so restarting
-  a stopped pump through the window is blocked. No policy in the episode restarts one. The condition
-  is owed as a declared field.
+  threshold is evaluated unconditionally, and a stopped loop's zero flow trips it after 4 s. Under
+  §Direction that no longer blocks anything it should not: the guard applies to stopping a pump
+  (`state=off`) and isolating a loop, never to starting a pump, so the restart is admitted while it
+  is tripped. The condition is still owed as a declared field.
 
 ## Operator items (decided by John, 2026-10-16 20:41Z)
 
@@ -122,8 +162,10 @@ them.
    for a limit per transmitter and mode; a constant is the narrower guard. `point_units` now opens
    with the channel's unit, because the comparison is against the channel's level. `clear` stays
    owed. The model never draws above 108 W (no hot-amplifier draw yet), so in this model the
-   guard never trips. Found on the way: `comm.tx_power_w`'s registry range is [0, 100] W, and the
-   chain reads 108 W with the amplifier on.
+   guard never trips. Found on the way, and recorded rather than changed: `comm.tx_power_w`'s
+   registry range is [0, 100] W, and the chain reads 108 W with the amplifier on. Found in review:
+   the verb's help (and two notes in `coupling.yaml`) said the amplifier is a 36 W step on the bus;
+   the model's step is the amplifier's 72 W DC input, and the help now says so.
 3. **`set_load` declares no interlock** (`domains/power/commands.yaml`). Its `lcl_overcurrent`
    watches a per-load current-limiting switch that is this model's choice, not Apollo's
    (`components.yaml#lcl`: "Apollo had mechanical breakers plus the PDU"), on a template family
@@ -138,8 +180,11 @@ their batch classes through the window (`aurora/tests/test_quiet_coast_window.py
 
 - `tests/test_interlocks.py`: the episode's interlocks resolve, or name the link that fails, as in the
   table. The count advances only while the reading is past the band, trips exactly at the dwell, and
-  is part of the state hash. A readable interlock inside its band lets the command through. A tripped
-  one refuses by name with no value. One unreadable interlock refuses the verb as unevaluated. An
+  is part of the state hash, keyed by domain-qualified id. A readable interlock inside its band lets
+  the command through. A tripped one refuses the direction it guards by name with no value, and the
+  safing direction is taken while it is tripped (amplifier off under each of its three readable
+  guards; pump on under `coolant_supply_high` and `pump_no_flow`; evaporator on under
+  `coolant_supply_high`). One unreadable interlock refuses the verb as unevaluated. An
   operator's closed interlock still wins.
 - `aurora/tests/test_quiet_coast_window.py`: through the real executive, with a SIGKILL and a resume,
   every tick of the record replays to its hash. That includes the dwell counts. Policy D reaches its

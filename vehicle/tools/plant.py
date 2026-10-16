@@ -77,6 +77,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import trajectory  # noqa: E402  (a sibling tool, not a package)
 from check_vehicle import (  # noqa: E402  (a sibling tool, not a package)
     INTEGRATOR_METHODS,
+    PREFIX_DOMAIN,
     Report,
     command_only_movers,
     derivation_value,
@@ -1576,6 +1577,13 @@ class Interlock:
     comparator: str
     assert_value: float
     dwell_us: int
+    domain: str = ""
+
+    @property
+    def key(self) -> str:
+        """The dwell map's key: the domain-qualified threshold id, because a bare id is unique only
+        within its domain's `profiles.yaml`, and two domains' thresholds must never share a count."""
+        return f"{self.domain}.{self.threshold}" if self.domain else self.threshold
 
 
 def resolve_interlock(world: World, name: str) -> tuple[Interlock | None, str | None]:
@@ -1587,23 +1595,28 @@ def resolve_interlock(world: World, name: str) -> tuple[Interlock | None, str | 
     `inputs` with prose for arithmetic is an estimate nothing can compute, so it is not readable even
     where `from` names a state of the same unit: the state is one of its inputs, not the estimate.
     """
-    bare = name.split(".", 1)[1] if "." in name else name
-    threshold = None
+    prefix, _, bare = name.rpartition(".")
+    found: list[tuple[str, dict[str, Any]]] = []
     for document, content in sorted(world.documents.items()):
         if not document.endswith("profiles.yaml") or not isinstance(content, dict):
             continue
-        threshold = next(
-            (
-                row
-                for row in content.get("thresholds") or []
-                if isinstance(row, dict) and str(row.get("id")) in (name, bare)
-            ),
-            None,
-        )
-        if threshold is not None:
-            break
-    if threshold is None:
+        domain = Path(document).parent.name
+        # A domain-qualified name (`power.bus_a_undervoltage`, `res.cooling_water_reserve`) is looked
+        # up in that domain only, and a domain answers to its folder and its channel prefix alike (as
+        # the linter resolves it); a bare one in every domain, and it must be found in exactly one.
+        if prefix and domain != PREFIX_DOMAIN.get(prefix, prefix):
+            continue
+        for row in content.get("thresholds") or []:
+            if isinstance(row, dict) and str(row.get("id")) == bare:
+                found.append((domain, row))
+    if not found:
         return None, f"`{name}` resolves to no threshold this executive can read"
+    if len(found) > 1:
+        return None, (
+            f"`{name}` names a threshold id that {len(found)} domains declare "
+            f"({', '.join(sorted(d for d, _ in found))}); qualify it with its domain"
+        )
+    domain, threshold = found[0]
     tid = str(threshold.get("id"))
     point = str(threshold.get("point") or "")
     comparator = threshold.get("comparator")
@@ -1665,9 +1678,48 @@ def resolve_interlock(world: World, name: str) -> tuple[Interlock | None, str | 
             comparator=str(comparator),
             assert_value=float(level),
             dwell_us=int(round(float(dwell_ms) * 1000)),
+            domain=domain,
         ),
         None,
     )
+
+
+def interlock_conditions(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """A verb's `interlocks_when` as a list of conditions: one mapping (which covers every interlock
+    the verb declares) or a list of them, each naming the interlocks it covers in `interlocks`."""
+    raw = (spec or {}).get("interlocks_when")
+    if isinstance(raw, dict):
+        return [raw]
+    if isinstance(raw, list):
+        return [c for c in raw if isinstance(c, dict)]
+    return []
+
+
+def guarding_interlocks(spec: dict[str, Any], arguments: dict[str, Any]) -> list[str]:
+    """The declared interlocks that guard this command, given its arguments (ADR 0004 §Direction).
+
+    An interlock guards a direction of a verb, not the verb: an amplifier on a sagging bus must not
+    come on, and must always be allowed to go off. `interlocks_when` says which: a condition names an
+    enum argument and the values for which its interlocks apply, and for any other value they do not,
+    so the safing direction is admitted whatever the guard reads, tripped or unreadable. A condition
+    without `interlocks` covers every interlock the verb declares; one with it covers those. An
+    interlock no condition covers guards every command of the verb."""
+    declared = spec.get("interlocks") if isinstance(spec, dict) else None
+    names = [str(i) for i in declared] if isinstance(declared, list) else []
+    covered: dict[str, list[dict[str, Any]]] = {}
+    for condition in interlock_conditions(spec):
+        listed = condition.get("interlocks")
+        for name in [str(i) for i in listed] if isinstance(listed, list) else names:
+            covered.setdefault(name, []).append(condition)
+    guarding = []
+    for name in names:
+        conditions = covered.get(name)
+        if not conditions or any(
+            str(arguments.get(str(c.get("argument")))) in [str(v) for v in c.get("values") or []]
+            for c in conditions
+        ):
+            guarding.append(name)
+    return guarding
 
 
 def watched_interlocks(world: World) -> list[Interlock]:
@@ -1681,7 +1733,7 @@ def watched_interlocks(world: World) -> list[Interlock]:
         for name in named if isinstance(named, list) else []:
             interlock, _problem = resolve_interlock(world, str(name))
             if interlock is not None:
-                found.setdefault(interlock.threshold, interlock)
+                found.setdefault(interlock.key, interlock)
     watched = [found[key] for key in sorted(found)]
     world.__dict__["_watched_interlocks"] = watched
     return watched
@@ -1705,14 +1757,14 @@ def _with_interlock_dwell(world: World, values: dict[str, Any]) -> dict[str, Any
     counts: dict[str, int] = {}
     for interlock in watched:
         past = interlock_past(interlock, point_reading(world, interlock.point, values))
-        counts[interlock.threshold] = int(previous.get(interlock.threshold, 0)) + 1 if past else 0
+        counts[interlock.key] = int(previous.get(interlock.key, 0)) + 1 if past else 0
     return {**values, INTERLOCK_DWELL: counts}
 
 
 def interlock_tripped(world: World, interlock: Interlock, values: dict[str, Any]) -> bool:
     """Tripped: the reading has been past its assert value for at least the assert dwell (at least one
     tick when the dwell is zero), by the counts the last tick left in the truth."""
-    count = int((values.get(INTERLOCK_DWELL) or {}).get(interlock.threshold, 0))
+    count = int((values.get(INTERLOCK_DWELL) or {}).get(interlock.key, 0))
     return count >= 1 and count * _tick_us(tick_seconds(world)) >= interlock.dwell_us
 
 

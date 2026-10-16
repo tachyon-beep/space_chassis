@@ -135,7 +135,7 @@ components:
       basis: historical
       source: "apollo_diode.md:157 (72 W input) and NR ch.18 (11.2 W RF)"
       note: >-
-        a 36 W electrical step and a 4x RF gain, and the one component on this vehicle whose
+        a 72 W electrical step and a 4x RF gain, and the one component on this vehicle whose
         *operation* is a hazard. `apollo_diode.md:1140` and `:1158` make it the trigger of the
         degraded chain and explicitly not its root cause: the amplifier does not fail, it
         *exposes* — a marginal pump, a weak contactor, a bus with less margin than anybody
@@ -291,7 +291,7 @@ state:
           the draw is the selected transmitter's `dc_w`, and *which* transmitter is a second
           argument of the same verb — `vehicle.yaml#comms.transmitters` carries 36 W for
           `sband_transceiver` and 72 W for `sband_power_amplifier`, and the verb's own help calls it
-          "a 36 W step on the bus and a 4x RF gain". A table over two arguments is not a mapping
+          "a 72 W step on the bus" (it said 36 W until ADR 0004's review). A table over two arguments is not a mapping
           over one, which is why this is `computed` rather than `maps`
         why: >-
           `tx_power` is also where the flagship thermal cycle closes: a hot amplifier draws more
@@ -314,7 +314,7 @@ state:
         not a load: power counts the two loads from its own inventory (ADR 0003 item 5), and
         nothing adds this number to the bus. Whether the 72 W is the amplifier alone or the
         chain with the amplifier (apollo_diode.md:157 reads "72 W input for the S-band power
-        amplifier", the verb's help calls it a 36 W step) is an open question the power
+        amplifier"; the verb's help said a 36 W step until ADR 0004's review) is an open question the power
         inventory carries; this rule follows the inventory, 36 + 72
     provenance:
       basis: apollo
