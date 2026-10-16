@@ -151,8 +151,11 @@ jobs:
         # than 13 GB of memory and a hosted runner has 16 GB shared with the other workers. It is
         # deselected here, not skipped in the test, and recorded as a known gap in
         # governance/status.md; D6 requires it to be made to fit and then run here.
+        # The quiet-coast episode's 120,000-tick tier (marker quiet_coast_full) is deselected here
+        # because the `episode` job below runs it.
         run: |
           python -m pytest -n auto -q -o addopts='' --junitxml=.scratch/validation/tests.xml \
+            -m 'not quiet_coast_full' \
             --deselect tests/test_vehicle_config.py::test_a_sub_tick_effect_lands_where_a_short_tick_would_have_put_it
       - name: Require executed tests and zero skips
         if: ${{ !cancelled() }}
@@ -175,6 +178,53 @@ jobs:
           name: referee-${{ matrix.python }}
           path: vehicle/.scratch/validation/
           if-no-files-found: error
+          retention-days: 30
+
+  episode:
+    # The bounded quiet-coast episode (D14; docs/vehicle-completion/09-quiet-coast-episode.md): the
+    # four policies over the whole 120,000 ticks, each judged its class by the evaluator, and the
+    # restart check at tick 60,000. Each run is about ten minutes; the runs share a lock so each
+    # policy runs once.
+    name: quiet-coast episode
+    needs: changes
+    if: ${{ needs.changes.outputs.vehicle == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: vehicle
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --require-hashes -r requirements-dev.lock
+      - name: The episode, whole
+        env:
+          QUIET_COAST_FULL: '1'
+        run: |
+          mkdir -p .scratch/episode
+          python -m pytest -n 4 -q -o addopts='' -rs --junitxml=.scratch/episode/tests.xml \
+            -m quiet_coast_full tests/test_quiet_coast.py
+      - name: Require executed tests and zero skips
+        if: ${{ !cancelled() }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          root = ET.parse(Path('.scratch/episode/tests.xml')).getroot()
+          suites = [root] if root.tag == 'testsuite' else list(root.iter('testsuite'))
+          counts = {key: sum(int(s.get(key, 0)) for s in suites)
+                    for key in ('tests', 'failures', 'errors', 'skipped')}
+          print(counts)
+          if counts['tests'] < 7 or any(counts[k] for k in ('failures', 'errors', 'skipped')):
+              raise SystemExit('The episode tier must execute all 7 tests with zero skips/failures/errors')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: quiet-coast-episode
+          path: vehicle/.scratch/episode/
           retention-days: 30
 
   readiness:
@@ -234,7 +284,7 @@ jobs:
     # needed for this change. Anything else (failure, cancellation) fails this check.
     name: required
     if: ${{ always() }}
-    needs: [changes, lint, aurora, vehicle, readiness]
+    needs: [changes, lint, aurora, vehicle, episode, readiness]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

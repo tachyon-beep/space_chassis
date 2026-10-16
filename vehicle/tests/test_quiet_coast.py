@@ -39,9 +39,15 @@ SCENARIO = VEHICLE / "scenarios" / "quiet_coast.yaml"
 TOOL = VEHICLE / "tools" / "episode_eval.py"
 SMOKE_TICKS = 3000
 FULL = os.environ.get("QUIET_COAST_FULL") == "1"
-full_only = pytest.mark.skipif(
+_full_skip = pytest.mark.skipif(
     not FULL, reason="the 120,000-tick runs are opt-in: QUIET_COAST_FULL=1"
 )
+
+
+def full_only(test):
+    """Opt-in tier: skipped locally without QUIET_COAST_FULL=1; in CI the referee deselects it by
+    its marker (`-m "not quiet_coast_full"`) and the `quiet-coast episode` job runs it."""
+    return pytest.mark.quiet_coast_full(_full_skip(test))
 
 
 def spec() -> dict:
