@@ -24,12 +24,12 @@
 
 domain: crew
 faults:
-  - id: CRW-01-incapacitation
+  - id: CRW-01-incapacitation-commander
     component: crew_availability
-    mechanism: "a crew member is injured or hypoxic: they stop answering, or answer less often"
+    mechanism: "the commander is injured or hypoxic: they stop answering, or answer less often"
     kind: discrete
     seeding:
-      on_demand_p: 2.0e-4
+      on_demand_p: 6.667e-5
       trigger: "any cabin depressurisation below the emergency level, or an EVA suit fault"
     perturbs: [crew.available, crew.workload, "crew.location_[id]"]
     detection:
@@ -53,10 +53,76 @@ faults:
       basis: apollo
       ref: "apollo_diode.md:226-227, :754"
       note: >-
+        One fault per person, because an onset moves one named element and which person
+        stops answering is the whole of the fault: a scenario can take out the commander, or
+        whoever is in the LM. The vehicle's 2.0e-4 per trigger is split three ways (6.667e-5
+        each, chosen), so the chance that somebody is incapacitated is what it was.
         `crew.available` is apollo's channel and the reason it exists. Crew physiology is out of
         scope, so the cause of an incapacitation is not modelled and the *state* is — which is the
         right boundary: the vehicle needs to know nobody is answering, and it does not need to
         know why
+
+  - id: CRW-01-incapacitation-lm-pilot
+    component: crew_availability
+    mechanism: "the LM pilot is injured or hypoxic: they stop answering, or answer less often"
+    kind: discrete
+    seeding:
+      on_demand_p: 6.667e-5
+      trigger: "any cabin depressurisation below the emergency level, or an EVA suit fault"
+    perturbs: [crew.available, crew.workload, "crew.location_[id]"]
+    detection:
+      evidence: >-
+        a crew member who does not answer, or answers slowly. `crew.available` carries the state
+        and the four values let a silence have a reason — and the reason is the diagnosis, because
+        resting and on-suit and incapacitated imply very different responses
+      latency: "immediate on `crew.available`, and the hard part is that a silence is indistinguishable from an unanswered question unless the state channel is watched"
+      false_positive_risk: >-
+        a crew member who is simply busy produces the same silence. `crew.workload` is the
+        separation, which is why a coarse workload state is worth having at all
+    fleet_class: onboard
+    response:
+      kind: service
+      note: >-
+        the service marks the crew member unavailable and the fleet has to redistribute. This is
+        the fault that makes the *organisation* the thing under test: three crew and ten agents
+        means a procedure that needs two crew in the LM cannot be run by a fleet that has not
+        thought about who is where
+    provenance:
+      basis: apollo
+      ref: "apollo_diode.md:226-227, :754"
+      note: >-
+        as CRW-01-incapacitation-commander, for this person
+
+  - id: CRW-01-incapacitation-csm-pilot
+    component: crew_availability
+    mechanism: "the CM pilot is injured or hypoxic: they stop answering, or answer less often"
+    kind: discrete
+    seeding:
+      on_demand_p: 6.667e-5
+      trigger: "any cabin depressurisation below the emergency level, or an EVA suit fault"
+    perturbs: [crew.available, crew.workload, "crew.location_[id]"]
+    detection:
+      evidence: >-
+        a crew member who does not answer, or answers slowly. `crew.available` carries the state
+        and the four values let a silence have a reason — and the reason is the diagnosis, because
+        resting and on-suit and incapacitated imply very different responses
+      latency: "immediate on `crew.available`, and the hard part is that a silence is indistinguishable from an unanswered question unless the state channel is watched"
+      false_positive_risk: >-
+        a crew member who is simply busy produces the same silence. `crew.workload` is the
+        separation, which is why a coarse workload state is worth having at all
+    fleet_class: onboard
+    response:
+      kind: service
+      note: >-
+        the service marks the crew member unavailable and the fleet has to redistribute. This is
+        the fault that makes the *organisation* the thing under test: three crew and ten agents
+        means a procedure that needs two crew in the LM cannot be run by a fleet that has not
+        thought about who is where
+    provenance:
+      basis: apollo
+      ref: "apollo_diode.md:226-227, :754"
+      note: >-
+        as CRW-01-incapacitation-commander, for this person
 
   - id: CRW-02-misheard
     component: crew_location

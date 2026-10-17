@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Schedule the faults a run will suffer, from the policies the domains already declare.
 
-The vehicle has 128 declared faults and, until this file, **no way to fail**. Every domain carries
+The vehicle has 130 declared faults and, until this file, **no way to fail**. Every domain carries
 a `fault_policy.yaml` naming what can break, what it looks like, what the service does about it
 without asking, and how it seeds — and nothing read the seeding. A challenge whose vehicle never
 breaks is a piloting exercise, and the 118 entries were the adversity sitting unused.
@@ -15,7 +15,7 @@ Three things make this a schedule rather than a dice roll:
     class-breaking**." That is the property `--check` tests, and it is the difference between a
     schedule a prior run can be compared against and one that silently changes when a domain
     lands.
-  - **the conditional faults are reported as armed and not scheduled.** 62 of the 128 seed on
+  - **the conditional faults are reported as armed and not scheduled.** 64 of the 130 seed on
     `on_demand_p` or `coupled_to` rather than on a rate, because they can only occur when a trigger
     holds — "any fault that removes a publisher's input without removing the publisher", "any
     redundant group with two or more live members". Sampling those from a rate would be inventing a
