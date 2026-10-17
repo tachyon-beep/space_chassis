@@ -300,46 +300,66 @@ state:
       - "logic:a device is fired once any executed event declares it in its `fires_<event>` list"
     devices:
       [interstage_nut_1, interstage_nut_2, interstage_nut_3, interstage_nut_4,
-       interstage_umbilical_guillotine, docking_ring_charge]
+       ascent_circuit_interrupter_1, ascent_circuit_interrupter_2, interstage_umbilical_cutter,
+       docking_ring_charge]
     devices_provenance:
       basis: derived
       relation: "the union of the sourced `fires_*` lists below; an event whose list is unset adds nothing until it is answered"
     fires_descent_stage_separation:
       [interstage_nut_1, interstage_nut_2, interstage_nut_3, interstage_nut_4,
-       interstage_umbilical_guillotine]
+       ascent_circuit_interrupter_1, ascent_circuit_interrupter_2, interstage_umbilical_cutter]
     fires_descent_stage_separation_provenance:
       basis: historical
       source: >-
-        `lm_structures_study_guide.pdf` (Grumman LM structures study guide, ibiblio Apollo
-        documents): staging is done "by explosively severing the four interstage nuts and bolts as
-        well as the interstage umbilicals"; NASA's Apollo Standard Detonator summary
-        (NTRS 20090015395) lists the "Lower LM guillotine" among the detonator's uses
+        Grumman, *Lunar Module Structures, Mechanical Systems and Electroexplosive Devices*, Course
+        No. 30915 Study Guide, 15 February 1967 (ibiblio `lm_structures_study_guide.pdf`, 142 PDF
+        pages, read 2026-10-17), printed p. 93 (PDF p. 102), "Stage Separation and Components": the
+        STAGE or ABORT
+        STAGE switch will "fire the initiators on the four interstage nuts and bolts, the two
+        circuit interrupters, and the cable cutter assembly, in their proper sequence"; printed
+        p. 1 (PDF p. 9), staging is done "by explosively severing the four interstage nuts and
+        bolts as well as the interstage umbilicals"
       note: >-
-        **reached through search excerpts on 2026-10-17, not read in full**: this container cannot
-        fetch either PDF, and the quoted phrase is the excerpt's. Four nut-and-bolt assemblies and
-        one umbilical guillotine; each is its own key because a staging with three of four nuts
-        severed is STR-05's mechanism, and a single `staged` flag could not express it. Whether each
-        assembly has one initiator or two is not modelled — the continuity channel is per device
+        seven devices. Each is its own key because a staging with three of four nuts severed is
+        STR-05's mechanism, and a single `staged` flag could not express it. Not modelled, and why:
+        the guide's sequence puts the cable cutter two 50 ms delays after the nuts and interrupters
+        (p. 93), which is inside one 20 ms-tick event's effect and changes no decision; and each
+        nut-and-bolt is fired by both ED systems, A on the bolt and B on the nut (p. 93), so a
+        single system's fail-to-fire is masked — a device here fails only when both do, which is
+        the case that hangs a stage. The cutter's two blades are likewise redundant ("operating
+        either blade cuts the interstage umbilical", printed p. 99, PDF p. 108)
     fires_lm_ascent_jettison: [docking_ring_charge]
     fires_lm_ascent_jettison_provenance:
       basis: historical
       source: >-
-        the Apollo 10 Flight Journal's annotation of the LM jettison (nasa.gov AFJ,
-        `as10-day5-pt23.html`): "CSM/LM Final Sep 1 switch - CM panel 2 … held in the down position
-        to trigger detonation of the explosive ring charge that runs around the docking collar to
-        sever it from the CM docking tunnel forward bulkhead"
+        the CSM docking subsystem description, Apollo CSM News Reference (North American Rockwell),
+        pp. 87-92 (ALSJ `CSM11_Docking_Subsystem_pp87-92.pdf`, PDF pp. 1-6, read in full
+        2026-10-17): printed p. 88-89, final separation "is accomplished by firing an explosive
+        train
+        located around the circumference of the docking ring. This separates the entire docking
+        ring from the CM"; printed p. 91, the charge "is a mild detonating fuse located around the
+        periphery of the docking ring … initiated by a signal from the CM … normally is fired for
+        final separation of the LM ascent stage, just before the CSM is injected on the transearth
+        flight"
       note: >-
-        reached through a search excerpt on 2026-10-17 and not fetched. The charge is the CSM's own
-        hardware, not the LM's — the docking ring leaves with the ascent stage — which is why it is a
-        device of the event and not of `pyro_lm_separation`. "Final Sep 1" implies a second switch;
-        the redundancy is one device here, for the reason the interstage note gives
-    fires_lm_undocking: UNCONFIGURED
-    fires_lm_undocking_note: >-
-      undocking is the probe and the ring latches rather than a pyrotechnic separation as far as the
-      sources reached say — the docking subsystem description is a mechanical latch system — but no
-      source reached says in as many words that no pyro fires, and `[]` is a claim. The rule reads
-      this list only when `lm_undocking` has been executed, so the debt is a gap on that tick and
-      nowhere else
+        the charge is the CSM's own hardware, not the LM's — "the docking ring remains attached to
+        the LM ascent stage" (p. 89) — which is why it is a device of the event and not of
+        `pyro_lm_separation`. The same charge separates the ring in a launch-escape abort (p. 91),
+        which is outside this mission's start
+    fires_lm_undocking: []
+    fires_lm_undocking_provenance:
+      basis: historical
+      source: >-
+        the CSM docking subsystem description, Apollo CSM News Reference (North American Rockwell),
+        pp. 87-92 (ALSJ `CSM11_Docking_Subsystem_pp87-92.pdf`, PDF pp. 1-6, read in full
+        2026-10-17): printed p. 88, "The two vehicles are separated for lunar descent through remote
+        electrical release of latches on the probe assembly" — the probe's three capture latches,
+        after the CM crewman "manually cocks all the 12 ring latches, and then closes and seals both
+        hatches"
+      note: >-
+        undocking fires no pyrotechnic: the ring latches are released by hand beforehand and the
+        probe's capture latches electrically. The explosive train is the *final* separation, after
+        the ascent stage has redocked (`fires_lm_ascent_jettison`)
     fires_pyro_fire: UNCONFIGURED
     fires_pyro_fire_note: >-
       `pyro_fire`'s own row says its configuration "depends on the device", and `execute_event` has
@@ -372,11 +392,17 @@ state:
     initial:
       hatch_crew_csm: latched
       hatch_crew_lm: latched
+      hatch_tunnel_csm: latched
+      hatch_tunnel_lm: latched
     initial_provenance:
       basis: chosen
       source: mission.yaml:launch_state
       reason: >-
-        both crew hatches start `latched`. The CSM half is published: the Apollo 17 CSM Launch
+        all four hatches start `latched`. The two tunnel hatches are published: at the first
+        docking "the CM crewman will remove the CM hatch, check the locking latches, connect the
+        umbilicals, and replace the CM hatch", and "the LM hatch [will not] be opened" (Apollo CSM News Reference, docking subsystem, pp. 87-92 (ALSJ `CSM11_Docking_Subsystem_pp87-92.pdf`),
+        printed p. 88), which the Apollo 17 checklist's post-docking pages repeat (p. 58). Of the
+        crew hatches, the CSM's is published: the Apollo 17 CSM Launch
         Checklist (Basic), PDF p. 20, sets `SIDE HATCH … GEAR BOX sel - LATCH … LOCK PIN REL KNOB -
         LOCK … LOCK PIN ind - flush`, a locked hatch rather than a shut one. The LM half is a
         decision, taken by the project coordinator under John's delegation of scope questions
@@ -385,16 +411,19 @@ state:
         this model's post-extraction MET 0, the three LM crew checklists reach only the overhead
         hatch and only a hundred hours later (`OVHD HATCH - LOCKED`), and the LM cabin the model
         starts with is pressurised, which a hatch that was merely `closed` would not guarantee. The
-        basis is `chosen` rather than `historical` because half of the map is the decision; an LM
-        stowage or acceptance record that says otherwise replaces it
+        basis is `chosen` rather than `historical` because one key of the map is the decision; an
+        LM stowage or acceptance record that says otherwise replaces it
     initial_note: >-
       each hatch's position at MET 0. `latched` is the one of the three that the pressure interlock
       (`apollo_diode.md:207`, "incompatible with pressure") holds as compatible with a pressurised
       cabin behind it, so the hatch-open thresholds and the leak rule start quiet and a crew has to
-      unlatch before either has anything to say. `hatch_crew_csm` is the CSM's crew hatch, distinct
-      from the tunnel hatch removed and reinstalled during post-docking operations (Apollo 17
-      checklist p. 58); `hatch_crew_lm` is the LM's forward EVA hatch, not the overhead docking
-      hatch
+      unlatch before either has anything to say. Two hatches face space and two face the tunnel.
+      `hatch_crew_csm` is the CSM's side hatch and `hatch_crew_lm` the LM's forward EVA hatch;
+      `hatch_tunnel_csm` is the CM's forward (docking) hatch, removed and reinstalled during
+      post-docking operations (Apollo 17 checklist p. 58), and `hatch_tunnel_lm` the LM's upper
+      (docking) hatch. A tunnel hatch only vents its cabin when the tunnel itself is open to space —
+      the vehicle undocked, or the ring unsealed — which is why the crew closes both before cocking
+      the ring latches for undocking
     moved_by:
       - "command:set_hatch_valve"
     command_value:
@@ -404,8 +433,8 @@ state:
         why: >-
           the values are the identity — `closed`, `latched` and `open` are this state's own — so
           what this entry declares is *which* hatch, and that is the only thing either side leaves
-          open. `hatch` offers `hatch_crew_csm` and `hatch_crew_lm`, which are the ids the unit's
-          `hatch_id` names, and the two agree
+          open. `hatch` offers the four hatches, which are the ids the unit's `hatch_id` names,
+          and the two agree
     dwell:
       min_on_s: 2
       min_off_s: 2
@@ -561,20 +590,34 @@ state:
     seal_min_engaged_provenance:
       basis: historical
       source: >-
-        the CSM docking subsystem description (Apollo 11 CSM News Reference, pp. 87-92, ALSJ
-        `CSM11_Docking_Subsystem_pp87-92.pdf`): "locking of any 3 of the 12 latches is sufficient to
-        assure a pressure-tight seal"
+        the CSM docking subsystem description, Apollo CSM News Reference (North American Rockwell),
+        pp. 87-92 (ALSJ `CSM11_Docking_Subsystem_pp87-92.pdf`, PDF pp. 1-6, read in full
+        2026-10-17): printed p. 87, "locking of any 3 of the 12 latches is sufficient to assure a
+        pressure-tight seal and allow entry into tunnel"
       note: >-
-        reached through a search excerpt on 2026-10-17, which cut the sentence at "suf"; the PDF
-        could not be fetched from this container. The figure is the seal, not the structure: three
+        the figure is the seal, not the structure: three
         latches hold pressure and twelve are what the docked stack is rated to carry loads on, which
         is why `latch_disagreement` still asserts below twelve
     pascals_per_psi: 6894.757293168361
-    # Which cabin is behind which hatch. The two keys are `hatch_state`'s `hatch_id`, and the values
+    # Which cabin is behind which hatch. The keys are `hatch_state`'s `hatch_id`, and the values
     # are ECLSS's pressure states, which this domain reads through `cabin_atm` and `lm_cabin_atm`.
     hatch_cabin:
       hatch_crew_csm: csm_cabin_pressure_pa
       hatch_crew_lm: lm_cabin_pressure_pa
+      hatch_tunnel_csm: csm_cabin_pressure_pa
+      hatch_tunnel_lm: lm_cabin_pressure_pa
+    # The hatches whose far side is the tunnel rather than space. The tunnel is open to space when
+    # the vehicles are not docked, or when fewer than `seal_min_engaged` ring latches hold the seal;
+    # otherwise it is a closed volume and an open tunnel hatch joins it to the cabin.
+    tunnel_hatches: [hatch_tunnel_csm, hatch_tunnel_lm]
+    tunnel_hatches_provenance:
+      basis: historical
+      source: >-
+        Apollo CSM News Reference, docking subsystem, pp. 87-92 (ALSJ `CSM11_Docking_Subsystem_pp87-92.pdf`), printed p. 87 and p. 91: the CM forward hatch and the LM docking hatch close the two
+        ends of the tunnel, the ring's seals close it at the interface ("locking of any 3 of the 12
+        latches is sufficient to assure a pressure-tight seal and allow entry into tunnel"); and
+        Grumman LM structures study guide (Course 30915, 15 Feb 1967, ibiblio `lm_structures_study_guide.pdf`), printed p. 42, the LM upper (docking) hatch at the lower end of the tunnel,
+        "approximately 18 inches" from the docking ring
     provenance:
       basis: apollo
       ref: "apollo_diode.md:209"
@@ -627,6 +670,30 @@ components:
     provenance:
       basis: UNCONFIGURED
       note: "as the CSM hatch. This is the hatch that opens onto the lunar surface, and every opening costs an atmosphere."
+  - id: hatch_tunnel_csm
+    kind: discrete
+    class: hatch
+    vehicle: csm
+    seal_leak_g_s: UNCONFIGURED
+    provenance:
+      basis: UNCONFIGURED
+      note: >-
+        as the CSM hatch. The CM's forward (docking) hatch: it "can be opened from either side … but
+        can be removed only into the CM", and carries a pressure equalization valve "operated from
+        either side to equalize the pressure in the tunnel and LM before removing the hatch"
+        (Apollo CSM News Reference, docking subsystem, pp. 87-92 (ALSJ `CSM11_Docking_Subsystem_pp87-92.pdf`), printed p. 91)
+  - id: hatch_tunnel_lm
+    kind: discrete
+    class: hatch
+    vehicle: lm
+    seal_leak_g_s: UNCONFIGURED
+    provenance:
+      basis: UNCONFIGURED
+      note: >-
+        as the CSM hatch. The LM's upper (docking) hatch, about 36 inches across with the same cam
+        latch, silicone seal and dump valve as the forward hatch, hinged so that it lifts off its
+        seal under a slight tunnel overpressure to let the CSM pressurise the LM at the first
+        docking (Grumman LM structures study guide (Course 30915, 15 Feb 1967, ibiblio `lm_structures_study_guide.pdf`), printed p. 42)
   - id: docking_interface
     kind: discrete
     class: interface
@@ -641,28 +708,31 @@ components:
         (NTRS 19720005743): "twelve automatic latches mounted on the CSM docking ring provide for
         structural integrity between the vehicles and for tunnel sealing during crew transfer"
       note: >-
-        **both reached through search excerpts on 2026-10-17, and neither fetched** — this container
-        cannot reach nasa.gov, apollojournals.org or ntrs.nasa.gov — so the quoted phrases are the
-        excerpts' and a later round with the PDFs should hold them to the page. The seven documents
-        this folder had acquired did not have the number. It is the key space of
-        `docking_latch_state`, and the twelve `latch_disagreement` carried as a placeholder shape is
-        now the published count.
+        the News Reference was read in full on 2026-10-17 (printed p. 87, "at contact 12 latches
+        mounted on the CM docking ring are automatically activated"; printed p. 90, "The 12 docking
+        latches are spaced an equal distance around the inner periphery of the docking ring"); the
+        Bloom and Campbell phrase is a search excerpt, its NTRS download returning 404. It is the
+        key space of `docking_latch_state`, and the twelve `latch_disagreement` carried as a
+        placeholder shape is now the published count.
   - id: pyro_lm_separation
     kind: discrete
     class: pyro
-    device_count: 5
+    device_count: 7
     provenance:
       basis: historical
       source: >-
-        `lm_structures_study_guide.pdf`: staging severs "the four interstage nuts and bolts as well as
-        the interstage umbilicals" — four nut-and-bolt assemblies and the umbilical guillotine, which
-        are `pyro_fired.fires_descent_stage_separation`
+        Grumman, *Lunar Module Structures, Mechanical Systems and Electroexplosive Devices*, Course
+        No. 30915 Study Guide, 15 February 1967 (ibiblio `lm_structures_study_guide.pdf`, 142 PDF
+        pages, read 2026-10-17), printed p. 93 (PDF p. 102): staging fires "the four interstage nuts
+        and bolts, the
+        two circuit interrupters, and the cable cutter assembly" — which are
+        `pyro_fired.fires_descent_stage_separation`
       note: >-
-        reached through a search excerpt on 2026-10-17 and not fetched. This said the count was
-        unpublished after a search of seven documents that did not include the LM structures study
-        guide; `lm_ecs_study_guide.pdf` describes the cutters qualitatively and gives no number. The
-        CSM's docking ring charge is the sixth device on the vehicle and is not this component's: it
-        is CSM hardware that leaves with the LM.
+        seven devices, not counting the redundant initiators (two ED systems per nut-and-bolt, two
+        blades on the cutter), which the pyro state's note explains. The CSM's docking ring charge
+        is the eighth device on the vehicle and is not this component's: it is CSM hardware that
+        leaves with the LM.
+
   - id: relief_valve
     kind: discrete
     class: valve
@@ -775,6 +845,7 @@ one_way_events:
 open_debts:
   - "**Two events still name no devices.** `pyro_fired.fires_lm_undocking` and `fires_pyro_fire` are unset: undocking is believed to be the probe and latches with no pyro, and no source reached says so; `pyro_fire` cannot name a device because `execute_event` has no device argument. Either one is a gap on the tick its event is executed and nowhere else."
   - "The tunnel volume and the hatch seal leak rates are unpublished and declared unset above. Without them an unsealed hatch or ring with pressure behind it is a gap in `structural_leak_g_s` rather than a vent rate."
+  - "**The tunnel's own pressure is not a state.** A tunnel hatch is opened after the crew equalises the tunnel through the hatch's valve (News Reference p. 87), so the differential across a tunnel hatch is cabin minus tunnel, and the vehicle carries neither the tunnel volume nor its pressure. Until it does, `set_hatch_valve` guards the two crew hatches against pressure and not the tunnel hatches, and an open tunnel hatch on a sealed ring is treated as joining the tunnel to its cabin with no loss."
   - "**Working a single latch is owed.** `set_docking_latch` takes `latch: one`, and nothing says whether a crew in the tunnel can re-cock a failed ring latch or with what chance; the `one` drive is recorded and acts on nothing until the fault path can fail a latch, and what it does then is this debt."
   - "The pressure vessel's proof and burst pressures are unset, and deliberately: apollo_diode.md:753 puts finite-element structural mechanics out of scope, so a vessel failure model is not wanted — but the *differential limit* that a relief valve protects is, and it is owed."
   - "Micrometeoroid and debris damage is not modelled. It is the one structural hazard that is genuinely stochastic on a lunar mission, and it belongs in the scenario layer rather than in the domain."

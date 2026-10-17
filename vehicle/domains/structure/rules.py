@@ -59,29 +59,42 @@ def docking_latch_state(inputs, params, dt):
 def structural_leak_g_s(inputs, params, dt):
     """The structure's leak in excess of the nominal cabin leak: zero while every path with pressure
     behind it is sealed, and no value while one is not, because the vent rate of an open hatch or an
-    unseated ring is set by an aperture and a seal this vehicle does not carry."""
+    unseated ring is set by an aperture and a seal this vehicle does not carry.
+
+    A crew hatch faces space. A tunnel hatch faces the tunnel, which is itself open to space only
+    when the vehicles are not docked or the ring holds fewer latches than seal it; on a sealed ring
+    an open tunnel hatch joins the tunnel to its cabin and loses nothing."""
     floor = params["pressure_floor_psid"]
     per_psi = params["pascals_per_psi"]
     hatches = inputs["hatch_state"]
+    tunnel_hatches = set(params["tunnel_hatches"])
+    engaged = sum(1 for position in inputs["docking_latch_state"].values() if position == "engaged")
+    docked = inputs["lm_separation_state"] == "docked"
+    tunnel_sealed = docked and engaged >= params["seal_min_engaged"]
     for hatch, cabin in sorted(params["hatch_cabin"].items()):
         position = hatches.get(hatch)
         if position is None:
             return params.no_value(f"{hatch} has no position; `hatch_state.initial` is owed")
-        if position == "latched":
+        if position == "latched" or (hatch in tunnel_hatches and tunnel_sealed):
             continue
         dp = inputs[cabin] / per_psi
-        if dp > floor:
+        if dp <= floor:
+            continue
+        if hatch not in tunnel_hatches:
             return params.no_value(
                 f"{hatch} is {position} with {dp:.2f} psid behind it; its vent rate is owed "
                 f"(`{hatch}.seal_leak_g_s`)"
             )
-    if inputs["lm_separation_state"] == "docked":
-        engaged = sum(1 for position in inputs["docking_latch_state"].values() if position == "engaged")
-        if engaged < params["seal_min_engaged"]:
+        if docked:
             return params.no_value(
-                f"the docked ring has {engaged} latches engaged, fewer than the "
-                f"{params['seal_min_engaged']} that seal it; the tunnel's leak is owed (`tunnel.volume_m3`)"
+                f"{hatch} is {position} with {dp:.2f} psid behind it and the docked ring has "
+                f"{engaged} latches engaged, fewer than the {params['seal_min_engaged']} that seal "
+                "it; the tunnel's leak is owed (`tunnel.volume_m3`)"
             )
+        return params.no_value(
+            f"{hatch} is {position} with {dp:.2f} psid behind it and nothing docked beyond it; "
+            f"its vent rate is owed (`{hatch}.seal_leak_g_s`)"
+        )
     return 0.0
 
 

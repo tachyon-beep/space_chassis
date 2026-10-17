@@ -104,9 +104,9 @@ commands:
         # `crew_lm` and `tunnel`, and **the first two name nothing anywhere in the corpus** —
         # no component, no state, no node, no vehicle entry — so a fleet could command a hatch
         # the vehicle does not have while `hatch_crew_csm` and `hatch_crew_lm` were commanded
-        # by nothing. The tunnel is the volume *between* the two hatches rather than a third
-        # one, which is why it is not here.
-        values: [hatch_crew_csm, hatch_crew_lm]
+        # by nothing. The tunnel is the volume *between* the two tunnel hatches rather than a
+        # hatch of its own, which is why it is not here; the two tunnel hatches are.
+        values: [hatch_crew_csm, hatch_crew_lm, hatch_tunnel_csm, hatch_tunnel_lm]
       state:
         type: enum
         values: [closed, latched, open]

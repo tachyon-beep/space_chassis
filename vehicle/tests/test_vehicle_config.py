@@ -4337,7 +4337,7 @@ def test_an_argument_a_fleet_can_send_names_something_the_vehicle_has(tmp_path):
     # tunnel, which is a component but not a hatch.
     refusal(
         "hatch",
-        [("domains/structure/commands.yaml", "values: [hatch_crew_csm, hatch_crew_lm]", "values: [hatch_crew_csm, hatch_crew_lm, tunnel]")],
+        [("domains/structure/commands.yaml", "values: [hatch_crew_csm, hatch_crew_lm, hatch_tunnel_csm, hatch_tunnel_lm]", "values: [hatch_crew_csm, hatch_crew_lm, hatch_tunnel_csm, hatch_tunnel_lm, tunnel]")],
         "which is not a 'hatch' in this domain",
     )
     # The two declared vocabularies, each tested against what it declares rather than its name.
@@ -4400,7 +4400,7 @@ def test_the_linter_refuses_a_keyed_state_on_a_node_that_does_not_declare_its_ke
     """
     coupling = "coupling.yaml"
     structure = "domains/structure/components.yaml"
-    declared = "    key_space: by_state\n    state_order: [pyro_fired, lm_separation_state"
+    declared = "    key_space: by_state\n    state_order: [events_fired, pyro_fired, lm_separation_state"
 
     # The live corpus declares it on every node that carries one, and the count is the claim.
     # Anchored to the token after a line start or a `,`/`{`, because two of the five are inline flow
@@ -4429,8 +4429,8 @@ def test_the_linter_refuses_a_keyed_state_on_a_node_that_does_not_declare_its_ke
     # The declaration removed: the node carries a keyed state and does not say so.
     refusal(
         "key_space_off",
-        [(coupling, declared, "    state_order: [pyro_fired, lm_separation_state")],
-        "carries ['pyro_fired'], whose `unit` is a `map[...]`, and does not declare "
+        [(coupling, declared, "    state_order: [events_fired, pyro_fired, lm_separation_state")],
+        "carries ['events_fired', 'pyro_fired'], whose `unit` is a `map[...]`, and does not declare "
         "`key_space: by_state`",
     )
     # A fourth keyed state arriving on a node that has never carried one, which is the case the
@@ -4458,13 +4458,12 @@ def test_the_linter_refuses_a_keyed_state_on_a_node_that_does_not_declare_its_ke
     # arrived with `ks='by_state'`) rather than by re-reading the test, which looked right twice.
     refusal(
         "key_space_gone_with_two",
-        [(coupling, "    key_space: by_state\n    state_order: [pyro_fired, lm_separation_state",
-          "    state_order: [pyro_fired, lm_separation_state"),
+        [(coupling, declared, "    state_order: [events_fired, pyro_fired, lm_separation_state"),
          (structure, 'id: lm_separation_state\n    node: structure_config\n    method: discrete\n'
                      '    unit: "enum[docked,undocked,separated]"',
           'id: lm_separation_state\n    node: structure_config\n    method: discrete\n'
           '    unit: "map[device_id,enum[docked,undocked,separated]]"')],
-        "carries ['lm_separation_state', 'pyro_fired'], whose `unit` is a `map[...]`",
+        "carries ['lm_separation_state', 'events_fired', 'pyro_fired'], whose `unit` is a `map[...]`",
     )
 
 
@@ -8887,7 +8886,9 @@ def test_the_launch_state_is_declared_once_and_held_in_both_directions(tmp_path)
     assert after["cabin_regulator_position"] == "primary"
     assert after["computer_mode"] == "idle"
     assert after["mode"] == "auto"
-    assert after["hatch_state"] == {"hatch_crew_csm": "latched", "hatch_crew_lm": "latched"}
+    assert after["hatch_state"] == dict.fromkeys(
+        ["hatch_crew_csm", "hatch_crew_lm", "hatch_tunnel_csm", "hatch_tunnel_lm"], "latched"
+    )
 
     # Twelve positions are made by the block and the remaining one is still owed.
     mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
@@ -9137,7 +9138,7 @@ def test_a_published_launch_position_is_not_a_decision(tmp_path):
 
     # Twelve positions: four settled by the start, five directly read from documents, two
     # derived through declared mappings (the link rate's mode and CMC DAP control ownership), and
-    # the two crew hatches — half read from the checklist, half decided, so `chosen` and not cited.
+    # the four hatches — three read from documents, one decided, so `chosen` and not cited.
     assert block["states"] == {
         "aps_state": "off",
         "dps_state": "off",
@@ -9150,7 +9151,9 @@ def test_a_published_launch_position_is_not_a_decision(tmp_path):
         "cabin_regulator_position": "primary",
         "computer_mode": "idle",
         "mode": "auto",
-        "hatch_state": {"hatch_crew_csm": "latched", "hatch_crew_lm": "latched"},
+        "hatch_state": dict.fromkeys(
+        ["hatch_crew_csm", "hatch_crew_lm", "hatch_tunnel_csm", "hatch_tunnel_lm"], "latched"
+    ),
     }
 
     # Every state that cites the block agrees with it, and its `basis` says which half it is in.
@@ -15727,11 +15730,17 @@ def test_a_command_value_says_which_argument_carries_the_value():
                 targets[key] = str(source)
     # Five quantity states joined the eight mode ones this round, and one keyed state declares
     # nothing but its key. 17 -> 21 with ADR 0003: thermal's `coolant_pump`, `evaporator_feed` and
-    # `radiator_bypass` and power's `load_enabled`, each keyed; 22 with ECLSS's `suit_fan`.
-    assert declared == 22, declared
+    # `radiator_bypass` and power's `load_enabled`, each keyed; 22 with ECLSS's `suit_fan`. 22 -> 26
+    # with the structure lane: the arm token's two writes and its age's reset, the record of
+    # executed events (which took `pyro_fired`'s write, the device now following from the event)
+    # and the ring's latch drive.
+    assert declared == 26, declared
     assert sorted(constants) == [
         "rcs.thruster_valve.isolate_rcs_manifold",
-        "structure.pyro_fired.execute_event",
+        "structure.arm_age_s.arm_event",
+        "structure.arm_state.arm_event",
+        "structure.arm_state.execute_event",
+        "structure.events_fired.execute_event",
     ], constants
     # The two grounded mappings, and the one that is honestly owed.
     tie = states["power.bus_tie_closed"]["command_value"][0]
@@ -16170,8 +16179,9 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     # `UNCONFIGURED`, which is the honest answer for an input nobody has declared.
     # 14 -> 20 with ADR 0003: `set_coolant_pump`, `set_evaporator_feed`, `set_radiator_bypass`
     # (thermal), `set_load` (power), `set_power_amplifier` and `play_recorder` (comms); 21 with
-    # `set_suit_fan` (ECLSS).
-    assert len(applied) == 21, applied
+    # `set_suit_fan` (ECLSS). 21 -> 23 with the structure lane: `arm_event` writes the token and
+    # `set_docking_latch` the ring's drive.
+    assert len(applied) == 23, applied
     assert "select_antenna" in applied
     # 7 -> 5: `set_coolant_pump` and `set_power_amplifier` stopped owing (ADR 0003): the pump's speed
     # selects `coolant_pump` (thermal) and the amplifier's power selects `transmitter_on` (comms).
@@ -16199,9 +16209,13 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     }, staged
     staged = plant.apply_command(world, values, "set_hatch_valve",
                                  {"vehicle": "csm", "hatch": "hatch_crew_lm", "state": "open"})
-    assert staged["internal"]["hatch_state"] == {"hatch_crew_lm": "open"}, staged
+    assert staged["internal"]["hatch_state"] == (
+        {**dict.fromkeys(["hatch_crew_csm", "hatch_tunnel_csm", "hatch_tunnel_lm"], "latched"), "hatch_crew_lm": "open"}
+    ), staged
     # The keyed state's element has the same second key, one level down, and for the same reason.
-    assert staged["hatch_state"] == {"hatch_crew_lm": "open"}, staged
+    assert staged["hatch_state"] == (
+        {**dict.fromkeys(["hatch_crew_csm", "hatch_tunnel_csm", "hatch_tunnel_lm"], "latched"), "hatch_crew_lm": "open"}
+    ), staged
     # And the rule-computed half: the command writes its *input*, and the state the rule owns is
     # left alone rather than guessed at.
     staged = plant.apply_command(world, values, "select_antenna", {"antenna": "high_gain"})
@@ -16251,10 +16265,14 @@ def test_a_command_puts_a_keyed_state_beside_its_siblings_never_on_top_of_them()
     world = plant.load_world(VEHICLE)
     values = plant.initial_values(world)
     siblings = sorted(s.id for s in world.states_on("structure_config"))
-    assert siblings == ["configuration", "descent_stage_state", "lm_separation_state", "pyro_fired"], (
+    assert siblings == ["configuration", "descent_stage_state", "events_fired", "lm_separation_state",
+                        "pyro_fired"], (
         f"the node this asserts about changed shape: {siblings}"
     )
 
+    unexecuted = dict.fromkeys(
+        ["lm_undocking", "descent_stage_separation", "lm_ascent_jettison", "pyro_fire"], False
+    )
     # A scalar sibling's slot, seeded the way `advance` writes one.
     values["structure_config"] = {"lm_separation_state": "docked", "configuration": "docked"}
     staged = plant.apply_command(world, values, "execute_event",
@@ -16266,7 +16284,8 @@ def test_a_command_puts_a_keyed_state_beside_its_siblings_never_on_top_of_them()
     assert staged["structure_config"] == {
         "lm_separation_state": "docked",
         "configuration": "docked",
-        "pyro_fired": {"lm_undocking": True},
+        # The record starts with every event unexecuted, so the element lands in a full map.
+        "events_fired": {**unexecuted, "lm_undocking": True},
     }, staged
     # The three assertions the flat write would have broken, one per sibling shape. The flat form
     # staged `{'lm_undocking': True}` and *dropped both scalars*, because it built the map from the
@@ -16281,15 +16300,17 @@ def test_a_command_puts_a_keyed_state_beside_its_siblings_never_on_top_of_them()
     merged = {**values, **staged}
     again = plant.apply_command(world, merged, "execute_event",
                                 {"event": "pyro_fire", "arm_token": "token"})
-    assert again["structure_config"]["pyro_fired"] == {
-        "lm_undocking": True, "pyro_fire": True,
+    assert again["structure_config"]["events_fired"] == {
+        **unexecuted, "lm_undocking": True, "pyro_fire": True,
     }, again
     assert again["structure_config"]["lm_separation_state"] == "docked"
     # The sentinel still nests, and the helper did not change that: the two containers differ in
     # which map holds the state and in nothing else.
     hatched = plant.apply_command(world, values, "set_hatch_valve",
                                   {"vehicle": "csm", "hatch": "hatch_crew_lm", "state": "open"})
-    assert hatched["internal"]["hatch_state"] == {"hatch_crew_lm": "open"}, hatched
+    assert hatched["internal"]["hatch_state"] == (
+        {**dict.fromkeys(["hatch_crew_csm", "hatch_tunnel_csm", "hatch_tunnel_lm"], "latched"), "hatch_crew_lm": "open"}
+    ), hatched
 
 
 
