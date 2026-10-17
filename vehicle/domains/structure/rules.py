@@ -64,7 +64,9 @@ def structural_leak_g_s(inputs, params, dt):
     per_psi = params["pascals_per_psi"]
     hatches = inputs["hatch_state"]
     for hatch, cabin in sorted(params["hatch_cabin"].items()):
-        position = hatches[hatch]
+        position = hatches.get(hatch)
+        if position is None:
+            return params.no_value(f"{hatch} has no position; `hatch_state.initial` is owed")
         if position == "latched":
             continue
         dp = inputs[cabin] / per_psi
