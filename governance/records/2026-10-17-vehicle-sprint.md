@@ -151,3 +151,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 14:06 Structure raises fidelity on #51 (`173216c`): two tunnel hatches, no pyro at undocking,
   two ascent circuit interrupters at staging; the hatch card is closed. The interrupter edge goes to
   power if those states are power's.
+- 14:10 Governance PR #52 merged (`910adc9`); later governance changes go on a follow-up PR.
