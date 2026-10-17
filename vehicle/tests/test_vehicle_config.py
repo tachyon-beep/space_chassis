@@ -23352,8 +23352,9 @@ def test_a_take_whose_removal_is_not_yet_durable_holds_the_window_and_a_power_lo
     Until it succeeds the window claims nothing and adopts no map — a quiet console with a new map is
     left unadopted — and every cycle names the failure. A power loss in that state can bring the take
     back (its map A); the console the agent has since rewritten without a map leaves the resume to
-    the take, and A is right, because no newer map was ever adopted. Once the barrier succeeds the
-    window takes up the console as usual.
+    the take, and A is right, because no newer map was ever adopted. That console carries no map, so
+    the take is held (issue #39) until the first claim puts the console back showing A, and retired by
+    the claim after it.
     """
     checkpoint, console, _plant, world = checkpoint_tools()
     diode, state = tmp_path / "diode", tmp_path / "state"
@@ -23393,9 +23394,13 @@ def test_a_take_whose_removal_is_not_yet_durable_holds_the_window_and_a_power_lo
         executive.close()
     resumed, _ = resume_from(console, checkpoint, world, diode, state)
     assert resumed.windows["alpha"].variables == {"map": "A"}
-    assert not (alpha / take_name).exists()
+    assert resumed.windows["alpha"].held == take_name and (alpha / take_name).exists(), "the map's only copy on disk is held"
     resumed.cycle()
     assert len(results_of(alpha)) == 2, "the console the agent wrote is claimed once; the take's batch is not run again"
+    assert json.loads((alpha / "console.json").read_text()) == {"commands": [], "variables": {"map": "A"}}
+    resumed.cycle()
+    assert resumed.windows["alpha"].held is None and not (alpha / take_name).exists()
+    assert len(results_of(alpha)) == 2
     resumed.close()
 
 
