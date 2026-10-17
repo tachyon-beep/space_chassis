@@ -81,8 +81,15 @@ therefore one that a flight-hardware document states independently, and the YAML
 - **Effectivity.** Flight software (Colossus 1/1A), Block II CSM. E-1964 (May 1966) has the
   same grouping (pitch and yaw jets also control X; A-C roll jets Y; B-D roll jets Z).
 - **Home.** `geometry.rcs_sm.jets` (basis `derived`, `jets_provenance`).
-- **Not established.** The AOH's engine names (A1 to D4, as in "SM engines A1, A2, C1, and C2",
-  AOH p. 2.3-25) map to the DAP's jet numbers through AOH Figure 2.3-14, which is graphical (G-5).
+- **Engine names (filled).** AOH Figure 2.5-1 "CM-SM Engine Locations", rendered
+  (`/mnt/project-files/sources/rcs/aoh-fig2.5-1-cm-sm-engine-locations.png`), labels each SM engine
+  with its rotation (+P A3, -P A4, CW+R A1, CCW-R A2; +Y B3, -Y B4, CW+R B1, CCW-R B2; +P C3, -P
+  C4, CW+R C1, CCW-R C2; +Y D3, -Y D4, CW+R D1, CCW-R D2; "odd number engines = +rotation") and
+  draws quad A on -Z, B on +Y, C on +Z, D on -Y: **the figure independently confirms the placement
+  derived above**. Matching rotation and quad gives the map, landed as `aoh_name`: 1 C3, 2 A4, 3
+  A3, 4 C4, 5 D3, 6 B4, 7 B3, 8 D4, 9 B1, 10 D2, 11 D1, 12 B2, 13 A1, 14 C2, 15 C1, 16 A2. AOH p.
+  2.3-25's A/C roll select switches wired to "A1, A2, C1, and C2" agree (DAP jets 13-16, roll AC).
+  `check_rcs_geometry` refuses a name whose quad, axis class or sign disagrees with its jet.
 
 ## G-3 LM jet positions and force axes (filled)
 
@@ -118,10 +125,9 @@ therefore one that a flight-hardware document states independently, and the YAML
 - **Owed.** A reading of the rendered scan of printed p. 6-22. If the scan says +Y, this is a
   conflict for the operator, not a correction.
 
-## G-5 SM per-jet offsets and engine names (owed; graphical)
+## G-5 SM per-jet offsets (approximation kept; adds no decision)
 
-- **Question.** Where does each SM jet sit relative to the averaged intersection, and which AOH
-  engine name is which DAP jet?
+- **Question.** Where does each SM jet sit relative to the averaged intersection?
 - **Searched.** ODB Figure 2-5 (printed p. 2-6) has dimensions "3.125" (8) ±PITCH AND YAW THRUST
   LINE INTERSECTION", "6.750"", "82.36" (8)" and "83.00" (*)"; which jets each applies to is in the
   drawing, not the text. AOH printed p. 2.5-1 says the two roll engines on each quad "are
@@ -132,9 +138,13 @@ therefore one that a flight-hardware document states independently, and the YAML
   82.36 or 83.00 in instead of 82.68 moves a lever arm by 0.4 %; the 3.125 in and 6.750 in
   offsets change roll and cross-coupling torques by a few per cent. This is the GSOP's own model,
   so the DAP was verified against it.
-- **Next step.** Render ODB p. 2-6 and AOH Figures 2.5-1 and 2.3-14 (needs the hosts above).
+- **Fidelity call (John, 13:51Z: fidelity must add options for scenarios, behaviours, decisions
+  or challenges).** Per-jet offsets **add no decision**: they shift torque per jet by a few per
+  cent and change no jet's role, no failure's consequence and no crew or agent option. The
+  averaged model stays as a documented approximation. If ODB Figure 2-5 is rendered anyway, the
+  offsets are a cheap refinement, not an owed item.
 
-## G-6 CM jet geometry (owed)
+## G-6 CM jet geometry (functions filled; positions and directions owed)
 
 - **Question.** Where are the CM's twelve jets and which way do they push?
 - **Searched.** R577-6 s. 6.5.1.2 (printed p. 6-43) lists twelve positions in the CM vehicle
@@ -143,9 +153,16 @@ therefore one that a flight-hardware document states independently, and the YAML
   carry tildes. Thrust directions are only in "Fig. 4-20" of an external reference (s. 6.5.3.2).
   The AOH says each nozzle is "ported through the CM skin" (p. 2.5-25) and names jets by function
   (p. 2.5-36, 2.5-39), with no positions.
-- **Why nothing is landed.** Four of twelve positions are sign-ambiguous, no direction is
-  readable, and the CM's jets fly only after CM/SM separation, which the bounded quiet-coast
-  episode does not reach.
+- **Filled: subsystem and function.** AOH Figure 2.5-1 names the CM's jets 11-16 (subsystem 1)
+  and 21-26 (subsystem 2): +roll 11/21, -roll 12/22, +pitch 13/23, -pitch 14/24, +yaw 15/25, -yaw
+  16/26; corroborated by AOH p. 2.3-32 (direct coils on all CM engines "except 13 and 23") and p.
+  2.5-39 (dump excludes "the two + pitch engines"). This is the decision-bearing half: it is what
+  a subsystem failure during entry takes away, and each subsystem alone can still turn the CM
+  both ways about every axis. Landed in `geometry.rcs_cm`.
+- **Still owed.** Positions and thrust directions: four positions are sign-ambiguous in the text
+  layer, no direction is readable, and the figure is a sketch. They matter only for torque
+  magnitudes after CM/SM separation, which the bounded quiet-coast episode does not reach.
+  R577-6's ids 1-12 are not yet mapped to the AOH's 11-26.
 - **Next step.** Render R577-6 p. 6-43 and find the CM jet-orientation figure (the CM ODB
   volume or the AOH's CM RCS figures).
 

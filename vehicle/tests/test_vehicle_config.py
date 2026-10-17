@@ -18514,6 +18514,16 @@ def test_the_linter_refuses_an_rcs_jet_table_that_breaks_its_cross_check(tmp_pat
             "rcs_sm.jets.9: declares '-roll'",
         ),
         (
+            "sm-aoh-name-swapped",
+            lambda doc: doc["geometry"]["rcs_sm"]["jets"][0].update(aoh_name="C4"),
+            "is AOH engine 'C4'",
+        ),
+        (
+            "cm-subsystem-loses-an-axis",
+            lambda doc: doc["geometry"]["rcs_cm"]["jets"][4].update(torque="+pitch"),
+            "subsystem 1 must turn the CM both ways about every axis",
+        ),
+        (
             "lm-jet-4-as-printed",
             lambda doc: doc["geometry"]["rcs_lm"]["jets"][3].update(force_axis="+Y"),
             "rcs_lm.jets.4: pushes along +Y",
