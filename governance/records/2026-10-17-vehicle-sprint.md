@@ -188,3 +188,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 14:47 John: "we want to be able to model apollo 13" (D48). Station handovers come into the episode; MET 0 moves to Apollo 13's TLI.
 - 14:48 John confirms the epoch shift (D49). 14:49 He notes a future direction, a Kerbal-style ad-hoc mission system, that must not change current work (`status.md`, "Future direction").
 - 14:51 Structure #51 (`aa3231c`) and thermal #49 (`0427cac`, rebased onto `e990b25`) report. Scope answers under D33 (D50): tunnel pressure as a follow-up; the SM service bay off the glycol loop. Research infers the inverter configuration from the Apollo 11 checklist.
+- 14:53 #47 carries `cooled_by: space` with a required `cooled_by_note` (`d221c8a`).
