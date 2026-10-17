@@ -6813,7 +6813,23 @@ def check_domain(
             # the vocabulary test for real: `load_burn`'s arguments are trajectory names against a
             # lifecycle enum, and `set_docking_latch` offers `engage` while the latch reports
             # `engaged`.
-            if kind == "command" and values and not (values & offered):
+            # **A `constant` is the value the command sets, so the arguments are the wrong thing to
+            # ask.** The test reads the verb's arguments, which is right for the identity and
+            # `maps` forms, where an argument's value becomes the state's. A constant is the other
+            # shape: `arm_event(event=…)` names *which* token and the value is the verb's own,
+            # `armed` — so its arguments can never reach `none/armed/expired/consumed`, and the test
+            # refused a command that writes exactly the value it declares. The constant is held to
+            # the vocabulary where it is declared (`command_value`, below), so this test steps aside
+            # for one and a constant the state cannot hold is still refused, once, by that rule.
+            constant = next(
+                (
+                    row.get("constant")
+                    for row in state.get("command_value") or []
+                    if isinstance(row, dict) and str(row.get("verb")) == name
+                ),
+                None,
+            )
+            if kind == "command" and values and constant is None and not (values & offered):
                 report.refuse(
                     f"{mwhere}",
                     f"names {name!r}, whose arguments can take {sorted(offered)}, and {sid} can take "
@@ -7049,6 +7065,14 @@ def check_domain(
                         f"{cwhere2}.constant",
                         "declares a constant with no `argument`, so nothing says which element of a "
                         "keyed state the command sets",
+                    )
+                vocabulary = unit_vocabulary(state.get("unit"))
+                if constant is not None and vocabulary is not None and str(constant) not in vocabulary:
+                    report.refuse(
+                        f"{cwhere2}.constant",
+                        f"is {constant!r}, which {sid}'s `unit` ({state.get('unit')!r}) cannot hold — "
+                        f"the vocabulary is {sorted(vocabulary)}. A command that writes a value its "
+                        "state cannot report is a transition the vehicle cannot describe afterwards",
                     )
                 if not isinstance(becomes, dict):
                     continue
