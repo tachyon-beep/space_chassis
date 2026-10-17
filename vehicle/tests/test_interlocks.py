@@ -11,6 +11,7 @@ An operator's `--closed-interlock` still wins.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -144,7 +145,9 @@ def test_a_tripped_interlock_refuses_by_name_and_never_says_the_value(world, tmp
         built.close()
     assert "refused: INTERLOCK TRIPPED" in body and "coolant_supply_high" in body, body
     assert "thermal.coolant_supply_c" in body and "state=refused" in body
-    assert "290" not in body and "16.85" not in body and "500" not in body, body
+    # The state hash is hex and can contain any run of digits, so it is taken out before the check.
+    words = re.sub(r"\b[0-9a-f]{16,}\b", "", body)
+    assert "290" not in words and "16.85" not in words and "500" not in words, body
 
 
 # ADR 0004 §Direction: an interlock guards a direction of its verb, and the safing direction — the

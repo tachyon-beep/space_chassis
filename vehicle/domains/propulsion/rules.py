@@ -1,5 +1,5 @@
-"""The propulsion domain's rules (D5): main-engine thrust from the firing engine, and the chamber
-pressure that follows it.
+"""The propulsion domain's rules (D5): main-engine thrust from the firing engine, the chamber
+pressure that follows it, and the SPS's helium pressurization (tank and feed pressure).
 
 Every parameter is read from the state's own declaration in `components.yaml`, where its provenance
 is. Each function is `rule(inputs, params, dt) -> value`.
@@ -69,7 +69,35 @@ def _chamber_pressure(inputs, params, dt):
     return _relax(target, float(inputs["chamber_pressure_pct"]), float(params["tau_s"]), dt)
 
 
+def bottle_pressure_psia(inputs, params):
+    """The helium bottles' pressure from what they still hold, isothermal at the loading point:
+    `P_fill x m / m_fill`. The ideal-gas ratio over the real one, stated on the state."""
+    held = float(inputs[params["helium_state"]])
+    return float(params["bottle_fill_psia"]) * held / float(params["bottle_fill_kg"])
+
+
+def _pressurant_pressure(inputs, params, dt):
+    """The propellant tanks' ullage pressure. The helium valves open only while the SPS thrusts
+    (AUTO, on the thrust ON-OFF signal), so between burns the tanks hold what they had; during a
+    burn the regulator holds its working pressure while the bottles stay above it, and the tanks
+    follow the bottles down once they do not."""
+    current = float(inputs["pressurant_pressure_psi"])
+    if str(inputs[params["engine_state"]]) not in params["firing_states"]:
+        return current
+    target = min(float(params["regulator_psia"]), bottle_pressure_psia(inputs, params))
+    return _relax(target, current, float(params["tau_s"]), dt)
+
+
+def _feed_pressure(inputs, params, dt):
+    """The feed as a percentage of the regulator's working pressure, relaxing with the line's own
+    constant toward the tank pressure upstream of it."""
+    target = 100.0 * float(inputs[params["tank_state"]]) / float(params["nominal_psia"])
+    return _relax(target, float(inputs["feed_pressure_pct"]), float(params["tau_s"]), dt)
+
+
 RULES = {
     "thrust_main_n": _thrust_main,
     "chamber_pressure_pct": _chamber_pressure,
+    "pressurant_pressure_psi": _pressurant_pressure,
+    "feed_pressure_pct": _feed_pressure,
 }

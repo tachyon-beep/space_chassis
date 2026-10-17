@@ -247,30 +247,30 @@ state:
       3600 [psia] 70 [F] 87.6 [lb] 87.6 [earth launch weight]", "Helium - Fuel Tanks 178 ... 5.4",
       "Helium - SM/RCS Quads A-D 4150 ... 6.0", "Helium - CM/RCS Systems A,B 4150 ... 1.0", and
       "Nitrogen - SM 2500 ... 1.3". The stock is the **SPS bottles' 87.6 lb = 39.73469 kg**, because
-      that is the charge whose destination is this node's only edge (`E-PROP-PRESS` into
-      `prop_main`); the other three helium charges total 12.4 lb and are published with different
-      destinations (the fuel-cell reactant tanks and the two RCS systems) that this vehicle models
-      as other stocks or not at all. **The LM's charge is published too**, in its own table —
+      that is the charge this node's only edge spends (`E-PRESS-PROP`, the helium a burn expels into
+      the propellant tanks). The other helium charges total 12.4 lb and go elsewhere: 5.4 lb is the
+      **SPS propellant tanks' own ullage** at 178 psia ("Helium - Fuel Tanks" and, on the next line,
+      "Helium - N2O4 Tanks", which this entry once read as the fuel-cell reactant tanks; it is
+      `propulsion.pressurant_pressure_psi`'s initial now), and the rest is the two RCS systems'. **The LM's charge is published too**, in its own table —
       "LM-II - Helium & Nitrogen": APS tanks 6.6 + 6.6 lb, RCS tanks 1.05 + 1.05, DPS supercritical
       51.2, DPS ambient 1.1 — and no LM helium stock exists in this corpus for it to fill
     quantum: 1.0e-5
-    quantum_placeholder: >-
-      chosen against a *quantum and minimum-flow* rule this entry cannot satisfy: the stock's
-      smallest flow is owed, so there is nothing to size the quantum against, and the quantum is
-      nevertheless needed for the fixed-point stock to exist. One hundredth of a gram is the
-      `water_potable_kg` figure, picked because the helium feed is slow rather than because any
-      source gives it
-    min_flow_per_s: UNCONFIGURED
+    min_flow_per_s: 0.052864781599702954
+    min_flow_derivation:
+      expression: "thrust_n * per_newton"
+      inputs:
+        thrust_n: "vehicle.yaml:propulsion.sps.thrust_n"
+        per_newton: "coupling.yaml:edges.E-PRESS-PROP.sensitivity.value"
     provenance:
       basis: historical
       source: "ODB Vol III (SNA-8-D-027(III) Rev 3) Table 3.2-10, MISSION J-2, 'Helium and Nitrogen' loading requirements, PDF p. 571: Helium - SPS Bottles, 3600 psia at 70 F, 87.6 lb required and 87.6 lb at earth launch"
       note: >-
         the value is the loading requirement and the launch weight, which the table gives as the
         same number — the bottles are charged to 3,600 psia and that is what the vehicle carries to
-        orbit. **The regulated flow is still owed** and is a different quantity: the table gives
-        the storage pressures (3,600 psia in the bottles, 178 in the fuel tanks, 4,150 in the RCS)
-        and no mass flow, and the displacement ratio this stock feeds is `E-PROP-PRESS`'s own
-        `UNCONFIGURED` sensitivity
+        orbit. The flow is `E-PRESS-PROP`'s, derived from the regulated pressure and the
+        propellants' densities: the SPS at full thrust spends 0.0529 kg/s of helium, which is
+        `min_flow_per_s` because the SPS does not throttle, so its only non-zero flow is its
+        largest. A quantum of one hundredth of a gram is under a hundredth of a tick's flow at that rate (1.06 g per 20 ms tick)
   - id: absorber_man_hours_csm
     node: absorber_capacity_csm
     method: stock
@@ -484,10 +484,15 @@ consumers:
   - id: pressurant_blowdown
     stock: pressurant_he
     edge: E-PRESS-PROP
-    rate_kg_s: UNCONFIGURED
+    rate_kg_s: 0.052864781599702954
+    derivation:
+      expression: "thrust_n * per_newton"
+      inputs:
+        thrust_n: "vehicle.yaml:propulsion.sps.thrust_n"
+        per_newton: "coupling.yaml:edges.E-PRESS-PROP.sensitivity.value"
     provenance:
-      basis: UNCONFIGURED
-      note: "regulated blowdown; the regulator's behaviour is owed (vehicle.yaml#open_debts)"
+      basis: derived
+      relation: "the helium the SPS expels into its tanks at full thrust: 91,188 N x 5.7973e-7 kg/s per N (`E-PRESS-PROP`), while the regulator holds 186 psia"
   - id: co2_removal
     stock: absorber_capacity_csm
     edge: E-ATM-ABSORB

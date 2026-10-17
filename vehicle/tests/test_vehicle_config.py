@@ -3412,24 +3412,23 @@ def test_the_linter_holds_every_draw_on_a_stock(tmp_path):
     assert report.refusals == [], report.refusals
     consumers = documents["domains/consumables/components.yaml"]["consumers"]
     assert len(consumers) == 12, f"{len(consumers)} consumers"
-    # Ten name an edge and two do not; the two with none say where the draw is carried. **One** rate
-    # is still owed — `pressurant_blowdown`, which needs the helium charge — where four were until
-    # the fuel cell's operating point landed: the three cell entries were one unknown under three
-    # names and they are now one division under three derivations.
+    # Ten name an edge and two do not; the two with none say where the draw is carried. **No** rate
+    # is owed: four were until the fuel cell's operating point landed (the three cell entries were
+    # one unknown under three names and they are now one division under three derivations), and
+    # `pressurant_blowdown` was the last, closed by the helium a newton of SPS thrust expels.
     named = [c for c in consumers if c.get("edge")]
     assert len(named) == 10, f"{len(named)} consumers name an edge"
     reasoned = [c for c in consumers if not c.get("edge") and (c.get("provenance") or {}).get("note")]
     assert len(reasoned) == 2, f"{len(reasoned)} edge-less consumers carry a reason"
     owed = [c["id"] for c in consumers if c.get("rate_kg_s") == "UNCONFIGURED"]
-    assert owed == [
-        "pressurant_blowdown",
-    ], owed
-    # And nine rates are held against their own arithmetic: the six that were, plus the three fuel
-    # cell entries the round that landed the operating point converted from owed to derived. A rate
-    # that states its inputs cannot disagree with the declarations it reads, which is the property
-    # the six were joined for and the reason the three joined them rather than being quoted.
+    assert owed == [], owed
+    # And ten rates are held against their own arithmetic: the six that were, the three fuel cell
+    # entries the round that landed the operating point converted from owed to derived, and the
+    # helium blowdown. A rate that states its inputs cannot disagree with the declarations it reads,
+    # which is the property the six were joined for and the reason the others joined them rather
+    # than being quoted.
     derived = [c for c in consumers if c.get("derivation")]
-    assert len(derived) == 9, f"{len(derived)} consumers declare a derivation"
+    assert len(derived) == 10, f"{len(derived)} consumers declare a derivation"
     assert next(c for c in consumers if c["id"] == "evaporator_water")["rate_kg_s"] == 9.5714e-4
 
     def refusal(name: str, old: str, new: str, needle: str) -> None:
@@ -7549,11 +7548,9 @@ def test_the_linter_refuses_a_counter_with_no_rating(tmp_path):
     definition = copy_definition(tmp_path / "held")
     path = definition / "coupling.yaml"
     text = path.read_text()
-    anchor = '    preloaded: "the helium charge is loaded at the pad'
+    anchor = '    apollo: "836-847"\n    preloaded: >-\n      the SPS bottles\' 87.6 lb of helium'
     assert anchor in text, "the fixture no longer matches the pressurant_he node"
-    head, _, tail = text.partition(anchor)
-    line, newline, rest = tail.partition("\n")
-    path.write_text(f"{head}{anchor}{line}{newline}    exhausted_at: 10\n{rest}")
+    path.write_text(text.replace(anchor, anchor.replace("preloaded", "exhausted_at: 10\n    preloaded"), 1))
 
     result = run_linter(definition)
     assert result.returncode == 1
@@ -10889,10 +10886,11 @@ def test_the_lag_integrator_applies_the_conversion_its_edge_declares():
     gaps: list = []
     plant.step(world, plant.initial_values(world), 0.02, gaps)
     assert "coolant_flow_kg_s" not in {g.state.id for g in gaps}
-    # And `thrust_main_n`'s debt moved from *the rule* to the *edge*, which is the truthful place:
-    # what it lacks is the propellant flow to relax toward, not the code that would relax it.
-    assert "thrust_main_n" in {s.id for s in buckets["edge"]}
-    assert "thrust_main_n" not in {s.id for s in buckets["rule"]}
+    # `thrust_main_n`'s debt moved from *the rule* to the *edge* in this test's round, because what
+    # it lacked was a driver to relax toward. The propulsion lane found that the edge it was waiting
+    # on, `E-PROP-ENG`, is the propellant tank's drain and never a cause of thrust, and made the state
+    # a rule on which engine is firing (`domains/propulsion/rules.py`): it is ready now.
+    assert "thrust_main_n" in {s.id for s in buckets["ready"]}
 
 
 def test_the_delay_integrator_hands_back_what_entered_one_pipe_ago(tmp_path):
@@ -12840,6 +12838,10 @@ def test_every_stock_declares_where_it_starts():
         "coolant_pump",
         "evaporator_feed",
         "radiator_bypass",
+        # The SPS pressurization rules: the propellant tanks' ullage pressure, loaded at 178 psia
+        # (ODB Table 3.3-10), and the feed as a percentage of the regulator's 186.
+        "pressurant_pressure_psi",
+        "feed_pressure_pct",
     }, sorted(seeded_integrators["internal"])
     # **And the five `algebraic` states the resolver adds**, the sentinel's half of the declared
     # arithmetic: the bay heat rate, the cabin pressure differential, the two loops' collected loads
@@ -12877,6 +12879,9 @@ def test_every_stock_declares_where_it_starts():
         "off",
         # The amplifier's lump at its MET-0 equilibrium, transmitter off (ADR 0003 item 10).
         283.35,
+        # The SPS tanks' loading pressure, and the feed it sets against the regulated 186 psia.
+        178.0,
+        100.0 * 178 / 186,
     }
     assert seeded["internal"]["o2_supply_pressure_psi"] == 900.0
     assert seeded["internal"]["suit_loop_flow_cfm"] == 35.0
@@ -15049,29 +15054,24 @@ def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
     p_states = {str(s["id"]): s for s in propulsion["state"]}
     c_states = {str(s["id"]): s for s in consumables["state"]}
 
-    assert p_states["pressurant_pressure_psi"]["provenance"]["basis"] == "UNCONFIGURED"
-    assert "placeholder" in p_states["pressurant_pressure_psi"]["tau_s_placeholder"]
-    # **The helium entry is the case that moved.** It was the corpus's example of a placeholder
-    # inside a wholly-owed entry — `basis: UNCONFIGURED` with a `quantum_placeholder` beside a
-    # `quantum` — and round 13 landed its charge from the Operational Data Book, so its provenance
-    # is `historical` now. What is still owed is the *flow*, so the placeholder is still a
-    # placeholder and the entry still carries one obligation: the assertion that matters is the
-    # one that says the placeholder is attached to something unset.
-    assert c_states["pressurant_he_kg"]["min_flow_per_s"] == "UNCONFIGURED", (
-        "the placeholder's justification is that the smallest flow is owed; if that landed, this "
-        "entry no longer needs the note"
-    )
-    assert (
-        "picked because the helium feed is slow"
-        in c_states["pressurant_he_kg"]["quantum_placeholder"]
-    )
+    # **Both cases have moved, and the rule outlived them.** The pressurant's pressure is a rule
+    # now (`domains/propulsion/rules.py`) between sourced pressures, so its entry is `chosen` for the
+    # time constant alone, and it keeps the note that says the five seconds are a shape rather than
+    # a figure. The helium's flow is derived (`coupling.yaml#E-PRESS-PROP`), so the quantum has a
+    # flow to be finer than and no longer needs a note of its own.
+    assert p_states["pressurant_pressure_psi"]["provenance"]["basis"] == "chosen"
+    assert "chosen in shape" in p_states["pressurant_pressure_psi"]["tau_s_placeholder"]
+    assert isinstance(c_states["pressurant_he_kg"]["min_flow_per_s"], float)
+    assert "quantum_placeholder" not in c_states["pressurant_he_kg"]
 
     definition = copy_definition(tmp_path / "unmarked")
     path = definition / "domains" / "propulsion" / "components.yaml"
     text = path.read_text()
+    # The pressurant's entry as it was owed: `basis: UNCONFIGURED` with the time constant unmarked.
     i = text.index("    tau_s_placeholder: >-")
-    j = text.index("    provenance:", i)
-    path.write_text(text[:i] + text[j:])
+    j = text.index("    provenance:\n      basis: chosen\n", i)
+    rest = text[j:].replace("      basis: chosen\n", "      basis: UNCONFIGURED\n", 1)
+    path.write_text(text[:i] + rest)
 
     result = run_linter(definition)
     assert result.returncode == 1
@@ -19800,8 +19800,11 @@ def test_the_helium_charge_is_a_loading_requirement_and_not_a_mystery():
     # The claim that was false is gone, and the note now says what the table also publishes.
     assert "not published for either vehicle" not in stock["provenance"]["note"]
     assert "LM-II - Helium & Nitrogen" in stock["initial_note"]
-    # The regulated flow is a *different* quantity and is still owed — the table has pressures.
-    assert stock["min_flow_per_s"] == "UNCONFIGURED"
+    # The regulated flow is a *different* quantity, and it is derived now rather than owed: the
+    # helium a burn expels is the propellant volume it replaces at the regulated pressure
+    # (`coupling.yaml#E-PRESS-PROP`), and the SPS's rated thrust sets the coarsest flow.
+    assert stock["min_flow_derivation"]["expression"] == "thrust_n * per_newton"
+    assert stock["min_flow_per_s"] == pytest.approx(0.0528648, rel=1e-5)
 
 
 def test_the_linter_refuses_an_unavailability_claim_whose_search_is_the_contract(tmp_path):
