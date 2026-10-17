@@ -100,7 +100,15 @@ def test_policy_a_through_the_window_is_judged_full_success_on_the_vehicle_s_own
     policy = episode_driver.Policy.from_document(document)
     driver = episode_driver.Driver(window, policy)
     wall = policy.duration_ticks / policy.tick_hz
-    assert driver.run(poll_seconds=0.05, timeout=wall + 600), (driver.sent, driver.log[-3:])
+    # The executive keeps the mission clock, not the wall's: on a loaded hosted runner the world ran
+    # at about 0.6 of real time (2026-10-17: MET 1,850 s after 3,000 s of wall), so the driver gets
+    # twice the episode's wall time, and the failure says how far the world got.
+    deadline = 2 * wall
+    assert driver.run(poll_seconds=0.05, timeout=deadline), (
+        episode_driver.mission_tick(window),
+        driver.sent,
+        driver.log[-1:],
+    )
     # The record of a stopped executive: a live journal's last line can be partial.
     stack.compose("stop", "vehicle")
     # The executive writes its journal 0600 as the image's uid 1000, and a 0600 create mode masks
