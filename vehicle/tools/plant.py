@@ -4006,7 +4006,8 @@ def apply_fault(world: World, values: dict[str, Any], fault: str) -> dict[str, A
     """A fault's onset, applied to the value map: what every declaring state becomes (WP09).
 
     `apply_command`'s counterpart for the hidden truth. Each `fault_value` row says `becomes` (the
-    value the state takes) or `scale` (the factor its current value is multiplied by), on one
+    value the state takes), `scale` (the factor its current value is multiplied by) or
+    `becomes_from: magnitude` (the fault policy's own `seeding.magnitude`), on one
     element (`key`) of a keyed state or on the whole of a scalar one; the linter holds the row to the
     state's unit and to a method that keeps the value (`check_fault_value`). Returns the staged
     delta, with the onset counted under `FAULT_ONSETS`.
@@ -4031,6 +4032,18 @@ def apply_fault(world: World, values: dict[str, Any], fault: str) -> dict[str, A
                     needs=state.id,
                 )
             value: Any = current * row["scale"]
+        elif row.get("becomes_from") == "magnitude":
+            # The policy's own figure, which the linter holds to the state's unit.
+            policy = world.documents.get(f"domains/{world.faults[fault]}/fault_policy.yaml") or {}
+            declared = next(
+                (f for f in policy.get("faults") or [] if str(f.get("id")) == fault), {}
+            )
+            value = (declared.get("seeding") or {}).get("magnitude")
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                raise Unconfigured(
+                    f"domains/{world.faults[fault]}/fault_policy.yaml:{fault}.seeding.magnitude",
+                    f"is {value!r}, and {state.id}'s onset takes its value from it",
+                )
         else:
             value = row.get("becomes")
         if key is not None:

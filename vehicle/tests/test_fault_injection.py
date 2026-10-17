@@ -408,3 +408,48 @@ def test_a_command_value_with_when_moves_only_the_state_its_call_names(tmp_path)
     # A route on a value the argument cannot take is refused by name.
     components.write_text(text.replace("when: {engine: aps}", "when: {engine: lmde}", 1))
     assert "is 'lmde', which 'engine' cannot take" in run_linter(copy).stdout
+
+
+LEAK_SOURCES = """state:
+  - id: leak_sources_g_s
+    node: internal
+    method: discrete
+    unit: "map[leak_id,g/s]"
+    initial: {lm_hatch_seal: 0.0, vessel: 0.0}
+    initial_provenance: {basis: chosen, reason: "a test fixture: no leak at MET 0"}
+    moved_by: ["fault:STR-01-hatch-seal-leak", "fault:STR-11-structural-thermal-cycling"]
+    fault_value:
+      - {fault: STR-01-hatch-seal-leak, key: lm_hatch_seal, becomes_from: magnitude}
+      - {fault: STR-11-structural-thermal-cycling, key: vessel, becomes_from: magnitude}
+    provenance: {basis: chosen, reason: "a test fixture for a fault's declared magnitude"}
+"""
+
+
+def test_an_onset_can_take_the_fault_policy_s_own_magnitude(tmp_path):
+    """Structure's leaks, beside the fault path: the size is the policy's, not a copy of it."""
+    copy = faulted_copy(tmp_path / "vehicle")
+    components = copy / "domains" / "structure" / "components.yaml"
+    replace(components, "\nstate:\n", "\n" + LEAK_SOURCES)
+    replace(
+        components,
+        "internal_order: [relief_valve_state,",
+        "internal_order: [leak_sources_g_s, relief_valve_state,",
+    )
+    out = run_linter(copy).stdout
+    assert "leak_sources_g_s.fault_value" not in out, out[-3000:]
+    leaking = plant.load_world(copy)
+    values = plant.initial_values(leaking)
+    stepped = plant.step(
+        leaking,
+        values,
+        plant.tick_seconds(leaking),
+        faults=[plant.FaultOnset(offset_us=0, fault="STR-01-hatch-seal-leak")],
+    )
+    assert stepped["leak_sources_g_s"] == {"lm_hatch_seal": 0.0055556, "vessel": 0.0}
+    # A magnitude in another unit is refused rather than converted.
+    policy = copy / "domains" / "structure" / "fault_policy.yaml"
+    text = policy.read_text()
+    marker = '      magnitude: 0.00055556\n      magnitude_unit: "g/s"\n'
+    assert text.count(marker) == 1
+    policy.write_text(text.replace(marker, marker.replace('"g/s"', '"g/h"')))
+    assert "takes the fault's magnitude in 'g/h' into leak_sources_g_s" in run_linter(copy).stdout

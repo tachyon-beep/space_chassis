@@ -328,8 +328,12 @@ def effect_owned_movers(state: dict[str, Any]) -> list[str]:
 #     moved_by: ["fault:PWR-02-fuel-cell-degradation"]
 #     fault_value:
 #       - fault: PWR-02-fuel-cell-degradation
-#         scale: 1.5                # or `becomes: <value>`; `key: <element>` on a keyed state
-#         provenance: {basis: ..., ...}
+#         scale: 1.5                # or `becomes: <value>`, or `becomes_from: magnitude`
+#         provenance: {basis: ..., ...} # `key: <element>` on a keyed state
+#
+# `becomes_from: magnitude` takes the value from the fault's own `seeding.magnitude`, in its
+# `magnitude_unit`, which must be the state's unit (a keyed state's element unit): the policy already
+# declares the size with its provenance, and a copy here would be a second declaration to drift.
 #
 # Only a state with memory can take one. An `algebraic` state is recomputed from its inputs every
 # segment, so an onset written into it would be gone before anything read it — the silent no-op this
@@ -341,8 +345,19 @@ def effect_owned_movers(state: dict[str, Any]) -> list[str]:
 FAULT_HELD_METHODS = ("discrete", "dynamics")
 
 
+def fault_magnitude_unit(unit: str) -> str:
+    """The unit a fault magnitude has to carry to land in a state: a keyed state's element unit."""
+    match = re.fullmatch(r"map\[[^,\]]+,(.+)\]", unit.strip())
+    return (match.group(1) if match else unit).strip()
+
+
 def check_fault_value(
-    where: str, sid: str, state: dict[str, Any], row: dict[str, Any], report: Report
+    where: str,
+    sid: str,
+    state: dict[str, Any],
+    row: dict[str, Any],
+    report: Report,
+    fault: dict[str, Any] | None = None,
 ) -> None:
     """One `fault_value` row against the state it moves: one effect, a value the state can hold."""
     method = state.get("method")
@@ -356,12 +371,13 @@ def check_fault_value(
             "ledgered transfers, and the integrators are the plant's",
         )
         return
-    effects = [name for name in ("becomes", "scale") if name in row]
+    effects = [name for name in ("becomes", "scale", "becomes_from") if name in row]
     if len(effects) != 1:
         report.refuse(
             where,
             f"declares {effects or 'no effect'}; a fault onset says exactly one of `becomes` (the "
-            "value the state takes) or `scale` (the factor its value is multiplied by)",
+            "value the state takes), `scale` (the factor its value is multiplied by) or "
+            "`becomes_from: magnitude` (the fault's own declared magnitude)",
         )
         return
     unit = str(state.get("unit") or "")
@@ -380,6 +396,29 @@ def check_fault_value(
         )
         return
     vocabulary = unit_vocabulary(state.get("unit"))
+    if "becomes_from" in row:
+        seeding = (fault or {}).get("seeding") or {}
+        magnitude = seeding.get("magnitude")
+        carried = str(seeding.get("magnitude_unit"))
+        if row.get("becomes_from") != "magnitude":
+            report.refuse(
+                where, f"takes its value from {row.get('becomes_from')!r}; the one source is `magnitude`"
+            )
+        elif isinstance(magnitude, bool) or not isinstance(magnitude, int | float):
+            report.refuse(
+                where,
+                f"takes the fault's magnitude, which its policy declares as {magnitude!r}: a fault "
+                "whose size is owed cannot set one",
+            )
+        elif carried != fault_magnitude_unit(unit):
+            report.refuse(
+                where,
+                f"takes the fault's magnitude in {carried!r} into {sid}, which holds "
+                f"{fault_magnitude_unit(unit)!r}. A converted figure is a separate declaration "
+                "(`becomes`, with the relation in its provenance), not a silent conversion",
+            )
+        # The provenance is the policy's, beside the magnitude it describes.
+        return
     if "scale" in row:
         factor = row.get("scale")
         if (
@@ -6660,7 +6699,7 @@ def check_domain(
     # --------------------------------------------------------------------------------------
     # WP09: the faults a `fault:` mover may name, which are this domain's own.
     faults_here = {
-        str(f.get("id"))
+        str(f.get("id")): f
         for f in (docs.get("fault_policy.yaml") or {}).get("faults") or []
         if isinstance(f, dict) and f.get("id")
     }
@@ -6781,7 +6820,9 @@ def check_domain(
                         f"a `fault_value` entry for {name!r}",
                     )
                     continue
-                check_fault_value(f"{where}:state {sid}.fault_value", sid, state, onset, report)
+                check_fault_value(
+                    f"{where}:state {sid}.fault_value", sid, state, onset, report, faults_here[name]
+                )
                 continue
             if kind == "event":
                 if name not in events_here:
