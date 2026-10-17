@@ -541,7 +541,17 @@ nodes:
   # `map[thruster_id,N]`; neither has a scalar sibling today, and the declaration is what keeps the
   # level explicit if one arrives.
   rcs_valves:        {domain: rcs,        kind: discrete, unit: enum, apollo: "149", key_space: by_state}
-  rcs_thrust:        {domain: rcs,        kind: flow,     unit: N,    apollo: "150", key_space: by_state}
+  rcs_thrust:
+    domain: rcs
+    kind: flow
+    unit: N
+    apollo: "150"
+    key_space: by_state
+    state_order: [control_torque, thruster_thrust, thrust_total_n]
+    state_order_note: >-
+      the law decides a torque, the jets that make it follow from the torque, and the total the
+      propellant drain reads is the sum of those jets. One tick of the service, in the order its
+      arithmetic runs (ADR 0005)
 
   # --- avionics, structure, crew, and the executive -----------------------------------
   instrumentation:   {domain: avionics,  kind: service,  unit: "-",  apollo: "180-182"}
@@ -1363,6 +1373,12 @@ edges:
         this edge, which is why it is declared at all rather than left implied by the tank
 
   - id: E-RCSP-RCS
+    # The scalar the drain needs: `rcs_thrust` carries the controller's torque, the per-jet thrust
+    # map and their sum, and the sum is the one a kg/s-per-N edge can multiply.
+    reads: thrust_total_n
+    # And the state it feeds: the propellant is what the jets burn, and `thruster_thrust` is the
+    # jets. The control torque and the total are the same tick's arithmetic, not consumers.
+    advances: thruster_thrust
     from: prop_rcs
     to: rcs_thrust
     kind: rate
@@ -1929,11 +1945,30 @@ edges:
     # `advances` because `body` is not a node state's only occupant:
     # RCS thrust through a lever arm is a torque about the centre of mass, and the node carries more than one state an edge can drive.
     advances: body_rate
+    # The torque, not the jets: `rcs.control_torque` is the service's couple about the centre of
+    # mass averaged over the tick, and `gnc.body_rate`'s rule (domains/gnc/rules.py) integrates it
+    # through the full inertia tensor. The jets' thrust map and the drain's scalar sit beside it on
+    # `rcs_thrust` and are what the propellant edges read.
+    reads: control_torque
     from: rcs_thrust
     to: vehicle_dynamics
     kind: lag
-    sensitivity: {value: UNCONFIGURED, unit: "rad/s2 per N", basis: UNCONFIGURED, at: nominal,
-    note: "needs the inertia tensor, which nobody supplies"}
+    sensitivity:
+      value: 1.3153e-06
+      derivation:
+        expression: "1 / iyy_kg_m2"
+        inputs:
+          iyy_kg_m2: "domains/gnc/components.yaml:state.body_rate.iyy_kg_m2"
+      unit: "rad/s2 per N*m"
+      basis: derived
+      relation: "Euler's equation, I w' = tau - w x (I w): one newton-metre about pitch accelerates the docked stack at 1/Iyy = 1/760263.3 = 1.3153e-6 rad/s2. Yaw is 1/767311.8 and roll 1/80081.1, ten times stiffer in response, and the products of inertia couple the three; the rule carries the tensor, this figure is the pitch diagonal"
+      at: "docked CSM+LM, vehicle.yaml#mass_properties"
+      note: >-
+        closed by the GNC+RCS lane (ADR 0005). The value was UNCONFIGURED for want of an inertia
+        tensor; `vehicle.yaml#mass_properties` carries the docked stack's, and `gnc.body_rate`
+        holds a copy of it by `same_as`. The edge is a `lag` because the torque moves a rate and
+        the rate moves the attitude a tick later: a slew starts slowly and stops late, which is
+        what the minimum-impulse limit cycle in the hold is made of
   - id: E-DYN-GNC
     # **The trajectory, not the attitude.** `vehicle_dynamics` carries a body rate, an attitude and
     # an orbit, and what a navigation solution estimates is a position and a velocity — the estimator
@@ -2864,7 +2899,7 @@ open_debts:
   - "Every thermal time constant and conductance (tau on E-PUMP-COOL, E-TRANSPORT-PLATE, E-PLATE-*). thermal_diode.md:965 declares them all UNSPECIFIED and refuses to infer them."
   - "Loop transit delay in ticks (E-COOL-TRANSPORT). Needs loop volume and flow; apollo_diode.md:97 gives ~24 gal/h."
   - "Throttle-to-thrust law for main propulsion (E-PROP-ENG). Isp and mass flow are supplied (vehicle.yaml#propulsion, Apollo 11 tables) and the RCS rate edge is now closed at 2724.3 N per kg/s (C-26's 277.8 s); what main propulsion still owes is the shape — build-up, tailoff and the descent engine's 65-92.5 % non-operating region, which `domains/propulsion/` refuses to interpolate across."
-  - "Inertia tensor and centre of mass, owed to `E-RCS-DYN` — and the thrusters' geometry, owed to `domains/rcs/`. **The docked stack's half is landed** (round 9: `vehicle.yaml#mass_properties`, from the Operational Data Book's Table 3.2-21, with the frame that made it usable), and four configurations' tensors are walkable `UNCONFIGURED`s there, each naming its own table. What is still missing is the other half and it is why this edge cannot close: forty-four unit thrust directions with their lever arms, which are what the allocator's wrench matrix is built from. The guidance-to-valve edge was named here as a third and does not belong: it carries a commanded selection one for one from the `guidance` service node, and the matrix is the allocator's rather than that edge's."
+  - "Inertia tensor and centre of mass for the configurations other than the docked stack. **`E-RCS-DYN` is closed on the docked stack's** (ADR 0005: `rcs.control_torque` through `gnc.body_rate`'s rigid-body rule), so what follows is the history of the debt and the general allocator it still describes. **The docked stack's half is landed** (round 9: `vehicle.yaml#mass_properties`, from the Operational Data Book's Table 3.2-21, with the frame that made it usable), and four configurations' tensors are walkable `UNCONFIGURED`s there, each naming its own table. What is still missing is the other half and it is why this edge cannot close: forty-four unit thrust directions with their lever arms, which are what the allocator's wrench matrix is built from. The guidance-to-valve edge was named here as a third and does not belong: it carries a commanded selection one for one from the `guidance` service node, and the matrix is the allocator's rather than that edge's."
   - "Per-edge crisis-point gains for the power->thermal->power loop (E-BUS-PUMP especially). Required before the fidelity closure means anything at the crisis operating point."
   - "A `regimes` table for the four remaining bus-driven edges (E-BUS-GNC, E-BUS-INST, E-BUS-COMM) and E-BAT-BUS's availability half. `regimes:` now exists and is enforced: a `discrete` coupling leaving physical equipment must declare one, `E-BUS-RCS` and `E-STRUCT-PLATE` are converted, and the two `guidance` command edges want none at all — promoting `guidance` to a service node turned them into commands, which the command exception covers without a table, where before they coupled from `nav_state`, the navigation solution, to ask a question only a decision can answer. A consumer's draw is constant inside the 24-32 V envelope and then stops; that envelope is already the undervoltage ladder in domains/power/profiles.yaml, so a `1 per V` here would model a load that grows without bound as the bus sags, which is the opposite of what a load does. The closing move for the four is a `regimes:` table on a discrete edge whose bands are checked against the thresholds that already exist, which would connect the coupling graph to the ladders it currently ignores."
 

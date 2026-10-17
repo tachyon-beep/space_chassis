@@ -256,6 +256,30 @@ state:
     node: vehicle_dynamics
     method: dynamics
     unit: dimensionless
+    # The rule is `domains/gnc/rules.py`: the rate this tick, integrated exactly over the tick as a
+    # rotation and renormalised (ADR 0005).
+    initial: [0.7071067811865476, 0.0, -0.6487577877061355, -0.2812709243605549]
+    initial_provenance:
+      basis: derived
+      relation: >-
+        the passive-thermal-control attitude, with the roll not yet started: body +X on the
+        ecliptic north pole, reached from EARTH_J2000 by the shortest rotation. The pole is
+        (0, -sin e, cos e) in EARTH_J2000 with the IAU 1976 obliquity e = 84,381.448 arcsec =
+        23.4392911 deg, so the rotation is 90 deg about x cross n = (0, -cos e, -sin e) and
+        q = [cos 45, 0, -sin 45 cos e, -sin 45 sin e]
+      source: >-
+        Apollo 11 Mission Report, MSC-00171, s. 4.5, printed p. 4-4: "The digital autopilot was
+        used to initiate the passive thermal control mode at a positive roll rate of 0.3 deg/sec,
+        with the positive longitudinal axis of the spacecraft pointed toward the ecliptic north
+        pole during translunar coast":
+        https://www.nasa.gov/wp-content/uploads/static/apollo50th/pdf/A11_MissionReport.pdf
+      note: >-
+        why this attitude: the vehicle's thermal boundary already assumes passive thermal control at
+        the cut (`domains/thermal/components.yaml`, `environment_heat_w.initial`, ADR 0003 item 9),
+        and this is the attitude that mode is flown in. The roll itself is *not* started: the body
+        rate starts at rest and the service holds this attitude in `auto`, which is the
+        disagreement `open_debts` records. The roll angle about +X is the shortest rotation's,
+        which is a convention, not a figure; nothing reads it until the sun geometry lands
     provenance:
       basis: apollo
       ref: "apollo_diode.md:117"
@@ -270,6 +294,36 @@ state:
     node: vehicle_dynamics
     method: dynamics
     unit: deg/s
+    # The rule is `domains/gnc/rules.py`: Euler's equation for a rigid body under the RCS service's
+    # torque (`rcs.control_torque`, through E-RCS-DYN), a midpoint step per tick (ADR 0005).
+    initial: [0.0, 0.0, 0.0]
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        at rest, holding the attitude `attitude.initial` names: the cut is after LM extraction and
+        before the roll is spun up, and a vehicle the service is holding has no rate it is
+        correcting. The 0.3 deg/s roll is the fleet's to start
+    # The docked stack's inertia tensor, which is what the rate integrates against. Copies, held to
+    # `vehicle.yaml#mass_properties` by `same_as`; the other configurations' tensors are owed there
+    # by name and this state is the docked stack's until they land (`open_debts`).
+    ixx_kg_m2: 80081.1
+    iyy_kg_m2: 760263.3
+    izz_kg_m2: 767311.8
+    pxy_kg_m2: -14932.2
+    pxz_kg_m2: -6371.9
+    pyz_kg_m2: 1638.5
+    same_as:
+      ixx_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.ixx.value"
+      iyy_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.iyy.value"
+      izz_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.izz.value"
+      pxy_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.pxy.value"
+      pxz_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.pxz.value"
+      pyz_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.pyz.value"
+    inertia_note: >-
+      the Operational Data Book prints products as PXY = sum(m x y), so the tensor's off-diagonal
+      terms are their negatives (`rules.inertia_tensor`). The products are what make a spin about
+      +X wander: the roll axis is not a principal axis of the docked stack, so a passive thermal
+      control roll left alone cones, which is the behaviour Apollo crews re-established PTC for
     provenance:
       basis: apollo
       ref: "apollo_diode.md:118"

@@ -100,7 +100,11 @@ commands:
         note: "unit quaternion"
         quaternion_order: "[w,x,y,z]"
         quaternion_order_source: "vehicle.yaml:conventions.quaternion_order"
-      rate_limit_deg_s: {type: number, optional: true, minimum: 0}
+      # The DAP's own rate selections (R-577 Sec 3 Rev 3, Noun 46, p. 3.2-6: 0.05, 0.2, 0.5 deg/s;
+      # the fourth is the 2 deg/s the Apollo 11 docked closing was flown at, MSC-00171), and
+      # required: the effect path drives `rcs.slew_rate_limit` from it, and an optional argument
+      # cannot drive a state. A slew's rate is the trade a fleet makes against propellant.
+      rate_limit_deg_s: {type: enum, values: ["0.05", "0.2", "0.5", "2.0"]}
       tolerance_profile: {type: enum, values: [tight, nominal, loose], optional: true}
       safe_vector: {type: enum, optional: true,
                     values: [sun_safe, earth_safe, comm_safe, inertial_safe]}
@@ -115,10 +119,13 @@ commands:
     execution_class: declarative
     maximum_queue_age_s: 120
     help: >-
-      Request an attitude: a frame, a unit quaternion, an optional rate limit and tolerance
-      profile, and — for the safe-hold case — which safe vector to acquire. This is the only way
-      to ask the vehicle to *hold* or to *track*, because those are properties of the target and
-      not modes of the controller. The interlock is the interesting one: the vehicle will refuse a
+      Request an attitude: a frame, a unit quaternion, a rate limit (one of the DAP's
+      selections), an optional tolerance profile, and — for the safe-hold case — which safe
+      vector to acquire. This is the only way to ask the vehicle to *hold* or to *track*, because
+      those are properties of the target and not modes of the controller. The slew is a
+      rate-limited rotation in `auto` and every degree of it is propellant: a faster rate is a
+      bigger couple for longer, and the hold that follows costs a minimum-impulse limit cycle that
+      a tight deadband pays ten times over a loose one. The interlock is the interesting one: the vehicle will refuse a
       new target while it is already rotating uncommanded, because a slew request during an
       unexplained rate is how a stuck thruster becomes a tumbling vehicle — the controller would
       fight a torque nobody commanded and the fleet would read the result as a guidance problem.
