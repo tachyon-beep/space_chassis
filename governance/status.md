@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 13:40 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 13:42 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -38,11 +38,13 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | 10 | Avionics FDIR | — | not started | last; needs lane 9's faults |
 
 Engine requests queued with lane 9: ruled-discrete seeding (structure, comms; in #47); numeric
-carried arguments with range refusal in `plant.command_effect` (thermal, after #45 and #46).
+carried arguments with range refusal in `plant.command_effect` (thermal, after #45 and #46);
+`resolve_interlock` accepting a coupling-node `from` (propulsion).
 
 Cross-lane changes in flight: the standby-pump fix (D29) is power's `load_enabled` line in #43 plus
-thermal's re-derived MET-0 equilibrium and service-bay G (29.6875 W/K) and C (213,750 J/K) in #49;
-whichever lands first carries both and the other rebases.
+thermal's re-derived MET-0 equilibrium and service-bay G (29.6875 W/K) and C (213,750 J/K),
+which thermal cherry-picks onto power's branch. Power has applied *off* on #43 (MET-0 CSM load
+1,401 W).
 
 ## Waiting on John
 
@@ -50,9 +52,9 @@ One word each. Lanes carry on with the recommended option where they can.
 
 | item | options (recommended first) | asked in |
 |---|---|---|
-| power a: bus tie | apollo / keep | Burn down power subsystem, 12:57 |
-| power b: shed ladder | crew / auto | same |
-| power c: source converter | retire / keep | same |
+| power a: bus tie (lane building *apollo*) | apollo / keep | Burn down power subsystem, 12:57 |
+| power b: shed ladder (lane building *crew*) | crew / auto | same |
+| power c: source converter (lane building *retire*) | retire / keep | same |
 | RCS: the CM jet | keep / split / owe | Source RCS thruster geometry, 13:18 |
 | comms: Earth-link delay at the window | geometric / constant / none | Comms remainder, 13:31 (card) |
 | thermal: pump speed | fraction / rpm / unset (lane building *fraction*) | Finish thermal, 13:19 (card) |
@@ -72,12 +74,13 @@ to the coordinator; *not reported* means the lane has not said yet.
 
 | lane | builds to | approximations kept |
 |---|---|---|
-| power | Apollo EPS as flown: each fuel cell a module with its own connection and health (AOH 2.6) | battery derate and temperature owed (no source); pump draws carried at 250 W though WP02 found tens of watts AC |
-| thermal | the loop as heat balances; bays `C dT/dt = Q − G(T − T_coolant)` | bay C and G are `chosen`, bounded by limits (ADR 0003 item 11); pump speed as a fraction of rated (no rated rpm found) |
-| comms | occultation from the propagated orbit | Earth-link delay undecided (constant 1.3 s is read by nothing) |
-| RCS geometry | per-jet SM and LM geometry from primary sources, linter-checked | all 44 jets treated as one article; CM jets owed |
-| fault injection | onset as a step change on the moved state, same tick | a ramp is a domain rule's job, not the plant's |
-| ECLSS, propulsion, structure, unpin | not reported | — |
+| power (#43) | Apollo EPS as flown: each fuel cell a module (AOH 2.6); building the recommended a, b, c: battery-to-main-bus tie plus fuel cell 2 cross-feed, no automatic shed ladder (cautions only, the crew sheds), source converter retired | battery derate and temperature owed (no source); pump draws carried at 250 W though WP02 found tens of watts AC |
+| thermal (#49) | the loop as heat balances; bays `C dT/dt = Q − G(T − T_coolant)` | bay C and G are `chosen`, bounded by limits (ADR 0003 item 11); pump speed as a fraction of rated (no rated rpm found) |
+| comms (#48) | blackout as exact sphere geometry per tick from the propagated orbit, Moon at real distance; link budget designed in full; light time `range/c`, 0.02–1.32 s, for the window to apply | ground end is Earth's centre, not MSFN stations (no station coordinates; stations would change `link_ok` in the episode, so only as a deliberate change); no link-budget constant sourced (TN D-6723 and the USB tables are behind blocked `ntrs.nasa.gov`); `carrier_lock` a discrete with a numeric acquisition timer once #47 is on `main` |
+| propulsion (#50) | thrust a first-order lag to rated; chamber pressure proportional to thrust | DPS thrust and chamber pressure left as gaps (throttle-to-thrust law unsourced, `main_propulsion_diode.md:36` refuses it); feed pressure held at 100 % of nominal with no regulator or line loss; regulator lock-up, bottle blowdown and helium displacement wait on reachable sources; no start transient (none published) |
+| RCS geometry (#44) | per-jet SM and LM geometry from primary sources, linter-checked | all 44 jets treated as one article; CM jets owed |
+| fault injection (#47) | onset as a step change on the moved state, same tick | a ramp is a domain rule's job, not the plant's |
+| ECLSS, structure, unpin | not reported | — |
 | GNC + RCS | not started; the arc report recommends attitude as pointing modes until a decision needs 6-DOF | open with John; D31 bears on it |
 
 ## Known gaps in CI

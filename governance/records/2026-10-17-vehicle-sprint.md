@@ -108,3 +108,7 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
   for the standby pump; the thermal side rides on whichever of #43 or #49 lands first.
 - 13:37 John: design for more fidelity, not less, except where it creates project risk; lanes
   even out their level of detail through the coordinator (D31). `status.md` gains a fidelity ledger.
+- 13:39 Fidelity reported by propulsion, comms and power (`status.md`, "Fidelity ledger"). Power
+  applied the standby pump *off* on #43; thermal cherry-picks its re-derivation onto power's branch.
+  Lane 9's engine queue adds `resolve_interlock` accepting a coupling-node `from` (propulsion).
+- 13:40 Governance PR #52 opened (this record, D24–D31, `status.md`).
