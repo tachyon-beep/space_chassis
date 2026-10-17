@@ -4,9 +4,9 @@
 # The design's build order (simulator-design.md:113) is "dictionary + linter, then a spike on
 # electrical → thermal → consumables". This is the first domain. It is deliberately the
 # hardest one to get wrong and the easiest to check: the topology is simple, the physics is
-# algebraic except for one stock and two lags, and `electrical_diode.md` supplies a
-# load-shed ladder that had to be **re-anchored** before it could be used (conflict
-# register C-01 — its tiers sit up to 2 V below the point apollo calls an event).
+# algebraic except for one stock and two lags. `electrical_diode.md` supplied an automatic
+# load-shed ladder (conflict register C-01); Apollo had none, and since 2026-10-17 the crew
+# sheds and `load_shed_class` reports what they shed.
 #
 # The vehicle has two separate electrical systems, and the separation is the point. The CSM
 # runs on three fuel cells fed from the cryogenic O2 inventory; the LM runs on batteries
@@ -23,7 +23,7 @@ natural_rate_hz: 50
 # Three reads were missing until the edge list was read against this line, and each is a dependency
 # the graph had and the declaration denied: `coldplate_t`, which `E-PLATE-BAT` derates the battery's
 # usable capacity by; `link`, which `E-AMP-LOAD` puts on `bus_a` at 1/28 A per W; and
-# `command_executive`, which `E-CMD-BUS` drives the load-shed ladder with. All three are *inputs*,
+# `command_executive`, which `E-CMD-LOAD` moves the load switches with. All three are *inputs*,
 # which is why they belong here rather than in `writes` — the nodes they land on are power's.
 reads: [o2_csm, h2_csm, coldplate_t, link, command_executive]
 writes: [fuel_cell, bus_a, bus_b, battery_energy, bus_tie, load_shed_state,
@@ -388,42 +388,46 @@ state:
       basis: chosen
       reason: "electrical_diode.md:254 supplies one controlled reclose then latch; a latched discrete with hysteresis is the only representation in which reclose-then-latch is expressible at all, and its band is the lcl_overcurrent band as a fraction of the load's rating"
 
+  # What the crew has shed. Apollo had no automatic DC load shed (AOH p. 2.6-38: the
+  # undervoltage caution "is for indication only"; the crew sheds by checklist), so this is a
+  # report of the switches rather than a ladder's position: John, 2026-10-17 (decision b, PR #43).
   - id: load_shed_class
     method: discrete
     node: load_shed_state
     unit: "enum[none,P3,P2,P1,P0]"
     moved_by:
-      - "logic:the undervoltage ladder's own position, which the bus thresholds drive"
-    hysteresis: {assert: 26.5, clear: 27.2, dwell_ms: 500}
-    band_on: power.dc_bus_a_v
-    band_value: UNCONFIGURED
-    evidence_question: >-
-      WP02 E-9. Not a value a source can give: Apollo shed load by crew procedure, not by an
-      automatic ladder. What the sources do give is the envelope the ladder sits in: the DC
-      undervoltage caution at 26.25 V (AOH p. 2.6-5; TN D-7609 p. 8), sustained operation
-      26.5-30.0 V and limits 26.5-31.0 V (J-mission handout p. 2.6-26), and "use batts only when
-      main bus volts < 24.5" in the emergency power-down (Apollo 15 CSM Systems Checklist
-      EMER/1-7). The rung-to-class map remains the decision coupling.yaml#open_debts names
+      - "logic:the crew's own switch positions, `load_enabled`, read against the loads on at MET 0"
+    # The rule's parameters (`domains/power/rules.py`): every load `load_enabled.initial` has on,
+    # with its `loads[].class`, copied because a rule reads only its own state's declaration and
+    # held to both by `tests/test_power_rules.py`. A load that is off at MET 0 (the standby pump,
+    # the LM) is not shed by staying off.
+    watched_class:
+      csm_sband_transceiver: P1
+      csm_sband_power_amplifier: P2
+      csm_suit_fan: P0
+      csm_cabin_fan: P1
+      csm_co2_scrubber: P0
+      csm_imu: P1
+      csm_guidance_computer: P1
+      csm_instrumentation: P2
+      csm_coolant_pump_1: P1
+      csm_heaters: P2
+      csm_rcs_heaters: P2
+      csm_comm_heaters: P3
+      csm_lighting: P3
+    severity_order: [none, P3, P2, P1, P0]
     note: >-
-      The ladder's position, and the one band of the four in profiles.yaml that the position
-      itself latches on: the top tier, `bus_a_undervoltage` — assert 26.5 V, clear 27.2 V. The
-      clear was 27.0 V until `check_band_on` read this entry's `band_on` against the threshold it
-      names, and the two statements about the same volts disagreed by 0.2 V: a bus recovering to
-      27.1 V released the ladder's position while `bus_a_undervoltage` was still asserted. The
-      per-tier dwells and the three tiers below stay in profiles.yaml, where the thresholds that
-      step through them carry them; what this entry owns is the latch, and a latch needs one band
-      rather than four. **`band_value` is `UNCONFIGURED`, and it is the sharpest thing this entry
-      owes.** By the rung map `coupling.yaml#open_debts` already records, `bus_a_undervoltage`
-      selects `none` — which is what the threshold's own provenance says when it calls this tier
-      one that "does not shed load" — so *both* outcomes of the one band this state declares are
-      the same member of its vocabulary. A band that makes the state `none` whichever way the bus
-      crosses it cannot move the state at all, and the three rungs that do move it are the other
-      `bus_a_*` thresholds, which this entry does not band. What is owed is the ladder's
-      rung-to-class map as a declaration a band can read, which is one decision with the missing
-      P1 rung rather than a value somebody can supply.
+      the most critical class among the loads on at MET 0 that `load_enabled` now has off: `none`
+      while nothing is, and `P0` once a survival load is. It moves when a `set_load` lands, in the
+      same tick, and reads nothing else: no bus voltage sheds a load in this vehicle, and an
+      undervoltage is a caution the crew answers (`bus_a_undervoltage`). The class vocabulary is
+      the inventory's P0-P3 factoring, chosen (`electrical_diode.md:847`); what the state reports
+      is the crew's switches, which is why it carries no hysteresis: a report of a position does not
+      cross anything. It was the position of an automatic four-rung ladder that no Apollo vehicle
+      had, whose band could not move it and which had no rung for P1 (WP02 E-9)
     provenance:
       basis: chosen
-      reason: "the ladder position is a mode, not a measurement, so it is latched; its band is the top tier's own band on power.dc_bus_a_v, which `band_on` names so the linter holds the two to the same volts"
+      reason: "Apollo shed load by crew procedure, not by an automatic ladder (AOH p. 2.6-38; WP02 E-9), so the published decision is the switch map and this state is its summary in the inventory's classes; `apollo_diode.md:48`'s \"any shed\" and \"any restore\" events are its changes"
 
   # The connection of every source `set_source` names. Internal: power alone reads it.
   - id: source_enabled
@@ -667,7 +671,7 @@ state:
         operator item 1's (John, 2026-10-16): available generation on bus A less its load
 
   # The switch position of every load in the inventory below, and the state `set_load` moves. It is
-  # on a coupling node, `load_shed_state` beside the ladder's class, rather than the sentinel, because
+  # on a coupling node, `load_shed_state` beside the shed class, rather than the sentinel, because
   # two domains read it: power sums the enabled loads onto each bus, and thermal sums the same loads'
   # heat. A state on the sentinel is readable by its own domain only (`plant.md` §2, D5).
   - id: load_enabled

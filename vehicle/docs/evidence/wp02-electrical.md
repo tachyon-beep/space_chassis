@@ -170,8 +170,12 @@ Corpus, cited and not edited: `apollo_diode.md:72-80` (the power channel table),
   source.
 - **Decision owed.** Keep the model's A-B tie as electrical_diode.md:252's `TIE_AB` and define
   `auto`, or re-model the tie as Apollo's battery-to-main-bus tie.
+- **Decided.** Decision a "apollo", 2026-10-17 (power lane; recorded by the coordinator under John's
+  delegation of 13:48Z): re-model the tie as Apollo's battery-to-main-bus tie (MAIN BUS TIE BAT A/C,
+  BAT B/C), with fuel cell 2's cross-feed (AOH p. 2.6-38's six motor switches). Not yet built; the
+  battery resistance is JEPS's 0.364 ohm for J-mission effectivity (AOH prints 0.234 ohm).
 
-## E-9 `power.load_shed_class` `band_value` (UNCONFIGURED; model decision)
+## E-9 `power.load_shed_class` `band_value` (closed: no automatic ladder)
 
 - **Finding.** Apollo had no automatic shed ladder; the crew shed load by checklist. Published
   envelope: DC undervoltage caution below 26.25 V (AOH p. 2.6-5; D-7609 p. 8); sustained 26.5-30.0 V,
@@ -179,6 +183,13 @@ Corpus, cited and not edited: `apollo_diode.md:72-80` (the power channel table),
   (A15SC S/1-2); "use batts only when main bus volts < 24.5" (A15SC EMER/1-7). The model's 26.5 V
   top tier is apollo_diode.md:73's event, 0.25 V above the flown caution; that difference is a
   conflict-register matter and is not changed here.
+- **Decided.** Decision b "crew", 2026-10-17 (power lane, PR #43; John chose fidelity, and the
+  coordinator recorded the option under John's delegation of 13:48Z). The three chosen shed tiers
+  (25.5, 24.5 and 23.5 V) and `E-BUS-SHED` are retired. `bus_a_undervoltage` and
+  `bus_b_undervoltage` remain cautions, as AOH p. 2.6-38's "for indication only" caution was.
+  `load_shed_class` is now the most critical class among the loads on at MET 0 that the crew's
+  `load_enabled` has off, with no band, so `band_value` is no longer owed. The crew's 24.5 V
+  battery cue (A15SC EMER/1-7) belongs to the battery-on-the-bus work.
 
 ## E-10 Fuel-cell reactant rate (existing value, independently validated)
 

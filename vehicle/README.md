@@ -87,7 +87,7 @@ flag.
 It needs `PyYAML`. It is deliberately *not* wired into the operator-side services, which are
 standard library only.
 
-Current state: **composes, with 263 declared debts.** A debt is reported and is fatal under
+Current state: **composes, with 262 declared debts.** A debt is reported and is fatal under
 `--strict`; a refusal is fatal always. The linter refuses a build, it does not warn:
 
 **The direction of travel, because the headline alone reads the wrong way.** The count went
@@ -219,10 +219,10 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 157 states over 60 scheduled nodes, 142
-thresholds, 59 verbs and 127 classified events across the eleven directories, with 263 declared debts
-and every one of them named. **129 of the 157 states are fully configured and 28 carry a debt**, and
-a real tick advances **80** of the 157 states, and the build order's **80** ready are that same set
+**All eleven domains have landed** — 148 channels, 157 states over 60 scheduled nodes, 139
+thresholds, 59 verbs and 127 classified events across the eleven directories, with 262 declared debts
+and every one of them named. **131 of the 157 states are fully configured and 26 carry a debt**, and
+a real tick advances **81** of the 157 states, and the build order's **81** ready are that same set
 — the second of those figures is the objective's own second completion criterion, and both
 are read out of `tools/plant.py`'s output by `test_the_readme_status_matches_the_tools`. Since round
 58 the first line of `--build-order` *is* a tick's own gap list rather than a second opinion about
@@ -255,7 +255,7 @@ took them from being read by nobody to being refusals under `--strict`, which is
 is only displayed stops being a debt.
 
 `domains/power/` carries a 25-load inventory with inrush currents and shed classes, and it
-declares 21 states, 17 thresholds, 5 verbs, 11 faults. Two
+declares 21 states, 14 thresholds, 5 verbs, 11 faults. Two
 things in it are worth reading rather than skimming:
 
 - **The load-shed ladder is re-anchored.** `review-findings.md` recommends generalising

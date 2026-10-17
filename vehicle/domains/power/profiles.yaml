@@ -9,11 +9,10 @@
 # Adopting it unchanged produces a plant whose protective state machine believes the bus is
 # healthy across a 2 V band in which its own telemetry says an event has occurred.
 #
-# So the ladder below is re-anchored: apollo's event threshold is the top of the ladder, and
-# the shed tiers sit below it, each with a recovery gap wide enough that a restored load
-# cannot re-trip the tier it came from. That last rule is `review-findings.md` #7's
-# refinement of `consumables_diode.md:613`: the recovery-minus-assert gap must exceed the
-# load delta the transition itself causes, or the ladder oscillates at the recovery dwell.
+# So the ladder was re-anchored: apollo's event threshold at the top and three shed tiers below
+# it, each with a recovery gap wider than the load delta it shed (`review-findings.md` #7). The
+# tiers are gone since 2026-10-17, because Apollo had no automatic DC load shed (AOH p. 2.6-38):
+# what remains is the top, `bus_a_undervoltage`, a caution the crew answers by shedding load.
 #
 # ## Versioned, not writable
 #
@@ -31,11 +30,14 @@ profiles:
     provenance:
       basis: apollo
       ref: "apollo_diode.md:73-80"
-      note: "the event conditions are apollo's; the tier values below them are chosen so the ladder is monotone and each tier's recovery gap exceeds the load delta it sheds"
+      note: "the event conditions are apollo's; the automatic shed tiers that sat below them were retired on 2026-10-17 because Apollo had none (AOH p. 2.6-38)"
 
 thresholds:
 
-  # --- the ladder, from apollo's event threshold downward ---------------------------------
+  # --- the undervoltage caution ---------------------------------------------------------
+  # Three automatic shed tiers sat below it (25.5, 24.5 and 23.5 V, all chosen) until 2026-10-17:
+  # Apollo had no automatic DC load shed (AOH p. 2.6-38), so John retired them (decision b, PR #43)
+  # and the crew sheds, `load_shed_class` reporting what they shed.
   - id: bus_a_undervoltage
     point: power.dc_bus_a_v
     comparator: below
@@ -48,45 +50,8 @@ thresholds:
     provenance:
       basis: apollo
       ref: "apollo_diode.md:73"
-      note: "apollo's own event: <26.5 V for 0.5 s. This tier does not shed load; it tells the crew that the bus is in the band where things start dropping out, and it is the tier electrical_diode.md's ladder omits entirely."
-  - id: bus_a_shed_p3
-    point: power.dc_bus_a_v
-    comparator: below
-    assert: 25.5
-    clear: 26.4
-    dwell_assert_ms: 200
-    dwell_clear_s: 30
-    latched: true
-    severity: CAUTION
-    provenance:
-      basis: chosen
-      reason: "the first shed tier, set 1 V below apollo's event because a vehicle that has already been warned for 0.5 s should not also lose its discretionary loads at the same instant; recovery at 26.4 V restores the tier while leaving the warning standing"
-  - id: bus_a_shed_p2
-    point: power.dc_bus_a_v
-    comparator: below
-    assert: 24.5
-    clear: 26.0
-    dwell_assert_ms: 300
-    dwell_clear_s: 60
-    latched: true
-    severity: WARNING
-    provenance:
-      basis: chosen
-      reason: "1 V below the P3 tier and with a 1.5 V recovery gap: P2 loads include the second coolant pump and the heaters, and restoring them is itself a load step, so the gap has to be wider than the step (review-findings.md #7)"
-  - id: bus_a_survival
-    point: power.dc_bus_a_v
-    comparator: below
-    assert: 23.5
-    clear: 25.5
-    dwell_assert_ms: 100
-    dwell_clear_s: 60
-    latched: true
-    severity: EMERGENCY
-    provenance:
-      basis: chosen
-      reason: "survival: only P0 loads remain. The shortest assert dwell and the widest recovery gap, because the cheapest error here is being slow to shed and the most expensive is oscillating back and forth between survival and P2"
-
-  # --- the same ladder on bus B, offset by the tie's asymmetry ----------------------------
+      note: "apollo's own event: <26.5 V for 0.5 s. It sheds nothing, as Apollo's own caution did not (AOH p. 2.6-38: \"for indication only\"); the crew answers it by checklist. It is the tier electrical_diode.md's ladder omits entirely."
+  # --- the same caution on bus B -----------------------------------------------------------
   - id: bus_b_undervoltage
     point: power.dc_bus_b_v
     comparator: below
@@ -309,9 +274,9 @@ thresholds:
       ref: "apollo_diode.md:48"
       note: >-
         apollo's events are "any shed" and "any restore", and the shed is the half that alarms.
-        `power/profiles.yaml` already carries the ladder that *decides* to shed, and this is the
-        announcement that it did — a different statement, published at a different layer, and the
-        one a fleet needs when it comes back from a conversation turn to find four loads gone
+        The crew decides to shed (`set_load`) and this is the announcement that a load is off —
+        a different statement, published at a different layer, and the one a fleet needs when it
+        comes back from a conversation turn to find another agent has turned four loads off
 
 profile_selection:
 
@@ -328,7 +293,7 @@ alternatives:
       factors:
         below: 1.1111
         above: 0.9
-    # the bus undervoltage ladder is the reason this matters: warning later is shedding later
+    # the bus undervoltage caution is the reason this matters: warning later is shedding later
       provenance:
         basis: chosen
         reason: "a profile an agent can select to trade margin for warning time; it can only ever make the envelope narrower, never wider, which is the monotonicity the min(agent, operator) ceiling requires"

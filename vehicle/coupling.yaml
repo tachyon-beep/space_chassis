@@ -301,21 +301,20 @@ nodes:
   bus_a:             {domain: power, kind: state,   unit: V,  apollo: "73-75"}
   bus_b:             {domain: power, kind: state,   unit: V,  apollo: "74"}
   bus_tie:           {domain: power, kind: discrete, unit: enum, apollo: "79"}
-  # `load_shed_state` carries two states: the ladder's class, and `load_enabled`, the switch position
-  # of every load (a map, so `key_space: by_state`). Together they are which loads the bus feeds. A
-  # node rather than the sentinel for the switches because thermal reads them too.
+  # `load_shed_state` carries two states: `load_enabled`, the switch position of every load (a map,
+  # so `key_space: by_state`), and `load_shed_class`, what the crew has shed by it. Together they
+  # are which loads the bus feeds. A node rather than the sentinel because thermal reads the switches.
   load_shed_state:
     domain: power
     kind: discrete
     unit: enum
     apollo: "48, :237"
     key_space: by_state
-    state_order: independent
+    state_order: [load_enabled, load_shed_class]
     state_order_note: >-
-      the switch map is written by `set_load` and the ladder's class by the bus voltage
-      (`E-BUS-SHED`); neither reads the other within a tick, so there is no order to get wrong.
-      When the ladder is built and opens loads itself, it will write switch positions and this
-      becomes an order
+      the switch map is written by `set_load` and the shed class is read from it
+      (`domains/power/rules.py`), so the switches go first and a `set_load` is reported in the tick
+      it lands. No bus voltage moves either: Apollo had no automatic DC load shed (AOH p. 2.6-38)
 
   # --- thermal: lumped nodes plus the transport that an RC network loses ---------------
   coolant_flow:
@@ -1354,18 +1353,15 @@ edges:
       basis: derived
       at: "28 V bus"
       relation: >-
-        the guidance platform is a *class* of load, not a function of volts: it computes at full
-        rate for as long as its bus is inside the envelope and stops when the ladder sheds its
-        class. The classes are `domains/power/components.yaml#loads` and the tiers are
-        `domains/power/profiles.yaml`, both reused by name
+        the guidance platform is a load, not a function of volts: it computes at full rate for as
+        long as its bus is inside the envelope and its switches (`csm_guidance_computer`,
+        `csm_imu` in `load_enabled`) are on. No voltage sheds it: Apollo had no automatic DC load
+        shed (AOH p. 2.6-38), so the crew does, by `set_load`
       note: >-
-        this is the chain review-findings.md #7 simulates, arriving as data rather than as prose:
-        the guidance computer is class **P1** and `csm_imu` is P1 with it, so the tier that keeps
-        only P0 sheds *both*. The vehicle loses its navigation solution and its attitude sensing
-        in the same tick, at the bottom of a ladder it climbed because something else was already
-        wrong. Whether guidance belongs in P0 is a re-rating question this table now makes
-        visible — the ladder is a profile and profiles are versioned (D-05), so the answer is a
-        revision rather than a code change
+        review-findings.md #7's chain is now a crew decision rather than a ladder rung: the
+        guidance computer and `csm_imu` are both class P1, so a crew powering down to the survival
+        set loses navigation and attitude sensing together. The automatic shed tiers this table
+        stepped through were retired on 2026-10-17 (power lane, PR #43)
       regimes:
         - when: nominal
           response: >-
@@ -1373,15 +1369,6 @@ edges:
         - when: bus_a_undervoltage
           response: >-
             unchanged. apollo's own event tier (apollo_diode.md:73) sheds nothing
-        - when: bus_a_shed_p3
-          response: >-
-            unchanged: P3 goes first
-        - when: bus_a_shed_p2
-          response: >-
-            unchanged: the platform is P1 and this tier sheds P2, which costs `csm_instrumentation` (120 W) rather than the computer
-        - when: bus_a_survival
-          response: >-
-            **shed.** `csm_guidance_computer` is class P1 (domains/power/components.yaml#loads) and survival keeps only P0, so the platform drops out — and `csm_imu` is P1 beside it, so attitude sensing goes with it. Whatever the crew does next is done without a navigation solution
         - when: otherwise
           response: >-
             no bus, nothing powered
@@ -1398,8 +1385,8 @@ edges:
       relation: >-
         the transmit chain is two loads in two classes — `csm_sband_transceiver` at P1 (36 W) and
         `csm_sband_power_amplifier` at P2 (72 W) — so the bus gate is a two-step loss rather than
-        a fade. Each tier below is a shed tier from `domains/power/profiles.yaml`, and the link
-        budget's own dB follow from which of the two is still energised
+        a fade. The crew sheds either by `set_load` (no voltage sheds a load: AOH p. 2.6-38), and
+        the link budget's own dB follow from which of the two is still energised
       note: >-
         this edge is a **back-edge** of `C-COMM-BUS` with a one-tick delay, and the regimes make
         the cycle's content explicit for the first time: the amplifier is 72 W on the bus, so
@@ -1413,15 +1400,6 @@ edges:
         - when: bus_a_undervoltage
           response: >-
             unchanged. apollo's own event tier (apollo_diode.md:73) sheds nothing
-        - when: bus_a_shed_p3
-          response: >-
-            unchanged: P3 goes first
-        - when: bus_a_shed_p2
-          response: >-
-            the power amplifier is P2 and goes; the transceiver alone remains, so the link is short by the amplifier's contribution to transmit power
-        - when: bus_a_survival
-          response: >-
-            **both shed.** The transceiver is P1 and the amplifier is P2, and survival keeps only P0 — so the vehicle is not merely quiet, it is inaudible, in the tier where a crew would most want to be heard
         - when: otherwise
           response: >-
             no bus, nothing powered
@@ -1466,16 +1444,17 @@ edges:
       basis: derived
       at: nominal
       relation: >-
-        a gate with a regime per rung of the shed ladder, not a gain. The valve drivers are a
-        survival load: a valve that cannot be commanded is a vehicle that cannot point, which is
-        the definition of the situation the ladder exists to prevent. The tiers below are
-        `domains/power/profiles.yaml`'s own thresholds, reused by id rather than restated, so a
-        change to the ladder moves this edge with it
+        a gate with a regime per band of the bus, not a gain. The valve drivers are a survival
+        load: a valve that cannot be commanded is a vehicle that cannot point. The band below is
+        `domains/power/profiles.yaml`'s own threshold, reused by id rather than restated; no
+        voltage sheds a load (AOH p. 2.6-38), so what else the valves lose (the P2 RCS heaters) is
+        the crew's `set_load`
       note: >-
         the unit read "1 per V" and the edge is `discrete`, which is a contradiction the file
         carried for its whole life: a discrete response has no derivative with respect to volts.
-        What it has is a band structure, and the band structure was already written down —
-        apollo's own 26.5 V event (apollo_diode.md:73) at the top and three shed tiers below it
+        What it has is a band structure, and the band structure was already written down:
+        apollo's own 26.5 V event (apollo_diode.md:73). The three automatic shed tiers below it
+        were retired on 2026-10-17 (power lane, PR #43)
       regimes:
         - when: nominal
           response: >-
@@ -1484,19 +1463,6 @@ edges:
           response: >-
             still energised. This is apollo's event tier and it sheds nothing: it exists to tell
             the crew the bus is in the band where things start dropping out
-        - when: bus_a_shed_p3
-          response: >-
-            still energised. P3 goes first and the valve drivers are not P3
-        - when: bus_a_shed_p2
-          response: >-
-            still energised, and this is the rung that costs something adjacent: P2 carries the
-            RCS *heaters* (domains/power/components.yaml#loads), so the valves still fire and fire
-            cold. A cold thruster has a longer rise time and the allocator's pulse widths stop
-            matching what the vehicle does, which is a control problem reported as a valve problem
-        - when: bus_a_survival
-          response: >-
-            energised, and now one of the few things left: survival keeps the P0 loads, and being
-            able to point is what surviving consists of
         - when: otherwise
           response: >-
             no bus. The valves are unpowered and fail closed, which is a requirement rather than
@@ -1511,13 +1477,13 @@ edges:
       at: nominal
       relation: >-
         the instrumentation service is supplied or it is not. `csm_instrumentation` is class P2
-        (120 W) and `lm_instrumentation` is P2 (100 W), so the tier that sheds P2 takes the
-        vehicle's own telemetry with it — after which the fleet is flying an unlit panel
+        (120 W) and `lm_instrumentation` is P2 (100 W), so a crew shedding P2 by `set_load` takes
+        the vehicle's own telemetry with it — after which the fleet is flying an unlit panel. No
+        voltage sheds it: Apollo had no automatic DC load shed (AOH p. 2.6-38)
       note: >-
-        the tier order here is the argument for the ladder's shape. Instruments go at P2, one
-        tier before guidance and comms go at survival, so a crew loses the numbers before it
-        loses the ability to act on them. The reverse order would be a vehicle that still had
-        thrust and no way to know where it was pointing
+        the class order is the argument for shedding instruments before guidance: they are P2 and
+        guidance and comms are P1, so a crew following the classes loses the numbers before it
+        loses the ability to act on them
       regimes:
         - when: nominal
           response: >-
@@ -1525,15 +1491,6 @@ edges:
         - when: bus_a_undervoltage
           response: >-
             unchanged. apollo's own event tier (apollo_diode.md:73) sheds nothing
-        - when: bus_a_shed_p3
-          response: >-
-            unchanged: P3 goes first
-        - when: bus_a_shed_p2
-          response: >-
-            **shed.** `csm_instrumentation` and `lm_instrumentation` are both class P2, so this is the tier where the vehicle stops reporting its own state — the degradation is visible to the crew only in its absence
-        - when: bus_a_survival
-          response: >-
-            still shed, and now guidance and comms have gone the same way. Nothing on the vehicle is measuring anything
         - when: otherwise
           response: >-
             no bus, nothing powered
@@ -1551,7 +1508,7 @@ edges:
       basis: derived
       at: "both buses inside envelope"
       relation: >-
-        bus B's rail arrives at the tie. The tiers are `domains/power/profiles.yaml`'s own ladder
+        bus B's rail arrives at the tie. The band is `domains/power/profiles.yaml`'s own caution
         on `power.dc_bus_b_v`, reused by id; what crosses is the rail, and what the tie does with
         it is `E-TIE-BUSA`'s question
       note: >-
@@ -2086,52 +2043,10 @@ edges:
     kind: discrete
     sensitivity: {value: 1.0, unit: "-", basis: derived, relation: "the coupling is the signal itself; one unit in, one unit out", at: nominal,
     note: "commands are revalidated at the moment of effect (diode-contract.md:145-148)"}
-  # The shed ladder, and it was **not** a command path — which is what its old id claimed.
-  #
-  # It was `E-CMD-BUS`, `from: command_executive`, with the family's unity-gain sensitivity, and it
-  # was the one edge in the family no state backed: `check_command_reach`'s forward half asks which
-  # state on a commanded node declares a command mover, and `power.load_shed_class` declares
-  # `logic:the undervoltage ladder's own position, which the bus thresholds drive`. The ladder is a
-  # threshold response to bus voltage, so this edge was claiming, in the graph's own words, that "the
-  # coupling is the signal itself" from an executive that sets no tier.
-  #
-  # The exception it was leaning on is written three hundred lines up in this file: a `discrete`
-  # edge out of physical equipment has to declare `regimes` because a mode selection is a table
-  # rather than a derivative, *and the command paths are the exception*. `bus_a -> rcs_valves` is the
-  # same shape as this one and declares its table; `E-CMD-BUS` never had to, because its source was
-  # a service node. Retargeted, it declares one too, and the four rungs below are
-  # `domains/power/profiles.yaml`'s own thresholds **reused by id rather than restated**, so a change
-  # to the ladder moves this edge with it — the same construction `E-BUS-RCS` uses.
-  - id: E-BUS-SHED
-    from: bus_a
-    to: load_shed_state
-    advances: load_shed_class
-    kind: discrete
-    sensitivity:
-      unit: shed tier
-      basis: derived
-      at: nominal
-      relation: >-
-        a table, not a gain: the ladder's position is which rung the bus voltage has crossed, and
-        the rungs are the four `bus_a_*` thresholds in `domains/power/profiles.yaml`. `load_shed_class`
-        is the state that carries the position, so the destination is the ladder itself rather than a
-        load — the loads are shed by the class, which is what makes the position worth publishing
-      note: >-
-        this edge exists so the schedule places the ladder after the bus it watches. It was
-        `E-CMD-BUS` and no command writes the class
-      regimes:
-        - when: nominal
-          response: "`none` — the bus is inside its band and nothing is shed"
-        - when: bus_a_undervoltage
-          response: "still `none`. apollo's own event tier (`apollo_diode.md:73`) sheds nothing; it is the band where things start dropping out, not a rung"
-        - when: bus_a_shed_p3
-          response: "`P3` — the first rung, and the loads in it are the ones the vehicle can fly without"
-        - when: bus_a_shed_p2
-          response: "`P2` — instruments and the RCS heaters. The class the vehicle is in is the *deepest* rung it has crossed, not the one it crossed last"
-        - when: bus_a_survival
-          response: "`P0` — everything but the survival set is shed. **The ladder has no rung that selects `P1`**: seven loads are class P1 and the four thresholds go P3, P2, P0, so the enum names a tier no rung produces. Recorded in `open_debts` rather than guessed at, because whether the missing thing is a threshold or an enum value is a decision about the vehicle"
-        - when: otherwise
-          response: "no bus. The ladder has no voltage to respond to and the class holds its last position"
+  # `E-BUS-SHED` (bus_a -> load_shed_state) was the automatic shed ladder's edge, keyed on three
+  # chosen undervoltage tiers. Apollo had no automatic DC load shed (AOH p. 2.6-38), so John retired
+  # the ladder on 2026-10-17 (decision b, PR #43): the crew sheds with `set_load` (`E-CMD-LOAD`) and
+  # `load_shed_class` reports what is off, and no voltage moves either state.
   # The tie was the one commanded node the executive could not reach, and `check_command_reach` is
   # what found it: `power`'s `bus_tie_closed` declares `moved_by: command:set_bus_tie`, and no edge
   # landed on `bus_tie` from the executive at all. What this edge does *not* do is reorder anything:
@@ -2144,7 +2059,7 @@ edges:
     kind: discrete
     sensitivity: {value: 1.0, unit: "-", basis: derived, relation: "the coupling is the signal itself; one unit in, one unit out", at: nominal}
   # `set_load`'s path to the load switches, the same unity signal as the rest of the family. It
-  # advances the switch map only: the ladder's class beside it on the node is not commanded.
+  # advances the switch map only: the shed class beside it on the node is read from the map.
   - id: E-CMD-LOAD
     from: command_executive
     to: load_shed_state
@@ -2729,9 +2644,8 @@ open_debts:
 
   - "**Thirteen edges read a node that publishes no value.** `state_values` writes a node key only when one state owns the node, so an edge whose *source* carries more than one state multiplies its sensitivity by `None` on every tick — not late on one tick, never. The family spans five domains: `E-FC-BUS`, `E-FC-BUSB`, `E-FC-HEAT`, `E-FC-DRAW-O2` and `E-FC-DRAW-H2` read `fuel_cell` (two states); `E-AMP-LOAD` and `E-LINK-TEL` read `link` (two); `E-DYN-GNC` and `E-DYN-GEOM` read `vehicle_dynamics` (three); `E-CABIN-CO2-REMOVAL` and its LM twin read the five-state cabin nodes; and `E-CREW-ATM` and `E-LM-CREW-ATM` read `crew_state` (three). Each was counted as a debt by the round that named the family, in the same list as this sentence — eleven of them, because the crew's two are spoken for by their targets' blockers and `--debts` gives an edge one entry. **Eight of the thirteen land on states a tick already refuses, so the worklist reports that blocker; the other five are latent** — `E-FC-DRAW-O2`, `E-FC-DRAW-H2`, `E-CABIN-CO2-REMOVAL`, `E-LM-CABIN-CO2-REMOVAL` all land on `*_kg_s` states that are `algebraic` with derivations and never ask their edge for a driver, and `E-LINK-TEL` lands on `published_evidence`, a sink read back by nothing. **What is owed is one of two repairs and they are not equivalent**: give the source node a state that *is* the quantity the edge wants (the cell's output power on `fuel_cell`, a crew count on `crew_state`), or declare a field naming which state on a crowded source an edge reads. The first changes what the vehicle models and is a domain edit per node; the second changes what an edge may say and is a contract edit in `plant.md` §2 and the linter together. Choosing is a decision about the graph's shape, not a value, which is why it is here."
 
-  - "**Three of the four banded latches can hold a value their band cannot make.** A `hysteresis` block carries exactly two boundaries — `assert` and `clear` — so `band_value` gives exactly two outcomes, and three of the four states that declare a band declare a vocabulary wider than that. `lcl_tripped` is the one that fits, and its extra members are explained: `retrying` and `latched` are the one-reclose-then-latch lifecycle rather than boundaries. The other three are open. `load_shed_class` declares `none,P3,P2,P1,P0` and bands only `bus_a_undervoltage`, which by the rung map above selects `none` — so both outcomes of its one band are the same member and the band cannot move the state; a four-rung ladder is not one comparator. `sensor_health` declares `good,suspect,fault` and nothing says which comparison puts a class in the middle. `innovation_window` declares `good,suspect,fault` and its own source names *two* thresholds — \"the two thresholds that separate a warn from a trip\" — while the state declares one band, so `fault` has no boundary at all. What each owes is a second boundary or a second band, and for `load_shed_class` it is the same decision as the missing P1 rung: a rung-to-class map the thresholds carry, rather than another band on the state. **Every one of them is a declaration rather than a number**, which is why they are here and not in a field."
+  - "**Two of the three banded latches can hold a value their band cannot make.** A `hysteresis` block carries exactly two boundaries — `assert` and `clear` — so `band_value` gives exactly two outcomes, and two of the three states that declare a band declare a vocabulary wider than that. `lcl_tripped` is the one that fits, and its extra members are explained: `retrying` and `latched` are the one-reclose-then-latch lifecycle rather than boundaries. The other two are open. `sensor_health` declares `good,suspect,fault` and nothing says which comparison puts a class in the middle. `innovation_window` declares `good,suspect,fault` and its own source names *two* thresholds — \"the two thresholds that separate a warn from a trip\" — while the state declares one band, so `fault` has no boundary at all. What each owes is a second boundary or a second band. (`load_shed_class` was the fourth until 2026-10-17, when the automatic ladder it reported was retired and it became a report of the crew's switches, with no band.) **Every one of them is a declaration rather than a number**, which is why they are here and not in a field."
 
-  - "The ladder's missing rung. `power.load_shed_class` can take `none`, `P3`, `P2`, `P1` and `P0`, and the four `bus_a_*` thresholds in `domains/power/profiles.yaml` select `none`, `P3`, `P2` and `P0` — so seven P1 loads are declared in `domains/power/components.yaml#loads` and no voltage ever sheds them as a tier of their own. `E-BUS-SHED`'s own table says so where the rungs are written. What is owed is one of two things and which is a decision about the vehicle rather than a value: a fifth threshold between `bus_a_shed_p2` at 24.5 V and `bus_a_survival` at 23.5 V, or a class enum that names the four rungs the ladder actually has. Until then a P1 load is shed at `bus_a_survival` with the P0 set, or not at all."
 
   # Round 50 added `advances` and `drains` and made the stock classifier dimensional; round 51
   # asked what would actually fix the ratio edges rather than how to describe them better. The

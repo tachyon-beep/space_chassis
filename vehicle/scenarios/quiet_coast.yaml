@@ -125,8 +125,9 @@ episode:
           this episode, which is 09 §5's B1 finding. Policies are separated by the deadline and
           by the loop, not by water.
 
-  # A shed or a trip has no rule (09 §4), so a value on these is an apparatus failure.
-  unmodelled: [load_shed_class, lcl_tripped]
+  # A trip has no rule (09 §4), so a value on it is an apparatus failure. `load_shed_class` left
+  # this list on 2026-10-17: it reports the crew's switches now (power lane, PR #43).
+  unmodelled: [lcl_tripped]
   # Held by scope (09 §4): the tick reports a gap on them and their value may not move. A move is
   # an apparatus failure ("a held state is written").
   held: [battery_charge_j]

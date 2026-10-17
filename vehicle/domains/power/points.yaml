@@ -96,7 +96,7 @@ points:
   - channel: power.load_shed_class
     from: load_shed_class
     layer: service
-    derivation: "the highest priority class currently shed"
+    derivation: "the most critical class among the loads on at MET 0 that the crew's switches have off"
     note: "an agent that cannot see this cannot tell a vehicle that is conserving power from one that is failing"
 
 # --------------------------------------------------------------------------------------

@@ -2,7 +2,8 @@
 
 The node key of a shared node is a keyed state's container (`_stage_element` writes
 `values[node][state.id]`), so a fallback to it handed a sibling's value to a state with none of its
-own: `load_shed_class` read `{"load_enabled": {...}}` after one `set_load`.
+own: `load_shed_class` read `{"load_enabled": {...}}` after one `set_load`, back when it had no
+rule. It has one now (the crew's switches, read against MET 0), so it reads its own value.
 """
 
 from __future__ import annotations
@@ -36,8 +37,11 @@ def test_a_shared_state_with_no_value_of_its_own_reads_none_not_its_sibling_s(wo
     )
     # The container is there, holding the keyed sibling...
     assert after["load_shed_state"]["load_enabled"]["csm_lighting"] == "off"
-    # ...and the sibling reads its own map, while the class, which has no value, reads none.
+    # ...and the sibling reads its own map, while the class reads its own value, not the map.
     assert plant.state_level(after, states["load_enabled"])["csm_lighting"] == "off"
+    assert plant.state_level(after, states["load_shed_class"]) == "P3"
+    # A state on a shared node with no value of its own reads none rather than the container.
+    del after["load_shed_class"]
     assert plant.state_level(after, states["load_shed_class"]) is None
 
 

@@ -519,3 +519,52 @@ def test_a_degraded_fuel_cell_1_carries_less_and_its_partner_more(world):
     off = plant.Effect(0, "set_source", {"source": "fc_1", "state": "off"})
     isolated, _ = tick(world, degraded, [off])
     assert isolated["bus_a_rated_w"] == 1420 and isolated["fc_1_current_a"] == 0.0
+
+
+def test_the_shed_class_watches_every_load_on_at_met_0_in_its_inventory_class():
+    """`load_shed_class.watched_class` is a copy, so it is held to both of its sources: the loads
+    `load_enabled.initial` has on, each with its `loads[].class`."""
+    power = power_yaml()
+    states = {s["id"]: s for s in power["state"]}
+    classes = {load["id"]: load["class"] for load in power["loads"]}
+    on = [k for k, v in states["load_enabled"]["initial"].items() if v == "on"]
+    assert states["load_shed_class"]["watched_class"] == {k: classes[k] for k in on}
+    assert states["load_shed_class"]["severity_order"] == ["none", "P3", "P2", "P1", "P0"]
+    assert "hysteresis" not in states["load_shed_class"]
+
+
+def test_the_crew_sheds_and_the_class_reports_it_in_the_same_tick(world):
+    """Apollo had no automatic DC load shed (AOH p. 2.6-38): the class is the most critical class
+    the crew's switches have off, and it moves when `set_load` lands, both ways."""
+    values, gaps = tick(world, plant.initial_values(world))
+    assert "load_shed_class" not in gaps
+    assert values["load_shed_class"] == "none"
+
+    def set_load(load, state):
+        return plant.Effect(0, "set_load", {"load": load, "state": state})
+
+    lights, _ = tick(world, values, [set_load("csm_lighting", "off")])
+    assert lights["load_shed_class"] == "P3"
+    imu, _ = tick(world, lights, [set_load("csm_imu", "off")])
+    assert imu["load_shed_class"] == "P1"
+    # A less critical load shed beside it does not lower the report.
+    heaters, _ = tick(world, imu, [set_load("csm_heaters", "off")])
+    assert heaters["load_shed_class"] == "P1"
+    restored, _ = tick(world, heaters, [set_load("csm_imu", "on")])
+    assert restored["load_shed_class"] == "P2"
+    # The standby pump is off at MET 0, so turning it on and off again sheds nothing.
+    pump, _ = tick(world, values, [set_load("csm_coolant_pump_2", "on")])
+    pump_off, _ = tick(world, pump, [set_load("csm_coolant_pump_2", "off")])
+    assert pump_off["load_shed_class"] == "none"
+
+
+def test_no_bus_voltage_sheds_a_load():
+    """The three automatic shed tiers and the edge that keyed the class on them are gone: the
+    undervoltage caution remains, and nothing in the coupling graph moves the class from a bus."""
+    profiles = yaml.safe_load((VEHICLE / "domains" / "power" / "profiles.yaml").read_text())
+    ids = {t["id"] for t in profiles["thresholds"]}
+    assert {"bus_a_undervoltage", "bus_b_undervoltage"} <= ids
+    assert not {"bus_a_shed_p3", "bus_a_shed_p2", "bus_a_survival"} & ids
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    into = [e for e in coupling["edges"] if e.get("to") == "load_shed_state"]
+    assert [e["id"] for e in into] == ["E-CMD-LOAD"]

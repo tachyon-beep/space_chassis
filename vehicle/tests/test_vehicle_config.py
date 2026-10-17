@@ -9530,26 +9530,20 @@ def test_a_hysteresis_band_says_what_point_it_is_a_band_on(tmp_path):
                 for field in ("assert", "clear")
             ):
                 bands[state["id"]] = state
-    # The four bands with values in them, and every one of them says what it is on.
+    # The three bands with values in them, and every one of them says what it is on. The fourth
+    # was `load_shed_class`, whose band left with the automatic ladder (power lane, 2026-10-17): it
+    # reports the crew's switches now, and a report of a position crosses nothing.
     assert sorted(bands) == [
         "innovation_window",
         "lcl_tripped",
-        "load_shed_class",
         "sensor_health",
     ], sorted(bands)
     assert {sid: state["band_on"] for sid, state in bands.items()} == {
-        "load_shed_class": "power.dc_bus_a_v",
         "lcl_tripped": "power.lcl_[n]_current_a",
         "sensor_health": "UNCONFIGURED",
         "innovation_window": "UNCONFIGURED",
     }
-
-    # The ladder's band is the top tier's own, to the volt — and it is the *threshold's* value the
-    # state now carries, so the two cannot drift apart again.
     profiles = yaml.safe_load((VEHICLE / "domains" / "power" / "profiles.yaml").read_text())
-    tiers = {t["id"]: t for t in profiles["thresholds"] if t.get("point") == "power.dc_bus_a_v"}
-    assert bands["load_shed_class"]["hysteresis"]["assert"] == tiers["bus_a_undervoltage"]["assert"]
-    assert bands["load_shed_class"]["hysteresis"]["clear"] == tiers["bus_a_undervoltage"]["clear"] == 27.2
 
     # And the fraction is the same decision as the amperes, which is what can be compared across
     # units: the ratio.
@@ -9582,7 +9576,7 @@ def test_a_hysteresis_band_says_what_point_it_is_a_band_on(tmp_path):
     refusal(
         "no-band-on",
         ("domains", "power", "components.yaml"),
-        "    band_on: power.dc_bus_a_v\n",
+        "    band_on: power.lcl_[n]_current_a\n",
         "",
         "and no `band_on`",
     )
@@ -9590,16 +9584,20 @@ def test_a_hysteresis_band_says_what_point_it_is_a_band_on(tmp_path):
     refusal(
         "unregistered",
         ("domains", "power", "components.yaml"),
-        "    band_on: power.dc_bus_a_v\n",
+        "    band_on: power.lcl_[n]_current_a\n",
         "    band_on: power.dc_bus_c_v\n",
         "which is not a registered point",
     )
-    # And the disagreement the round found: the state's clear 0.2 V below the threshold's own.
+    # And the disagreement the round found: a state's clear 0.2 V below the threshold's own. The
+    # state it was found on, `load_shed_class`, has had no band since the automatic ladder was
+    # retired (2026-10-17), so the fixture plants that band back on it.
     refusal(
         "clear-disagrees",
         ("domains", "power", "components.yaml"),
-        "hysteresis: {assert: 26.5, clear: 27.2, dwell_ms: 500}",
-        "hysteresis: {assert: 26.5, clear: 27.0, dwell_ms: 500}",
+        '    unit: "enum[none,P3,P2,P1,P0]"\n',
+        '    unit: "enum[none,P3,P2,P1,P0]"\n'
+        "    hysteresis: {assert: 26.5, clear: 27.0, dwell_ms: 500}\n"
+        "    band_on: power.dc_bus_a_v\n",
         "Two statements about the same quantity in the same units on the same point have to agree",
     )
     # A band claiming other units while dividing differently from the band it names.
@@ -9656,17 +9654,16 @@ def test_a_hysteresis_band_says_what_it_makes_the_state(tmp_path):
     assert sorted(bands) == [
         "innovation_window",
         "lcl_tripped",
-        "load_shed_class",
         "sensor_health",
     ], sorted(bands)
 
-    # Every band with values says what it makes the state — and the one that cannot is the one whose
-    # own band selects a single member whichever way it crosses.
+    # Every band with values says what it makes the state. The one that could not, `load_shed_class`
+    # (its one band selected `none` whichever way it crossed), has no band since the automatic ladder
+    # was retired (power lane, 2026-10-17).
     assert {sid: state.get("band_value") for sid, state in bands.items()} == {
         "lcl_tripped": {"assert": "tripped", "clear": "closed"},
         "sensor_health": {"assert": "fault", "clear": "good"},
         "innovation_window": {"assert": "suspect", "clear": "good"},
-        "load_shed_class": "UNCONFIGURED",
     }
 
     # And every member a band names is one the state's own `unit` can hold — the join round 67 made
@@ -9679,8 +9676,8 @@ def test_a_hysteresis_band_says_what_it_makes_the_state(tmp_path):
         vocabulary = set(re.findall(r"enum\[([^\]]*)\]", state["unit"])[0].split(","))
         assert set(declared.values()) <= vocabulary, sid
 
-    # The band that cannot make its own state says so where a reader looks for it: the rung map is
-    # the same decision as the missing P1 rung, so it is recorded once rather than counted twice.
+    # The band that could not make its own state was `load_shed_class`'s, and it is gone with the
+    # automatic ladder, so the debts view no longer names a power `band_value`.
     view = subprocess.run(
         [sys.executable, str(LINTER), "--dir", str(VEHICLE), "--debts"],
         capture_output=True,
@@ -9690,7 +9687,10 @@ def test_a_hysteresis_band_says_what_it_makes_the_state(tmp_path):
     # The exact path rather than a count of the field's name, because the round's own `open_debts`
     # sentence mentions `band_value` too — and a test satisfied by a prose paragraph would pass on a
     # corpus that had stopped declaring the field at all.
-    assert view.count("domains/power/components.yaml.state[11].band_value: is UNCONFIGURED") == 1, view
+    # Since the automatic ladder was retired (2026-10-17) no power state owes a `band_value`.
+    assert "domains/power/components.yaml" not in "\n".join(
+        line for line in view.splitlines() if "band_value: is UNCONFIGURED" in line
+    ), view
 
     def refusal(name: str, path: tuple[str, ...], old: str, new: str, needle: str) -> None:
         definition = copy_definition(fixture_dir(tmp_path, name))
@@ -15177,30 +15177,16 @@ def test_every_command_edge_lands_where_a_state_says_a_command_writes():
     assert written["nav_state"] == ["gnc.nav_solution"]
     assert written["structure_config"] == ["structure.pyro_fired"]
 
-    # And the one edge that turned out to be a false claim rather than a missing declaration. The
-    # ladder is a threshold response to bus voltage — its own `logic:` reason says the bus
-    # thresholds drive it — so `E-CMD-BUS` was retargeted, and the id went with it.
+    # And the one edge that turned out to be a false claim rather than a missing declaration:
+    # `E-CMD-BUS` claimed the executive set the ladder's tier. It was retargeted to the bus as
+    # `E-BUS-SHED`, and that went too when the automatic ladder was retired (power lane,
+    # 2026-10-17): the crew sheds by `set_load`, and the class is read from the switches.
     ids = {str(edge["id"]) for edge in coupling["edges"]}
-    assert "E-CMD-BUS" not in ids, "the ladder edge is back on the executive and no command sets a tier"
-    shed = next(edge for edge in coupling["edges"] if edge["id"] == "E-BUS-SHED")
-    assert shed["from"] == "bus_a" and shed["to"] == "load_shed_state"
-    assert shed["sensitivity"]["regimes"], "a discrete edge out of the bus is a table, not a gain"
-    # Its rungs are the profile's thresholds reused by id rather than restated, which is the
-    # construction `E-BUS-RCS` uses and the reason a change to the ladder moves this edge with it.
-    rungs = [r["when"] for r in shed["sensitivity"]["regimes"]]
-    assert rungs == [
-        "nominal",
-        "bus_a_undervoltage",
-        "bus_a_shed_p3",
-        "bus_a_shed_p2",
-        "bus_a_survival",
-        "otherwise",
-    ], rungs
+    assert "E-CMD-BUS" not in ids, "the shed edge is back on the executive and no command sets a class"
+    assert "E-BUS-SHED" not in ids, "no bus voltage sheds a load (AOH p. 2.6-38)"
     profiles = yaml.safe_load((VEHICLE / "domains" / "power" / "profiles.yaml").read_text())
-    declared = {str(t["id"]) for t in profiles["thresholds"]}
-    for rung in rungs[1:-1]:
-        assert rung in declared, f"the rung {rung!r} names no threshold in the power profile"
-    # The ladder has no rung that selects P1, and that is a debt rather than a silence.
+    retired = {"bus_a_shed_p3", "bus_a_shed_p2", "bus_a_survival"}
+    assert not retired & {str(t["id"]) for t in profiles["thresholds"]}
     class_state = next(
         state
         for state in yaml.safe_load(
@@ -15208,8 +15194,7 @@ def test_every_command_edge_lands_where_a_state_says_a_command_writes():
         )["state"]
         if state["id"] == "load_shed_class"
     )
-    assert "P1" in class_state["unit"], class_state["unit"]
-    assert not [t for t in profiles["thresholds"] if "shed_p1" in str(t["id"])]
+    assert [str(m) for m in class_state["moved_by"]][0].startswith("logic:the crew's own switch")
 
 
 def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
@@ -15258,9 +15243,11 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     # And the headline is the count of *declared* edges, which is the two forms together.
     scalar = [e for e in edges if e.sensitivity.get("value") not in (None, "UNCONFIGURED")]
     tables = [e for e in edges if e.sensitivity.get("regimes")]
-    assert len(tables) == 8, f"the regime edges changed: {[e.id for e in tables]}"
+    # 8 -> 7: `E-BUS-SHED` left with the automatic shed ladder (power lane, 2026-10-17).
+    assert len(tables) == 7, f"the regime edges changed: {[e.id for e in tables]}"
     # 69 -> 74: ADR 0003 quiet coast: the thermal, power and comms rules together (E-PUMP-COOL, E-RAD-THERM and E-AMP-HEAT among them).
-    assert len(scalar) + len(tables) == 74
+    # 74 -> 73: `E-BUS-SHED` retired.
+    assert len(scalar) + len(tables) == 73
     ready = subprocess.run(
         [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--readiness"],
         capture_output=True,
@@ -15269,7 +15256,7 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     )
     assert ready.returncode == 0, ready.stderr
     found = re.search(r"edges with a sensitivity\s+(\d+) / (\d+)", ready.stdout)
-    assert (int(found.group(1)), int(found.group(2))) == (74, len(edges)), found.group(0)
+    assert (int(found.group(1)), int(found.group(2))) == (73, len(edges)), found.group(0)
 
 
 def test_a_verb_that_starts_a_state_is_declared_rather_than_described(tmp_path):
@@ -17589,11 +17576,12 @@ def test_a_commanded_mode_holds_its_value_through_a_tick_and_a_code_moved_one_do
     assert carried["relief_valve_state"] == "open", carried.get("relief_valve_state")
     assert carried["internal"]["relief_valve_state"] == "open", carried["internal"]
 
-    # And the boundary: `load_shed_class` is moved by the undervoltage ladder, so the tick still
-    # refuses it with the mover named rather than a sentence about the class.
+    # And the boundary: `time_health` is moved by `logic:` and has no rule, so the tick still
+    # refuses it with the mover named rather than a sentence about the class. (`load_shed_class` was
+    # the case until it got a rule, the crew's switches, on 2026-10-17.)
     refused = []
     plant.step(world, values, plant.tick_seconds(world), refused)
-    ladder = [g for g in refused if g.state.id == "load_shed_class"]
+    ladder = [g for g in refused if g.state.id == "time_health"]
     assert ladder, [g.state.id for g in refused][:20]
     assert "moved by" in ladder[0].owed, ladder[0].owed
 
@@ -17939,10 +17927,10 @@ def test_the_linter_refuses_a_debt_that_names_an_edge_whose_note_says_it_is_clos
     definition = copy_definition(tmp_path / "closed-edge-debt")
     path = definition / "coupling.yaml"
     text = path.read_text()
-    old = "- \"The ladder's missing rung."
-    assert old in text, "the fixture no longer matches the shed-rung debt"
+    old = "- \"Per-edge crisis-point gains"
+    assert old in text, "the fixture no longer matches the crisis-gain debt"
     path.write_text(
-        text.replace(old, "- \"E-GNC-RCS is still owed. The ladder's missing rung.", 1)
+        text.replace(old, "- \"E-GNC-RCS is still owed. Per-edge crisis-point gains", 1)
     )
     result = run_linter(definition)
     assert result.returncode == 1

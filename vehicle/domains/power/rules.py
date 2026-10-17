@@ -221,6 +221,22 @@ def bus_a_rated_w(inputs, params, dt):
     )
 
 
+def load_shed_class(inputs, params, dt):
+    """The most critical class among the loads on at MET 0 that the crew's switches now have off.
+
+    Apollo had no automatic DC load shed (AOH p. 2.6-38): the crew shed by checklist, so this is a
+    report of `load_enabled`, not a ladder. A watched load missing from the switch map is a gap."""
+    switches = inputs["load_enabled"]
+    order = list(params["severity_order"])
+    worst = 0
+    for load_id, load_class in params["watched_class"].items():
+        if load_id not in switches:
+            return params.no_value(f"{load_id} has no position in `load_enabled`")
+        if switches[load_id] != "on":
+            worst = max(worst, order.index(str(load_class)))
+    return order[worst]
+
+
 def _held_resistance(state_id):
     """A module's source resistance, held: nothing aboard moves it (`dX/dt = 0`). A fault (PWR-02)
     or a scenario sets it; the rule returns what it carries, so a checkpoint restores it."""
@@ -239,6 +255,7 @@ RULES = {
     "fuel_cell_current_a": fuel_cell_current_a,
     "fc_1_current_a": fc_1_current_a,
     "bus_a_rated_w": bus_a_rated_w,
+    "load_shed_class": load_shed_class,
     "fc_1_resistance_ohm": _held_resistance("fc_1_resistance_ohm"),
     "fc_2_resistance_ohm": _held_resistance("fc_2_resistance_ohm"),
     "fc_3_resistance_ohm": _held_resistance("fc_3_resistance_ohm"),

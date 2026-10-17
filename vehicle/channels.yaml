@@ -232,7 +232,7 @@ power:
     provenance:
       basis: apollo
       ref: "apollo_diode.md:48"
-      note: "apollo lists breaker/load shedding as a principal operator control and gives the bus event condition; the four priority classes are chosen, from the P0-P3 factoring in electrical_diode.md:847"
+      note: "apollo lists breaker/load shedding as a principal operator control and gives the bus event condition; the crew sheds, with no automatic DC load shed (AOH p. 2.6-38), so the channel reports the crew's switches; the four priority classes are chosen, from the P0-P3 factoring in electrical_diode.md:847"
 
 eclss:
 
