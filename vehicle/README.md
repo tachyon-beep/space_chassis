@@ -219,10 +219,10 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 158 states over 63 scheduled nodes, 142
+**All eleven domains have landed** — 148 channels, 159 states over 63 scheduled nodes, 142
 thresholds, 59 verbs and 128 classified events across the eleven directories, with 265 declared debts
-and every one of them named. **130 of the 158 states are fully configured and 28 carry a debt**, and
-a real tick advances **83** of the 158 states, and the build order's **83** ready are that same set
+and every one of them named. **131 of the 159 states are fully configured and 28 carry a debt**, and
+a real tick advances **84** of the 159 states, and the build order's **84** ready are that same set
 — the second of those figures is the objective's own second completion criterion, and both
 are read out of `tools/plant.py`'s output by `test_the_readme_status_matches_the_tools`. Since round
 58 the first line of `--build-order` *is* a tick's own gap list rather than a second opinion about
@@ -302,7 +302,7 @@ are the vehicle's only two-step verbs (C-16: a burn is interruptible, so requiri
 one adds a delay rather than a safety).
 
 `domains/eclss/` is the one where a fault has minutes rather than hours.
-It declares 23 states, 20 thresholds, 6 verbs, 21 faults — four conserved gases in each of
+It declares 24 states, 20 thresholds, 6 verbs, 21 faults — four conserved gases in each of
 **two** compartments. Three things in it are worth reading:
 
 - **The atmosphere is modelled as gas masses, not as a pressure.** Pressure is `nRT/V`, so a
@@ -1632,7 +1632,7 @@ The reference plant's `advance()` implements two of `plant.md` §3's seven integ
 this was written, and the split is worth stating plainly: **`algebraic`, `discrete` and `dynamics`
 are rules the configuration deliberately does not carry** — `delay` *is* carried, as a `delay_s` and
 a ring, and the vehicle's one delay state is in *ready now* — and counting them together with the
-states a tick cannot reach because a coupling is missing, so 39 of the 158 states need code.
+states a tick cannot reach because a coupling is missing, so 39 of the 159 states need code.
 (This said *before the plant can walk a whole tick*, which was true when it was written and is not
 now: a tick walks all 139 of them and records what it cannot advance. See *The tick stopped at its
 first debt* below.)
@@ -1829,7 +1829,7 @@ debt and 24 of them are in this bucket — the four that differ are debts a tick
 the distinction between a value nobody has written down and a state nothing can reach.
 
 ```
-158 states, by what blocks them:
+159 states, by what blocks them:
 
     83   53 %  ready now — the states a real tick advances
     24   15 %  owes a value — the cheapest to close, and the debt count already tracks them

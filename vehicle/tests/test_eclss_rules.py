@@ -72,3 +72,16 @@ def test_the_suit_loop_advances_on_a_real_tick(world):
     gaps: list[plant.Gap] = []
     plant.step(world, plant.initial_values(world), DT, gaps)
     assert "suit_loop_flow_cfm" not in {gap.state.id for gap in gaps}
+
+
+def test_set_suit_fan_off_stops_the_circuit_with_its_load_still_powered(world):
+    """`set_suit_fan` used to move nothing: the verb was accepted and the circuit kept flowing."""
+    values = plant.initial_values(world)
+    assert values["suit_fan"] == {"csm": "on", "lm": "off"}
+    assert values["load_enabled"][SUIT["compressor_load"]] == "on"
+    staged = plant.apply_command(world, values, "set_suit_fan", {"vehicle": "csm", "state": "off"})
+    values = {**values, **staged}
+    ticks = 250
+    after = walk(world, values, ticks)
+    assert after["load_enabled"][SUIT["compressor_load"]] == "on"
+    assert suit_flow(after) == pytest.approx(35.0 * math.exp(-ticks * DT / SUIT["tau_s"]), rel=1e-6)

@@ -10,17 +10,23 @@ import math
 
 
 def _suit_loop_flow(inputs, params, dt):
-    """The suit compressor as flow: relax toward the rated delivery while its load is on, else zero.
+    """The suit compressor as flow: relax toward the rated delivery while it runs, else toward zero.
 
-    The compressor is the only thing that moves the suit circuit (`initial_provenance`), and it is
-    an electrical load, so what runs it is `power.load_enabled[<its load>]`. A switch map that does
-    not name the load is a gap rather than a stopped fan.
+    The compressor is the only thing that moves the suit circuit (`initial_provenance`). It runs
+    while `set_suit_fan` has it on (`suit_fan`) and its electrical load is powered
+    (`power.load_enabled`), as the coolant pump does. A switch map that does not name its element is
+    a gap rather than a stopped fan.
     """
     enabled = inputs["load_enabled"]
     load = params["compressor_load"]
+    switch = params["compressor_switch"]
+    commanded = inputs[switch["state"]]
     if load not in enabled:
         return params.no_value(f"power.load_enabled names no {load!r}")
-    target = float(params["rated_flow_cfm"]) if enabled[load] == "on" else 0.0
+    if switch["element"] not in commanded:
+        return params.no_value(f"{switch['state']} names no {switch['element']!r}")
+    running = enabled[load] == "on" and commanded[switch["element"]] == "on"
+    target = float(params["rated_flow_cfm"]) if running else 0.0
     current = float(inputs["suit_loop_flow_cfm"])
     return target + (current - target) * math.exp(-dt / float(params["tau_s"]))
 

@@ -57,9 +57,10 @@ writes: [cabin_atm, lm_cabin_atm, cabin_regulator, cabin_o2_supply_csm,
 
 # Two states on the `internal` sentinel, so their order is a declaration rather than the alphabet's:
 # both are published and neither drives the other, and the sentinel is advanced after every node.
-internal_order: [suit_loop_flow_cfm, o2_supply_pressure_psi]
+internal_order: [suit_fan, suit_loop_flow_cfm, o2_supply_pressure_psi]
 internal_order_note: >-
-  **nothing at all**: the suit circuit's flow and the oxygen supply tank's pressure are published
+  the compressor's switch before the flow it gates, so a `set_suit_fan` acts on the tick it lands.
+  Between the flow and the tank, **nothing at all**: the suit circuit's flow and the oxygen supply tank's pressure are published
   quantities with no edge between them and no shared input, so the order is a declaration rather than
   a finding. What it is not is the alphabet's — `o2_supply_pressure_psi` sorts before
   `suit_loop_flow_cfm`, and a tiebreak that decides is a tiebreak that can be wrong later
@@ -590,10 +591,40 @@ state:
         (`docs/vehicle-completion/08-risks.md`). Effectivity: Bouman p. 2 describes the basic
         two-tank system before the post-Apollo 13 redesign, which is the Apollo 11 CSM's
         configuration, but does not name CSM-107; Forester's strokes are Apollo 12 and 14 flight data
+  # The suit compressor's switch, which `set_suit_fan` moves. The verb existed and moved nothing, so a
+  # fleet could command the fan off and the circuit kept flowing; now the flow rule reads it.
+  - id: suit_fan
+    method: discrete
+    node: internal
+    unit: "map[vehicle,enum[on,off]]"
+    initial: {csm: "on", lm: "off"}
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        chosen, matching power's MET-0 load positions (`csm_suit_fan` on, `lm_suit_fan` off): the CSM
+        suit circuit "circulates continuously" (`suit_loop_flow_cfm`'s `initial_provenance`, ECS study
+        guide PDF p. 39) and the LM is unpowered at MET 0. The launch checklist's compressor switch was
+        not read
+    moved_by: ["command:set_suit_fan"]
+    command_value:
+      - verb: set_suit_fan
+        argument: state
+        key: vehicle
+        why: "one element per vehicle; the CSM's suit circuit flows while its compressor is commanded on and its load is powered"
+    dwell:
+      min_on_s: 1
+      min_off_s: 1
+    provenance:
+      basis: apollo
+      ref: "apollo_diode.md:238"
+      note: >-
+        apollo's set_suit_fan, as a switch the plant holds. The LM's element has no flow state to
+        drive yet. The one-second dwell each way is chosen, as `cabin_regulator_position`'s is: a
+        compressor switch has a transit and a fleet must not chatter it by re-commanding every tick
   - id: suit_loop_flow_cfm
     # **The compressor as flow** (`domains/eclss/rules.py`). The rule relaxes the flow toward
-    # `rated_flow_cfm` while the CSM suit compressor's load is on (`power.load_enabled`) and toward
-    # zero while it is off, with `tau_s`. It was a lag with no driver, which no tick could advance.
+    # `rated_flow_cfm` while the CSM suit compressor is commanded on (`suit_fan`) and its load is
+    # powered (`power.load_enabled`), and toward zero otherwise, with `tau_s`. It was a lag with no driver, which no tick could advance.
     node: internal
     method: dynamics
     unit: ft3/min
@@ -610,6 +641,7 @@ state:
         MET 0 is the normal-space delivery, and the compressor is the only thing that drives it
     rated_flow_cfm: 35
     compressor_load: csm_suit_fan
+    compressor_switch: {state: suit_fan, element: csm}
     tau_s: 5
     provenance:
       basis: chosen
