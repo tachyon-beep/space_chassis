@@ -175,3 +175,20 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 14:28 ECLSS puts the O2 tank heaters on their own node (#46 commit 0007). Metabolic figures in `vehicle.yaml` differ from the AOH; recorded as unowned debt in `status.md`.
 - 14:29 Thermal's MET-0 re-derivation is on #43 (`efd60cf`). Policy D's non-loss is the corrected physics, so #43 carries the `aurora/tests` expectation change (D42).
 - 14:31 Governance PR #53 merged (`e90d9f1`).
+- 14:32 Structure publishes the docking-latch count on #51 (`3dd1e64`) for propulsion's docked-burn guard.
+- 14:34 Crew reports #54's fidelity (`ed840ef`). The `perceive()` caller goes to lane 9 after #47.
+- 14:35 Lane 9's order after #47 adds the `ask_crew` `perceive()` caller after the instrument layer.
+- 14:36 Docking-latch talkback wiring sourced (TN D-6854 Fig A-7(b)); the research thread's earlier reading is struck through in `structure.md`.
+- 14:39 John confirms the delegated decisions and adds a closing phase: a light-touch fidelity calibration pass per station after the lanes merge (D45).
+- 14:41 Comms reports #48's fidelity: `link_snr` from Bellcomm CR-125670. Open across lanes: the CSM transmit chain uses LM figures, and the PA is an AC load whose inverter path is power's call.
+- 14:41–14:43 Draft #56 (GNC and RCS, `claude/vehicle-gnc-rcs-03b5j4`): pointing modes, ADR 0005; rebases after #44 and #47. GNC scope answers under D33 (D46); three engine asks to lane 9.
+- 14:44 Research lane finished: eight source files under `sources/` in the project's shared folder. `thermal.md` finds the SM bays are not glycol-cooled; thermal decides the fix on #49.
+- 14:46 Power's AC distribution and comms' ground end decided under D33 (D47). GNC's dynamics seeding is on #47 (`4761970`).
+- 14:46 #45 (unpin) merged as `e990b25`, `required` green including both episode jobs. Every lane rebases; #46 next, then #47. From now on a closing PR does not touch the pinned figures, the README status paragraph or `plant.py`.
+- 14:47 John: "we want to be able to model apollo 13" (D48). Station handovers come into the episode; MET 0 moves to Apollo 13's TLI.
+- 14:48 John confirms the epoch shift (D49). 14:49 He notes a future direction, a Kerbal-style ad-hoc mission system, that must not change current work (`status.md`, "Future direction").
+- 14:51 Structure #51 (`aa3231c`) and thermal #49 (`0427cac`, rebased onto `e990b25`) report. Scope answers under D33 (D50): tunnel pressure as a follow-up; the SM service bay off the glycol loop. Research infers the inverter configuration from the Apollo 11 checklist.
+- 14:53 #47 carries `cooled_by: space` with a required `cooled_by_note` (`d221c8a`).
+- 15:01 GNC + RCS #56 rebased on `e990b25` as `d50194c` (268 debts, 0 refusals): `gnc.sun_direction_body` from a fixed Apollo 13 TLI sun line, and `set_ptc_roll` (0.3 deg/s, as flown at three revolutions per hour). The PTC roll goes in the ledger as a decision.
+- 15:02 Research delivers the Apollo 13 MSFN network as flown (`sources/comms.md`); no as-flown rise/set table. D51: Vanguard and ARIA positions from the pre-flight press kit, labelled planned. Comms models handovers in its own PR after #48.
+- 15:03 Governance #55 merged as `7ad188f` (D41–D44, lane events to 14:30); the next batch carries D45–D51.

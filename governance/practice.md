@@ -88,8 +88,9 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   fault-injection lane.** Other lanes route engine needs through the coordinator, or land them as a
   small PR merged before the domain PR that uses them.
 - **Merge order**: #45 (unpin), then #46 (ECLSS engine helper), then #47 (fault injection), then the
-  rest rebase and merge when `required` is green. Figures are rewritten from the tools on rebase,
-  never hand-merged.
+  rest rebase and merge when `required` is green. Since #45 (14:46), a PR that closes a state does not
+  touch the pinned figures, the README status paragraph or `plant.py`; a README count-line conflict
+  resolves to `main`'s side plus a test re-run.
 - **Shared decision records take one dated section per verb.** ADR 0004
   (`vehicle/docs/decisions/0004-interlock-evaluation.md`) is being amended by ECLSS (#46), structure
   (#51) and possibly propulsion (#50): each lane adds its own dated, verb-named section and rebases
@@ -104,7 +105,7 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   decision or challenge, not a single forced move (D37); otherwise a documented approximation. A new
   signal to debug or a new confounder is worth it; a quantity that only drains from full to empty is
   not, but the events around it (meals that make barks and noise) are; propellant is not in that
-  class (D40). Each
+  class (D40). The target scenario is **Apollo 13** (D48): each lane checks its fidelity against it. Each
   lane tells the coordinator the fidelity it builds to and any approximation it keeps; the
   coordinator evens the lanes out, and the governance thread writes the ledger in `status.md`.
 - **Sources**: any domain may be read (D32). Lanes started before 13:46 on 2026-10-17 get primary
