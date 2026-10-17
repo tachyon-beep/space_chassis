@@ -1,6 +1,6 @@
 # Programme — decision log
 
-As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `0036b88`. **Append-only**: a revised
+As of **2026-10-17**, `tachyon-beep/space_chassis` `main` @ `b525b48`. **Append-only**: a revised
 decision gets a new dated entry that points back, never an edit in place. Decisions that belong to one
 stream stay in that stream's log (`chassis/decisions.md`, `vehicle/decisions.md`); this log holds the
 ones that bind the whole programme.
@@ -65,3 +65,26 @@ before it, which offered an earlier paid run of the agent container against the 
 | # | decision | who | why | where |
 |---|---|---|---|---|
 | D23 | **No container-only paid pilot.** No model-backed run against `aurora/contract/fake_diode.py` alone. The first paid run stays D22's 10-minute smoke test on the accepted bounded quiet-coast episode, and the work goes to the vehicle: the rest of tranche 1 and tranche 2 (`docs/vehicle-completion/07-sequencing.md`) up to that episode's acceptance. D22 and the block in `status.md` ("any paid run") are unchanged. | John | The container is a copy of an Aurora container already proven in another project, so a fixture-only run would test what is already known and not the vehicle, which is the untested half | `status.md`; `docs/vehicle-completion/07-sequencing.md` |
+
+## 2026-10-17 — the vehicle sprint
+
+John opened a sprint to build out the vehicle on 2026-10-17, run as parallel subsystem lanes. The
+lanes, their file ownership and merge order are in
+[`records/2026-10-17-vehicle-sprint.md`](records/2026-10-17-vehicle-sprint.md); the rules that bind
+every lane are in [`practice.md`](practice.md), "Vehicle sprint". Quotes are John's words in the
+Space Aurora project, with the UTC time.
+
+| # | decision | who | why | where |
+|---|---|---|---|---|
+| D24 | **Power is the first subsystem to burn down.** 12:51: "ok, lets start prioitising burning down one of those sub systems"; he chose Power on the decision card at 12:55. | John | Power is the subsystem the arc report's recommended middle (a fuel-cell degradation in coast) depends on | draft PR #43 |
+| D25 | **Subsystems are burned down in parallel where they do not overlap.** 12:56: "you can actually do them in paralell where there is no overlap". The ownership and merge rules that make the lanes not overlap are the coordinator's, open to his revision. | John; lane rules by the coordinator | Blocking is almost entirely inside each domain (one cross-domain blamed state of 78) | `practice.md`, "Vehicle sprint"; `records/2026-10-17-vehicle-sprint.md` |
+| D26 | **The four whole-guarded verbs are sprint items**: `request_translation`, `start_burn`, `select_nav_source`, `set_o2_source`. 12:59: "we're doing a sprint to build out more of the vehicle now, we can try to get those in if you talk to the coordinator". Each lane that changes a verb's `interlocks_when` updates `vehicle/docs/decisions/0004-interlock-evaluation.md` or adds a follow-up decision. | John | Their guards are whole because decision 0004 (137–143) could not name a recovery direction | `records/2026-10-17-vehicle-sprint.md`, "The four verbs" |
+| D27 | **Work runs only in the cloud or on nyx.** 12:58: "work can only be done through the cloud or on nyx"; 12:58: "nyx is the more capable dev platform (more hardware, more space, better tooling)". No device session on his Windows/WSL machine (velma). | John | — | `practice.md`, "Where work runs" |
+| D28 | **nyx is a Remote Control device for this project**: `nyx.foundryside.dev`, folder `/home/john/space_chassis`, preapproved. Access was confirmed read-only at 13:26 (John, 13:25: "confirm you have access now"). A session starts there only when John asks for work on nyx. The checkout there was on `main` `475840a`, 100 commits behind `origin/main`, with an untracked `FIXME.md`; nobody has fetched or pulled. | John | — | `practice.md`, "Where work runs" |
+| D29 | **The accepted quiet-coast episode is a point-in-time milestone, not a scientific record.** 13:35: "lets not get hung up on the accepted quiet coast episode, it was a point in time milestone not a scientific record, so lets not stress too much". A lane may change what the episode reads and re-run it without ceremony; the episode jobs still have to pass. Applied first to the standby coolant pump, read by the power lane as *off*: pump 2 is off at MET 0 (CSM load 1,651 W → 1,401 W), thermal re-derives its MET-0 equilibrium and the service bay's G and C, and both ride on whichever of #43 or #49 lands first. Amends the weight D14 and D22 put on the episode's acceptance; D22's stages are unchanged. | John; the *off* reading by the power lane | The 250 W came from a pump commanded off (found by the thermal lane) | power thread; #43, #49 |
+| D30 | **One agent tracks governance for the sprint** and is the only writer of `governance/` outside `governance/vehicle/` and `governance/chassis/` while the sprint runs. 13:34: "please mae sure an agent is tracking the governance in the repo govdernance folder". Lanes report to the coordinator; the coordinator relays merges, decisions and lane events to the governance thread, which records them. | John; the writer by the coordinator | Eight lanes move at once; one writer avoids conflicts in `status.md` | `README.md`; `practice.md`, "Vehicle sprint" |
+| D31 | **Design for more fidelity, not less, except where it creates project risk**, and keep the level of detail even across lanes. 13:37: "for design decisions we should genuinely design for more fidelity not less, except where it creates project risk, coordinate level of detail with the coordinator so we don't wind up too uneven". Each lane states the fidelity it builds to and any approximation it keeps; the coordinator evens them out and `status.md` carries the ledger. Bears on the open "attitude as pointing modes" item in the arc report, which John has not answered. | John | — | `practice.md`, "Vehicle sprint"; `status.md`, "Fidelity ledger" |
+
+Open with John on 2026-10-17 (listed in `status.md`, "Waiting on John", until answered): power's
+bus tie, shed ladder and source converter; the CM RCS jet; the Earth-link delay; thermal's two
+cards; the arc report's eleven; the allowed domains for primary sources; the D22 pilot credentials.

@@ -1,6 +1,6 @@
 # Practice — how every stream works
 
-As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `0036b88`. Replaces the permission and
+As of **2026-10-17**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Replaces the permission and
 slot rules in `chassis/practice.md`, `vehicle/practice.md` and `coordination.md` (`decisions.md` D1,
 D2). Each stream's own `practice.md` keeps only what is particular to it: the chassis's plan, review
 and live-check cycle, and the vehicle's gate and evidence discipline. Where they disagree with this
@@ -63,6 +63,34 @@ Only these, because they spend money, change a setting only he can change, or ac
 
 Everything else a stream may decide, recording it in its `decisions.md` as *coordinator* or
 *governance*, open to his revision.
+
+## Where work runs
+
+Only in the cloud or on nyx (`decisions.md` D27). nyx is a Remote Control device for the project
+(`nyx.foundryside.dev`, `/home/john/space_chassis`, D28); start a session there only when John asks
+for work on nyx. Never start a device session on his Windows/WSL machine.
+
+## Vehicle sprint (from 2026-10-17)
+
+The vehicle is being burned down in parallel lanes, one per subsystem (D24, D25). The lane table,
+the full rules and the running log are in
+[`records/2026-10-17-vehicle-sprint.md`](records/2026-10-17-vehicle-sprint.md); who holds what now is
+in [`status.md`](status.md). While the sprint runs these rules add to the loop above:
+
+- **A lane is a project thread with one draft PR.** It edits only its own blocks in shared YAML: an
+  edge belongs to the lane owning its target state, a channel to the lane whose prefix it carries.
+- **Engine code (`vehicle/tools/plant.py`, `check_vehicle.py`, `faults.py`) belongs to the
+  fault-injection lane.** Other lanes route engine needs through the coordinator, or land them as a
+  small PR merged before the domain PR that uses them.
+- **Merge order**: #45 (unpin), then #46 (ECLSS engine helper), then #47 (fault injection), then the
+  rest rebase and merge when `required` is green. Figures are rewritten from the tools on rebase,
+  never hand-merged.
+- **The quiet-coast episode must stay green; its numbers may move** (D29).
+- **Fidelity**: design for more fidelity, not less, except where it creates project risk (D31). Each
+  lane tells the coordinator the fidelity it builds to and any approximation it keeps; the
+  coordinator evens the lanes out, and the governance thread writes the ledger in `status.md`.
+- **Reporting**: lanes report to the coordinator; the governance thread is the only writer of
+  `governance/` outside `vehicle/` and `chassis/` for the sprint (D30).
 
 ## Reporting
 
