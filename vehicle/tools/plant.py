@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 import functools
 import hashlib
 import importlib.util
@@ -3425,6 +3426,16 @@ def initial_values(world: World, scenario: Scenario | None = None) -> dict[str, 
         if state.method not in SEEDED_METHODS:
             continue
         initial = (state.spec or {}).get("initial")
+        if state.method == "dynamics" and isinstance(initial, (list, dict)) and not unset_paths(initial):
+            # **A `dynamics` state's declared vector or record** — an attitude quaternion, a body
+            # rate, a held target. The shape is the state's own, as a discrete state's map is, and
+            # its rule reads it on the first tick the way a lag reads its level. A copy, so a rule
+            # that mutates what it was handed cannot reach back into the declaration.
+            entries = state_values(world, state, copy.deepcopy(initial))
+            if state.node == "internal":
+                entries["internal"] = {**(values.get("internal") or {}), **entries["internal"]}
+            values.update(entries)
+            continue
         if not isinstance(initial, (int, float)):
             continue
         if state.node == "internal":
