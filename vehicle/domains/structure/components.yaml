@@ -42,15 +42,17 @@ writes: [structure_config]
 # irreversible transition with no arming requirement is a transition a single misread line can
 # fire, which is precisely what `apollo_diode.md:167-170` says a two-step arm/commit is for.
 # --------------------------------------------------------------------------------------
-# The order these states advance in. **Nothing on the sentinel advances today** — no edge
-# can target it and the rules that would move these states are domain code — so this is a
-# decision about the rules rather than a consequence of them, and it is declared so the
-# frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [relief_valve_state, hatch_state, docking_latch_state, arm_state, cabin_dp_psi, structural_leak_g_s]
+# The order these states advance in. No edge can target the sentinel, so the states here are
+# advanced by the effect path (the commanded ones) and by `domains/structure/rules.py` (the rest),
+# and the order is declared so the frozen lexicographic tiebreak is not what decides. See
+# `internal_order_note`.
+internal_order: [relief_valve_state, hatch_state, latch_drive, docking_latch_state, arm_age_s, arm_state, cabin_dp_psi, structural_leak_g_s]
 internal_order_note: >-
   the mechanisms before the quantities they explain: a valve, a hatch and a latch each change
-  what the cabin's differential pressure and leak are, and the arm is last of the mechanisms
-  because nothing else depends on it.
+  what the cabin's differential pressure and leak are, and each latch follows the drive that
+  moves it. The arm is last of the mechanisms because nothing else depends on it, and its age
+  comes before it because the expiry is a comparison against the age this tick has just
+  advanced.
 
 state:
   - id: lm_separation_state
@@ -151,9 +153,53 @@ state:
     node: internal
     method: discrete
     unit: "map[event,enum[none,armed,expired,consumed]]"
+    # One position per event `arm_event` can name, and every one of them is `none` at MET 0.
+    initial:
+      lm_undocking: none
+      descent_stage_separation: none
+      lm_ascent_jettison: none
+      pyro_fire: none
+    initial_provenance:
+      basis: derived
+      relation: >-
+        nothing can have been armed before MET 0: `arm_event`'s `allowed_phases` open at
+        `lunar_orbit`, and `mission.yaml#phases` opens at `translunar_coast`, so the first phase in
+        which a token can exist comes after the epoch. The four keys are `arm_event`'s own `event`
+        enum, which is the key space a token is bound to (`apollo_diode.md:487-509`)
+      source: domains/structure/commands.yaml:commands.arm_event.allowed_phases
+    # **The two commands write the two transitions a fleet causes, and the rule writes the one time
+    # causes.** This was `trigger:arm_event`, a mover no reader implemented: `arm_event` named the
+    # state and nothing said what it made of it. Arming writes `armed` under the event it names,
+    # firing writes `consumed` under the same key, and `domains/structure/rules.py` turns an `armed`
+    # token whose age has reached `ttl_s` into `expired`.
     moved_by:
-      - "trigger:arm_event"
+      - "command:arm_event"
+      - "command:execute_event"
       - "logic:the token's own lifecycle: minted, then consumed by use or expired by time"
+    command_value:
+      - verb: arm_event
+        argument: event
+        constant: armed
+        key: event
+        why: >-
+          the argument names *which* token, and the value is the verb: arming any event leaves its
+          token `armed`, and arming an armed event re-arms it (`commands.yaml#arm_event.help`), which
+          is the same value written again while `arm_age_s` starts over
+      - verb: execute_event
+        argument: event
+        constant: consumed
+        key: event
+        why: >-
+          one arm, one execution (`apollo_diode.md:509`): the token the command fires on is spent,
+          under the event it names. The executive refuses an `execute_event` with no outstanding
+          token before any effect is staged, so this write only ever lands on an `armed` key
+    # The window, as a parameter the rule reads. It is the `arm_expiry` threshold's own assert, and
+    # the test file holds the two together so the arm cannot outlive the threshold that guards it.
+    ttl_s: 120
+    ttl_provenance:
+      basis: derived
+      relation: "profiles.yaml#thresholds.arm_expiry.assert, the 120 s window that threshold's `chosen` reason argues; the rule and the interlock must expire a token at the same age"
+      source: domains/structure/profiles.yaml:thresholds.arm_expiry.assert
     dwell:
       min_on_s: 0
       min_off_s: 0
@@ -171,24 +217,134 @@ state:
         an event that fired and one that was armed and never did are the same vehicle with
         different histories, and a fleet reading `none` for both would lose the distinction the
         two-step exists to create
+  - id: arm_age_s
+    node: internal
+    method: discrete
+    unit: "map[event,s]"
+    initial:
+      lm_undocking: 0
+      descent_stage_separation: 0
+      lm_ascent_jettison: 0
+      pyro_fire: 0
+    initial_provenance:
+      basis: derived
+      relation: "no token exists at MET 0 (see `arm_state.initial_provenance`), so no token has an age; zero is the value arming writes, and the rule holds it until a token is armed"
+      source: domains/structure/commands.yaml:commands.arm_event.allowed_phases
+    moved_by:
+      - "command:arm_event"
+      - "logic:the age of an armed token, advanced by the tick's horizon while the token is armed and held otherwise"
+    command_value:
+      - verb: arm_event
+        argument: event
+        constant: 0
+        key: event
+        why: >-
+          arming starts the window: the token the command mints has age zero, and a re-arm is a new
+          token, so it starts again — which is what lets a fleet that has changed its mind say so by
+          arming again rather than by waiting out the window
+    provenance:
+      basis: derived
+      relation: >-
+        the time half of the arm/commit pattern. `arm_state`'s `expired` is a statement about how
+        long a token has existed, and the published value is an enum that cannot hold a duration, so
+        the duration is its own state: a timer, which `plant.md` §3 files under `discrete`. It is
+        not published — `structure.arm_state_[event]` is — because what a fleet needs is whether the
+        token is still good, and the window is in the profile it can read
+
+  - id: events_fired
+    node: structure_config
+    method: discrete
+    unit: "map[event,bool]"
+    initial:
+      lm_undocking: false
+      descent_stage_separation: false
+      lm_ascent_jettison: false
+      pyro_fire: false
+    initial_provenance:
+      basis: derived
+      relation: "no one-way event can have fired before MET 0: `execute_event`'s `allowed_phases` open at `lunar_orbit` and the mission opens at `translunar_coast`. The keys are the verb's `event` enum"
+      source: domains/structure/commands.yaml:commands.execute_event.allowed_phases
+    moved_by: ["command:execute_event"]
+    command_value:
+      - verb: execute_event
+        argument: event
+        constant: true
+        key: event
+        why: >-
+          the argument is the key and the value is the verb. This is the write `pyro_fired` used to
+          carry, and it was the wrong state for it: the argument names an *event* and that state is
+          keyed by *device*, so a fired `lm_undocking` landed as a pyro called `lm_undocking`
+    provenance:
+      basis: derived
+      relation: >-
+        **an event is not a device**, which `open_debts` said and nothing resolved. The record of
+        which irreversible events the vehicle has executed is keyed by the verb's own argument, and
+        `pyro_fired` is computed from it through each event's declared devices (`pyro_fired.fires_*`),
+        so the join between the two vocabularies is a declaration a reader can check rather than a
+        key that happened to be the wrong one. Held between commands by the effect path; not
+        published on its own, because `structure.stage_state` and the continuity channel are the
+        consequences a fleet reads
 
   - id: pyro_fired
     node: structure_config
     method: discrete
     unit: "map[device_id,bool]"
+    # **A device fires because an event that fires it was executed, and the rule is that join.**
+    # This was `event:pyro_fire` plus `execute_event` writing `true` under the *event's* name, which
+    # the open debt "an event is not a device" described and nothing fixed. `events_fired` now holds
+    # the events; each `fires_<event>` below names the devices that event fires; and
+    # `domains/structure/rules.py` marks a device fired once any event that fires it has been
+    # executed. A fired device never reads `false` again, because the record it is computed from
+    # never forgets an event.
     moved_by:
-      - "event:pyro_fire"
-      - "command:execute_event"
-    command_value:
-      - verb: execute_event
-        argument: event
-        constant: true
-        why: >-
-          `event` names *which* device fires, not what value it takes: a pyro command is a one-way
-          set and the value is the same `true` for every device. That is why this is a `constant`
-          with an `argument` rather than a `maps` — the argument is the key, and the value is the
-          verb. The other mover, `event:pyro_fire`, is the executive raising the same value
-        key: event
+      - "logic:a device is fired once any executed event declares it in its `fires_<event>` list"
+    devices:
+      [interstage_nut_1, interstage_nut_2, interstage_nut_3, interstage_nut_4,
+       interstage_umbilical_guillotine, docking_ring_charge]
+    devices_provenance:
+      basis: derived
+      relation: "the union of the sourced `fires_*` lists below; an event whose list is unset adds nothing until it is answered"
+    fires_descent_stage_separation:
+      [interstage_nut_1, interstage_nut_2, interstage_nut_3, interstage_nut_4,
+       interstage_umbilical_guillotine]
+    fires_descent_stage_separation_provenance:
+      basis: historical
+      source: >-
+        `lm_structures_study_guide.pdf` (Grumman LM structures study guide, ibiblio Apollo
+        documents): staging is done "by explosively severing the four interstage nuts and bolts as
+        well as the interstage umbilicals"; NASA's Apollo Standard Detonator summary
+        (NTRS 20090015395) lists the "Lower LM guillotine" among the detonator's uses
+      note: >-
+        **reached through search excerpts on 2026-10-17, not read in full**: this container cannot
+        fetch either PDF, and the quoted phrase is the excerpt's. Four nut-and-bolt assemblies and
+        one umbilical guillotine; each is its own key because a staging with three of four nuts
+        severed is STR-05's mechanism, and a single `staged` flag could not express it. Whether each
+        assembly has one initiator or two is not modelled — the continuity channel is per device
+    fires_lm_ascent_jettison: [docking_ring_charge]
+    fires_lm_ascent_jettison_provenance:
+      basis: historical
+      source: >-
+        the Apollo 10 Flight Journal's annotation of the LM jettison (nasa.gov AFJ,
+        `as10-day5-pt23.html`): "CSM/LM Final Sep 1 switch - CM panel 2 … held in the down position
+        to trigger detonation of the explosive ring charge that runs around the docking collar to
+        sever it from the CM docking tunnel forward bulkhead"
+      note: >-
+        reached through a search excerpt on 2026-10-17 and not fetched. The charge is the CSM's own
+        hardware, not the LM's — the docking ring leaves with the ascent stage — which is why it is a
+        device of the event and not of `pyro_lm_separation`. "Final Sep 1" implies a second switch;
+        the redundancy is one device here, for the reason the interstage note gives
+    fires_lm_undocking: UNCONFIGURED
+    fires_lm_undocking_note: >-
+      undocking is the probe and the ring latches rather than a pyrotechnic separation as far as the
+      sources reached say — the docking subsystem description is a mechanical latch system — but no
+      source reached says in as many words that no pyro fires, and `[]` is a claim. The rule reads
+      this list only when `lm_undocking` has been executed, so the debt is a gap on that tick and
+      nowhere else
+    fires_pyro_fire: UNCONFIGURED
+    fires_pyro_fire_note: >-
+      `pyro_fire`'s own row says its configuration "depends on the device", and `execute_event` has
+      no device argument, so the generic event cannot name what it fires. What would close it is a
+      device argument on the verb, keyed by this state's `device_id`, or the event's removal
     one_way: true
     requires_arm: true
     provenance:
@@ -261,9 +417,18 @@ state:
     node: internal
     method: discrete
     unit: "map[latch_id,enum[open,engaged,released,failed]]"
+    # **The verb drives the mechanism and the mechanism reports back**, and the two halves are two
+    # states now: `latch_drive` is what the crew last commanded and this is where each latch is. The
+    # rule puts every latch at the drive's position. `failed` is the fault path's to write (STR-02,
+    # STR-03), and until it can inject one the rule has no failed latch to leave where it is.
     moved_by:
-      - "trigger:set_docking_latch"
-      - "logic:the latch mechanism's own report: the verb drives the mechanism and the mechanism reports back"
+      - "logic:the latch mechanism's own report: every latch that has not failed follows `latch_drive`"
+    latches:
+      [latch_01, latch_02, latch_03, latch_04, latch_05, latch_06,
+       latch_07, latch_08, latch_09, latch_10, latch_11, latch_12]
+    latches_provenance:
+      basis: derived
+      relation: "one key per latch of `docking_interface.latches`, twelve; the ids are this model's, because the sources number no latches"
     dwell:
       min_on_s: 1
       min_off_s: 1
@@ -275,6 +440,43 @@ state:
         only means something if the individual latches are modelled. A count cannot express
         `eleven of twelve engaged`, and `eleven of twelve` is the state a crew has to reason
         about.
+  - id: latch_drive
+    node: internal
+    method: discrete
+    unit: "map[latch_scope,enum[none,engage,release]]"
+    initial:
+      all: engage
+      one: none
+    initial_provenance:
+      basis: derived
+      relation: >-
+        `mission.yaml#phases`' first row names `csm_lm_docked`, and the hard dock is what engages the
+        ring ("at contact 12 latches mounted on the CM docking ring are automatically activated",
+        `docking_interface.provenance`), so the drive standing at MET 0 is `engage` on every latch and
+        no single latch has been worked. `docking_latch_state` reads all twelve engaged from it on the
+        first tick
+      source: mission.yaml:phases.translunar_coast.configurations[0]
+    moved_by: ["command:set_docking_latch"]
+    command_value:
+      - verb: set_docking_latch
+        argument: state
+        key: latch
+        maps:
+          engage: engage
+          release: release
+        why: >-
+          the verb's two arguments are the two halves of this state: `latch` is the key (`all` or
+          `one`) and `state` is the value. Keyed by scope rather than one value because the two
+          scopes act on disjoint latches — `all` on every latch that has not failed, `one` on a
+          failed latch — so a later `all` cannot undo the meaning of an earlier `one`
+    provenance:
+      basis: derived
+      relation: >-
+        the command half of `docking_latch_state`'s mover, which said "the verb drives the mechanism
+        and the mechanism reports back" with one state for both halves. Held between commands by
+        the effect path. What `one` does to a failed latch — whether a crew in the tunnel can re-cock
+        it, and with what chance — is owed. Nothing can fail a latch until the fault path injects
+        STR-02 and STR-03, so the `one` drive is recorded and acts on nothing yet
   - id: relief_valve_state
     node: internal
     method: discrete
@@ -336,13 +538,48 @@ state:
     node: internal
     method: algebraic
     unit: "g/s"
+    # **What the rule computes, and what it refuses to.** A sealed structure leaks nothing beyond the
+    # nominal cabin leak, which ECLSS already books whole (`vehicle.yaml#consumables.leak`) and which
+    # no source divides between seals and joints — `hatch_crew_csm.seal_leak_g_s` says why a share
+    # would be invented. So on a sealed vehicle this is zero *in excess of nominal*, and it is that
+    # excess the fleet's elimination is after. The structure is sealed when every hatch with
+    # pressure behind it is `latched` and, while docked, the ring has at least `seal_min_engaged`
+    # latches engaged. An unsealed path with pressure behind it vents at a rate its aperture and
+    # seal set, and those are unset, so the rule returns no value and names the path: that tick is a
+    # gap rather than a plausible number. The seeded leaks (STR-01, STR-08, STR-11) add here once
+    # the fault path can inject them.
+    pressure_floor_psid: 0.5
+    pressure_floor_provenance:
+      basis: derived
+      relation: "profiles.yaml#thresholds.hatch_open_with_pressure.assert: the differential below which the vehicle already treats a hatch as safe to have open, so a path with less than this behind it is not venting a cabin"
+      source: domains/structure/profiles.yaml:thresholds.hatch_open_with_pressure.assert
+    seal_min_engaged: 3
+    seal_min_engaged_provenance:
+      basis: historical
+      source: >-
+        the CSM docking subsystem description (Apollo 11 CSM News Reference, pp. 87-92, ALSJ
+        `CSM11_Docking_Subsystem_pp87-92.pdf`): "locking of any 3 of the 12 latches is sufficient to
+        assure a pressure-tight seal"
+      note: >-
+        reached through a search excerpt on 2026-10-17, which cut the sentence at "suf"; the PDF
+        could not be fetched from this container. The figure is the seal, not the structure: three
+        latches hold pressure and twelve are what the docked stack is rated to carry loads on, which
+        is why `latch_disagreement` still asserts below twelve
+    pascals_per_psi: 6894.757293168361
+    # Which cabin is behind which hatch. The two keys are `hatch_state`'s `hatch_id`, and the values
+    # are ECLSS's pressure states, which this domain reads through `cabin_atm` and `lm_cabin_atm`.
+    hatch_cabin:
+      hatch_crew_csm: csm_cabin_pressure_pa
+      hatch_crew_lm: lm_cabin_pressure_pa
     provenance:
       basis: apollo
       ref: "apollo_diode.md:209"
       note: >-
         the structure's own contribution to the leak, as distinct from the ECLSS compartment's
         total. Two channels rather than one because a hatch seal and a plumbing joint are
-        different faults with different fixes, and the sum cannot tell them apart.
+        different faults with different fixes, and the sum cannot tell them apart. Computed by
+        `domains/structure/rules.py` as the excess over the nominal cabin leak; see the comment
+        above for why the nominal share is not this state's to carry.
 
 # --------------------------------------------------------------------------------------
 # Components. Passive hardware is an observable object with no command interface
@@ -389,30 +626,39 @@ components:
   - id: docking_interface
     kind: discrete
     class: interface
-    latches: UNCONFIGURED
+    latches: 12
     provenance:
-      basis: UNCONFIGURED
+      basis: historical
+      source: >-
+        two documents that agree: the CSM docking subsystem description (Apollo 11 CSM News
+        Reference, pp. 87-92, ALSJ `CSM11_Docking_Subsystem_pp87-92.pdf`), "at contact 12 latches
+        mounted on the CM docking ring are automatically activated to form a pressure-tight seal";
+        and K. Bloom and G. Campbell (North American Rockwell), "The Apollo docking system"
+        (NTRS 19720005743): "twelve automatic latches mounted on the CSM docking ring provide for
+        structural integrity between the vehicles and for tunnel sealing during crew transfer"
       note: >-
-        `structure.docking_latches` is registered as a count and the debt is real: without the
-        number, `eleven of twelve engaged` cannot be distinguished from `all twelve`, and the F-15
-        chain's docking half has nothing to be partial against. `apollo_diode.md:208` publishes the
-        channel and not the number. What would answer it is the docking interface's own drawing or
-        the LM-3 Systems Handbook — `LM-3_Systems_Handbook.pdf` and the LM-3 Apollo Operations
-        Handbooks are indexed in the library and are 21-243 MB each, so they are the next thing to
-        acquire. Searched, and none has it: `csm_ecs_study_guide.pdf`, `lm_ecs_study_guide.pdf`, `lunar_module_environmental_control_subsystem.pdf`, `ApolloTrainingElectricalPowerSystemStudyGuide.pdf`, `lm_propulsion_rcs_study_guide.pdf`, `Apollo_Mission_E_Spacecraft_Reference_Trajectory_Vol4_Consumables_Analysis.pdf` and the CSM/LM Operational Data Book Volume III — the seven documents this folder has acquired and extracted. That is a bounded search rather than an exhaustive one, and naming it is what makes it checkable.
+        **both reached through search excerpts on 2026-10-17, and neither fetched** — this container
+        cannot reach nasa.gov, apollojournals.org or ntrs.nasa.gov — so the quoted phrases are the
+        excerpts' and a later round with the PDFs should hold them to the page. The seven documents
+        this folder had acquired did not have the number. It is the key space of
+        `docking_latch_state`, and the twelve `latch_disagreement` carried as a placeholder shape is
+        now the published count.
   - id: pyro_lm_separation
     kind: discrete
     class: pyro
-    device_count: UNCONFIGURED
+    device_count: 5
     provenance:
-      basis: UNCONFIGURED
+      basis: historical
+      source: >-
+        `lm_structures_study_guide.pdf`: staging severs "the four interstage nuts and bolts as well as
+        the interstage umbilicals" — four nut-and-bolt assemblies and the umbilical guillotine, which
+        are `pyro_fired.fires_descent_stage_separation`
       note: >-
-        the continuity channel is registered as `structure.pyro_continuity_[n]`, so the count is an
-        argument to the channel rather than a constant in the model — which is what makes the debt
-        survivable, not what closes it. `lm_ecs_study_guide.pdf` describes the separation
-        pyrotechnics qualitatively ("when the initiators are fired, the gas generated drives the
-        cutter blades") and gives no number; `lm_propulsion_rcs_study_guide.pdf`'s only hit is a test
-        set's part number. Searched, and none has it: `csm_ecs_study_guide.pdf`, `lm_ecs_study_guide.pdf`, `lunar_module_environmental_control_subsystem.pdf`, `ApolloTrainingElectricalPowerSystemStudyGuide.pdf`, `lm_propulsion_rcs_study_guide.pdf`, `Apollo_Mission_E_Spacecraft_Reference_Trajectory_Vol4_Consumables_Analysis.pdf` and the CSM/LM Operational Data Book Volume III — the seven documents this folder has acquired and extracted. That is a bounded search rather than an exhaustive one, and naming it is what makes it checkable.
+        reached through a search excerpt on 2026-10-17 and not fetched. This said the count was
+        unpublished after a search of seven documents that did not include the LM structures study
+        guide; `lm_ecs_study_guide.pdf` describes the cutters qualitatively and gives no number. The
+        CSM's docking ring charge is the sixth device on the vehicle and is not this component's: it
+        is CSM hardware that leaves with the LM.
   - id: relief_valve
     kind: discrete
     class: valve
@@ -523,7 +769,8 @@ one_way_events:
       ref: "apollo_diode.md:343"
 
 open_debts:
-  - "**An event is not a device.** `pyro_fired` is keyed by `device_id` and `execute_event` names an `event` — `lm_undocking`, `descent_stage_separation`, `lm_ascent_jettison`, `pyro_fire`. `one_way_events` declares what each event changes (`from_configuration`, `to_configuration`, `consequence`) and no device, so the command is declared against a key the argument cannot produce. What is owed is the pyro device list and which events fire which — the same list `structure.pyro_continuity_[n]` is published over."
-  - "The latch count, the pyro device count, the tunnel volume and the relief valve's crack pressure are all unpublished and declared unset above. Four numbers, and each of them is the difference between a chain that can be modelled and one that can only be described."
+  - "**Two events still name no devices.** `pyro_fired.fires_lm_undocking` and `fires_pyro_fire` are unset: undocking is believed to be the probe and latches with no pyro, and no source reached says so; `pyro_fire` cannot name a device because `execute_event` has no device argument. Either one is a gap on the tick its event is executed and nowhere else."
+  - "The tunnel volume and the hatch seal leak rates are unpublished and declared unset above. Without them an unsealed hatch or ring with pressure behind it is a gap in `structural_leak_g_s` rather than a vent rate."
+  - "**Working a single latch is owed.** `set_docking_latch` takes `latch: one`, and nothing says whether a crew in the tunnel can re-cock a failed ring latch or with what chance; the `one` drive is recorded and acts on nothing until the fault path can fail a latch, and what it does then is this debt."
   - "The pressure vessel's proof and burst pressures are unset, and deliberately: apollo_diode.md:753 puts finite-element structural mechanics out of scope, so a vessel failure model is not wanted — but the *differential limit* that a relief valve protects is, and it is owed."
   - "Micrometeoroid and debris damage is not modelled. It is the one structural hazard that is genuinely stochastic on a lunar mission, and it belongs in the scenario layer rather than in the domain."
