@@ -3369,7 +3369,10 @@ def test_the_linter_holds_a_domain_s_declared_reads(tmp_path):
     # A node the reading domain writes itself is not a cross-domain read: `E-O2-FC` carries
     # `fc_o2_draw` back into `fuel_cell` and both are power's, so the unbroken corpus above is the
     # evidence that this case is silent rather than a fixture that would pass either way.
-    assert "fc_o2_draw" not in report.debts[0], "an internal read was counted as cross-domain"
+    # ECLSS's tank rule reads `fc_o2_draw` across domains, which is a real read, so the check names
+    # the reading domain.
+    assert "power->fc_o2_draw" not in report.debts[0], "an internal read was counted as cross-domain"
+    assert "eclss->fc_o2_draw" in report.debts[0], report.debts[0]
 
 
 def test_the_linter_holds_every_draw_on_a_stock(tmp_path):
@@ -12808,6 +12811,7 @@ def test_every_stock_declares_where_it_starts():
         "impulse_total",
         "gyro_bias",
         "o2_supply_pressure_psi",
+        "suit_fan",
         "suit_loop_flow_cfm",
         "dps_throttle_pct",
         "chamber_pressure_pct",
@@ -12852,9 +12856,11 @@ def test_every_stock_declares_where_it_starts():
     # Zero everywhere except the supply tank's pressure, which is the one seeded sentinel value that
     # is not an accumulator's origin — and, from round 67, `auto`, which is not a number at all and
     # is the reason the value assertions below name their states rather than ranging over the map.
-    # The three switch maps are maps, which a set cannot hold, so they are asserted by name below.
+    # The four switch maps are maps, which a set cannot hold, so they are asserted by name below.
     switch_maps = {k for k, v in seeded_integrators["internal"].items() if isinstance(v, dict)}
-    assert switch_maps == {"coolant_pump", "evaporator_feed", "radiator_bypass"}, switch_maps
+    assert switch_maps == {"coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan"}, (
+        switch_maps
+    )
     assert {v for k, v in seeded_integrators["internal"].items() if k not in switch_maps} == {
         0.0,
         35.0,
@@ -15346,7 +15352,8 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     # And the headline is the count of *declared* edges, which is the two forms together.
     scalar = [e for e in edges if e.sensitivity.get("value") not in (None, "UNCONFIGURED")]
     tables = [e for e in edges if e.sensitivity.get("regimes")]
-    assert len(tables) == 8, f"the regime edges changed: {[e.id for e in tables]}"
+    # 8 -> 10 with `E-O2-HTR-BUSA` and `-BUSB`, the O2 tank heaters' on/off load on each main bus.
+    assert len(tables) == 10, f"the regime edges changed: {[e.id for e in tables]}"
     # 69 -> 74: ADR 0003 quiet coast: the thermal, power and comms rules together (E-PUMP-COOL, E-RAD-THERM and E-AMP-HEAT among them).
     # A floor since lane 0 (`SENSITIVITY_FLOOR`); the tool's figure is held to this count below.
     assert len(scalar) + len(tables) >= SENSITIVITY_FLOOR, len(scalar) + len(tables)
@@ -15654,6 +15661,54 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
     )
 
 
+def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
+    """ADR 0004 §Direction, amended 2026-10-17: `set_o2_source`'s hazard is its `source` and its `flow`
+    together. A cabin losing pressure is fed by cutting its oxygen (an isolated source, or a flow of
+    `off`), and the service module's reserve is spent only by a flow drawn from `primary`, so neither
+    guard can name its direction with one argument. A condition may list its arguments and name the
+    combinations it applies to; the linter reads each combination as it reads a single value, and HELP
+    prints them."""
+    o2 = yaml.safe_load((VEHICLE / "domains" / "consumables" / "commands.yaml").read_text())
+    verb = next(v for v in o2["commands"] if v["verb"] == "set_o2_source")
+    caution, reserve = verb["interlocks_when"]
+    assert caution["argument"] == reserve["argument"] == ["source", "flow"]
+    assert ["primary", "nominal"] not in caution["values"] and ["isolated", "high"] in caution["values"]
+    assert reserve["values"] == [["primary", "low"], ["primary", "nominal"], ["primary", "high"]]
+
+    generated = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "generate_help.py"), "--dir", str(VEHICLE)],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    assert "`o2_reserve_10` — only when (`source`, `flow`) is one of (`primary`, `low`)" in generated, generated[-800:]
+
+    block = "        values:\n          - [primary, low]\n          - [primary, nominal]\n          - [primary, high]\n"
+
+    def refusal(name: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / "domains" / "consumables" / "commands.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    refusal("o2-one", block, block.replace("[primary, low]", "[primary]"), "not a list of 2 values")
+    refusal("o2-bad", block, block.replace("[primary, low]", "[primary, max]"), "which those arguments cannot take")
+    refusal("o2-twice", block, block.replace("[primary, nominal]", "[primary, low]"), "name each combination once")
+    every = "        values:\n" + "".join(
+        f"          - [{s}, {f}]\n" for s in ("primary", "surge", "isolated") for f in ('"off"', "low", "nominal", "high")
+    )
+    refusal("o2-every", block, every, "names every combination of ['source', 'flow']")
+    refusal(
+        "o2-argument",
+        "        argument: [source, flow]\n        values:\n          - [primary, low]",
+        "        argument: [source, vehicle_note]\n        values:\n          - [primary, low]",
+        "which is not an enum argument of this verb",
+    )
+
+
 def test_a_command_value_says_which_argument_carries_the_value():
     """The rule proved the verb could say *a* value, and nothing said what each value becomes.
 
@@ -15748,8 +15803,8 @@ def test_a_command_value_says_which_argument_carries_the_value():
                 targets[key] = str(source)
     # Five quantity states joined the eight mode ones this round, and one keyed state declares
     # nothing but its key. 17 -> 21 with ADR 0003: thermal's `coolant_pump`, `evaporator_feed` and
-    # `radiator_bypass` and power's `load_enabled`, each keyed.
-    assert declared == 21, declared
+    # `radiator_bypass` and power's `load_enabled`, each keyed; 22 with ECLSS's `suit_fan`.
+    assert declared == 22, declared
     assert sorted(constants) == [
         "rcs.thruster_valve.isolate_rcs_manifold",
         "structure.pyro_fired.execute_event",
@@ -16190,8 +16245,9 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     # stages it and leaves `link_snr` to the rule. The other five `computed` effects name
     # `UNCONFIGURED`, which is the honest answer for an input nobody has declared.
     # 14 -> 20 with ADR 0003: `set_coolant_pump`, `set_evaporator_feed`, `set_radiator_bypass`
-    # (thermal), `set_load` (power), `set_power_amplifier` and `play_recorder` (comms).
-    assert len(applied) == 20, applied
+    # (thermal), `set_load` (power), `set_power_amplifier` and `play_recorder` (comms); 21 with
+    # `set_suit_fan` (ECLSS).
+    assert len(applied) == 21, applied
     assert "select_antenna" in applied
     # 7 -> 5: `set_coolant_pump` and `set_power_amplifier` stopped owing (ADR 0003): the pump's speed
     # selects `coolant_pump` (thermal) and the amplifier's power selects `transmitter_on` (comms).
@@ -20081,7 +20137,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
-    assert len(values["internal"]) == 27, sorted(values["internal"])
+    # 27 -> 28 with ECLSS's `suit_fan`.
+    assert len(values["internal"]) == 28, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
@@ -20933,8 +20990,9 @@ def test_the_oxygen_supply_pressure_is_a_state_with_a_published_starting_value(t
 
     This test holds the two halves of that: the state's figure against the document's own words (the
     citation is in the field, so this is a reader for it), and the channel's value against the band
-    apollo's own threshold declares. What is *not* claimed is the dynamics — the state owes its time
-    constant and its driver, and the debt says so.
+    apollo's own threshold declares. The dynamics are the AOH's heater relay now (SM2A-03-BLOCK II-(1)
+    pp. 2.6-12/13, `domains/eclss/rules.py`), held by `tests/test_eclss_rules.py`; this test holds
+    that the state no longer owes them.
     """
     import sys as _sys
 
@@ -20952,15 +21010,16 @@ def test_the_oxygen_supply_pressure_is_a_state_with_a_published_starting_value(t
     # nobody can check, which is the whole reason the source law exists.
     assert "csm_ecs_study_guide.pdf" in source and "PDF p. 12" in source
     assert "900 psig" in source
-    # And what it owes is declared rather than implied: no time constant, no driver, and a provenance
-    # block whose searches are recorded.
-    assert state["tau_s"] == "UNCONFIGURED"
-    assert state["provenance"]["basis"] == "UNCONFIGURED"
-    assert "Searched:" in state["provenance"]["note"]
+    # It owed a time constant and a driver until the AOH's own law replaced the lag: it is a ruled
+    # `dynamics` state with a sourced provenance, and the heater relay it integrates over has a node.
+    assert state["method"] == "dynamics" and "tau_s" not in state
+    assert state["provenance"]["basis"] == "historical"
+    assert "595.87 Btu/hour" in state["provenance"]["source"]
+    assert state["heater_state"] == "o2_tank_heaters"
     # It is on the sentinel, so its order is declared — and the declared order names every sentinel
     # state, which is the rule the linter holds.
     sentinel = [s["id"] for s in eclss["state"] if s.get("node") == "internal"]
-    assert sorted(sentinel) == ["o2_supply_pressure_psi", "suit_loop_flow_cfm"], sentinel
+    assert sorted(sentinel) == ["o2_supply_pressure_psi", "suit_fan", "suit_loop_flow_cfm"], sentinel
     assert sorted(eclss["internal_order"]) == sorted(sentinel)
     assert eclss["internal_order_note"]
 
