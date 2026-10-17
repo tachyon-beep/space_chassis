@@ -221,13 +221,14 @@ jobs:
 
   episode-window:
     # Policy A through the window over the whole episode (aurora/tests/test_quiet_coast_window.py,
-    # ADR 0004): the real executive at m = 2, a SIGKILL at tick 60,000 and a resume. It needs the
-    # root's requirements, and runs from the root, where its marker is registered.
+    # ADR 0004): the real executive at m = 2, a SIGKILL at tick 60,000 and a resume, then the
+    # evaluator's replay of the record. It needs the root's requirements, and runs from the root,
+    # where its marker is registered. Its first hosted run was still going at 112 minutes.
     name: quiet-coast episode through the window
     needs: changes
     if: ${{ needs.changes.outputs.vehicle == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5

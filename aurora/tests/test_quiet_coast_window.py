@@ -118,7 +118,7 @@ def shortened(policy_id: str):
     return make
 
 
-def evaluator(*args: str, timeout: float = 3600) -> subprocess.CompletedProcess:
+def evaluator(*args: str, timeout: float = 3 * 3600) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(EVAL), *args],
         capture_output=True,
@@ -219,7 +219,8 @@ def drive_and_judge(
         if kill_at is not None:
             # The driver's own polls until the mission passes `kill_at` (the opening commands taken,
             # the stand-down not yet due), then a SIGKILL mid-run.
-            give_up = time.monotonic() + wall + 600
+            # A loaded runner keeps the executive below the clock's rate, so the limits are twice it.
+            give_up = time.monotonic() + 2 * wall + 600
             while (episode_driver.mission_tick(window) or 0) < kill_at:
                 assert time.monotonic() < give_up, (driver.log, executive.tail())
                 driver.step()
@@ -228,7 +229,7 @@ def drive_and_judge(
             executive.kill()
         # On to the end of the judged run: every command due by then submitted (a policy's later
         # commands, past a shortened run's end, are never due).
-        give_up = time.monotonic() + wall + 900
+        give_up = time.monotonic() + 2 * wall + 900
         while (episode_driver.mission_tick(window) or 0) < ticks:
             assert time.monotonic() < give_up, (driver.sent, driver.log[-3:], executive.tail())
             driver.step()
@@ -460,6 +461,8 @@ def test_policy_a_through_the_window_over_the_whole_episode(tmp_path_factory):
         path.write_text(yaml.safe_dump(policy, sort_keys=False))
         return SCENARIO, path
 
-    run = window_run(tmp_path_factory, "full_a", late, 120_000, 60_000)
+    # One replay, not two: the shortened runs show a second replay gives the same trace hash, and
+    # each replay of the whole record is most of an hour on a hosted runner.
+    run = window_run(tmp_path_factory, "full_a", late, 120_000, 60_000, twice=False)
     assert_the_transport(run, 120_000)
     assert run.record["class"] == EXPECTED["a"], run.record["first_violation"]
