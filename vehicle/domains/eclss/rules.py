@@ -1,5 +1,6 @@
-"""ECLSS's domain rules (D5, `plant.md` §2): the suit circuit's flow, the cabin leak by gas, and the
-oxygen supply tanks' pressure under their heater relay.
+"""ECLSS's domain rules (D5, `plant.md` §2): the suit circuit's flow, the cabin leak by gas, the
+regulator's draw on the store its source selects, and the oxygen supply tanks' pressure under their
+heater relay.
 
 Every number a rule uses is a field on its own state in `components.yaml`, where its provenance is.
 Each function is `rule(inputs, params, dt) -> value`; `None` is a gap, not a value.
@@ -43,6 +44,39 @@ def _leak_share(inputs, params, dt):
         return 0.0
     share = max(float(inputs[params["gas_stock"]]), 0.0) / total
     return float(params["leak_kg_per_h"]) / 3600.0 * share
+
+
+def _o2_supply(inputs, params, dt):
+    """The regulator's demand from one store: the nominal flow while the vehicle's source is one
+    this store answers to (`draws_on`, one member or a list) and its flow band is not `off`, else
+    nothing. The cabin regulator's position does not gate it: that state is one value for both
+    vehicles, so an LM command would stop the CSM's oxygen, and a per-vehicle position is owed.
+
+    The store is debited by this value on the *next* tick, at that tick's step, so the flow stops
+    once the store holds less than a tick of it: a flow scaled down to the last milligrams over this
+    step would be credited to the cabin now and could outrun the store on a shorter step next.
+    """
+    for switch in (params["source_switch"], params["flow_switch"]):
+        if switch["element"] not in inputs[switch["state"]]:
+            return params.no_value(f"{switch['state']} names no {switch['element']!r}")
+    source, flow = params["source_switch"], params["flow_switch"]
+    selected = inputs[source["state"]][source["element"]]
+    # Optional: `RuleParams` refuses a missing key rather than raising `KeyError`, so ask by name.
+    if "no_store" in list(params) and selected in params["no_store"]:
+        return params.no_value(
+            f"{source['state']}[{source['element']}] is {selected!r}, a store this vehicle does not have"
+        )
+    draws_on = params["draws_on"]
+    if isinstance(draws_on, str):
+        draws_on = [draws_on]
+    if selected not in draws_on:
+        return 0.0
+    if inputs[flow["state"]][flow["element"]] == "off":
+        return 0.0
+    demand = float(params["nominal_kg_s"])
+    if float(inputs[params["stock_state"]]) < demand * dt:
+        return 0.0
+    return demand
 
 
 def _tank_heaters(inputs, params, dt):
@@ -103,6 +137,9 @@ def _tank_pressure(inputs, params, dt):
 RULES = {
     "suit_loop_flow_cfm": _suit_loop_flow,
     "o2_tank_heaters": _tank_heaters,
+    "cabin_o2_supply_csm_kg_s": _o2_supply,
+    "cabin_o2_surge_supply_csm_kg_s": _o2_supply,
+    "cabin_o2_supply_lm_kg_s": _o2_supply,
     "o2_supply_pressure_psi": _tank_pressure,
     **{
         f"{cabin}_leak_{gas}_kg_s": _leak_share
