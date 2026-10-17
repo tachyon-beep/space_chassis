@@ -43,7 +43,9 @@ Maintainer items (accepted):
 3. **Reactants per ampere.** The fuel-cell reactant and water transfers are computed from module
    current, not power.
 4. **Pump as flow.** The glycol pump's command moves loop flow as a fraction of the published
-   200 lb/h, not a speed in rpm.
+   200 lb/h, not a speed in rpm. Extended 2026-10-17 by the coordinator under John's delegation of
+   13:48Z ("Fraction"): the pump's own shaft speed is `pump_1_speed_frac`, normalized to the rated
+   speed, because no source gives the rated rpm.
 5. **Defect fixes.** `E-WATER-RAD` reads the evaporator's duty, not the radiator's rejection; the
    amplifier's draw has one home (the load inventory); `comm_amp_t`'s dissipation derives from the
    amplifier's input and efficiency.
@@ -68,7 +70,10 @@ Operator items (proposed; John decides, `09-quiet-coast-episode.md` §8 and the 
    `tests/test_quiet_coast_scenario.py`.
 10. B5 — zone start temperatures are the model's derived equilibrium.
 11. Thermal node masses and conductances are `chosen`, constrained to reproduce the flown coast
-    rejection of 1,170–1,470 W (SP-368 p. 525), each labelled with that bound.
+    rejection of 1,170–1,470 W (SP-368 p. 525), each labelled with that bound. Extended 2026-10-17
+    by the coordinator under John's delegation of 13:48Z ("Chosen"): the two equipment bays
+    (`zone_csm_service_t`, `zone_lm_descent_t`) take this item's label too, starting in the middle of
+    their declared limits, with no source found for either bay's lump.
 
 ## Acceptance and consequences
 
