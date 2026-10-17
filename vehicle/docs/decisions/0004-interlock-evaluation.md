@@ -255,11 +255,13 @@ Apollo rule the arc review set), and the fleet gets no conditional cutoff it arm
 change is an in-burn command.
 
 `start_burn` stays guarded whole, as above: no argument value is the recovery, and `stop_burn` is
-the safing verb. Its admission list is `feed_pressure_low`, `pressurant_low`, `prop_cutoff_guard_5`
-and `dps_throttle_band`. `pressurant_low` no longer carries a `gated_by` (it is the SPS PRESS
-light's 157 psia setting, AOH p. 2.4-41, in every phase). What still keeps the verb from being
-admitted: `prop_cutoff_guard_5` reads a node-sourced point, which the engine's `resolve_interlock`
-does not resolve until the fault-injection lane's change lands, and `dps_throttle_band` is a band
-on a commanded argument rather than on a reading. Neither the in-burn evaluation nor its gate on
+the safing verb. Its admission list is `feed_pressure_low`, `pressurant_low` and
+`prop_cutoff_guard_5`. `dps_throttle_band` left it too, by the same decision: it is the 65-92.5 %
+no-go region of `set_throttle`'s commanded argument, not a reading, so it could never resolve here;
+it stays on `set_throttle`, where it becomes a refused sub-range of the numeric argument (engine
+work). `pressurant_low` no longer carries a `gated_by` (it is the SPS PRESS light's 157 psia
+setting, AOH p. 2.4-41, in every phase). What still keeps the verb from being admitted:
+`prop_cutoff_guard_5` reads a node-sourced point, which the engine's `resolve_interlock` does not
+resolve until the fault-injection lane's change lands. Neither the in-burn evaluation nor its gate on
 mainstage exists yet: the engine evaluates no `gated_by`, and nothing moves an engine to mainstage
 until `start_burn` stages its sequence. Both are engine work, routed to the fault-injection lane.
