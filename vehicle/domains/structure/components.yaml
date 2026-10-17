@@ -367,30 +367,34 @@ state:
     # express `eleven of twelve engaged`, and `eleven of twelve` is the state a crew has to reason
     # about". The registry has carried `map[...]` channels since `controls.breakers`.
     unit: "map[hatch_id,enum[closed,latched,open]]"
-    initial: UNCONFIGURED
+    # Key order is the `hatch_cabin` order and the mission's, because `check_launch_state` compares
+    # the two declarations as written.
+    initial:
+      hatch_crew_csm: latched
+      hatch_crew_lm: latched
+    initial_provenance:
+      basis: chosen
+      source: mission.yaml:launch_state
+      reason: >-
+        both crew hatches start `latched`. The CSM half is published: the Apollo 17 CSM Launch
+        Checklist (Basic), PDF p. 20, sets `SIDE HATCH … GEAR BOX sel - LATCH … LOCK PIN REL KNOB -
+        LOCK … LOCK PIN ind - flush`, a locked hatch rather than a shut one. The LM half is a
+        decision, taken by the project coordinator under John's delegation of scope questions
+        (2026-10-17 13:48Z, "preference more fidelity where it doesn't start creating significant
+        delivery risk"): no LM stowage or acceptance record has been found for the forward hatch at
+        this model's post-extraction MET 0, the three LM crew checklists reach only the overhead
+        hatch and only a hundred hours later (`OVHD HATCH - LOCKED`), and the LM cabin the model
+        starts with is pressurised, which a hatch that was merely `closed` would not guarantee. The
+        basis is `chosen` rather than `historical` because half of the map is the decision; an LM
+        stowage or acceptance record that says otherwise replaces it
     initial_note: >-
-      each hatch's position at MET 0. The state is a map over `hatch_id` and its three values are
-      `closed`, `latched` and `open`; the vehicle is pressurised at the epoch, which says the hatches
-      are not `open` and does not distinguish `closed` from `latched` — and that distinction is the
-      whole of `apollo_diode.md:207`'s "incompatible with pressure" interlock. The launch checklist
-      does reach the CSM's own hatches (p. 20): `FWD HATCH … ACTR HNDL sel - stow/check locked` and
-      `SIDE HATCH … GEAR BOX sel - LATCH … LOCK PIN REL KNOB - LOCK … LOCK PIN ind - flush`, which is
-      a *locked* hatch rather than a merely shut one — and it reaches **one** of this state's two
-      ids. `hatch_crew_csm` is the CSM's crew hatch, distinct from the tunnel hatch removed and
-      reinstalled during post-docking operations (Apollo 17 checklist p. 58). The LM crew hatch is
-      a different article, and **there is
-      no LM launch checklist to hold**: the LM was never launched on its own — it flew inside the
-      SLA — and the HSI series that carries the CSM's launch checklist (481248) carries the LM's
-      *activation* checklist instead (481249, 481252, 481253). Round 84 read the three LM crew
-      checklists this folder holds against this state — `HSI-481253` Basic (p. 3-36, PREP FOR
-      UNDOCKING at 110:13), the Apollo 15 LM activation checklist (p. 2-34, at 100:13:56) and the
-      Apollo 11 LM systems activation checklist (ACT-62, at 100:40) — and all three reach the
-      overhead hatch only in flight, as a verification step: `OVHD HATCH - LOCKED`. That is a
-      position a hundred hours after the epoch, and reading it onto the epoch would be the mistake
-      this folder has already recorded once, when a *flight* checklist's bus-tie setting was read as
-      a launch one. So the source informs the CSM side and does not establish the LM crew hatch at
-      this model's post-extraction MET 0. What would close it: an LM stowage or acceptance record,
-      or an explicit initial-position decision justified for the post-extraction model event
+      each hatch's position at MET 0. `latched` is the one of the three that the pressure interlock
+      (`apollo_diode.md:207`, "incompatible with pressure") holds as compatible with a pressurised
+      cabin behind it, so the hatch-open thresholds and the leak rule start quiet and a crew has to
+      unlatch before either has anything to say. `hatch_crew_csm` is the CSM's crew hatch, distinct
+      from the tunnel hatch removed and reinstalled during post-docking operations (Apollo 17
+      checklist p. 58); `hatch_crew_lm` is the LM's forward EVA hatch, not the overhead docking
+      hatch
     moved_by:
       - "command:set_hatch_valve"
     command_value:

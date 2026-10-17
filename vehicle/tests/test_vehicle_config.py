@@ -8969,8 +8969,9 @@ def test_the_launch_state_is_declared_once_and_held_in_both_directions(tmp_path)
     assert after["cabin_regulator_position"] == "primary"
     assert after["computer_mode"] == "idle"
     assert after["mode"] == "auto"
+    assert after["hatch_state"] == {"hatch_crew_csm": "latched", "hatch_crew_lm": "latched"}
 
-    # Eleven positions are made by the block and the remaining two are still owed.
+    # Twelve positions are made by the block and the remaining one is still owed.
     mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
     assert sorted(mission["launch_state"]["states"]) == [
         "antenna_selection",
@@ -8981,6 +8982,7 @@ def test_the_launch_state_is_declared_once_and_held_in_both_directions(tmp_path)
         "computer_mode",
         "dps_state",
         "guidance_mode",
+        "hatch_state",
         "mode",
         "sps_state",
         "telemetry_rate",
@@ -8993,10 +8995,7 @@ def test_the_launch_state_is_declared_once_and_held_in_both_directions(tmp_path)
         and all(str(m).startswith("command:") for m in state.spec["moved_by"])
         and state.spec.get("initial") == "UNCONFIGURED"
     ]
-    assert sorted(owed) == [
-        "breaker_panel",
-        "hatch_state",
-    ], sorted(owed)
+    assert sorted(owed) == ["breaker_panel"], sorted(owed)
 
     def refusal(name: str, path: tuple[str, ...], old: str, new: str, needle: str) -> None:
         definition = copy_definition(fixture_dir(tmp_path, name))
@@ -9088,7 +9087,7 @@ def test_the_post_ejection_p00_and_dap_modes_share_one_source_bounded_cut(tmp_pa
     assert launch["states"]["mode"] == "auto"
     assert "computer_mode" in launch["sourced"]
     assert "mode" not in launch["sourced"]
-    assert sorted(launch["owed"]) == ["breaker_panel", "hatch_state"]
+    assert sorted(launch["owed"]) == ["breaker_panel"]
 
     avionics = yaml.safe_load((VEHICLE / "domains" / "avionics" / "components.yaml").read_text())
     computer = next(s for s in avionics["state"] if s["id"] == "computer_mode")
@@ -9218,8 +9217,9 @@ def test_a_published_launch_position_is_not_a_decision(tmp_path):
         "distinct from P06 standby",
     }
 
-    # Eleven positions: four settled by the start, five directly read from documents, and two
-    # derived through declared mappings (the link rate's mode and CMC DAP control ownership).
+    # Twelve positions: four settled by the start, five directly read from documents, two
+    # derived through declared mappings (the link rate's mode and CMC DAP control ownership), and
+    # the two crew hatches — half read from the checklist, half decided, so `chosen` and not cited.
     assert block["states"] == {
         "aps_state": "off",
         "dps_state": "off",
@@ -9232,6 +9232,7 @@ def test_a_published_launch_position_is_not_a_decision(tmp_path):
         "cabin_regulator_position": "primary",
         "computer_mode": "idle",
         "mode": "auto",
+        "hatch_state": {"hatch_crew_csm": "latched", "hatch_crew_lm": "latched"},
     }
 
     # Every state that cites the block agrees with it, and its `basis` says which half it is in.
@@ -9245,8 +9246,10 @@ def test_a_published_launch_position_is_not_a_decision(tmp_path):
         assert str(state["initial"]) == str(value), sid
         provenance = state.get("initial_provenance") or {}
         assert provenance.get("source") == "mission.yaml:launch_state", sid
-        expected = "historical" if sid in block["sourced"] else "derived"
-        assert provenance.get("basis") == expected, sid
+        # A position the block does not cite is settled by the start or derived through a mapping —
+        # or, for `hatch_state`, decided (`chosen`, whose `reason` the linter requires).
+        expected = {"historical"} if sid in block["sourced"] else {"derived", "chosen"}
+        assert provenance.get("basis") in expected, sid
 
     # The rate is the `high` profile's own number rather than a second copy of it — the same join
     # `derives` makes everywhere else.
@@ -9299,7 +9302,7 @@ def test_a_published_launch_position_is_not_a_decision(tmp_path):
         "",
         "and the block's `sourced` map does not cite it",
     )
-    # A locator for a position the block does not declare. `hatch_state` is still owed; `comm_mode`
+    # A locator for a position the block does not declare. `breaker_panel` is still owed; `comm_mode`
     # used to serve here and cannot now, because round 81 put
     # it in the block as a `derived` position — so citing it in `sourced` fires the *basis* join
     # instead, which is the next case down.
@@ -9308,7 +9311,7 @@ def test_a_published_launch_position_is_not_a_decision(tmp_path):
         mission_path,
         '    antenna_selection: "p. 56 (`S BD ANT OMNI - HI GAIN`), before docking at p. 57 and LM ejection at p. 59"\n',
         '    antenna_selection: "p. 56 (`S BD ANT OMNI - HI GAIN`), before docking at p. 57 and LM ejection at p. 59"\n'
-        '    hatch_state: "p. 10"\n',
+        '    breaker_panel: "p. 10"\n',
         "A locator for a position this block does not make is a citation nothing holds",
     )
     # A position the block makes from a *relation* and the block's own citation claiming a document
@@ -9388,11 +9391,12 @@ def test_the_launch_block_declares_what_it_owes_and_not_only_what_it_makes(tmp_p
     block = mission["launch_state"]
     made, owed = block["states"], block["owed"]
     assert isinstance(owed, dict), type(owed)
-    # Eleven made and two owed; `relief_valve_state` was the fourteenth machine and answered itself,
-    # so it is in neither map.
+    # Twelve made and one owed — `hatch_state` moved across on 2026-10-17, decided under John's
+    # delegation; `relief_valve_state` was the fourteenth machine and answered itself, so it is in
+    # neither map.
     assert len(made) + len(owed) == 13
     assert not (set(made) & set(owed))
-    assert sorted(owed) == ["breaker_panel", "hatch_state"]
+    assert sorted(owed) == ["breaker_panel"]
 
     states: dict[str, dict] = {}
     for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
@@ -9455,54 +9459,41 @@ def test_the_launch_block_declares_what_it_owes_and_not_only_what_it_makes(tmp_p
     # debt something it has already paid.
     refusal(
         "owed-and-paid",
-        ("domains", "structure", "components.yaml"),
-        '    unit: "map[hatch_id,enum[closed,latched,open]]"\n    initial: UNCONFIGURED\n',
-        '    unit: "map[hatch_id,enum[closed,latched,open]]"\n    initial: {hatch_crew_csm: latched, hatch_crew_lm: latched}\n',
+        ("domains", "crew", "components.yaml"),
+        '    unit: "map[breaker_id,enum[in,out,tripped]]"\n    initial: UNCONFIGURED\n',
+        '    unit: "map[breaker_id,enum[in,out,tripped]]"\n    initial: {cb_main_a: in}\n',
         "still owes it. A debt the state has already paid is a debt left standing",
     )
     # A debt owed on a machine that does not exist.
     refusal(
         "owed-nothing-real",
         mission_path,
-        "    hatch_state: >-\n      each modeled crew hatch's position",
+        "    breaker_panel: >-\n      the `breaker_id` key space",
         "    not_a_state_at_all: >-\n      a debt owed on a machine that does not exist.\n"
-        "    hatch_state: >-\n      each modeled crew hatch's position",
+        "    breaker_panel: >-\n      the `breaker_id` key space",
         "owes 'not_a_state_at_all', which is not a state of any domain",
     )
     # And a debt named without saying what would close it, which is a debt nobody can pay.
     refusal(
         "owed-says-nothing",
         mission_path,
-        "    hatch_state: >-\n"
-        "      each modeled crew hatch's position after extraction. The CSM side hatch is locked in the\n"
-        "      launch checklist (p. 20), but the post-docking tunnel hatch is removed and reinstalled\n"
-        "      (p. 58), and it is a different hatch id. The modeled LM crew hatch is the forward surface\n"
-        "      EVA hatch, not the overhead docking hatch. It needs a forward-hatch stowage or acceptance\n"
-        "      source, or an explicit post-extraction initial-position decision; the overhead hatch's\n"
-        "      later flight configuration would not answer this event\n",
-        '    hatch_state: ""\n',
-        "owes 'hatch_state' with nothing said about what would close it",
+        "    breaker_panel: >-\n"
+        "      the `breaker_id` key space and the positions reached after extraction. The checklist gives\n"
+        "      pad panel positions on p. 11 and later changes breakers during orbit, TLI and docking; the\n"
+        "      pad list cannot be copied to MET 0. `set_breaker`'s `lcl` argument awaits the same LCL ids\n",
+        '    breaker_panel: ""\n',
+        "owes 'breaker_panel' with nothing said about what would close it",
     )
-    # A state claiming the launch question while the block neither makes it nor owes it. The four
-    # owed states do not cite the block — the debt is theirs and the block merely names them — so
-    # this is the join that keeps a *third* one from appearing without either side saying so.
+    # A state claiming the launch question while the block neither makes it nor owes it. The owed
+    # states do not cite the block — the debt is theirs and the block merely names them — so this is
+    # the join that keeps a machine from appearing without either side saying so. `hatch_state`
+    # cites the block for its decided start; drop it from the block and it claims a decision that
+    # does not mention it.
     definition = copy_definition(fixture_dir(tmp_path, "claims-the-block-unaccounted"))
-    target = definition / "domains" / "structure" / "components.yaml"
-    text = target.read_text()
-    anchor = "    unit: \"map[hatch_id,enum[closed,latched,open]]\"\n    initial: UNCONFIGURED\n"
-    assert anchor in text
-    target.write_text(
-        text.replace(
-            anchor,
-            anchor + "    initial_provenance:\n      basis: chosen\n      reason: a state that"
-            " claims the launch question\n      source: mission.yaml:launch_state\n",
-            1,
-        )
-    )
     mission_target = definition / "mission.yaml"
     mission_text = mission_target.read_text()
-    trimmed = re.sub(r"(?m)^    hatch_state: >-\n(?:      .*\n)*", "", mission_text, count=1)
-    assert trimmed != mission_text, "the fixture no longer matches the hatch_state debt"
+    trimmed = re.sub(r"(?m)^    hatch_state:\n(?:      .*\n)*", "", mission_text, count=1)
+    assert trimmed != mission_text, "the fixture no longer matches the hatch_state position"
     mission_target.write_text(trimmed)
     out = run_linter(definition).stdout
     assert "A state claiming the launch question that does not mention it is a citation nothing holds" in out, out[-1400:]
