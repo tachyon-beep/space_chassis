@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:07 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 14:12 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -25,7 +25,7 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | # | lane | PR | state | waits on |
 |---|---|---|---|---|
 | 0 | Unpin vehicle test figures | [#45](https://github.com/tachyon-beep/space_chassis/pull/45) | ready for review | its `required` check; merges first |
-| 6 | ECLSS states | [#46](https://github.com/tachyon-beep/space_chassis/pull/46) | draft (engine helper: two-argument interlock condition) | #45 |
+| 6 | ECLSS states | [#46](https://github.com/tachyon-beep/space_chassis/pull/46) | draft (engine helper: two-argument interlock condition); 21 of 25 ready; CO2 and humidity wait on crew | #45 |
 | 9 | Fault injection into the step loop | [#47](https://github.com/tachyon-beep/space_chassis/pull/47) | draft; carries the engine work for other lanes (list below); per-tick hashes differ from `main` (nothing pins them) | #45, #46 |
 | 1 | Burn down power subsystem | [#43](https://github.com/tachyon-beep/space_chassis/pull/43) | draft; per-cell fuel cells and PWR-02 pushed; standby pump *off* | #45; #47 before the PWR-02 `fault:` row |
 | — | Source RCS thruster geometry | [#44](https://github.com/tachyon-beep/space_chassis/pull/44) | draft; SM and LM jets sourced; CM jets, SM offsets, minimum impulse bit owed | #45; primary sources (now reachable, D32) |
@@ -48,7 +48,9 @@ Burn sequencing and node-read interlocks change truth bytes; side effect, ECLSS
 `co2_absorber_low` becomes evaluable. The comms `measured` antenna pattern is on #47 at `2e9f79e`
 (bound G ≤ 41253/θ², `historical` provenance required). #46 also carries a state-level `preloaded:` in `advance()`/`_classify()`.
 
-Cross-lane follow-ups: ECLSS takes the structural-leak drain edge into `cabin_leak_csm`/`lm` after
+Cross-lane follow-ups: propulsion takes the docked-burn requirement (9 of 12 latches) as an interlock
+edge from structure; structure's tunnel volume is published (11.6 ft³, ODB Vol I Fig 4.2-8.1),
+correcting the repo's "unpublished" note. ECLSS takes the structural-leak drain edge into `cabin_leak_csm`/`lm` after
 #51 lands. Lane-map correction: cabin water vapour waits on crew, like CO2.
 
 Cross-lane changes in flight: the standby-pump fix (D29) is power's `load_enabled` line in #43 plus
@@ -104,7 +106,7 @@ to the coordinator; *not reported* means the lane has not said yet.
 | RCS geometry (#44) | per-jet SM and LM geometry from primary sources, linter-checked | not reported | all 44 jets treated as one article; CM jets owed |
 | fault injection (#47) | onset as a step change on the moved state, same tick | not reported | a ramp is a domain rule's job, not the plant's |
 | structure (#51) | two tunnel hatches (CM forward, LM overhead) in `hatch_state`, so the ring seal matters only with a tunnel hatch open; undocking fires no pyro (CSM News Reference p. 88); staging also fires two ascent circuit interrupters (Grumman study guide p. 93); latches, hatch and pyro as discrete devices; after #47: `pyro_health` fail-to-fire, descent stage separates only when all five staging devices fire, jettison only when the ring charge fires, `leak_sources_g_s` summed by the leak rule | **decision** (close the tunnel before latch release) and **confounder** (tunnel versus cabin leak) | latches move instantly to the drive (1 s dwell only; actuation time unsourced); the `one` scope is recorded and acts on nothing (re-cocking a failed latch unsourced); leak with an unlatched hatch or unseated ring above 0.5 psid is a named gap (aperture, seal, tunnel volume unsourced); configuration states still flip on the event until #47; `hatch_open_with_pressure` unevaluable (prose `gated_by`) |
-| ECLSS (#46, 18 of 24 states) | cabin leak per gas (bulk-flow shares); `set_o2_source` partly guarded through a general two-argument interlock condition (ADR 0004 amended; lane 7 can use it for its two verbs); suit loop on its compressor at 35 cfm, switched by `set_suit_fan` | not reported | cabin H2O waits on crew production (D-06), like CO2, since a removal-only vapour stock would dry the cabin; crew O2 uptake waits on `crew_state`, so cabin O2 still rises by the metabolic term; `o2_supply_pressure_psi` on a card to John (cryo tank sources on blocked hosts) |
+| ECLSS (#46, 21 of 25 ready) | cabin leak per gas (bulk-flow shares); `set_o2_source` partly guarded through a general two-argument interlock condition (ADR 0004 amended; lane 7 can use it for its two verbs); suit loop on its compressor at 35 cfm, switched by `set_suit_fan`; O2 supply pressure on the Apollo heater relay (on 865 / off 935 psia, rate from the AOH p. 2.6-13 repressurization table; the Apollo 11-dated AOH chosen over the Apollo 13 Review Board's 950 psia caution and 983 psig relief) | **signal**: the heater-cycle sawtooth changes shape with quantity, and a pressure that will not hold is the Apollo 13 signature | cabin H2O waits on crew production (D-06), like CO2, since a removal-only vapour stock would dry the cabin; crew O2 uptake waits on `crew_state`, so cabin O2 still rises by the metabolic term; the last four (cabin CO2 and humidity) wait on the crew lane's crew-count state |
 | unpin (#45) | — (test figures, no model) | — | — |
 | GNC + RCS | attitude as pointing modes: a rate-limited slew law behind `set_attitude_target` (D38) | not reported | 6-DOF deferred; it would replace only the law |
 

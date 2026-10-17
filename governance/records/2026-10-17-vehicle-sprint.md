@@ -152,3 +152,7 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
   two ascent circuit interrupters at staging; the hatch card is closed. The interrupter edge goes to
   power if those states are power's.
 - 14:10 Governance PR #52 merged (`910adc9`); later governance changes go on a follow-up PR.
+- 14:06–14:10 Research delivered `sources/structure.md`, `comms.md`, `propulsion.md`. Tunnel
+  volume is published (11.6 ft³, ODB Vol I Fig 4.2-8.1). Docked burns need 9 of 12 latches: routed
+  to propulsion as an interlock edge.
+- 14:08 ECLSS models O2 supply pressure on the heater relay (865/935 psia) on #46; 21 of 25 ready.
