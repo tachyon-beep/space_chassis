@@ -132,3 +132,5 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 13:49 John: borderline scope questions get an independent Fable evaluation (D36). The
   "Independent review of the arc report decisions" thread starts on the eleven, pointing modes and
   D-06 first.
+- 13:50–13:51 John: fidelity has to add an interesting option, not a forced move (D37). The
+  fidelity ledger gains a "what option it adds" column, filled as lanes report.

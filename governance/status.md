@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 13:52 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 13:54 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -80,22 +80,23 @@ Answered by the coordinator under D33 at 13:50 (D35), each the lane's recommende
 
 ## Fidelity ledger
 
-"Preference more fidelity where it doesn't start creating significant delivery risk" (D34, D31). One line per lane:
-the fidelity it builds to, and any approximation it deliberately keeps. Filled from what lanes report
+"Preference more fidelity where it doesn't start creating significant delivery risk" (D34, D31). Added fidelity must add an interesting option for a scenario, behaviour, decision or challenge,
+not a single forced move (D37). One line per lane: the fidelity it builds to, the option it adds, and
+any approximation it deliberately keeps. Filled from what lanes report
 to the coordinator; *not reported* means the lane has not said yet.
 
-| lane | builds to | approximations kept |
-|---|---|---|
-| power (#43) | Apollo EPS as flown: each fuel cell a module (AOH 2.6); a, b, c as answered (D35): battery-to-main-bus tie plus fuel cell 2 cross-feed, no automatic shed ladder (cautions only, the crew sheds), source converter retired | for lack of a text source: fuel-cell terminal a linear secant of the AOH envelope, not the polarization curve (graphical only, A14DB), extrapolated below 400 W per module; no feeder or motor-switch drop (0–1 V, WP02 E-2); no AC buses or inverters, so the glycol pumps (AC, likely tens of watts) are 250 W DC loads; load draws mostly `chosen`, constant-power, no inrush; battery derate, temperature and internal resistance unsourced (AOH 0.234 Ω and JEPS 0.364 Ω disagree; JEPS taken for J-mission effectivity unless John says otherwise); charger output current graphical only |
-| thermal (#49) | the loop as heat balances; bays `C dT/dt = Q − G(T − T_coolant)` | bay C and G are `chosen`, bounded by limits (ADR 0003 item 11); pump speed as a fraction of rated (no rated rpm found) |
-| comms (#48) | blackout as exact sphere geometry per tick from the propagated orbit, Moon at real distance; link budget designed in full; light time `range/c`, 0.02–1.32 s, for the window to apply | ground end is Earth's centre, not MSFN stations (no station coordinates; stations would change `link_ok` in the episode, so only as a deliberate change); no link-budget constant sourced (TN D-6723 and the USB tables are behind blocked `ntrs.nasa.gov`); `carrier_lock` a discrete with a numeric acquisition timer once #47 is on `main` |
-| propulsion (#50) | thrust a first-order lag to rated; chamber pressure proportional to thrust | DPS thrust and chamber pressure left as gaps (throttle-to-thrust law unsourced, `main_propulsion_diode.md:36` refuses it); feed pressure held at 100 % of nominal with no regulator or line loss; regulator lock-up, bottle blowdown and helium displacement wait on reachable sources; no start transient (none published) |
-| RCS geometry (#44) | per-jet SM and LM geometry from primary sources, linter-checked | all 44 jets treated as one article; CM jets owed |
-| fault injection (#47) | onset as a step change on the moved state, same tick | a ramp is a domain rule's job, not the plant's |
-| structure (#51) | latches, hatch and pyro as discrete devices; after #47: `pyro_health` fail-to-fire, descent stage separates only when all five staging devices fire, jettison only when the ring charge fires, `leak_sources_g_s` summed by the leak rule | latches move instantly to the drive (1 s dwell only; actuation time unsourced); the `one` scope is recorded and acts on nothing (re-cocking a failed latch unsourced); leak with an unlatched hatch or unseated ring above 0.5 psid is a named gap (aperture, seal, tunnel volume unsourced); configuration states still flip on the event until #47; `hatch_open_with_pressure` unevaluable (prose `gated_by`) |
-| ECLSS (#46, 18 of 24 states) | cabin leak per gas (bulk-flow shares); `set_o2_source` partly guarded through a general two-argument interlock condition (ADR 0004 amended; lane 7 can use it for its two verbs); suit loop on its compressor at 35 cfm, switched by `set_suit_fan` | cabin H2O waits on crew production (D-06), like CO2, since a removal-only vapour stock would dry the cabin; crew O2 uptake waits on `crew_state`, so cabin O2 still rises by the metabolic term; `o2_supply_pressure_psi` on a card to John (cryo tank sources on blocked hosts) |
-| unpin | not reported | — |
-| GNC + RCS | not started; the arc report recommends attitude as pointing modes until a decision needs 6-DOF | open with John; D31 bears on it |
+| lane | builds to | what option it adds | approximations kept |
+|---|---|---|---|
+| power (#43) | Apollo EPS as flown: each fuel cell a module (AOH 2.6); a, b, c as answered (D35): battery-to-main-bus tie plus fuel cell 2 cross-feed, no automatic shed ladder (cautions only, the crew sheds), source converter retired | not reported | for lack of a text source: fuel-cell terminal a linear secant of the AOH envelope, not the polarization curve (graphical only, A14DB), extrapolated below 400 W per module; no feeder or motor-switch drop (0–1 V, WP02 E-2); no AC buses or inverters, so the glycol pumps (AC, likely tens of watts) are 250 W DC loads; load draws mostly `chosen`, constant-power, no inrush; battery derate, temperature and internal resistance unsourced (AOH 0.234 Ω and JEPS 0.364 Ω disagree; JEPS taken for J-mission effectivity unless John says otherwise); charger output current graphical only |
+| thermal (#49) | the loop as heat balances; bays `C dT/dt = Q − G(T − T_coolant)` | not reported | bay C and G are `chosen`, bounded by limits (ADR 0003 item 11); pump speed as a fraction of rated (no rated rpm found) |
+| comms (#48) | blackout as exact sphere geometry per tick from the propagated orbit, Moon at real distance; link budget designed in full; light time `range/c`, 0.02–1.32 s, for the window to apply | not reported | ground end is Earth's centre, not MSFN stations (no station coordinates; stations would change `link_ok` in the episode, so only as a deliberate change); no link-budget constant sourced (TN D-6723 and the USB tables are behind blocked `ntrs.nasa.gov`); `carrier_lock` a discrete with a numeric acquisition timer once #47 is on `main` |
+| propulsion (#50) | thrust a first-order lag to rated; chamber pressure proportional to thrust | not reported | DPS thrust and chamber pressure left as gaps (throttle-to-thrust law unsourced, `main_propulsion_diode.md:36` refuses it); feed pressure held at 100 % of nominal with no regulator or line loss; regulator lock-up, bottle blowdown and helium displacement wait on reachable sources; no start transient (none published) |
+| RCS geometry (#44) | per-jet SM and LM geometry from primary sources, linter-checked | not reported | all 44 jets treated as one article; CM jets owed |
+| fault injection (#47) | onset as a step change on the moved state, same tick | not reported | a ramp is a domain rule's job, not the plant's |
+| structure (#51) | latches, hatch and pyro as discrete devices; after #47: `pyro_health` fail-to-fire, descent stage separates only when all five staging devices fire, jettison only when the ring charge fires, `leak_sources_g_s` summed by the leak rule | not reported | latches move instantly to the drive (1 s dwell only; actuation time unsourced); the `one` scope is recorded and acts on nothing (re-cocking a failed latch unsourced); leak with an unlatched hatch or unseated ring above 0.5 psid is a named gap (aperture, seal, tunnel volume unsourced); configuration states still flip on the event until #47; `hatch_open_with_pressure` unevaluable (prose `gated_by`) |
+| ECLSS (#46, 18 of 24 states) | cabin leak per gas (bulk-flow shares); `set_o2_source` partly guarded through a general two-argument interlock condition (ADR 0004 amended; lane 7 can use it for its two verbs); suit loop on its compressor at 35 cfm, switched by `set_suit_fan` | not reported | cabin H2O waits on crew production (D-06), like CO2, since a removal-only vapour stock would dry the cabin; crew O2 uptake waits on `crew_state`, so cabin O2 still rises by the metabolic term; `o2_supply_pressure_psi` on a card to John (cryo tank sources on blocked hosts) |
+| unpin (#45) | — (test figures, no model) | — | — |
+| GNC + RCS | not started; the arc report recommends attitude as pointing modes until a decision needs 6-DOF | — | under independent review (D36); D34 and D37 bear on it |
 
 ## Known gaps in CI
 
