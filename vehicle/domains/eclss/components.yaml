@@ -53,20 +53,21 @@ natural_rate_hz: 1
 reads: [o2_csm, o2_lm, absorber_capacity_csm, absorber_capacity_lm, crew_state,
         cabin_zone_t, lm_cabin_zone_t, command_executive, load_shed_state, fc_o2_draw]
 writes: [cabin_atm, lm_cabin_atm, cabin_regulator, cabin_o2_supply_csm,
-         cabin_o2_supply_lm, co2_removal_csm, co2_removal_lm, cabin_leak_csm, cabin_leak_lm]
+         cabin_o2_supply_lm, co2_removal_csm, co2_removal_lm, cabin_leak_csm, cabin_leak_lm,
+         o2_tank_heaters]
 
-# Four states on the `internal` sentinel, so their order is a declaration rather than the alphabet's,
+# Three states on the `internal` sentinel, so their order is a declaration rather than the alphabet's,
 # and the sentinel is advanced after every node.
-internal_order: [suit_fan, suit_loop_flow_cfm, o2_tank_heaters, o2_supply_pressure_psi]
+internal_order: [suit_fan, suit_loop_flow_cfm, o2_supply_pressure_psi]
 internal_order_note: >-
   the compressor's switch before the flow it gates, so a `set_suit_fan` acts on the tick it lands.
   Between the flow and the tank, **nothing at all**: the suit circuit's flow and the oxygen supply tank's pressure are published
   quantities with no edge between them and no shared input, so the order is a declaration rather than
   a finding. What it is not is the alphabet's — `o2_supply_pressure_psi` sorts before
   `suit_loop_flow_cfm`, and a tiebreak that decides is a tiebreak that can be wrong later. The tanks'
-  heater relay before their pressure: the switch reads the pressure the last tick left and the
-  pressure integrates over what the heaters are doing now, so a stroke starts on the tick the switch
-  closes
+  heater relay is on its own node, scheduled before the sentinel, so the switch reads the pressure
+  the last tick left and the pressure integrates over what the heaters are doing now: a stroke starts
+  on the tick the switch closes
 
 # --------------------------------------------------------------------------------------
 # State. Four conserved gases per compartment, one commanded regulator, and three derived
@@ -543,7 +544,7 @@ state:
   # identical, drawn in parallel, and the switch energises both or neither.
   - id: o2_tank_heaters
     method: discrete
-    node: internal
+    node: o2_tank_heaters
     unit: "enum[on,off]"
     initial: "off"
     initial_provenance:

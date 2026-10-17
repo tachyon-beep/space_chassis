@@ -28,11 +28,11 @@ interpreted afterwards. Nothing here reads across the boundary: the corpus is *c
 | `plant.md` | The core contract: what `step()` is, the seven integrator classes, determinism, the event queue, and what the plant may never do. |
 | `vehicle.yaml` | Globals: the frame registry and the four scalar conventions, environment, configurations and their mass closure, propulsion, consumable loads, thermal zones, antennas. |
 | `mission.yaml` | The profile: eight phases summing to 192.0 h, the ten-posture execution machine, the freshness manifest, the derived lunar occultation, MET epoch, crew, the Δv budget, objectives, the three scenario postures. |
-| `coupling.yaml` | apollo's coupling graph as data, with typed edges, crisis-point sensitivities, seven declared cycles and the fifteen failure chains. The linter derives the 63-node tick order from it. |
+| `coupling.yaml` | apollo's coupling graph as data, with typed edges, crisis-point sensitivities, seven declared cycles and the fifteen failure chains. The linter derives the 64-node tick order from it. |
 | `presentation.yaml` | The vehicle's side of the frozen window: the epistemic mapping, the six files, the frame envelope, the mirror and its bound, the ring's cadence classes, and which of `diode_probe.py`'s twelve checks the configuration satisfies. |
 | `channels.yaml` | The point dictionary: 148 canonical channels with units, precision, rate, priority, events **and an event class**, a derived maximum decision age and the crew perception bound, plus the registry's own `coverage` block. |
 | `domains/<name>/` | One landed subsystem: `components` · `points` · `profiles` · `commands` · `fault_policy`. |
-| `tools/check_vehicle.py` | The linter. `--order` prints the derived 63-node tick order with the states at each node; `--phases` prints the verb-by-phase view derived from the registries. |
+| `tools/check_vehicle.py` | The linter. `--order` prints the derived 64-node tick order with the states at each node; `--phases` prints the verb-by-phase view derived from the registries. |
 | `tools/generate_help.py` | Emits the vehicle's `HELP.md` from the command registries — §8's only place a verb name may appear, so it is generated rather than written. |
 | `tools/plant.py` | A **reference plant**: loads the world from the configuration, builds the tick order, emits a frame, and runs until it reaches something it cannot compute — where it names what is missing instead of guessing. `--readiness` prints the build order. |
 
@@ -219,7 +219,7 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 160 states over 63 scheduled nodes, 142
+**All eleven domains have landed** — 148 channels, 160 states over 64 scheduled nodes, 142
 thresholds, 59 verbs and 128 classified events across the eleven directories, with 261 declared debts
 and every one of them named. **133 of the 160 states are fully configured and 27 carry a debt**, and
 a real tick advances **86** of the 160 states, and the build order's **86** ready are that same set

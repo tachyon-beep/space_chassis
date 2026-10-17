@@ -279,6 +279,14 @@ nodes:
       three outflows of one leak, each a share of the same total computed from the same four stocks;
       none reads another, so there is no order to get wrong
     note: "the CSM cabin's leak to space, by gas"
+  # The S/M oxygen tanks' heater relay, a node rather than the sentinel because power reads it: each
+  # tank's heaters and fans are a bus load while the switch is closed (E-O2-HTR-BUSA, -BUSB).
+  o2_tank_heaters:
+    domain: eclss
+    kind: discrete
+    unit: enum
+    apollo: "312"
+    note: "the cryogenic oxygen tanks' pressure switch, energising both tanks' heaters and fans or neither (AOH p. 2.6-12)"
   cabin_leak_lm:
     domain: eclss
     kind: flow
@@ -778,6 +786,52 @@ edges:
   # The cabin leak (ECLSS lane, 2026-10-17): the gas the leak takes leaves the cabin whole, one for
   # one, and each edge reads its own gas's share of the leak on the leak's node. Water vapour has no
   # drain yet: its source is the crew, and a vapour stock with only removals would dry the cabin.
+  # Tank 1's heaters and fans on main bus A: the relay closes both tanks' circuits at once, so the
+  # load arrives on both buses together. Power owns the load and its bus assignment; this edge is the
+  # coupling the scheduler orders by, asked for on #46 because #46 merges first.
+  - id: E-O2-HTR-BUSA
+    from: o2_tank_heaters
+    to: fuel_cell
+    kind: discrete
+    advances: bus_a_load_w
+    sensitivity:
+      unit: "on or off"
+      basis: historical
+      at: nominal
+      source: >-
+        AOH SM2A-03-BLOCK II-(1) Vol. 1, p. 2.6-13: "113.88 watt heaters supply 389.67 Btu, 52.8
+        watt fan motors supply 180.2 Btu" per O2 tank, net of line loss. Tank 1 on main bus A is
+        power's assignment, pending a source
+      regimes:
+        - when: "on"
+          response: >-
+            tank 1's heaters and fans draw 166.68 W (113.88 W + 52.8 W) on main bus A for as long as
+            the switch stays closed, a stroke of minutes repeating every half hour or so at a full tank
+        - when: otherwise
+          response: "no heater or fan load on main bus A from tank 1"
+  # Tank 2's heaters and fans on main bus B: the relay closes both tanks' circuits at once, so the
+  # load arrives on both buses together. Power owns the load and its bus assignment; this edge is the
+  # coupling the scheduler orders by, asked for on #46 because #46 merges first.
+  - id: E-O2-HTR-BUSB
+    from: o2_tank_heaters
+    to: fuel_cell
+    kind: discrete
+    advances: bus_b_load_w
+    sensitivity:
+      unit: "on or off"
+      basis: historical
+      at: nominal
+      source: >-
+        AOH SM2A-03-BLOCK II-(1) Vol. 1, p. 2.6-13: "113.88 watt heaters supply 389.67 Btu, 52.8
+        watt fan motors supply 180.2 Btu" per O2 tank, net of line loss. Tank 2 on main bus B is
+        power's assignment, pending a source
+      regimes:
+        - when: "on"
+          response: >-
+            tank 2's heaters and fans draw 166.68 W (113.88 W + 52.8 W) on main bus B for as long as
+            the switch stays closed, a stroke of minutes repeating every half hour or so at a full tank
+        - when: otherwise
+          response: "no heater or fan load on main bus B from tank 2"
   - id: E-ATM-LEAK-O2
     sensitivity:
       value: 1.0
