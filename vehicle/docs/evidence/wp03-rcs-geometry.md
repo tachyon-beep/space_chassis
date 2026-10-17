@@ -163,10 +163,13 @@ therefore one that a flight-hardware document states independently, and the YAML
   and 277.8 s that C-26 applied to all forty-four overstate the CM's impulse capacity (305,120
   N s) by about 2 % if the simulator's 272.1 s is near the article's Isp. No flight-hardware CM thrust or Isp was found in the text layers read;
   the AOH defers to the CSM data book (SNA-8-D-027 Vol. I, p. 2.5-24), not reached.
-- **Not changed here.** C-26 was the operator's decision. Options for John: keep one article for
-  all forty-four (the CM is out of the coast episode's scope); split the CM jet out with the
-  R577-6 simulator figures as `chosen` with that bound; or leave the CM's thrust and Isp owed
-  until the CSM data book is read.
+- **Decided: owe** (2026-10-17, by the coordinator under John's 13:48Z delegation of obvious
+  scope questions, intent "preference more fidelity where it doesn't start creating significant
+  delivery risk"). The CM jet becomes its own article with thrust and Isp owed until a
+  flight-hardware source (the CSM data book, SNA-8-D-027 Vol. I) gives them. Splitting with the
+  R577-6 figures was rejected because it would put simulator values in as stand-ins, and keeping
+  one article for all forty-four is the lowest-fidelity option. The model change raises the
+  pinned debt count, so it lands after the test-figure unpin.
 
 ## Not geometry
 
