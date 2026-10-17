@@ -46,8 +46,8 @@ machine with command and logic movers (propulsion); node-read interlocks (propul
 `resolve_interlock` from a coupling node); the ECLSS sentinel fix (`_walk` overwrote
 `values["internal"]`). Held: `gated_by`, waiting on the in-burn-guard answer's application (D35).
 Burn sequencing and node-read interlocks change truth bytes; side effect, ECLSS
-`co2_absorber_low` becomes evaluable. Queued for lane 9 after #47: an argument check for `set_throttle` (`dps_throttle_band`; may be
-covered by `refused_bands`) and `gated_by` on a state condition (propulsion). The "61 nodes" prose
+`co2_absorber_low` becomes evaluable. Queued for lane 9 after #47: an argument check for `set_throttle` (`dps_throttle_band`) and
+`gated_by` on a state condition (propulsion). The "61 nodes" prose
 count goes in lane 9's rebase over #46; the linter's derived line becomes the only figure. The comms `measured` antenna pattern is on #47 at `2e9f79e`
 (bound G ≤ 41253/θ², `historical` provenance required). #46 also carries a state-level `preloaded:` in `advance()`/`_classify()`.
 
