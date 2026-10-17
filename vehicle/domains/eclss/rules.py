@@ -60,10 +60,15 @@ def _o2_supply(inputs, params, dt):
         if switch["element"] not in inputs[switch["state"]]:
             return params.no_value(f"{switch['state']} names no {switch['element']!r}")
     source, flow = params["source_switch"], params["flow_switch"]
+    selected = inputs[source["state"]][source["element"]]
+    if selected in (params.get("no_store") or []):
+        return params.no_value(
+            f"{source['state']}[{source['element']}] is {selected!r}, a store this vehicle does not have"
+        )
     draws_on = params["draws_on"]
     if isinstance(draws_on, str):
         draws_on = [draws_on]
-    if inputs[source["state"]][source["element"]] not in draws_on:
+    if selected not in draws_on:
         return 0.0
     if inputs[flow["state"]][flow["element"]] == "off":
         return 0.0

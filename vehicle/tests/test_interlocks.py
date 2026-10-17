@@ -407,7 +407,7 @@ def test_an_lm_fire_refuses_lm_oxygen_and_a_csm_fire_does_not(world, tmp_path):
         built.attach("alpha")
         try:
             trip(world, built, overrides, name)
-            outcomes.append(run(built, root, "set_o2_flow vehicle=lm flow=high"))
+            outcomes.append(run(built, root, "set_o2_flow vehicle=lm flow=nominal"))
         finally:
             built.close()
     refused, taken = outcomes

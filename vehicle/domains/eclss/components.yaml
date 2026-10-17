@@ -546,13 +546,14 @@ state:
         tank's pressure transducer (sharing the O2 tank 1 meter) is not a channel yet
   - id: cabin_o2_supply_lm_kg_s
     # The LM regulator's demand, under the same switches as the CSM's: nothing while the LM's
-    # source is `isolated` or its flow band is `off`. The LM has no surge tank, so `surge` and
-    # `primary` both draw on its own store.
+    # source is `isolated` or its flow band is `off`. The LM has no surge tank, so `surge` is a gap
+    # that says so (`no_store`) rather than a store the rule pretends to draw on.
     node: cabin_o2_supply_lm
     method: algebraic
     unit: kg O2/s
     nominal_kg_s: 2.736470e-05
-    draws_on: [primary, surge]
+    draws_on: primary
+    no_store: [surge]
     source_switch: {state: o2_source, element: lm}
     flow_switch: {state: o2_flow, element: lm}
     stock_state: o2_lm_kg
@@ -566,10 +567,11 @@ state:
         the rule routes (`domains/eclss/rules.py`), and not a `provenance.derivation`, for the
         reason the CSM's is not; `check_metabolic_rules` holds it to the same figures within 1 %
       note: >-
-        `surge` draws on the LM's store because the LM has none of its own: the vocabulary is one
-        verb's across both vehicles, and a source the LM does not have is read as the one it does
-        rather than as no oxygen. Which of the LM's tanks feeds the regulator (descent, then ascent)
-        is not modelled; `o2_lm_kg` is one store
+        `surge` is in the verb's vocabulary for both vehicles and names no LM tank, so selecting it
+        for the LM is a gap with that message rather than a draw on some other store or on none.
+        Refusing it at the command needs a per-vehicle vocabulary, which the executive does not
+        read yet. Which of the LM's tanks feeds the regulator (descent, then ascent; AOH LM ECS) is
+        not modelled either; `o2_lm_kg` is one store, and the LM's own valve positions are owed
   - id: cabin_regulator_position
     node: cabin_regulator
     method: discrete
@@ -793,6 +795,11 @@ state:
       - verb: set_o2_flow
         argument: flow
         key: vehicle
+        maps: {low: UNCONFIGURED, high: UNCONFIGURED}
+        note: >-
+          the rates of `low` and `high` are not published in any source reached, so the command is
+          refused by name rather than delivering the nominal demand under another band's name; what
+          would answer it is the regulator's or the O2 flow control's delivered rate in each band
         why: "one element per vehicle; `off` stops the regulator's flow from whichever store is selected"
     dwell:
       min_on_s: 1
@@ -805,8 +812,8 @@ state:
         guards, restarted this state's dwell on a source change, and locked under a different
         conflict domain, so the argument was dropped. Only `off` acts: it stops the cabin supply, which is what the
         `cabin_pressure_caution` guard on `set_o2_flow` assumes when it refuses it.
-        `low`, `nominal` and `high` all deliver the nominal demand, because no source reached gives
-        their rates. The one-second dwell each way is chosen, as `o2_source`'s is
+        `low` and `high` are in the vocabulary and nothing moves this state to them: their rates are
+        not sourced, so `set_o2_flow` refuses both (`command_value.maps`). The one-second dwell each way is chosen, as `o2_source`'s is
   - id: o2_source
     method: discrete
     node: internal

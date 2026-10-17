@@ -232,12 +232,35 @@ def test_the_lm_supply_honours_its_own_switches(world, switch):
     assert after["cabin_o2_supply_csm_kg_s"] == pytest.approx(SUPPLY["nominal_kg_s"])
 
 
-@pytest.mark.parametrize("source", ["primary", "surge"])
-def test_the_lm_draws_on_its_own_store_from_either_source(world, source):
-    """The LM has no surge tank, so `surge` reads as the store it does have."""
-    values = {**plant.initial_values(world), "o2_source": {"csm": "primary", "lm": source}}
-    after = walk(world, values, 5)
+def test_the_lm_draws_on_its_own_store_and_surge_is_a_gap_that_says_why(world):
+    """The LM has no surge tank (Codex, PR #64): `surge` for the LM is a gap with a message, not a
+    draw on its own store under another tank's name."""
+    after = walk(world, plant.initial_values(world), 5)
     assert after["cabin_o2_supply_lm_kg_s"] == pytest.approx(LM_SUPPLY["nominal_kg_s"])
+    rule = rules_module().RULES["cabin_o2_supply_lm_kg_s"]
+
+    class Params(dict):
+        why = None
+
+        def no_value(self, why):
+            self.why = why
+
+    params = Params(LM_SUPPLY)
+    inputs = {
+        "o2_source": {"csm": "primary", "lm": "surge"},
+        "o2_flow": {"csm": "nominal", "lm": "nominal"},
+        "o2_lm_kg": 10.0,
+    }
+    assert rule(inputs, params, DT) is None
+    assert "does not have" in params.why
+
+
+def test_set_o2_flow_refuses_the_bands_whose_rates_are_unsourced(world):
+    """`low` and `high` would otherwise deliver the nominal demand under another band's name."""
+    values = walk(world, plant.initial_values(world), 1)
+    for band in ("low", "high"):
+        with pytest.raises(plant.Unconfigured, match="not published"):
+            plant.apply_command(world, values, "set_o2_flow", {"vehicle": "csm", "flow": band})
 
 
 def surge_quanta(world, values, steps):
@@ -324,6 +347,4 @@ def test_the_supply_rule_stops_below_a_tick_of_flow():
     inputs["o2_surge_csm_kg"] = demand * DT * 0.99
     assert rule(inputs, params, DT) == 0.0
     inputs["o2_surge_csm_kg"] = demand * DT
-    assert rule(inputs, params, DT) == pytest.approx(demand)
-    inputs["o2_flow"] = {"csm": "high", "lm": "nominal"}
     assert rule(inputs, params, DT) == pytest.approx(demand)
