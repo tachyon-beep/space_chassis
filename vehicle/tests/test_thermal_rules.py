@@ -121,8 +121,8 @@ def episode_definition(destination: Path) -> Path:
         )
         _replace_once(
             coupling,
-            "    state_order: [tx_power, link_snr]",
-            "    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_snr]",
+            "    state_order: [tx_power, link_margin_db]",
+            "    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_margin_db]",
         )
         rules = domains / "comms" / plant.RULES_FILE
         assert not rules.exists()

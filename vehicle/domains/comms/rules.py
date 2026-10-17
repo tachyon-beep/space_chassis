@@ -92,28 +92,22 @@ def light_time_s(inputs, params, dt):
     return math.sqrt(sum(x * x for x in position)) / float(params["speed_of_light_m_s"])
 
 
-def link_snr(inputs, params, dt):
-    """The downlink's signal-to-noise ratio in the telemetry bit-rate bandwidth at an 85-ft MSFN
-    station (`comm.snr_db`): the received carrier power, scaled from Bellcomm's lunar-range
-    prediction by range, less the high-gain antenna's pointing loss, against the carrier power the
-    commanded telemetry rate needs.
+def link_margin_db(inputs, params, dt):
+    """The downlink's power margin at an 85-ft MSFN station (`comm.link_margin_db`): the received
+    carrier power, scaled from Bellcomm's lunar-range prediction by range and less the high-gain
+    antenna's pointing loss, over the minimum the commanded telemetry rate needs.
 
-    SNR = required SNR + (received - required carrier power): the circuit margin is the SNR the
-    link has over the SNR the mode needs (TN D-6723), so a zero margin is 12.5 dB. There is no
-    S-band carrier to measure in `vhf` or `none`, or with the Earth behind the Moon, and the state
-    is then a gap rather than a low number, so a planned blackout raises no SNR alarm.
+    This is CR-125670's *power margin*, not a signal-to-noise ratio: the dB by which the received
+    power could fall before the data channel's circuit margin reaches zero. The report keeps the two
+    apart because the USB receivers' bandpass limiters make the noise depend on the signal, so it is
+    the margin rather than an SNR that Table II's rows support. A zero margin is where data stops
+    meeting a 1e-6 bit-error rate.
+
+    It is the budget of the configured S-band link and is defined in every mode and behind the Moon:
+    whether a carrier reaches the ground at all is `blackout`'s, and the comm mode's, business, and
+    the thresholds on this channel are gated on them rather than on a value that goes missing.
     """
-    mode = inputs["comm_mode"]
-    if mode not in ("sband_high", "sband_low"):
-        return params.no_value(f"the vehicle radiates no S-band carrier in `{mode}` mode")
     orbit = inputs["orbital_state"]
-    hidden = occulted(orbit["position_m"], orbit["moon_position_m"], float(params["moon_radius_m"]))
-    if hidden is None:
-        return params.no_value(
-            "the vehicle is inside the Moon's mean radius, where the trajectory has no meaning"
-        )
-    if hidden:
-        return params.no_value("the Earth is behind the Moon, so no carrier reaches the ground")
     antenna = inputs["antenna_selection"]
     family = (
         "high_gain"
@@ -140,7 +134,7 @@ def link_snr(inputs, params, dt):
     key = str(int(rate)) if isinstance(rate, (int, float)) else str(rate)
     if key not in required:
         return params.no_value(f"no required carrier power is declared for {rate} bit/s")
-    return float(params["required_snr_db"]) + received - float(required[key])
+    return received - float(required[key])
 
 
 RULES = {
@@ -149,6 +143,6 @@ RULES = {
     "link_ok": link_ok,
     "blackout": blackout,
     "light_time_s": light_time_s,
-    "link_snr": link_snr,
+    "link_margin_db": link_margin_db,
     "playback_rate": playback_rate,
 }

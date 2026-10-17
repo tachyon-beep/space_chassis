@@ -61,10 +61,10 @@ def definition(tmp_path: Path, *, drop_edge: str | None = None) -> Path:
         comms.write_text(text.replace("\nstate:\n", "\nstate:\n" + TRANSMITTER_ON, 1))
         coupling = root / "coupling.yaml"
         ctext = coupling.read_text()
-        old = "    state_order: [tx_power, link_snr]\n"
+        old = "    state_order: [tx_power, link_margin_db]\n"
         assert ctext.count(old) == 1
         coupling.write_text(
-            ctext.replace(old, "    state_order: [transmitter_on, tx_power, link_snr]\n")
+            ctext.replace(old, "    state_order: [transmitter_on, tx_power, link_margin_db]\n")
         )
     if drop_edge is not None:
         coupling = root / "coupling.yaml"

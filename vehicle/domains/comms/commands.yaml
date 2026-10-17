@@ -249,7 +249,7 @@ not_implemented:
     why: >-
       the gain is a property of the dish, not a setting. A verb that could change it would let a
       fleet improve its link by asserting that the antenna is better than it is, and nothing
-      downstream could detect it — `comm.snr_db` would agree with the assertion, because the
+      downstream could detect it — `comm.link_margin_db` would agree with the assertion, because the
       assertion would be an input to it. `vehicle.yaml#comms.antennas` carries the gains and they
       are the two sourced figures in this domain; the derived beamwidths follow from them by the
       gain-beamwidth product, which is a physical identity rather than a preference.
@@ -265,7 +265,7 @@ not_implemented:
     why: >-
       refused because `comm.blackout_state` is not a flag, it is a geometric fact. A verb that
       could set it would let a fleet declare that the Moon is not there, and the consequence is
-      precise: it would defeat the `gated_by` clause on `snr_loss` and `carrier_lock_loss`, so the
+      precise: it would defeat the `gated_by` clause on `link_margin_loss` and `carrier_lock_loss`, so the
       vehicle would alarm on its own orbit — which is the failure the gate exists to prevent. The
       state is derived from the vehicle's own position and Earth's, and the way to change it is to
       change where the vehicle is.

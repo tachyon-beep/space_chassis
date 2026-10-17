@@ -379,12 +379,12 @@ def test_the_light_time_is_published_and_the_unread_constant_is_gone(world):
 
 
 # ------------------------------------------------------------------------------------------------
-# The link budget (`state link_snr`, `comm.snr_db`): Bellcomm's lunar-range prediction, moved by
+# The link budget (`state link_margin_db`, `comm.link_margin_db`): Bellcomm's lunar-range prediction, moved by
 # range, the power amplifier and the high-gain antenna's pointing loss.
 # ------------------------------------------------------------------------------------------------
 
 
-def _snr(
+def _margin(
     world,
     *,
     antenna="high_gain",
@@ -395,8 +395,8 @@ def _snr(
     pointing_deg=0.0,
     behind=False,
 ):
-    """`link_snr` called directly on a hand-built snapshot, with the state's own declaration."""
-    spec = _state(world, "link_snr").spec
+    """`link_margin_db` called directly on a hand-built snapshot, with the state's own declaration."""
+    spec = _state(world, "link_margin_db").spec
     distance = float(spec["reference_range_m"]) if range_m is None else range_m
     moon = [384_400e3, 0.0, 0.0]
     if behind:
@@ -411,31 +411,40 @@ def _snr(
         "antenna_pointing": pointing_deg,
         "telemetry_rate": rate,
     }
-    params = plant.RuleParams(spec, "domains/comms/components.yaml:state link_snr")
-    return _comms_rules().link_snr(inputs, params, DT), params
+    params = plant.RuleParams(spec, "domains/comms/components.yaml:state link_margin_db")
+    return _comms_rules().link_margin_db(inputs, params, DT), params
 
 
 def test_at_lunar_range_the_budget_reproduces_bellcomm_s_margins(world):
     """CR-125670 Table II, 85-ft station: on the high-gain antenna high-rate telemetry closes with
-    the amplifier on and fails with it off; on an omni only the low rate closes. The SNR is the
-    12.5 dB a 1e-6 bit-error rate needs plus Bellcomm's margin."""
+    the amplifier on and fails with it off; on an omni only the low rate closes. The margin is
+    Table II's own power margin, Pr - Pmin, with nothing added."""
     cases = [
-        ({"antenna": "high_gain", "amplifier": "on", "rate": 51_200}, 24.4),
-        ({"antenna": "high_gain", "amplifier": "off", "rate": 51_200}, 4.4),
-        ({"antenna": "omni_a", "amplifier": "on", "rate": 51_200}, 2.0),
-        ({"antenna": "omni_b", "amplifier": "on", "rate": 1_600}, 13.0),
+        ({"antenna": "high_gain", "amplifier": "on", "rate": 51_200}, 11.9),
+        ({"antenna": "high_gain", "amplifier": "off", "rate": 51_200}, -8.1),
+        ({"antenna": "omni_a", "amplifier": "on", "rate": 51_200}, -10.5),
+        ({"antenna": "omni_b", "amplifier": "on", "rate": 1_600}, 0.5),
     ]
     for kwargs, expected in cases:
-        snr, _ = _snr(world, **kwargs)
-        assert snr == pytest.approx(expected, abs=1e-9), kwargs
-    # And against apollo's two thresholds: healthy, degraded (below 8), lost (below 3).
-    assert _snr(world, amplifier="off")[0] < 8 and _snr(world, antenna="omni_a")[0] < 3
+        margin, _ = _margin(world, **kwargs)
+        assert margin == pytest.approx(expected, abs=1e-9), kwargs
+    # And against the domain's two thresholds: the omni's low rate is above loss (0 dB) and below
+    # the caution (3 dB); the high-gain antenna with the amplifier on clears both.
+    profiles = yaml.safe_load((VEHICLE / "domains/comms/profiles.yaml").read_text())
+    levels = {
+        t["id"]: float(t["assert"])
+        for t in profiles["thresholds"]
+        if t.get("id") in ("link_margin_low", "link_margin_loss")
+    }
+    omni_low = _margin(world, antenna="omni_b", rate=1_600)[0]
+    assert levels["link_margin_loss"] < omni_low < levels["link_margin_low"]
+    assert _margin(world)[0] > levels["link_margin_low"]
 
 
 def test_half_the_range_is_six_db_more(world):
-    spec = _state(world, "link_snr").spec
-    far, _ = _snr(world)
-    near, _ = _snr(world, range_m=float(spec["reference_range_m"]) / 2)
+    spec = _state(world, "link_margin_db").spec
+    far, _ = _margin(world)
+    near, _ = _margin(world, range_m=float(spec["reference_range_m"]) / 2)
     assert near - far == pytest.approx(20 * math.log10(2), abs=1e-9)
 
 
@@ -445,33 +454,44 @@ def test_the_pointing_loss_has_the_slope_e_geom_link_declares(world):
     coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
     edge = next(e for e in coupling["edges"] if e["id"] == "E-GEOM-LINK")
     h = 1e-4
-    slope = (_snr(world, pointing_deg=2 + h)[0] - _snr(world, pointing_deg=2 - h)[0]) / (2 * h)
+    slope = (_margin(world, pointing_deg=2 + h)[0] - _margin(world, pointing_deg=2 - h)[0]) / (2 * h)
     assert slope == pytest.approx(float(edge["sensitivity"]["value"]), abs=0.005)
     # On an omni the high-gain antenna's pointing does not enter.
-    assert _snr(world, antenna="omni_a", pointing_deg=5)[0] == _snr(world, antenna="omni_a")[0]
+    assert _margin(world, antenna="omni_a", pointing_deg=5)[0] == _margin(world, antenna="omni_a")[0]
 
 
-def test_no_carrier_is_a_named_gap_rather_than_a_low_snr(world):
-    """Behind the Moon, in VHF or with the S-band off, there is no carrier to measure: a value
-    there would be an SNR alarm every revolution, which the domain's first rule forbids."""
-    for kwargs, words in (
-        ({"behind": True}, "behind the Moon"),
-        ({"mode": "vhf"}, "`vhf`"),
-        ({"mode": "none"}, "`none`"),
-        ({"antenna": "sband_steerable"}, "sband_steerable"),
-    ):
-        snr, params = _snr(world, **kwargs)
-        assert snr is None, kwargs
-        assert words in params.why_none, params.why_none
+def test_the_margin_is_defined_behind_the_moon_and_in_every_mode(world):
+    """A gap keeps the state's last value, so a margin that went missing behind the Moon or in VHF
+    would publish the last S-band figure as if it were current. The budget is the configured
+    link's in every case; whether a carrier reaches the ground is `blackout`'s and the mode's, and
+    `link_margin_loss` is gated on the occultation."""
+    reference, _ = _margin(world)
+    for kwargs in ({"behind": True}, {"mode": "vhf"}, {"mode": "none"}):
+        margin, _ = _margin(world, **kwargs)
+        assert margin is not None, kwargs
+    # Behind the Moon the range is the Moon's distance plus a lunar orbit, so the value moves only
+    # by range; in VHF or with the S-band off it is the reference itself.
+    assert _margin(world, mode="vhf")[0] == reference and _margin(world, mode="none")[0] == reference
+    profiles = yaml.safe_load((VEHICLE / "domains/comms/profiles.yaml").read_text())
+    loss = next(t for t in profiles["thresholds"] if t.get("id") == "link_margin_loss")
+    assert loss["gated_by"] == "comm.blackout_state is clear"
+
+
+def test_an_antenna_no_prediction_covers_is_a_named_gap(world):
+    """The LM steerable antenna's gain is owed (`components.yaml` debts), so its budget is a gap
+    that names it rather than a number."""
+    margin, params = _margin(world, antenna="sband_steerable")
+    assert margin is None
+    assert "sband_steerable" in params.why_none, params.why_none
 
 
 def test_the_link_budget_s_copies_agree_with_their_sources(world):
     vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
     hga = next(a for a in vehicle["comms"]["antennas"] if a["id"] == "high_gain")
     narrow = next(b for b in hga["beams"] if b["id"] == "narrow")
-    spec = _state(world, "link_snr").spec
+    spec = _state(world, "link_margin_db").spec
     assert float(spec["hga_beamwidth_deg"]) == float(narrow["beamwidth_deg"])
-    assert float(spec["moon_radius_m"]) == _moon_radius_m(world)
+    assert "moon_radius_m" not in spec  # the occultation is `blackout`'s, not the budget's
     assert float(spec["reference_range_m"]) == 215_000 * 1_852
 
 
@@ -490,10 +510,10 @@ def test_through_the_step_loop_the_omni_budget_closes_and_the_hga_waits_on_point
         return seen[0]
 
     values, gaps = first_tick({"antenna_selection": "omni_a"})
-    assert not [g for g in gaps if g.state.id == "link_snr"]
-    # MET 0, 6,563 km, amplifier off, low rate: 28.7 dB.
-    assert values["link_snr"] == pytest.approx(28.7, abs=0.1)
+    assert not [g for g in gaps if g.state.id == "link_margin_db"]
+    # MET 0, 6,563 km, amplifier off, low rate: 16.2 dB.
+    assert values["link_margin_db"] == pytest.approx(16.2, abs=0.1)
 
     values, gaps = first_tick({})
-    snr_gaps = [g for g in gaps if g.state.id == "link_snr"]
-    assert snr_gaps and "antenna_pointing" in snr_gaps[0].owed
+    margin_gaps = [g for g in gaps if g.state.id == "link_margin_db"]
+    assert margin_gaps and "antenna_pointing" in margin_gaps[0].owed

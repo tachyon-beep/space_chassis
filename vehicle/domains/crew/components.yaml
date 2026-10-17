@@ -308,7 +308,7 @@ display_contract:
             - {channel: power.dc_bus_a_v, displayed_precision: 0.5, units: V}
             - {channel: power.dc_bus_b_v, displayed_precision: 0.5, units: V}
       controls: [controls.breakers, controls.switches]
-      cannot_see: [gnc.guidance_mode, eclss.co2_pp_mmhg, thermal.comm_amp_c, comm.snr_db]
+      cannot_see: [gnc.guidance_mode, eclss.co2_pp_mmhg, thermal.comm_amp_c, comm.link_margin_db]
       human_channels:
         - "a hot smell from a rack, a relay chattering, a breaker that will not stay in"
       note: >-
@@ -356,7 +356,7 @@ display_contract:
             - {channel: cw.master_alarm, displayed_precision: exact}
             - {channel: cw.active_lights, displayed_precision: exact}
       controls: [controls.switches]
-      cannot_see: [structure.accel_xyz_g, prop.dps_throttle_pct, power.dc_bus_a_v, comm.snr_db]
+      cannot_see: [structure.accel_xyz_g, prop.dps_throttle_pct, power.dc_bus_a_v, comm.link_margin_db]
       human_channels:
         - "a callout from the commander, a gauge that disagrees with the number he just read"
       note: >-
@@ -381,7 +381,7 @@ display_contract:
       panels: []
       controls: []
       cannot_see: [eclss.lm_cabin_pressure_psia, thermal.coolant_supply_c,
-                   prop.chamber_pressure_pct, comm.snr_db]
+                   prop.chamber_pressure_pct, comm.link_margin_db]
       human_channels:
         - "everything. A suit has a flow indicator and an alarm light and nothing else, so every other observation is a person's"
       note: >-

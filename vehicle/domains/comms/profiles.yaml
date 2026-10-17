@@ -14,13 +14,14 @@
 # deliberate statement about what is worth knowing: event and alarm channels plus essential
 # power, ECLSS and GNC.
 #
-# ## The two limits that are not apollo's
+# ## The limits that are not apollo's
 #
-# Everything below except `recorder_fill_high` and `tx_power_high` is apollo's channel events
-# adopted verbatim — the pointing band, the two SNR levels, the frame-loss limit, the mode and
-# antenna events. Those two are this vehicle's, and both exist because the domain's *resource*
+# Everything below except `recorder_fill_high`, `tx_power_high` and the two link-margin levels is
+# apollo's channel events adopted verbatim — the pointing band, the frame-loss limit, the mode and
+# antenna events. `recorder_fill_high` and `tx_power_high` exist because the domain's *resource*
 # has a bound the corpus never states: a recorder that fills, and a transmitter whose DC draw is
-# the flagship cycle's trigger.
+# the flagship cycle's trigger. The link-margin levels replace apollo's two SNR levels, because
+# the channel publishes a power margin and an SNR threshold does not carry over to it.
 
 domain: comms
 
@@ -97,42 +98,49 @@ thresholds:
         mechanical fact about a specific antenna
 
   # --- the link itself --------------------------------------------------------------------
-  - id: snr_degraded
+  - id: link_margin_low
     acts: crew
-    point: comm.snr_db
+    point: comm.link_margin_db
     comparator: below
-    assert: 8
-    clear: 10
+    assert: 3
+    clear: 5
     dwell_assert_ms: 1000
     dwell_clear_s: 5
     latched: true
     severity: CAUTION
     provenance:
-      basis: apollo
-      ref: "apollo_diode.md:164"
+      basis: chosen
+      reason: >-
+        3 dB of power margin is what the high-gain beam loses at half its beamwidth
+        (`pattern_loss_db_at_beamwidth` 12 dB times 0.5 squared), so the caution arrives while a
+        pointing drift is still half a beam from the edge. apollo's "<8 degraded" was on an SNR and
+        does not carry over to a power margin (`components.yaml#link_margin_db`), and no reachable
+        Apollo document states a caution level on the power margin
       note: >-
-        apollo's "<8 degraded" on a band whose nominal is 8-30 dB, with a 2 dB recovery band
-        (chosen) narrower than the 5 dB gap to the loss threshold. The narrowness is deliberate:
-        between 8 and 3 dB there is a real operating region — a thin link that still carries
-        `emergency` — and a recovery band wide enough to swallow it would make the two alarms
-        one alarm with two names
+        a 2 dB recovery band, the same width the SNR version had, so the region between this and
+        the loss threshold — a thin link that still carries `emergency` — stays a region rather
+        than being swallowed by the recovery band. The level matters most on the omni at lunar
+        range, where Bellcomm's Table II puts the low-rate margin at +0.5 dB: there the caution is
+        standing, which is the true state of an omni link at the Moon
 
-  - id: snr_loss
+  - id: link_margin_loss
     acts: crew
-    point: comm.snr_db
+    point: comm.link_margin_db
     comparator: below
-    assert: 3
-    clear: 6
+    assert: 0
+    clear: 1
     dwell_assert_ms: 500
     dwell_clear_s: 10
     latched: true
     severity: WARNING
     gated_by: "comm.blackout_state is clear"
     provenance:
-      basis: apollo
-      ref: "apollo_diode.md:164"
+      basis: historical
+      source: "Bellcomm CR-125670 (1970), pp. 6-7: the power margin is \"the magnitude by which the receiver input signal power could be reduced to achieve a circuit margin just equal to zero\", so below zero the telemetry the rate needs is not carried"
       note: >-
-        apollo's "<3 loss". The gate is the domain's central operational decision: **this alarm
+        zero is the level the source defines, and the 1 dB recovery band is chosen: wide enough that
+        a margin hovering on zero does not chatter the alarm, narrow enough to clear before
+        `link_margin_low` does. apollo's "<3 loss" was on an SNR and does not carry over. The gate is the domain's central operational decision: **this alarm
         does not fire behind the Moon.** A loss of signal at a predicted occultation is the
         vehicle working correctly, and an alarm every orbit is how a fleet learns to ignore
         communications alarms — after which the one that matters arrives into a habit of
@@ -242,7 +250,7 @@ thresholds:
         a boolean compared against a half, the same shape the avionics and structure domains use
         for `false`. One second to assert because lock acquisition is a search, none to recover
         because the recovery direction is unambiguous. Gated on the blackout for the same reason
-        `snr_loss` is: behind the Moon the receiver is *supposed* to lose the carrier, and
+        `link_margin_loss` is: behind the Moon the receiver is *supposed* to lose the carrier, and
         announcing it would be announcing the orbit
 
   - id: link_mode_none

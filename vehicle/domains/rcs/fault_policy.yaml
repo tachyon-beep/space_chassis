@@ -77,7 +77,7 @@ faults:
         is what happens next, and the vehicle's contribution is `rcs.control_authority_margin`,
         which is what the isolation just cost. F-04's third-order effect — the high-gain antenna
         leaving its beam — is not a separate fault: it is the attitude rate meeting the pointing
-        requirement, and `comm.snr_db` is where a fleet notices it
+        requirement, and `comm.link_margin_db` is where a fleet notices it
     provenance:
       basis: apollo
       ref: "apollo_diode.md:332, :1158"

@@ -5025,7 +5025,7 @@ def test_the_linter_refuses_a_multi_state_node_with_no_declared_order(tmp_path):
     """Ten nodes are advanced by more than one state, and the tiebreak silently decided all ten.
 
     This is not ambiguity, it is a wrong answer waiting to happen: the frozen lexicographic rule
-    sorts `link_snr` before `tx_power`, and transmit power is a term in the link budget — so the
+    sorts `link_margin_db` before `tx_power`, and transmit power is a term in the link budget — so the
     derived order would compute every signal-to-noise ratio from last tick's power. Each node
     with more than one producing state now declares either its order or that it has none, and
     `independent` is a permitted answer that has to carry a reason.
@@ -5033,7 +5033,7 @@ def test_the_linter_refuses_a_multi_state_node_with_no_declared_order(tmp_path):
     definition = copy_definition(tmp_path / "vehicle")
     path = definition / "coupling.yaml"
     text = path.read_text()
-    anchor = "    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_snr]\n"
+    anchor = "    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_margin_db]\n"
     assert anchor in text, "the fixture no longer matches the `link` node"
     path.write_text(text.replace(anchor, "", 1))
 
@@ -5066,7 +5066,7 @@ def test_the_linter_refuses_a_state_order_that_is_not_the_group(tmp_path):
 
 
 def test_the_derived_order_puts_transmit_power_before_the_link_budget(tmp_path):
-    """The order is derived, so it is checkable: `tx_power` advances before `link_snr`.
+    """The order is derived, so it is checkable: `tx_power` advances before `link_margin_db`.
 
     The `--order` view is the artifact `plant.md:71` promises, and the intra-node order is the
     part the tiebreak would have got wrong. Asserting the pair rather than the whole 39-node list
@@ -5088,8 +5088,8 @@ def test_the_derived_order_puts_transmit_power_before_the_link_budget(tmp_path):
     marker = _re.search(r"^\s*\d+\. link\b.*$", result.stdout, _re.M)
     assert marker is not None, result.stdout[-2000:]
     section = result.stdout[marker.start() :]
-    assert "tx_power" in section and "link_snr" in section, result.stdout[-2000:]
-    assert section.index("tx_power") < section.index("link_snr"), (
+    assert "tx_power" in section and "link_margin_db" in section, result.stdout[-2000:]
+    assert section.index("tx_power") < section.index("link_margin_db"), (
         "transmit power has to advance before the link budget it is a term of"
     )
     assert "[order undeclared]" not in result.stdout, (
@@ -8517,7 +8517,7 @@ def test_the_linter_refuses_a_read_that_names_a_state_on_another_node(tmp_path):
     # boundary between the two rules is written down rather than implied.
     swapped = copy_definition(fixture_dir(tmp_path, "reads-wrong-quantity"))
     path = swapped / "coupling.yaml"
-    path.write_text(path.read_text().replace("    reads: tx_power\n", "    reads: link_snr\n", 1))
+    path.write_text(path.read_text().replace("    reads: tx_power\n", "    reads: link_margin_db\n", 1))
     assert run_linter(swapped).returncode == 0
 
 
@@ -8588,7 +8588,7 @@ def test_a_crowded_node_is_read_through_the_state_the_edge_names():
         "fuel_cell_current_a",
         "fuel_cell_current_a",
         "fuel_cell_power_w",
-        "link_snr",
+        "link_margin_db",
         "lm_leak_co2_kg_s",
         "lm_leak_n2_kg_s",
         "lm_leak_o2_kg_s",
@@ -10288,7 +10288,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # `command_value` mappings name profiles and a mode no source prices.
     # One more moved in with the pump: its `on` mapping is an owed rated speed, so what blocks
     # `pump_1_speed_rpm` is named to a field rather than to the code that would drive it.
-    # Four more moved in when a `computed` effect began naming its input: `link_snr`, `tx_power`,
+    # Four more moved in when a `computed` effect began naming its input: `link_margin_db`, `tx_power`,
     # `instrumentation_power` and `nav_solution` are blocked by a field now rather than by the
     # rule that would compute them.
     # Six left `value` in round 8 — the two cabins' gas stocks, which took the initials the four-gas
@@ -10358,7 +10358,7 @@ def test_the_plant_advances_a_node_s_states_in_the_order_the_node_declares(tmp_p
     ran the flow before the pump speed that drives it.
 
     `link` is the one to look at, because `plant.md` already names it: the frozen lexicographic
-    tiebreak "gets `link` wrong — `link_snr` sorts before `tx_power`, and transmit power is a term
+    tiebreak "gets `link` wrong — `link_margin_db` sorts before `tx_power`, and transmit power is a term
     in the link budget". The corpus *declares* the right order and the plant was not reading the
     declaration, so this was not even the tiebreak being wrong; it was a third order, the order the
     YAML happened to be written in, deciding silently.
@@ -10380,7 +10380,7 @@ def test_the_plant_advances_a_node_s_states_in_the_order_the_node_declares(tmp_p
         )
     # And the two independent nodes still get a frozen order, which is the tiebreak rather than a
     # declaration — the plant must not read "independent" as "whatever the file said".
-    assert [s.id for s in world.states_on("link")] == ["transmitter_on", "tx_power", "amp_dissipation_w", "link_snr"]
+    assert [s.id for s in world.states_on("link")] == ["transmitter_on", "tx_power", "amp_dissipation_w", "link_margin_db"]
     assert [s.id for s in world.states_on("engine_main")] == sorted(
         ["aps_state", "dps_state", "sps_state"]
     )
@@ -14006,7 +14006,7 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
 
     `check_domains` requires a node advanced by two or more states to declare a `state_order` or
     to claim `independent`, and the comment beside it records what the requirement is for: the
-    frozen lexicographic tiebreak sorted `link_snr` before `tx_power`, on a node where transmit
+    frozen lexicographic tiebreak sorted `link_margin_db` before `tx_power`, on a node where transmit
     power is a term in the link budget, so the derived order computed this tick's ratio from last
     tick's power. *"Silence about them means the alphabet decides."*
 
@@ -15206,7 +15206,7 @@ def test_every_command_edge_lands_where_a_state_says_a_command_writes():
     # The four that were silent, named, because a future round that adds a fifth mover here should
     # have to say which state it is moving.
     assert written["instrumentation"] == ["avionics.instrumentation_power"]
-    assert written["link"] == ["comms.link_snr", "comms.tx_power", "comms.transmitter_on"]
+    assert written["link"] == ["comms.link_margin_db", "comms.tx_power", "comms.transmitter_on"]
     assert written["nav_state"] == ["gnc.nav_solution"]
     assert written["structure_config"] == ["structure.pyro_fired"]
 
@@ -16179,7 +16179,7 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     # **Fourteen apply and seven are owed**, and the eighth moved across in round 33: a
     # rule-computed state is changed through an *input*, and `select_antenna`'s input
     # (`comms.antenna_selection`) is a state that exists and declares the same verb — so the command
-    # stages it and leaves `link_snr` to the rule. The other five `computed` effects name
+    # stages it and leaves `link_margin_db` to the rule. The other five `computed` effects name
     # `UNCONFIGURED`, which is the honest answer for an input nobody has declared.
     # 14 -> 20 with ADR 0003: `set_coolant_pump`, `set_evaporator_feed`, `set_radiator_bypass`
     # (thermal), `set_load` (power), `set_power_amplifier` and `play_recorder` (comms); 21 with
@@ -16319,7 +16319,7 @@ def test_the_console_applies_the_effect_and_says_what_changed(tmp_path):
     guard the command and refuses it
     `INTERLOCK UNEVALUATED`; the tie stays `open` in the ring. And `set_coolant_pump`, the old
     NOT IMPLEMENTED case, declares interlocks too, so the owed-value refusal is proved on `point_hga`
-    — interlock-free, and its `link_snr.command_value.selects` is owed (`domains/comms/components.yaml`).
+    — interlock-free, and its `link_margin_db.command_value.selects` is owed (`domains/comms/components.yaml`).
     """
     console, _plant, world = console_tools()
     diode = tmp_path / "diode"
@@ -16348,7 +16348,7 @@ def test_the_console_applies_the_effect_and_says_what_changed(tmp_path):
     # A valid command the corpus cannot apply: refused by name, with the reason.
     pointed = run("point_hga target=earth mode=auto")
     assert "refused: NOT IMPLEMENTED" in pointed, pointed
-    assert "link_snr.command_value.selects" in pointed and "is owed" in pointed, pointed
+    assert "link_margin_db.command_value.selects" in pointed and "is owed" in pointed, pointed
     assert "does not simulate the effect" not in pointed, pointed
     # And setting what is already set changes nothing and says so.
     again = run("set_comm_mode mode=sband_low")
@@ -16360,7 +16360,7 @@ def test_a_computed_effect_names_the_input_the_command_changes(tmp_path):
 
     That made it a place a missing state could hide, and one of them hid with a *claim* attached.
     Six entries declare a `computed` effect across five verbs — `select_antenna` and `point_hga` on
-    `link_snr`, `set_power_amplifier` on `tx_power`, `set_instrumentation_mode` on
+    `link_margin_db`, `set_power_amplifier` on `tx_power`, `set_instrumentation_mode` on
     `instrumentation_power`, and `load_state_vector` and `select_nav_source` on `nav_solution` — and
     the input each command writes has a state for exactly one of them. For the other five the
     command's real effect is a state the corpus does not declare, which is a debt.
@@ -16393,18 +16393,18 @@ def test_a_computed_effect_names_the_input_the_command_changes(tmp_path):
     resolved = {k: v for k, v in computed.items() if v[1] != "UNCONFIGURED"}
     # ADR 0003 resolved two more: comms' `transmitter_on` and thermal's `coolant_pump`.
     assert sorted(resolved) == [
-        "comms.link_snr <- select_antenna",
+        "comms.link_margin_db <- select_antenna",
         "comms.tx_power <- set_power_amplifier",
         "thermal.pump_1_speed_rpm <- set_coolant_pump",
     ], resolved
-    assert resolved["comms.link_snr <- select_antenna"][1] == "antenna_selection"
+    assert resolved["comms.link_margin_db <- select_antenna"][1] == "antenna_selection"
     # The two halves agree, which is what the check enforces and what makes the effect performable.
     assert "command:select_antenna" in [
         str(m) for m in states["comms.antenna_selection"]["moved_by"]
     ]
     # The four that owe name no state, and the thing the false claim named is not a channel.
     assert {k for k, v in computed.items() if v[1] == "UNCONFIGURED"} == {
-        "comms.link_snr <- point_hga",
+        "comms.link_margin_db <- point_hga",
         "avionics.instrumentation_power <- set_instrumentation_mode",
         "gnc.nav_solution <- load_state_vector",
         "gnc.nav_solution <- select_nav_source",

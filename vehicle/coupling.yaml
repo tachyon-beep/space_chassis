@@ -539,12 +539,12 @@ nodes:
     # every thermal edge on the vehicle.
     unit: dB
     apollo: "164"
-    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_snr]
+    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_margin_db]
     state_order_note: >-
       **the case that made this check worth writing.** Transmit power is a term in the link
-      budget, so the signal-to-noise ratio has to be computed from the power of this tick — and
-      the lexicographic tiebreak sorts `link_snr` before `tx_power`, which would have made every
-      SNR a function of one-tick-old transmit power. On a nominal link that is a 20 ms error;
+      budget, so the link margin has to be computed from the power of this tick — and
+      the lexicographic tiebreak sorts `link_margin_db` before `tx_power`, which would have made every
+      margin a function of one-tick-old transmit power. On a nominal link that is a 20 ms error;
       across `set_power_amplifier` it is a 6 dB step reported a tick late, which is exactly the
       transient a fleet is watching for. `transmitter_on` is first because the draw and the
       amplifier's dissipation are both functions of the switch: it is on this node rather than the
@@ -1961,7 +1961,7 @@ edges:
     at: "hot end, plate > 323 K",
     note: "avionics_plate_c event is >50 C (apollo_diode.md:105). Near zero nominally."}
   - id: E-PLATE-COMM
-    advances: link_snr   # the amplifier's temperature enters the link budget as a loss, not as a transmitted power
+    advances: link_margin_db   # the amplifier's temperature enters the link budget as a loss, not as a transmitted power
     from: coldplate_t
     to: link
     kind: lag
@@ -2027,8 +2027,8 @@ edges:
         is the debt: what belongs here is the rejection law and not a slope."
   - id: E-AMP-LOAD
     # **The state this flux reads, on a node that carries two.** `link` holds the transmit power and
-    # the signal-to-noise ratio, so the node publishes no key; the edge's own unit is `A per W` and
-    # the quantity it multiplies is the power the amplifier is putting out. `link_snr` is the other
+    # the link margin, so the node publishes no key; the edge's own unit is `A per W` and
+    # the quantity it multiplies is the power the amplifier is putting out. `link_margin_db` is the other
     # candidate and it is a decibel — a ratio of the same link, not an input to its load.
     reads: tx_power
     from: link
@@ -2261,7 +2261,7 @@ edges:
         Collapsing the two would have made a gimbal failure indistinguishable from a vehicle
         pointing the wrong way.
   - id: E-GEOM-LINK
-    advances: link_snr   # antenna geometry is a pointing loss, and the loss lands in the signal-to-noise ratio
+    advances: link_margin_db   # antenna geometry is a pointing loss, and the loss lands in the link margin
     from: antenna_geometry
     to: link
     kind: algebraic
@@ -2563,7 +2563,7 @@ edges:
   - id: E-LINK-TEL
     # The other role on the same node: what a link delivers is set by how good it is, and the
     # quantity that says so is the ratio — `tx_power` is the input the amplifier's load already reads.
-    reads: link_snr
+    reads: link_margin_db
     from: link
     to: published_evidence
     kind: rate
@@ -2665,7 +2665,7 @@ cycles:
       The delay is on the bus-to-link edge, and the choice is physical rather than conventional.
       The amplifier's draw follows from the *commanded* transmitter state, which is a service
       state and therefore exogenous; the bus is a stiff regulated source that responds to its
-      load within the tick; and the link's signal-to-noise ratio is a consequence of both. So
+      load within the tick; and the link's margin is a consequence of both. So
       `comms` precedes `power` in the schedule, the load is known before the bus is solved, and
       the link reads the bus voltage as it stood one tick ago. Twenty milliseconds of lag on a
       stiff 28 V bus is not a modelling compromise — and the alternative, solving six members
@@ -2677,7 +2677,7 @@ cycles:
       hysteresis_required: false
       note: >-
         the loop gain through this pair alone is nominally zero, because the draw is driven by the
-        commanded state and not by the link's signal-to-noise ratio — a lower bus voltage does not
+        commanded state and not by the link's margin — a lower bus voltage does not
         make the amplifier draw less, which is the positive-feedback path and it runs through the
         *thermal* route rather than this one. That path is `C-AMP-BUS-PUMP`, and it carries the
         hysteresis requirement for both.
@@ -2786,7 +2786,7 @@ failure_chains:
     secondary: "attitude rate + excess propellant use"
     third_order: "high-gain antenna leaves beam -> communication degradation"
     first_published_clue: gnc.body_rate_xyz_deg_s
-    observable_clues: ["rcs.thruster_[n]_valve", "rcs.thruster_[n]_pressure_switch", structure.accel_xyz_g, gnc.body_rate_xyz_deg_s, comm.snr_db]
+    observable_clues: ["rcs.thruster_[n]_valve", "rcs.thruster_[n]_pressure_switch", structure.accel_xyz_g, gnc.body_rate_xyz_deg_s, comm.link_margin_db]
     scenario_use: crisis
     # The faults that can start this chain. `tools/faults.py` read "primary" as the fault rather than as
     # the chain because the two were joined by nothing but prose; this is the link, and it is held:
@@ -2873,7 +2873,7 @@ failure_chains:
     secondary: "pointing error grows"
     third_order: "telemetry gaps -> controllers lose evidence during another anomaly"
     first_published_clue: comm.hga_pointing_error_deg
-    observable_clues: [comm.hga_pointing_error_deg, comm.snr_db, comm.rx_frame_loss_pct]
+    observable_clues: [comm.hga_pointing_error_deg, comm.link_margin_db, comm.rx_frame_loss_pct]
     scenario_use: degraded
     # The faults that can start this chain. `tools/faults.py` read "primary" as the fault rather than as
     # the chain because the two were joined by nothing but prose; this is the link, and it is held:

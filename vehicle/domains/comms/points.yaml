@@ -9,7 +9,7 @@
 # merge them:
 #
 #   `comm.blackout_state`   the geometry says the link should be down, and it is not a fault
-#   `comm.snr_db`           the link exists and is thin
+#   `comm.link_margin_db`           the link exists and is thin
 #   `comm.carrier_lock`     the receiver can hear the vehicle and cannot read it
 #
 # A fleet that sees only the first has to trust the vehicle's ephemeris. One that sees only the
@@ -41,7 +41,7 @@ points:
     derivation: "whether the receiver has acquired the carrier"
     note: >-
       apollo's "lock loss" event. It is a *different fact* from having a usable link — a carrier
-      locks at an SNR far too low to carry data — so this channel and `comm.snr_db` together
+      locks at a power far too low to carry data — so this channel and `comm.link_margin_db` together
       separate "the receiver has lost the vehicle" from "the receiver can hear it and cannot read
       it". Those want opposite responses: the first is a pointing or power problem on the
       vehicle, the second is a bandwidth problem on both ends.
@@ -59,12 +59,15 @@ points:
       degrees is 0.54 dB down — a *pointing* warning rather than a link warning, which is exactly
       what apollo's two-sided wording says.
 
-  - channel: comm.snr_db
-    from: link_snr
+  - channel: comm.link_margin_db
+    from: link_margin_db
     layer: estimate
-    derivation: "the link's signal-to-noise ratio at the receiver"
+    derivation: "the received carrier power's margin over the power the telemetry rate needs"
     note: >-
-      apollo's band is 8-30 dB with "<8 degraded" and "<3 loss". Three edges land on the state
+      apollo's `comm.snr_db` row (8-30 dB **Sim**, "<8 degraded", "<3 loss") re-based on the
+      quantity an Apollo prediction can source: Bellcomm CR-125670's power margin, which the same
+      report says is not a signal-to-noise ratio, so apollo's band and events do not carry over and
+      the thresholds are this vehicle's (`link_margin_low`, `link_margin_loss`). Three edges land on the state
       behind this channel — a sagging bus (`E-BUS-COMM`), a hot amplifier (`E-PLATE-COMM`) and
       pointing loss (`E-GEOM-LINK`) — and the channel deliberately does not say which, because
       one number cannot: the attribution needs `power.dc_bus_a_v`, `thermal.comm_amp_c` and
@@ -186,7 +189,7 @@ not_published:
       the sum of transmit power, antenna gain, pointing loss, range loss and receiver threshold.
       It is the number the domain computes and it is not published because publishing it would
       publish the *conclusion*: design.md §8 refuses to hand a fleet a diagnosis, and a link
-      budget is a diagnosis of an SNR. The terms are all observable — `comm.tx_power_w`,
+      budget is a diagnosis of a margin. The terms are all observable — `comm.tx_power_w`,
       `comm.antenna`, `comm.hga_pointing_error_deg` — and the arithmetic is the fleet's.
 
   - channel: comm.rx_frame_[n]_contents
