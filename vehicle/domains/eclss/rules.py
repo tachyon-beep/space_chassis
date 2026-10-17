@@ -61,7 +61,8 @@ def _o2_supply(inputs, params, dt):
             return params.no_value(f"{switch['state']} names no {switch['element']!r}")
     source, flow = params["source_switch"], params["flow_switch"]
     selected = inputs[source["state"]][source["element"]]
-    if selected in (params.get("no_store") or []):
+    # Optional: `RuleParams` refuses a missing key rather than raising `KeyError`, so ask by name.
+    if "no_store" in list(params) and selected in params["no_store"]:
         return params.no_value(
             f"{source['state']}[{source['element']}] is {selected!r}, a store this vehicle does not have"
         )
