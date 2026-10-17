@@ -198,3 +198,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 15:31 GNC + RCS (lane's call, coordinator agrees): the CM RCS becomes a separate stock isolated in coast, as flown; the slew law allocates SM quads only, which removes the ~2 % CM pricing error in E-RCSP-RCS. Lands on #56 after #44.
 - 16:10 Governance #57 merged as `6814102` (D45–D51) on a green `required`, seconds before D54 reached this thread; its review follows the merge.
 - 16:10 D54: every PR that leaves draft gets an independent Fable review report for John (`vehicle-status/reviews/pr-<N>.md`); merges need green plus a non-blocking verdict.
+- 16:11 John confirms D54 on the card: "Merge on clear".

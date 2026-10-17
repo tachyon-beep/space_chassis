@@ -93,7 +93,8 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   resolves to `main`'s side plus a test re-run.
 - **Review before merge (D54, from 16:09).** Every PR that leaves draft, governance batches included, gets an
   independent Fable review written to `vehicle-status/reviews/pr-<N>.md` in the project's shared folder. A PR merges
-  when `required` is green and the verdict is not blocking; John evaluates the PR and the report afterwards.
+  when `required` is green and the verdict is not blocking (John, "Merge on clear"); John evaluates the PR and the report
+  afterwards and can ask for a revert.
 - **Shared decision records take one dated section per verb.** ADR 0004
   (`vehicle/docs/decisions/0004-interlock-evaluation.md`) is being amended by ECLSS (#46), structure
   (#51) and possibly propulsion (#50): each lane adds its own dated, verb-named section and rebases
