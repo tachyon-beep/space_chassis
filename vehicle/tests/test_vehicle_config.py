@@ -871,11 +871,22 @@ def test_the_build_order_is_the_ticks_own_gap_list():
     # read by the command path and not by `advance` — the hold carries the state either way — which
     # is why `bus_tie_closed`'s `auto` and `telemetry_rate`'s `emergency`, `normal` and `burst` are
     # owed, counted by `--readiness`, and not a disagreement with the tick.
+    # **And a device list the integrator reads only after its event has run is the same case one
+    # door along.** `pyro_fired` reads `fires_<event>` for each event `events_fired` records as
+    # executed and refuses, on that tick, an event whose list is unset — so `fires_pyro_fire` is
+    # owed on the path that executes `pyro_fire` and read on no other, as a `command_value` row is
+    # read only by its verb. While the record says the event has not run, the list is not read.
+    executed = plant.initial_values(world).get("events_fired") or {}
     assert not [
         state.id
         for state in world.states
         if state.id in advanced
-        and [owed for owed in state.owed if not owed.startswith("command_value")]
+        and [
+            owed
+            for owed in state.owed
+            if not owed.startswith("command_value")
+            and not (owed.startswith("fires_") and not executed.get(owed.removeprefix("fires_")))
+        ]
     ], "a state the tick advanced is missing a declaration its own integrator reads"
     # The bucket totals were the guard that used to be the disagreement counters: a state moving
     # between them, or a new way of being blocked arriving, moved one of these four numbers. **Since
@@ -2585,9 +2596,9 @@ def test_the_linter_refuses_a_cadence_class_that_disagrees_with_the_registry(tmp
     definition = copy_definition(tmp_path / "vehicle")
     path = definition / "presentation.yaml"
     text = path.read_text()
-    anchor = "members: 85,"
+    anchor = "members: 86,"
     assert anchor in text, "the fixture no longer matches presentation.yaml"
-    path.write_text(text.replace(anchor, "members: 84,", 1))
+    path.write_text(text.replace(anchor, "members: 85,", 1))
 
     result = run_linter(definition)
     assert result.returncode == 1
@@ -2957,7 +2968,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     path.write_text(without_block(path.read_text(), "coverage"))
     result = run_linter(definition)
     assert result.returncode == 0, result.stdout[-900:]
-    assert "declares 148 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
+    assert "declares 149 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
     assert "derived here as 20 unperturbed, 15 of them `service`" in result.stdout
     # One block deleted is one debt added, so the ablation is the corpus's own count plus one.
     assert f"COMPOSES, with {corpus_debts() + 1} declared debt(s)." in result.stdout
@@ -5145,7 +5156,7 @@ def test_the_linter_refuses_a_state_order_that_is_not_the_group(tmp_path):
     path = definition / "coupling.yaml"
     text = path.read_text()
     anchor = (
-        "    state_order: [pyro_fired, lm_separation_state, descent_stage_state, configuration]\n"
+        "    state_order: [events_fired, pyro_fired, lm_separation_state, descent_stage_state, configuration]\n"
     )
     assert anchor in text, "the fixture no longer matches `structure_config`"
     path.write_text(
@@ -12868,6 +12879,9 @@ def test_every_stock_declares_where_it_starts():
         "coolant_pump",
         "evaporator_feed",
         "radiator_bypass",
+        # The structure lane: the four hatches latched at launch, and the latch ring's drive.
+        "hatch_state",
+        "latch_drive",
     }, sorted(seeded_integrators["internal"])
     # **And the five `algebraic` states the resolver adds**, the sentinel's half of the declared
     # arithmetic: the bay heat rate, the cabin pressure differential, the two loops' collected loads
@@ -12886,9 +12900,10 @@ def test_every_stock_declares_where_it_starts():
     # is the reason the value assertions below name their states rather than ranging over the map.
     # The four switch maps are maps, which a set cannot hold, so they are asserted by name below.
     switch_maps = {k for k, v in seeded_integrators["internal"].items() if isinstance(v, dict)}
-    assert switch_maps == {"coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan"}, (
-        switch_maps
-    )
+    # The structure lane's two are maps as well: the hatches and the latch ring's drive.
+    assert switch_maps == {
+        "coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan", "hatch_state", "latch_drive",
+    }, switch_maps
     assert {v for k, v in seeded_integrators["internal"].items() if k not in switch_maps} == {
         0.0,
         35.0,
@@ -13089,6 +13104,15 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
                     for argument in (verbs[name].get("argument_schema") or {}).values():
                         if isinstance(argument, dict) and argument.get("type") == "enum":
                             offered.update(str(v) for v in argument.get("values") or [])
+                    # A `constant` effect sets its value whatever the arguments are, so the value it
+                    # names is what the verb expresses for this state — the linter's rule as well.
+                    offered.update(
+                        str(row["constant"])
+                        for row in state.get("command_value") or []
+                        if isinstance(row, dict)
+                        and str(row.get("verb")) == name
+                        and row.get("constant") is not None
+                    )
                     values = set()
                     for match in re.findall(r"enum\[([^\]]*)\]", str(state.get("unit") or "")):
                         values.update(v.strip() for v in match.split(","))
@@ -15297,7 +15321,8 @@ def test_every_command_edge_lands_where_a_state_says_a_command_writes():
     assert written["instrumentation"] == ["avionics.instrumentation_power"]
     assert written["link"] == ["comms.link_snr", "comms.tx_power", "comms.transmitter_on"]
     assert written["nav_state"] == ["gnc.nav_solution"]
-    assert written["structure_config"] == ["structure.pyro_fired"]
+    # `execute_event` writes the record of executed events, and the devices follow from it.
+    assert written["structure_config"] == ["structure.events_fired"]
 
     # And the one edge that turned out to be a false claim rather than a missing declaration. The
     # ladder is a threshold response to bus voltage — its own `logic:` reason says the bus
@@ -15440,9 +15465,9 @@ def test_a_verb_that_starts_a_state_is_declared_rather_than_described(tmp_path):
         "maneuver_state": ["load_burn"],
         "imu_alignment": ["request_imu_alignment"],
         "lcl_tripped": ["set_breaker"],
-        "arm_state": ["arm_event"],
-        "docking_latch_state": ["set_docking_latch"],
     }, found
+    # `arm_state` and `docking_latch_state` left in the structure lane: the arm token is written by
+    # `arm_event`'s constant, and the latches follow `latch_drive`, which `set_docking_latch` writes.
     # The verb that clears an LCL is the one whose help says so, and the one the reason used to
     # name cannot — which is the whole of what the prose form cost.
     assert "reset" in verbs["set_breaker"]["argument_schema"]["state"]["values"]
@@ -16623,7 +16648,8 @@ def test_a_commanded_state_is_guarded_by_a_dwell_and_the_executive_reads_it(tmp_
     assert commanded, "no discrete state is moved by a command"
     # The one-way state is the first exemption; the four keyed maps are the second.
     assert sorted(s.id for s in commanded if not s.spec.get("dwell")) == [
-        "coolant_pump", "evaporator_feed", "load_enabled", "pyro_fired", "radiator_bypass",
+        "arm_age_s", "coolant_pump", "evaporator_feed", "events_fired", "latch_drive",
+        "load_enabled", "radiator_bypass",
     ]
     assert all(
         s.spec.get("one_way") or str(s.spec.get("unit") or "").startswith("map[")
@@ -17726,8 +17752,8 @@ def test_the_linter_asks_a_carried_mode_where_it_starts_and_not_a_code_moved_one
     refusal(
         "keyed-carried-mode-outside-the-enum",
         structure,
-        "    initial: UNCONFIGURED\n    initial_note: >-\n",
-        "    initial:\n      hatch_crew_csm: ajar\n    initial_note: >-\n",
+        "    initial:\n      hatch_crew_csm: latched\n",
+        "    initial:\n      hatch_crew_csm: ajar\n",
         "which its `unit` ('map[hatch_id,enum[closed,latched,open]]') cannot hold",
     )
 
@@ -18838,8 +18864,6 @@ def test_a_bounded_search_record_is_what_the_corpus_now_carries():
         ("domains/comms/components.yaml", "gimbal"),
         ("domains/eclss/components.yaml", "condensing_heat_exchanger"),
         ("domains/structure/components.yaml", "hatch_crew_csm"),
-        ("domains/structure/components.yaml", "docking_interface"),
-        ("domains/structure/components.yaml", "pyro_lm_separation"),
     ):
         document = yaml.safe_load((VEHICLE / relative).read_text())
         component = next(c for c in document["components"] if c.get("id") == cid)
@@ -20183,8 +20207,9 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
-    # 27 -> 28 with ECLSS's `suit_fan`.
-    assert len(values["internal"]) == 28, sorted(values["internal"])
+    # 27 -> 28 with ECLSS's `suit_fan`; 28 -> 30 with the structure lane: `latches_engaged` and
+    # `docking_talkback`, both computed from the latch positions on the sentinel.
+    assert len(values["internal"]) == 30, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
@@ -20268,7 +20293,7 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
     # And the debt states both figures, because a number in prose with no reader is the next round's
     # finding — this is that reader.
     entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
-    assert "142 published points" in entry and "72 are *derived*" in entry
+    assert "143 published points" in entry and "71 are *derived*" in entry
 
 
 def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
@@ -20321,9 +20346,11 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     ), report)
     counts = _cv.CHANNEL_DERIVATION_COUNTS
     # 64/71 -> 63/72 with the comms quiet-coast model (7b22cd7), which moved the docstring too.
-    assert counts["same"] == 63, counts
-    assert counts["derived"] == 72, counts
-    assert counts["total"] == 135, counts
+    # 63/72 -> 65/71 with the structure lane: `structure.docking_latches` reads `latches_engaged`, a
+    # count in its own unit, and `structure.docking_talkbacks` is a new channel that is its state.
+    assert counts["same"] == 65, counts
+    assert counts["derived"] == 71, counts
+    assert counts["total"] == 136, counts
     assert not [r for r in report.refusals if "channels read from a state" in r], report.refusals
     doc = _cv.CHANNEL_DERIVATION_FIGURES.search(_cv.inspect.getdoc(_cv.check_channel_derivations) or "")
     assert doc is not None, "the docstring no longer states the figures this check computes"
@@ -20365,12 +20392,12 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     total_fixture = copy_definition(fixture_dir(tmp_path, "total-count"))
     path = total_fixture / "presentation.yaml"
     text = path.read_text()
-    assert "of the 135 channels read from a state" in text
-    path.write_text(text.replace("of the 135 channels read from a state", "of the 134 channels read from a state", 1))
+    assert "of the 136 channels read from a state" in text
+    path.write_text(text.replace("of the 136 channels read from a state", "of the 135 channels read from a state", 1))
     result = run_linter(total_fixture)
     assert result.returncode == 1, result.stdout[-900:]
     assert (
-        "states that 134 channels read from a state, and the registry now has 135" in result.stdout
+        "states that 135 channels read from a state, and the registry now has 136" in result.stdout
     ), result.stdout[-900:]
 
     # And the corpus's own sentence carries all the figures, which is what makes it a declaration.
@@ -20378,11 +20405,12 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
     # 63 -> 64 in round 32: `eclss.o2_supply_pressure_psi` moved from the node-sourced set to the
     # state-sourced one, where its unit is its source's. 134 -> 135 in round 61, when the total was
-    # given a reader and the sentence it was read from turned out to be the stale copy.
-    assert "only 63 have the state's own unit" in entry
-    assert "of the 135 channels read from a state" in entry
-    assert "The other 72 are *derived*" in entry
-    assert "15 of the 72 now carry an evaluable `derivation`" in entry
+    # given a reader and the sentence it was read from turned out to be the stale copy. 63/135 ->
+    # 65/136 with the structure lane's latch count and talkback channels.
+    assert "only 65 have the state's own unit" in entry
+    assert "of the 136 channels read from a state" in entry
+    assert "The other 71 are *derived*" in entry
+    assert "15 of the 71 now carry an evaluable `derivation`" in entry
 
 
 def test_the_frame_publishes_a_derived_channel_at_this_tick_s_own_readings():
@@ -21487,13 +21515,13 @@ def test_the_mechanical_conversions_land_on_the_declarations_that_sized_them():
     # The nine, by the registry's own count of evaluable derivations.
     lint = run_linter(VEHICLE)
     assert lint.returncode == 0, lint.stdout[-900:]
-    assert "15 of the 72 now carry an evaluable `derivation`" in lint.stdout
+    assert "15 of the 71 now carry an evaluable `derivation`" in lint.stdout
     entry = next(
         d
         for d in yaml.safe_load((VEHICLE / "presentation.yaml").read_text())["open_debts"]
         if "frame publishes channel ids now" in d
     )
-    assert "15 of the 72 now carry an evaluable `derivation`" in entry
+    assert "15 of the 71 now carry an evaluable `derivation`" in entry
     assert "0 of the prose rows declare in their own `owed` field" in entry
 
 
