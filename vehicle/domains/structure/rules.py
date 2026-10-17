@@ -94,7 +94,7 @@ def structural_leak_g_s(inputs, params, dt):
             return params.no_value(
                 f"{hatch} is {position} with {dp:.2f} psid behind it and the docked ring has "
                 f"{engaged} latches engaged, fewer than the {params['seal_min_engaged']} that seal "
-                "it; the tunnel's leak is owed (`tunnel.volume_m3`)"
+                "it; the vent rate through the unseated ring seal is owed"
             )
         return params.no_value(
             f"{hatch} is {position} with {dp:.2f} psid behind it and nothing docked beyond it; "

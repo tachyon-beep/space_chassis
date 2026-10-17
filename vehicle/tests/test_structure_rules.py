@@ -247,7 +247,7 @@ def test_an_open_tunnel_hatch_is_sealed_by_the_ring_and_unsealed_without_it(worl
     assert trace[3]["hatch_state"]["hatch_tunnel_csm"] == "open"
     assert trace[3]["structural_leak_g_s"] == 0.0
     owed = trace[-1]["gaps"]["structural_leak_g_s"]
-    assert "hatch_tunnel_csm" in owed and "tunnel.volume_m3" in owed
+    assert "hatch_tunnel_csm" in owed and "unseated ring seal" in owed
 
 
 def test_after_undocking_an_open_tunnel_hatch_faces_space(world, tmp_path):
