@@ -298,6 +298,19 @@ DEFAULT_WORLD_SAFING = [
         "set_suit_fan vehicle=csm state=on",
         "set_suit_fan vehicle=csm state=off",
     ),
+    # `set_o2_source` (ADR 0004, amended 2026-10-17): its guards name source and flow together.
+    (
+        "cabin_pressure_caution",
+        {"csm_cabin_pressure_pa": 30000.0},  # 4.35 psia, past the 4.5 psia caution, above the emergency
+        "set_o2_source vehicle=csm source=surge flow=high",
+        "set_o2_source vehicle=csm source=primary flow=off",
+    ),
+    (
+        "o2_reserve_10",
+        {"o2_csm_kg": 20.0},  # past the 27.9 kg floor
+        "set_o2_source vehicle=csm source=surge flow=nominal",
+        "set_o2_source vehicle=csm source=primary flow=nominal",
+    ),
     (
         "load_margin_negative",
         {"bus_a_load_w": 3000.0},  # above bus A's 2,840 W rated generation
@@ -334,7 +347,7 @@ def test_every_readable_interlock_names_its_direction_or_is_whole_on_purpose(wor
     """A verb with a readable interlock declares `interlocks_when`, except the three ADR 0004 lists as
     guarded whole because no argument value is plainly the recovery (`select_nav_source` left the
     list when ADR 0005 gave it a recovery)."""
-    whole = {"request_translation", "start_burn", "set_o2_source"}
+    whole = {"request_translation", "start_burn"}
     for verb, spec in world.verbs.items():
         readable = [
             name
@@ -348,3 +361,25 @@ def test_every_readable_interlock_names_its_direction_or_is_whole_on_purpose(wor
     for state in ("closed", "vent", "repress"):
         assert "structure.hatch_open_with_pressure" in plant.guarding_interlocks(vent, {"state": state})
     assert "cabin_pressure_emergency" not in plant.guarding_interlocks(vent, {"state": "repress"})
+
+
+def test_a_guard_over_two_arguments_applies_to_the_combinations_it_names(world):
+    """`set_o2_source` (ADR 0004 §Direction, amended 2026-10-17): the cabin caution guards cutting the
+    cabin's oxygen, an isolated source or a flow of `off`; the reserve guards drawing on `primary`."""
+    spec = world.verbs["set_o2_source"]
+
+    def guards(source: str, flow: str) -> list[str]:
+        return plant.guarding_interlocks(spec, {"vehicle": "csm", "source": source, "flow": flow})
+
+    for flow in ("off", "low", "nominal", "high"):
+        assert "eclss.cabin_pressure_caution" in guards("isolated", flow)
+        assert "o2_reserve_10" not in guards("isolated", flow)
+        assert "o2_reserve_10" not in guards("surge", flow)
+    for source in ("primary", "surge"):
+        assert "eclss.cabin_pressure_caution" in guards(source, "off")
+        for flow in ("low", "nominal", "high"):
+            assert "eclss.cabin_pressure_caution" not in guards(source, flow)
+    assert guards("primary", "off") == ["eclss.cabin_pressure_caution"]
+    assert guards("primary", "high") == ["o2_reserve_10"]
+    # A leak on a low reserve: the surge tank is the one source both guards admit.
+    assert guards("surge", "high") == []

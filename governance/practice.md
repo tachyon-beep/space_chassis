@@ -86,21 +86,33 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   edge belongs to the lane owning its target state, a channel to the lane whose prefix it carries.
 - **Engine code (`vehicle/tools/plant.py`, `check_vehicle.py`, `faults.py`) belongs to the
   fault-injection lane.** Other lanes route engine needs through the coordinator, or land them as a
-  small PR merged before the domain PR that uses them.
-- **Merge order**: #45 (unpin), then #46 (ECLSS engine helper), then #47 (fault injection), then the
-  rest rebase and merge when `required` is green. Figures are rewritten from the tools on rebase,
-  never hand-merged.
+  small PR merged before the domain PR that uses them. The engine lane's rule (16:12): when a lane's own data
+  change makes prose in `check_vehicle.py` or `plant.py` stale, the lane may fix that prose on its own PR, as
+  long as no logic changes; logic changes still go to the engine lane through the coordinator.
+- **Merge order**: #45 (unpin), then #46 (ECLSS engine helper), then #58 (unpin the census figures #45 kept, from 15:26), then #47 (fault injection), then the
+  rest rebase and merge when `required` is green. Since #45 (14:46), a PR that closes a state does not
+  touch the test figures #45 unpinned; the census figures #45 kept stay pinned until #58 merges, and only
+  then does such a PR leave every figure, the README status paragraph and `plant.py` alone. A README
+  count-line conflict resolves to `main`'s side plus a test re-run.
+- **Review before merge (D54, from 16:09).** Every PR that leaves draft, governance batches included, gets an
+  independent Fable review written to `vehicle-status/reviews/pr-<N>.md` in the project's shared folder. A PR merges
+  when `required` is green and the verdict is not blocking (John, "Merge on clear"); John evaluates the PR and the report
+  afterwards and can ask for a revert.
 - **Shared decision records take one dated section per verb.** ADR 0004
   (`vehicle/docs/decisions/0004-interlock-evaluation.md`) is being amended by ECLSS (#46), structure
   (#51) and possibly propulsion (#50): each lane adds its own dated, verb-named section and rebases
   over the others, never editing another lane's section.
+- **A vehicle PR may carry the matching `aurora/tests` assertion change** when it moves behaviour a
+  chassis test asserts, and says so; nothing else in `aurora/` (D42).
+- **Every fault carries `fleet_class`** (`precursor | onboard | out_of_scope`, a note on
+  `out_of_scope`; D38 item 5); lane 9 lints it after #47.
 - **The quiet-coast episode must stay green; its numbers may move** (D29).
 - **Fidelity**: "preference more fidelity where it doesn't start creating significant delivery
   risk" (John, D34; D31), and only where it adds an interesting option for a scenario, behaviour,
   decision or challenge, not a single forced move (D37); otherwise a documented approximation. A new
   signal to debug or a new confounder is worth it; a quantity that only drains from full to empty is
   not, but the events around it (meals that make barks and noise) are; propellant is not in that
-  class (D40). Each
+  class (D40). The target scenario is **Apollo 13** (D48): each lane checks its fidelity against it. Each
   lane tells the coordinator the fidelity it builds to and any approximation it keeps; the
   coordinator evens the lanes out, and the governance thread writes the ledger in `status.md`.
 - **Sources**: any domain may be read (D32). Lanes started before 13:46 on 2026-10-17 get primary

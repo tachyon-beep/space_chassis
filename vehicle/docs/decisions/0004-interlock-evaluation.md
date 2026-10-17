@@ -106,7 +106,11 @@ that those guards refuse every command of the verb. A verb with no `interlocks_w
 command with every interlock, as before. The linter checks that a condition's argument is an enum and
 its values are the argument's, and in the list form that each interlock is covered exactly once,
 by a condition or by an unconditional entry, so a list cannot leave a guard whole-verb by omission.
-Every verb with a readable interlock declares one, guarding only the direction that worsens the
+A condition may name several arguments (`argument: [source, flow]`), and then each of its `values`
+is one combination of theirs in the same order, so a guard whose hazard depends on two arguments
+together names the combinations it applies to (amended 2026-10-17 for `set_o2_source`; the linter
+refuses a combination of the wrong length, a member its argument cannot take, a repeat, and every
+combination there is, which is the guard declared whole). Every verb with a readable interlock declares one, guarding only the direction that worsens the
 hazard its threshold watches, and admitting only the values the verb's help or the threshold make
 plainly the recovery. As declared:
 
@@ -133,13 +137,19 @@ plainly the recovery. As declared:
 | set_source | `bus_a_undervoltage`, `load_margin_negative` | `state=off` | `state=on` |
 | set_battery_contactor | `load_margin_negative` | `state=off` | `state=on` |
 | select_sensor | `redundancy_degraded` | `source=primary`, `secondary` | `source=auto` |
+| set_o2_source | `eclss.cabin_pressure_caution` | `source=isolated` at any flow; `flow=off` at any source | `source=primary` or `surge` at `flow=low`, `nominal`, `high` |
+| set_o2_source | `o2_reserve_10` | `source=primary` at `flow=low`, `nominal`, `high` | `source=primary` at `flow=off`; `source=surge`, `isolated` at any flow |
 
 Guarded whole, because no argument value is plainly the recovery: `request_translation`
 (`rcs_propellant_reserve`; every translation spends propellant), `start_burn` (`feed_pressure_low`;
-the safing verb is `stop_burn`), `select_nav_source` (`estimator_divergence`; the help refuses
-choosing any source while the estimator diverges, and whether `blended` is a recovery is not said),
-and `set_o2_source` (`cabin_pressure_caution` and `o2_reserve_10`; the hazardous direction depends
-on two arguments, `source` and `flow`, together, which one condition cannot name). The unconditional
+the safing verb is `stop_burn`), and `select_nav_source` (`estimator_divergence`; the help refuses
+choosing any source while the estimator diverges, and whether `blended` is a recovery is not said).
+`set_o2_source` was the fourth until 2026-10-17: its hazardous direction depends on two arguments,
+`source` and `flow`, together, which one condition could not name. A cabin below its caution is fed
+by cutting its oxygen and the S/M reserve is spent only by a flow from `primary` (the cryogenic
+tanks are in the S/M and the 3.7 lb surge tank is a separate store in the CM,
+`csm_ecs_study_guide.pdf` PDF p. 12), so it now names combinations, and on a leak with a low
+reserve the surge tank at any flow is the one choice both guards admit. The unconditional
 entries above are the same judgement for one guard of a verb whose other guard has a direction.
 
 The same rule applies to UNEVALUATED: a safing command needs no guard, so an unreadable interlock
@@ -237,4 +247,4 @@ guarded-whole list above. It now declares `interlocks_when` on `source`:
 - refused while tripped: `imu_only`, `star_sighting`, `radar`, `blended`
 - the safing direction: `ground_uplink`
 
-Three verbs stay guarded whole: `request_translation`, `start_burn` and `set_o2_source`.
+Two verbs stay guarded whole: `request_translation` and `start_burn`.

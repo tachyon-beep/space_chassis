@@ -296,11 +296,18 @@ def generate(root: Path, verbs: frozenset[str] | set[str] | None = None) -> str:
                     for condition in conditions:
                         names = [str(n) for n in condition.get("interlocks") or interlocks]
                         covered.update(names)
-                        when = ", ".join(f"`{v}`" for v in condition["values"])
-                        parts.append(
-                            f"{', '.join(f'`{n}`' for n in names)} — only when "
-                            f"`{condition.get('argument')}` is {when}"
-                        )
+                        argument = condition.get("argument")
+                        if isinstance(argument, list):
+                            # Two arguments together (ADR 0004, `set_o2_source`): the combinations.
+                            subject = "(" + ", ".join(f"`{a}`" for a in argument) + ")"
+                            when = ", ".join(
+                                "(" + ", ".join(f"`{x}`" for x in v) + ")" for v in condition["values"]
+                            )
+                            when = f"one of {when}"
+                        else:
+                            subject = f"`{argument}`"
+                            when = ", ".join(f"`{v}`" for v in condition["values"])
+                        parts.append(f"{', '.join(f'`{n}`' for n in names)} — only when {subject} is {when}")
                     rest = [str(i) for i in interlocks if str(i) not in covered]
                     if rest:
                         parts.append(f"{', '.join(f'`{n}`' for n in rest)} — always")

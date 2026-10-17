@@ -47,19 +47,27 @@ natural_rate_hz: 1
 # `command_executive` is what `E-CMD-ATM` drives the cabin regulator with, and it is the only read
 # here that is a signal rather than a quantity. It was missing while the *other* command edges were
 # declared by their domains, which is what a list nothing counts looks like.
+#
+# `load_shed_state` carries power's `load_enabled`, which says whether the suit compressor's load is
+# on; the suit circuit's flow rule reads it, with no edge, as thermal's zone heat rates do.
 reads: [o2_csm, o2_lm, absorber_capacity_csm, absorber_capacity_lm, crew_state,
-        cabin_zone_t, lm_cabin_zone_t, command_executive]
+        cabin_zone_t, lm_cabin_zone_t, command_executive, load_shed_state, fc_o2_draw]
 writes: [cabin_atm, lm_cabin_atm, cabin_regulator, cabin_o2_supply_csm,
-         cabin_o2_supply_lm, co2_removal_csm, co2_removal_lm]
+         cabin_o2_supply_lm, co2_removal_csm, co2_removal_lm, cabin_leak_csm, cabin_leak_lm,
+         o2_tank_heaters]
 
-# Two states on the `internal` sentinel, so their order is a declaration rather than the alphabet's:
-# both are published and neither drives the other, and the sentinel is advanced after every node.
-internal_order: [suit_loop_flow_cfm, o2_supply_pressure_psi]
+# Three states on the `internal` sentinel, so their order is a declaration rather than the alphabet's,
+# and the sentinel is advanced after every node.
+internal_order: [suit_fan, suit_loop_flow_cfm, o2_supply_pressure_psi]
 internal_order_note: >-
-  **nothing at all**: the suit circuit's flow and the oxygen supply tank's pressure are published
+  the compressor's switch before the flow it gates, so a `set_suit_fan` acts on the tick it lands.
+  Between the flow and the tank, **nothing at all**: the suit circuit's flow and the oxygen supply tank's pressure are published
   quantities with no edge between them and no shared input, so the order is a declaration rather than
   a finding. What it is not is the alphabet's — `o2_supply_pressure_psi` sorts before
-  `suit_loop_flow_cfm`, and a tiebreak that decides is a tiebreak that can be wrong later
+  `suit_loop_flow_cfm`, and a tiebreak that decides is a tiebreak that can be wrong later. The tanks'
+  heater relay is on its own node, scheduled before the sentinel, so the switch reads the pressure
+  the last tick left and the pressure integrates over what the heaters are doing now: a stroke starts
+  on the tick the switch closes
 
 # --------------------------------------------------------------------------------------
 # State. Four conserved gases per compartment, one commanded regulator, and three derived
@@ -113,6 +121,12 @@ state:
     method: stock
     unit: kg
     initial: 0.0
+    # Nothing aboard adds diluent, so the stock's only flow is its share of the leak (`E-ATM-LEAK-N2`).
+    preloaded: >-
+      the pad's nitrogen is purged before the mission (`initial_provenance`) and no flight source
+      adds any: the cabin regulator meters oxygen, and the repressurisation package and surge tank
+      hold oxygen (`csm_ecs_study_guide.pdf` PDF p. 12). The stock is drained by the leak and filled
+      only by a fault that adds the wrong gas
     initial_derivation:
       expression: "(partial_pressure_mmhg * mmhg_to_pa) * volume_m3 / (gas_constant * temperature_k) * molar_mass_kg_per_mol"
       inputs:
@@ -284,6 +298,9 @@ state:
     method: stock
     unit: kg
     initial: 0.0
+    preloaded: >-
+      as `csm_cabin_n2_kg`: the LM's ECS "stores, in gaseous form, all oxygen required"
+      (`lm_ecs_study_guide.pdf`), so no flight source adds diluent and the leak is the only flow
     initial_derivation:
       expression: "(partial_pressure_mmhg * mmhg_to_pa) * volume_m3 / (gas_constant * temperature_k) * molar_mass_kg_per_mol"
       inputs:
@@ -309,6 +326,134 @@ state:
     provenance:
       basis: derived
       relation: "as the CSM compartment"
+  # The cabin leak by gas (ECLSS lane, 2026-10-17): what each cabin stock loses through its seals.
+  # Without these the regulator's leak term entered the cabin and nothing left it.
+  - id: csm_leak_o2_kg_s
+    node: cabin_leak_csm
+    method: algebraic
+    unit: "kg O2/s"
+    leak_kg_per_h: 0.023
+    gas_stock: csm_cabin_o2_kg
+    cabin_stocks: [csm_cabin_o2_kg, csm_cabin_n2_kg, csm_cabin_co2_kg, csm_cabin_h2o_kg]
+    provenance:
+      basis: derived
+      relation: >-
+        the cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
+        over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
+        through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
+        shares of the four sum to the whole leak. Only three are taken: water vapour has no drain
+        edge, so the cabin loses its vapour share less than `leak_kg_per_h` while the regulator
+        replaces the whole figure as oxygen
+      note: >-
+        `leak_kg_per_h` is `vehicle.yaml#consumables.leak.csm_kg_per_h`, copied for the rule, with that
+        entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
+        figure is the leak term of `cabin_o2_supply_csm_kg_s`, so the regulator replaces what this
+        takes. Water vapour's share has no state yet: its drain lands with the crew's vapour source
+  - id: csm_leak_n2_kg_s
+    node: cabin_leak_csm
+    method: algebraic
+    unit: "kg N2/s"
+    leak_kg_per_h: 0.023
+    gas_stock: csm_cabin_n2_kg
+    cabin_stocks: [csm_cabin_o2_kg, csm_cabin_n2_kg, csm_cabin_co2_kg, csm_cabin_h2o_kg]
+    provenance:
+      basis: derived
+      relation: >-
+        the cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
+        over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
+        through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
+        shares of the four sum to the whole leak. Only three are taken: water vapour has no drain
+        edge, so the cabin loses its vapour share less than `leak_kg_per_h` while the regulator
+        replaces the whole figure as oxygen
+      note: >-
+        `leak_kg_per_h` is `vehicle.yaml#consumables.leak.csm_kg_per_h`, copied for the rule, with that
+        entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
+        figure is the leak term of `cabin_o2_supply_csm_kg_s`, so the regulator replaces what this
+        takes. Water vapour's share has no state yet: its drain lands with the crew's vapour source
+  - id: csm_leak_co2_kg_s
+    node: cabin_leak_csm
+    method: algebraic
+    unit: "kg CO2/s"
+    leak_kg_per_h: 0.023
+    gas_stock: csm_cabin_co2_kg
+    cabin_stocks: [csm_cabin_o2_kg, csm_cabin_n2_kg, csm_cabin_co2_kg, csm_cabin_h2o_kg]
+    provenance:
+      basis: derived
+      relation: >-
+        the cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
+        over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
+        through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
+        shares of the four sum to the whole leak. Only three are taken: water vapour has no drain
+        edge, so the cabin loses its vapour share less than `leak_kg_per_h` while the regulator
+        replaces the whole figure as oxygen
+      note: >-
+        `leak_kg_per_h` is `vehicle.yaml#consumables.leak.csm_kg_per_h`, copied for the rule, with that
+        entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
+        figure is the leak term of `cabin_o2_supply_csm_kg_s`, so the regulator replaces what this
+        takes. Water vapour's share has no state yet: its drain lands with the crew's vapour source
+  - id: lm_leak_o2_kg_s
+    node: cabin_leak_lm
+    method: algebraic
+    unit: "kg O2/s"
+    leak_kg_per_h: 0.0226796
+    gas_stock: lm_cabin_o2_kg
+    cabin_stocks: [lm_cabin_o2_kg, lm_cabin_n2_kg, lm_cabin_co2_kg, lm_cabin_h2o_kg]
+    provenance:
+      basis: derived
+      relation: >-
+        the LM cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
+        over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
+        through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
+        shares of the four sum to the whole leak. Only three are taken: water vapour has no drain
+        edge, so the cabin loses its vapour share less than `leak_kg_per_h` while the regulator
+        replaces the whole figure as oxygen
+      note: >-
+        `leak_kg_per_h` is `vehicle.yaml#consumables.leak.lm_kg_per_h`, copied for the rule, with that
+        entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
+        figure is the leak term of `cabin_o2_supply_lm_kg_s`, so the regulator replaces what this
+        takes. Water vapour's share has no state yet: its drain lands with the crew's vapour source
+  - id: lm_leak_n2_kg_s
+    node: cabin_leak_lm
+    method: algebraic
+    unit: "kg N2/s"
+    leak_kg_per_h: 0.0226796
+    gas_stock: lm_cabin_n2_kg
+    cabin_stocks: [lm_cabin_o2_kg, lm_cabin_n2_kg, lm_cabin_co2_kg, lm_cabin_h2o_kg]
+    provenance:
+      basis: derived
+      relation: >-
+        the LM cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
+        over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
+        through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
+        shares of the four sum to the whole leak. Only three are taken: water vapour has no drain
+        edge, so the cabin loses its vapour share less than `leak_kg_per_h` while the regulator
+        replaces the whole figure as oxygen
+      note: >-
+        `leak_kg_per_h` is `vehicle.yaml#consumables.leak.lm_kg_per_h`, copied for the rule, with that
+        entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
+        figure is the leak term of `cabin_o2_supply_lm_kg_s`, so the regulator replaces what this
+        takes. Water vapour's share has no state yet: its drain lands with the crew's vapour source
+  - id: lm_leak_co2_kg_s
+    node: cabin_leak_lm
+    method: algebraic
+    unit: "kg CO2/s"
+    leak_kg_per_h: 0.0226796
+    gas_stock: lm_cabin_co2_kg
+    cabin_stocks: [lm_cabin_o2_kg, lm_cabin_n2_kg, lm_cabin_co2_kg, lm_cabin_h2o_kg]
+    provenance:
+      basis: derived
+      relation: >-
+        the LM cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
+        over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
+        through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
+        shares of the four sum to the whole leak. Only three are taken: water vapour has no drain
+        edge, so the cabin loses its vapour share less than `leak_kg_per_h` while the regulator
+        replaces the whole figure as oxygen
+      note: >-
+        `leak_kg_per_h` is `vehicle.yaml#consumables.leak.lm_kg_per_h`, copied for the rule, with that
+        entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
+        figure is the leak term of `cabin_o2_supply_lm_kg_s`, so the regulator replaces what this
+        takes. Water vapour's share has no state yet: its drain lands with the crew's vapour source
   - id: cabin_o2_supply_csm_kg_s
     node: cabin_o2_supply_csm
     method: algebraic
@@ -403,68 +548,175 @@ state:
         mode" event — three members, which `unit_source` records — and the fourth is `unit_added`'s.
         The dwell is one second each way because the regulator is a valve with a mechanical transit
         and a fleet must not be able to chatter it by re-commanding every tick
-  # The supply tank's working pressure, which is what `eclss.o2_supply_pressure_psi` publishes. It is
-  # a *pressure* and the corpus had only a *mass*: round 30 found the channel reading `o2_csm` — the
-  # shared oxygen stock, in kilograms — under a psi name, and the honest answer was not a conversion
-  # but this state. What it still owes is named below rather than papered over.
+  # The supply tanks' heater relay and the pressure it holds (`domains/eclss/rules.py`). Until this
+  # round the pressure was a lag toward 900 with no driver and no source for its time constant; the
+  # AOH's own cryogenic section (SM2A-03-BLOCK II-(1), §2.6) publishes the law instead — a pressure
+  # switch cycling the heaters and fans between two settings, and a table of how long a stroke takes
+  # and how much a tank can deliver at each quantity. The two S/M tanks are carried as one: they are
+  # identical, drawn in parallel, and the switch energises both or neither.
+  - id: o2_tank_heaters
+    method: discrete
+    node: o2_tank_heaters
+    unit: "enum[on,off]"
+    initial: "off"
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        chosen: 900 psia is inside the switch's band, where the relay holds whichever way it last
+        moved, and no source says which stroke the tanks were in at MET 0. With `off` the first
+        stroke starts when the tanks first fall to 865 psia
+    moved_by:
+      - "logic:the tanks' pressure switch, which closes at the low setting and opens at the high"
+    pressure_state: o2_supply_pressure_psi
+    energize_psia: 865
+    deenergize_psia: 935
+    dwell:
+      min_on_s: 1
+      min_off_s: 1
+    provenance:
+      basis: historical
+      source: >-
+        AOH SM2A-03-BLOCK II-(1) Vol. 1, **p. 2.6-12**: "As pressure in the tanks decreases, the
+        pressure switch in each tank closes to energize the motor switch, closing contacts in the
+        heater and fan circuits. Both tanks have to decrease in pressure before heater and fan
+        circuits are energized. When either tank reaches the upper operating pressure limit, that
+        respective pressure switch opens to again energize the motor switch, thus opening the heater
+        and fan circuits to both tanks. The O2 tank circuits are energized at **865 psia** minimum and
+        de-energized at **935 psia** maximum." p. 2.6-49 repeats the 865-935 psia normal operating
+        range. Bouman (MSC-04312, May 1971, p. 2) gives the same two settings
+      note: >-
+        The band is the comparator and the relay latches inside it, so the anti-chatter that matters
+        is the 70 psi between the settings, which the rule reads from `energize_psia` and
+        `deenergize_psia`. It is declared as a `dwell` rather than a `hysteresis` because
+        `check_band_on` holds every band on `eclss.o2_supply_pressure_psi` to one of that point's
+        alarm thresholds (750/790, 5/2), and a control switch is not an alarm. The one-second dwell
+        each way is chosen, as the motor switch's transit, and is a declaration only: the plant's
+        `command_dwell` guards commanded states, and this one moves by its logic, so the band in the
+        rule is the only anti-chatter that acts. **Not modelled:** the manual mode, which
+        bypasses the switch from the MDC-2 heater and fan switches (p. 2.6-14; no verb carries them),
+        and the thermal interlock that opens the heaters at a +90 F shell (same page; no shell
+        temperature)
   - id: o2_supply_pressure_psi
     node: internal
-    method: lag
+    method: dynamics
     unit: psi
     initial: 900
     initial_provenance:
       basis: historical
       source: >-
-        `csm_ecs_study_guide.pdf` **PDF p. 12**, printed p. 2-1, section II. §2.2.1 "High Pressure O2
-        Distribution": "Downstream of the S/M O2 shut-off valve the **high pressure (900 psig)**
-        oxygen is supplied in parallel to the surge tank and backup tank in the LH equipment bay, and
-        to the PLSS supply valve and the S/M supply regulator". §2.1 on the same page is what stands
-        behind it: "the oxygen is stored in **two cryogenic tanks in the service module (S/M)**.
-        Heaters within the tanks change the oxygen from a liquid to a gaseous state, for distribution
-        to the using equipment." The channel's own 750-950 psi band brackets this working pressure,
-        which is why the starting value is the published one rather than a chosen figure
-    tau_s: UNCONFIGURED
-    note: >-
-      the time constant is owed, and it is the line's rather than the tank's: a heated cryogenic tank
-      holds its delivery pressure for as long as there is liquid to boil, so what a first-order lag
-      represents here is the response to a demand step
+        AOH SM2A-03-BLOCK II-(1) Vol. 1, **p. 2.6-6**, the cryogenic storage table: oxygen design
+        storage pressure **900 +-35 psia**. `csm_ecs_study_guide.pdf` **PDF p. 12** (printed p. 2-1,
+        §2.2.1) is the ECS's side of the same figure: "the high pressure (900 psig) oxygen is supplied
+        in parallel to the surge tank and backup tank". In vacuum a gauge vented to ambient reads the
+        absolute pressure, so the two agree
+    pressure_basis: "psia, the switch's and the table's; the channel's 750-950 psi band is the same quantity"
+    stock_state: o2_csm_kg
+    tanks: 2
+    full_lb_per_tank: 320
+    kg_per_lb: 0.45359237
+    draw_states: [fc_o2_draw_kg_s, cabin_o2_supply_csm_kg_s]
+    heater_state: o2_tank_heaters
+    energize_psia: 865
+    deenergize_psia: 935
+    heat_in_full_btu_h: 595.87
+    heat_leak_btu_h: 26
+    table_flow_lb_h: 1
+    relief_psia: 983
+    # [quantity %, repressurization minutes 865 to 935 psia, maximum flow lb/h at 865 psia]
+    repressurization_table:
+      - [100, 4.0, 3.56]
+      - [95, 4.3, 3.97]
+      - [90, 4.6, 4.55]
+      - [85, 5.0, 5.27]
+      - [80, 5.4, 6.02]
+      - [75, 5.7, 7.01]
+      - [70, 6.5, 7.94]
+      - [65, 7.4, 9.01]
+      - [60, 8.7, 10.80]
+      - [55, 9.6, 12.54]
+      - [50, 10.8, 14.19]
+      - [45, 11.5, 15.69]
+      - [40, 12.4, 17.01]
+      - [35, 12.6, 17.56]
+      - [30, 13.0, 17.56]
+      - [25, 13.1, 16.55]
+      - [20, 13.2, 15.48]
+      - [15, 14.5, 12.28]
+      - [10, 17.8, 8.76]
+      - [7.5, 21.4, 7.09]
+      - [5, 24.0, 5.37]
     provenance:
-      basis: UNCONFIGURED
+      basis: historical
+      source: >-
+        AOH SM2A-03-BLOCK II-(1) Vol. 1, change of 16 July 1969. **p. 2.6-13**: "Heat input from
+        heaters, fan motors, and heat leak into an O2 tank is **595.87 Btu/hour** (113.88 watt heaters
+        supply 389.67 Btu, 52.8 watt fan motors supply 180.2 Btu, and heat leak supplies **26 Btu**)",
+        and the oxygen columns of the table beneath it, copied above row for row: repressurization
+        time 865 to 935 psia and maximum flow at 865 psia by quantity. **p. 2.6-12** states the
+        table's flow: "Assuming a constant level flow from each tank (O2 - **1 lb/hr** ...)". **p.
+        2.6-14**: "Oxygen relief valves vent at a pressure between **983** and 1010 psig and reseat at
+        965 psig minimum". **p. 2.6-48**: 320 lb usable oxygen per tank (min)
       note: >-
-        **what the pressure does as the tank empties is not published.** The state is declared because
-        the *channel* is: `eclss.o2_supply_pressure_psi` is apollo's 750-950 psi indication with a
-        low-pressure event and a >5 psi/min fall, four declared faults perturb it, and until this
-        round it read `o2_csm` — a mass in kilograms — under a pressure's name. A cryogenic tank with
-        heaters holds its delivery pressure until the liquid is gone and then falls, so the relation
-        between this state and `o2_csm` is a heater-and-regulator model rather than a gas law.
-        **Searched:** `csm_ecs_study_guide.pdf` end to end — PDF p. 12 is everything it says about
-        the supply (the two tanks, the 900 psig working pressure, the surge tank's 3.7 lb, the inlet
-        restrictors' 8.2 lb/hr at 900 psig) — and `mission_e_consumables.txt`. What would close it: a
-        tank or heater analysis for the S/M cryogenic tanks, or a pressure-versus-contents curve, and
-        the *driver* is owed with it, because no edge can reach the sentinel.
-
-        **Searched, round WP02 (2026-10-15), and what it found is a different law rather than a
-        time constant.** MSC Cryogenics Symposium Papers, MSC-04312, May 1971
-        (https://ntrs.nasa.gov/api/citations/19720016135/downloads/19720016135.pdf): C. P. Bouman,
-        "Redesign of the Apollo Cryogenic Storage System", p. 2 — the O2 tank "pressure control
-        switch operates between a range of 865 to 935 psig", energising the heaters at the low
-        setting and removing them at the high; relief cracks at 973 psig; the pressure transducer
-        reads 50-1,050 psig "accurate within plus or minus 2.5 percent of full scale" (+-25 psi).
-        C. K. Forester (same volume, p. 65) models Apollo 12 and 14 pressurisation strokes "about
-        four minutes long", and pp. 68-69 give the switch points as about 860 and 900 psia. The J
-        mission EPS document
-        (https://www.ibiblio.org/apollo/Documents/J%20Mission%20Electrical%20Power%20System%20Oct%201971.pdf)
-        p. 2.6-14 gives O2 design pressure 900 +35 psia, and pp. 2.6-15/16 the heater ratings and the
-        caution limits (above 950, below 800 psia). So the supply pressure is a **relay-controlled
-        cycle between two switch points**, its period set by heater power, heat leak, draw and the
-        fluid's density (Forester's own independent variable), and a first-order lag toward 900 has
-        no source: choosing a `tau_s` would be a modelling approximation, which is John's call
-        (`docs/vehicle-completion/08-risks.md`). Effectivity: Bouman p. 2 describes the basic
-        two-tank system before the post-Apollo 13 redesign, which is the Apollo 11 CSM's
-        configuration, but does not name CSM-107; Forester's strokes are Apollo 12 and 14 flight data
-  - id: suit_loop_flow_cfm
+        **The law is the table's, and two numbers per row are all it needs.** A tank drawn at `m` lb/h
+        changes pressure at `K * (Q_in - m * dq/dm)`: `dq/dm` is the heat per pound withdrawn that
+        holds pressure constant, and the table's maximum flow is the flow at which the full 595.87
+        Btu/h just holds 865 psia, so `dq/dm = 595.87 / m_max`; `K` is the pressure per Btu, and the
+        table's stroke is 70 psi in `T` minutes at 1 lb/h with everything on, so
+        `K = 70 / (T/60 * (595.87 - dq/dm))`. Heaters off, `Q_in` is the 26 Btu/h leak. The rule is
+        `tank_pressure_rate_psi_h`. At MET 0 (96%, the vehicle's own 0.73 lb/h per tank) that is a
+        3.9-minute stroke and a 3.2 psi/min fall, 22 minutes from 935 back to 865, so the
+        `o2_supply_fast_fall` threshold's 5 psi/min is not reached in normal cycling; in the 45-25%
+        minimum dq/dm region the leak nearly
+        holds pressure by itself, which is the AOH's own description of that region (p. 2.6-12).
+        **Approximations, each named:** quantity is `o2_csm_kg` over 2 x 320 lb, the AOH's minimum
+        usable load, so the 279 kg loaded reads 96%; the two tanks share stock and draw equally;
+        the table is linear between rows and held at its ends, so below 5% (where the AOH says
+        operation is continuous) the 5% row stands; the draw is the fuel cells' and the cabin supply's,
+        the two oxygen flows this vehicle has; the pressure is held at the relief valve's 983 psia
+        crack because venting is not modelled. **Sources that disagree, and why these figures:** Bouman
+        (MSC-04312 p. 2) gives relief at 973 psig and the switch in psig, and the Apollo 13 Review
+        Board (June 1970) gives a 975 psia high caution for CSM-109; the AOH is dated to Apollo 11's
+        flight (change of 16 July 1969) and is the Block II handbook the crew flew with, so its 983
+        psig crack and psia band stand. In vacuum a gauge vented to ambient reads absolute, so psia
+        and psig are one figure here. A stroke lasts minutes and a tick is 20 ms, so the
+        explicit step is well inside its own resolution. Forester (MSC-04312 p. 65) reads Apollo 12
+        and 14 strokes as "about four minutes long", which is the table's top row
+  # The suit compressor's switch, which `set_suit_fan` moves. The verb existed and moved nothing, so a
+  # fleet could command the fan off and the circuit kept flowing; now the flow rule reads it.
+  - id: suit_fan
+    method: discrete
     node: internal
-    method: lag
+    unit: "map[vehicle,enum[on,off]]"
+    initial: {csm: "on", lm: "off"}
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        chosen, matching power's MET-0 load positions (`csm_suit_fan` on, `lm_suit_fan` off): the CSM
+        suit circuit "circulates continuously" (`suit_loop_flow_cfm`'s `initial_provenance`, ECS study
+        guide PDF p. 39) and the LM is unpowered at MET 0. The launch checklist's compressor switch was
+        not read
+    moved_by: ["command:set_suit_fan"]
+    command_value:
+      - verb: set_suit_fan
+        argument: state
+        key: vehicle
+        why: "one element per vehicle; the CSM's suit circuit flows while its compressor is commanded on and its load is powered"
+    dwell:
+      min_on_s: 1
+      min_off_s: 1
+    provenance:
+      basis: apollo
+      ref: "apollo_diode.md:238"
+      note: >-
+        apollo's set_suit_fan, as a switch the plant holds. The LM's element has no flow state to
+        drive yet. The one-second dwell each way is chosen, as `cabin_regulator_position`'s is: a
+        compressor switch has a transit and a fleet must not chatter it by re-commanding every tick
+  - id: suit_loop_flow_cfm
+    # **The compressor as flow** (`domains/eclss/rules.py`). The rule relaxes the flow toward
+    # `rated_flow_cfm` while the CSM suit compressor is commanded on (`suit_fan`) and its load is
+    # powered (`power.load_enabled`), and toward zero otherwise, with `tau_s`. It was a lag with no driver, which no tick could advance.
+    node: internal
+    method: dynamics
     unit: ft3/min
     initial: 35
     initial_provenance:
@@ -477,9 +729,19 @@ state:
         34.5 cubic feet per minute suit gas at a pressure rise of 6.9 inches of water". The circuit
         circulates continuously — it is what the crew breathe through before and after launch — so
         MET 0 is the normal-space delivery, and the compressor is the only thing that drives it
+    rated_flow_cfm: 35
+    compressor_load: csm_suit_fan
+    compressor_switch: {state: suit_fan, element: csm}
     tau_s: 5
     provenance:
       basis: chosen
+      note: >-
+        `rated_flow_cfm` is the guide's normal-space delivery, the same quotation as `initial`; the
+        34.5 cfm emergency delivery is not modelled because nothing on this vehicle selects the
+        emergency operating condition. `compressor_load` is power's `csm_suit_fan` (85 W,
+        `domains/power/components.yaml`), the one compressor load on the CSM bus: the guide's two
+        compressors are a running unit and its standby, and the load inventory carries one. The
+        channel is the CSM's circuit; the LM's suit loop (`lm_suit_fan`) has no state of its own
       reason: >-
         the suit loop is a compressor-driven circuit, so it spins up in seconds. apollo's `<20` event
         is what the time constant has to be short against — five seconds is long enough that a fan
@@ -920,7 +1182,6 @@ atmosphere_model:
       relation: "the ideal-gas relation applied to the published cabin volume and pressure, with the oxygen as the remainder after the three declared partial pressures. It is stated here so that the initial load is a computed consequence of published figures rather than a third invented one."
 
 open_debts:
-  - "**The oxygen supply tank has a pressure now, and its *rule* is what is owed.** Round 30 found `eclss.o2_supply_pressure_psi` — apollo's 750-950 psi indication, with a low-pressure event and a >5 psi/min fall, perturbed by four declared faults — reading `o2_csm`, the shared oxygen *stock*, in kilograms, because the vehicle had no supply tank at all. Round 32 gave it one: `state o2_supply_pressure_psi`, a lag on the sentinel whose 900 psig starting value is `csm_ecs_study_guide.pdf` **PDF p. 12**'s own working pressure, so the channel is published rather than omitted. **What is still owed is how it moves**: a heated cryogenic tank holds its delivery pressure until the liquid is gone and then falls, so the relation between this state and `o2_csm` is a heater-and-regulator model rather than a gas law — and the *driver* is owed with it, because no edge can reach the sentinel. **Searched:** the ECS study guide end to end (PDF p. 12 is everything it says about the supply: the two cryogenic tanks in the S/M, the 900 psig working pressure, the surge tank's 3.7 lb, the inlet restrictors' 8.2 lb/hr at 900 psig) and `mission_e_consumables.txt`. What would close it: a tank or heater analysis for the S/M cryogenic tanks, or a pressure-versus-contents curve."
   - "The condensing heat exchanger's removal rate is owed; it is declared unset above. Without it the humidity stock has no sink, so the model can express a humid cabin and cannot yet dry it. The ventilation fan's flow was this debt's other half and is closed: 86 cu ft/min per fan at 5 psia, two fans (TN D-6718 p. 14; see `ventilation_fan`). The exchanger's evidence so far is a design-analysis latent load and an accumulator capacity, which bound the rate and are not it (`docs/evidence/wp02-thermal-eclss-consumables.md`)."
   - "The suit loop is modelled as a single flow channel rather than as a circuit with the PLSS, because apollo publishes suit_loop_flow_cfm and nothing about the portable life support's own consumables. EVA is therefore a phase whose atmosphere consequences are not yet modelled."
   - "**The cabin leak is declared per cabin now, and one of the two is borrowed.** Round 67 split
