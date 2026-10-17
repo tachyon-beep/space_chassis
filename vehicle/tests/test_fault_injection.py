@@ -679,3 +679,26 @@ def test_a_dynamics_state_starts_from_its_declared_vector(tmp_path):
     assert declared == [0.0, 0.1, 0.0]
     # A vector in the truth hashes and survives the checkpoint's JSON like any other value.
     assert plant.state_hash(values) == plant.state_hash(json.loads(json.dumps(values)))
+
+
+def test_a_zone_cooled_by_space_is_in_no_loop_s_load_and_says_why(tmp_path):
+    """The thermal lane's ask: the SM service bay is not on the glycol loop.
+
+    `cooled_by: space` is accepted with a `cooled_by_note`, the exemption's reason, and the bay
+    leaves the primary loop's collected load; without the note it is refused.
+    """
+    bay = "        cooled_by: loop_primary\n        heat_state: service_bay_heat_w\n"
+    noted = tmp_path / "noted"
+    copy_noted = faulted_copy(noted)
+    replace(
+        copy_noted / "vehicle.yaml",
+        bay,
+        "        cooled_by: space\n        cooled_by_note: radiates through the SM skin\n"
+        "        heat_state: service_bay_heat_w\n",
+    )
+    out = run_linter(copy_noted).stdout
+    assert "zones.csm_service_bay.cooled_by" not in out, out[-3000:]
+    bare = faulted_copy(tmp_path / "bare")
+    replace(bare / "vehicle.yaml", bay, "        cooled_by: space\n        heat_state: service_bay_heat_w\n")
+    out = run_linter(bare).stdout
+    assert "is 'space' without a `cooled_by_note`" in out, out[-3000:]
