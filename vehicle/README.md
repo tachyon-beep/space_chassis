@@ -220,7 +220,7 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 162 states over 61 scheduled nodes, 142
+**All eleven domains have landed** — 148 channels, 168 states over 61 scheduled nodes, 142
 thresholds, 60 verbs and 128 classified events across the eleven directories, with every debt
 named. Those are the corpus's declarations, and the linter holds each of them against the files
 (`check_readme_figures`); they move when a domain adds a channel, a state or a verb, not when one
@@ -3662,7 +3662,7 @@ terrain-relative navigation and aerosurfaces — and with them the QP control al
 quaternion feedback law, both of which are `domains/rcs/`'s on a vehicle whose attitude is RCS
 only. What survives is the **navigation** half, and it is real mathematics: an error-state EKF
 with a Joseph-form covariance update, a fifteen-state error vector, a quintic trajectory segment
-with exact coefficients, and two state machines. It declares 13 states, 9 thresholds, 5 verbs,
+with exact coefficients, and two state machines. It declares 19 states, 9 thresholds, 5 verbs,
 11 faults.
 
 Four things in it are worth reading:

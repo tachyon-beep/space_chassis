@@ -127,8 +127,72 @@ def _sun_direction_body(inputs, params, dt):
     return list(_qmul(_qmul(conj, (0.0, *sun)), q)[1:])
 
 
+# --------------------------------------------------------------------------------------------
+# Where the navigation solution comes from, reduced (ADR 0005, "Navigation sources"). Not the
+# 15-state filter `gnc_diode.md:790` describes: the ground's tracking arc, how long the vehicle
+# has coasted on the vector it holds, and the two sigmas those give. Apollo's ground rule is that
+# the ground navigates and the onboard sightings are the backup, so the source that matters is
+# whether the vehicle holds the ground's vector or is coasting on an old one.
+# --------------------------------------------------------------------------------------------
+
+FT_TO_M = 0.3048
+
+
+def _msfn_arc_s(inputs, params, dt):
+    """How long the ground has tracked the vehicle since its solution last started over."""
+    return float(inputs["msfn_arc_s"]) + dt
+
+
+def _nav_vector_arc_s(inputs, params, dt):
+    """The tracking arc behind the vector the vehicle holds: the ground's own while the vehicle
+    takes the ground's vector, frozen at the moment it stopped."""
+    if str(inputs["nav_source"]) == "ground_uplink":
+        return float(inputs["msfn_arc_s"])
+    return float(inputs["nav_vector_arc_s"])
+
+
+def _nav_coast_s(inputs, params, dt):
+    """How long the vehicle has navigated without the ground's vector."""
+    if str(inputs["nav_source"]) == "ground_uplink":
+        return 0.0
+    return float(inputs["nav_coast_s"]) + dt
+
+
+def msfn_velocity_sigma_m_s(arc_s, table):
+    """The 1-sigma velocity the ground knows after `arc_s` of tracking: the RSS of the three axes'
+    3-sigma, divided by three, interpolated in the arc and held at the table's ends."""
+    rows = [(float(row[0]) * 3600.0, math.sqrt(sum(float(v) ** 2 for v in row[1:]))) for row in table]
+    if arc_s <= rows[0][0]:
+        three = rows[0][1]
+    elif arc_s >= rows[-1][0]:
+        three = rows[-1][1]
+    else:
+        for (t0, v0), (t1, v1) in zip(rows, rows[1:], strict=False):
+            if t0 <= arc_s <= t1:
+                three = v0 + (v1 - v0) * (arc_s - t0) / (t1 - t0)
+                break
+    return three / 3.0 * FT_TO_M
+
+
+def _nav_velocity_sigma(inputs, params, dt):
+    """The velocity sigma of the vector held: the ground's at the arc behind it."""
+    return msfn_velocity_sigma_m_s(float(inputs["nav_vector_arc_s"]), params["msfn_3sigma_ft_s"])
+
+
+def _nav_position_sigma(inputs, params, dt):
+    """The position sigma: the ground's at the uplink, grown by the velocity error over the coast."""
+    ground = float(params["ground_position_sigma_m"])
+    grown = float(inputs["nav_velocity_sigma"]) * float(inputs["nav_coast_s"])
+    return math.sqrt(ground * ground + grown * grown)
+
+
 RULES = {
     "body_rate": _body_rate,
     "attitude": _attitude,
     "sun_direction_body": _sun_direction_body,
+    "msfn_arc_s": _msfn_arc_s,
+    "nav_vector_arc_s": _nav_vector_arc_s,
+    "nav_coast_s": _nav_coast_s,
+    "nav_velocity_sigma": _nav_velocity_sigma,
+    "nav_position_sigma": _nav_position_sigma,
 }

@@ -224,11 +224,17 @@ components:
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [gyro_bias, imu_alignment, nav_covariance, radar, nav_integrity, maneuver_state]
+internal_order: [gyro_bias, imu_alignment, nav_covariance, nav_source, msfn_arc_s, nav_vector_arc_s,
+                 nav_coast_s, nav_velocity_sigma, nav_position_sigma, radar, nav_integrity,
+                 maneuver_state]
 internal_order_note: >-
   the platform's own chain: the bias drifts, the alignment is what the bias is known to, the
   covariance is what the alignment is worth, the radar refines it, the integrity verdict is
-  read off the covariance, and the manoeuvre state is what the verdict permits.
+  read off the covariance, and the manoeuvre state is what the verdict permits. The reduced
+  navigation chain sits after the covariance (ADR 0005): the source the command set comes first,
+  then the ground's arc, the arc behind the vector held (which reads this tick's ground arc), the
+  coast, and the two sigmas, velocity before position because the position grows at the velocity's
+  rate.
 
 state:
 
@@ -401,14 +407,11 @@ state:
           follows. `weight` is the second half of the same statement
         why: >-
           the state a command assigns here is the *source*, and the estimate follows from it
-        selects: UNCONFIGURED
+        selects: nav_source
         note: >-
-          the selected navigation source has no state. It is not published as `gnc.nav_source` —
-          no such channel is registered, and this note replaces a sentence that claimed one was,
-          along with a claim that the gap was recorded in this domain's `open_debts`, which it was
-          not. What would hold it is a state naming which of `imu_only`, `star`, `radar`,
-          `ground_uplink` and the blend the filter is navigating from, which is what `weight` and
-          the `nav_source_<source>_enable` gate are both about
+          the source is `nav_source` (ADR 0005, "Navigation sources"). It is not published as a
+          channel — `gnc.nav_source` is not registered — and the sigmas it sets are
+          `gnc.nav_position_sigma_m` and `gnc.nav_velocity_sigma_m_s`. `weight` has no state yet
     provenance:
       basis: apollo
       ref: "apollo_diode.md:119-122"
@@ -435,7 +438,168 @@ state:
         with no absolute update is a vehicle whose covariance grows, and the growth rate is set
         by the gyro's drift, which is the figure nobody has published. Its determinant is what
         the integrity ladder watches, and publishing `nav_position_sigma_m` without the state
-        that produces it would be publishing one diagonal of a matrix and calling it the matrix
+        that produces it would be publishing one diagonal of a matrix and calling it the matrix.
+        Which is why the two sigma channels moved off it (ADR 0005, "Navigation sources"): the
+        filter is not run, and `nav_position_sigma` and `nav_velocity_sigma` are the reduced
+        model's own states, each saying what it is computed from
+
+  # ------------------------------------------------------------------------------------
+  # Where the solution comes from, reduced (ADR 0005, "Navigation sources"). The source the fleet
+  # selected; the ground's tracking arc; the arc behind the vector the vehicle holds; how long it
+  # has coasted on that vector; and the two sigmas they give. `nav_covariance` stays the filter
+  # the corpus describes and is not run; these are what the published sigmas read today.
+  # ------------------------------------------------------------------------------------
+
+  - id: nav_source
+    node: internal
+    method: discrete
+    unit: "enum[imu_only,star_sighting,radar,ground_uplink,blended]"
+    initial: ground_uplink
+    initial_provenance:
+      basis: historical
+      source: >-
+        Apollo 13 Mission Techniques, Translunar Midcourse Corrections and Lunar Orbit Insertion,
+        s. 4, printed p. 4-1: "The basic ground rule is for MCC-H to provide the navigation function
+        as long as communications are maintained with the SC ... The MSFN vector and external
+        delta-V target parameter are uplinked to the CMC prior to each MCC"
+      note: >-
+        the vehicle starts on the ground's vector because that was the ground rule; onboard
+        sightings were the backup if communications were lost
+    moved_by:
+      - "command:select_nav_source"
+    dwell:
+      min_on_s: 0
+      min_off_s: 0
+      provenance:
+        basis: chosen
+        reason: "accepting an uplink or dropping to the onboard vector is a DSKY entry, and it takes effect when it is made"
+    provenance:
+      basis: historical
+      source: "apollo_diode.md:240, :123 — the verb and its five sources"
+      note: >-
+        the source the fleet selected, which is the input `select_nav_source` changes. In this
+        slice only `ground_uplink` is different from a coast: `star_sighting` needs the P23 marks
+        that are the next slice, `radar` is a landing instrument with nothing to range in a coast,
+        and `blended` needs `weight` carried. So the four others coast on the vector held, which is
+        what a vehicle that has stopped taking the ground's vector does until it has marks of its
+        own. `weight` has no state yet
+
+  - id: msfn_arc_s
+    node: internal
+    method: dynamics
+    unit: s
+    initial: 0
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        MET 0 is Apollo 13's TLI, and the ground's translunar tracking arc starts there. The table
+        `nav_velocity_sigma` reads begins two hours after TLI and is held at that value before it
+    provenance:
+      basis: derived
+      relation: "the arc grows by the tick, whatever the vehicle navigates from: the ground tracks the vehicle either way"
+      note: >-
+        the ground's tracking arc, which is what its velocity knowledge improves with. A vent
+        restarts it: Apollo 8's water dumps and evaporator boiloff disrupted the orbit
+        determination and "about 8 hours of tracking data were necessary" after each (Apollo 8
+        Mission Report, s. 5.9, printed p. 5-4). The vent is ECLSS's state and the edge from it is
+        this domain's, owed in `open_debts`
+
+  - id: nav_vector_arc_s
+    node: internal
+    method: dynamics
+    unit: s
+    initial: 0
+    initial_provenance:
+      basis: chosen
+      reason: "the vehicle holds the ground's vector at MET 0 (`nav_source.initial`), so the arc behind it is the ground's"
+    provenance:
+      basis: derived
+      relation: "`msfn_arc_s` while the source is `ground_uplink`; held at its last value otherwise"
+      note: >-
+        the tracking arc behind the vector the vehicle holds. A vehicle that drops to its own
+        vector keeps the ground's knowledge of that moment and no better, while the ground goes on
+        learning: the later the vehicle stops taking the ground's vector, the better the vector it
+        coasts on
+
+  - id: nav_coast_s
+    node: internal
+    method: dynamics
+    unit: s
+    initial: 0
+    initial_provenance:
+      basis: chosen
+      reason: "the vehicle holds the ground's vector at MET 0, so it has not coasted"
+    provenance:
+      basis: derived
+      relation: "zero while the source is `ground_uplink`; grows by the tick otherwise"
+      note: >-
+        how long the vehicle has navigated without the ground's vector. `gnc.coast_elapsed_s` is
+        published from `nav_integrity` and says the same thing about the filter's absolute
+        updates; the two meet when the filter is run
+
+  - id: nav_velocity_sigma
+    node: internal
+    method: algebraic
+    unit: m/s
+    # The ground's 3-sigma velocity knowledge against tracking time, [hours, u, v, w] in ft/s:
+    # radial, horizontal, out-of-plane. Earth reference before 55 h, Moon reference from it.
+    msfn_3sigma_ft_s:
+      - [2, 0.42, 1.02, 2.85]
+      - [6, 0.24, 0.81, 1.59]
+      - [10, 0.18, 0.72, 1.20]
+      - [15, 0.15, 0.63, 0.96]
+      - [20, 0.12, 0.51, 0.72]
+      - [25, 0.22, 0.24, 0.69]
+      - [30, 0.09, 0.39, 0.54]
+      - [35, 0.09, 0.36, 0.50]
+      - [40, 0.09, 0.33, 0.45]
+      - [45, 0.07, 0.28, 0.36]
+      - [50, 0.06, 0.24, 0.32]
+      - [55, 0.06, 0.20, 0.28]
+      - [60, 0.14, 0.06, 0.14]
+      - [65, 0.15, 0.06, 0.33]
+    msfn_provenance:
+      basis: historical
+      source: >-
+        Apollo 13 Mission Techniques, Translunar Midcourse Corrections and Lunar Orbit Insertion,
+        Table 3-2, printed p. 3-3, MSFN velocity uncertainties for the translunar coast, read from
+        the page image; Apollo 13 GN&C performance supplement (NTRS 19730017939), s. 4.1.1.1,
+        p. 4-2, for out-of-plane being "the direction in which velocity is least accurately
+        determined by ground based radar". Source notes: /mnt/project-files/sources/gnc-nav.md, Q1
+      note: >-
+        the table runs against time from TLI and is read here against the tracking arc, which is
+        the same thing until a vent restarts the arc. It is the planning table for translunar
+        coast and is used for transearth too
+    provenance:
+      basis: derived
+      relation: "the RSS of the three 3-sigma axes at `nav_vector_arc_s`, divided by three, in m/s; linear between rows and held beyond the ends"
+      note: >-
+        how well the vector the vehicle holds knows its velocity. It is the rate the position
+        uncertainty grows at once the vehicle stops taking the ground's vector
+
+  - id: nav_position_sigma
+    node: internal
+    method: algebraic
+    unit: m
+    ground_position_sigma_m: 185
+    ground_position_provenance:
+      basis: chosen
+      reason: >-
+        a scope decision taken under delegation: no MSFN position uncertainty for cislunar coast
+        was found (/mnt/project-files/sources/gnc-nav.md, "Not found" 1). 185 m is 0.1 nautical
+        mile, the order of the ground's Apollo 8 pericynthion accuracy (Apollo 8 Mission Report,
+        s. 5.9). It sits well under `estimator_divergence`'s 1,800 m, so on the ground's vector
+        the threshold is quiet and the coast is what crosses it
+    provenance:
+      basis: derived
+      relation: "sqrt(r0^2 + (sigma_v * t_coast)^2), with r0 the ground's position sigma, sigma_v `nav_velocity_sigma` and t_coast `nav_coast_s`"
+      note: >-
+        how well the vehicle knows where it is. On the ground's vector it is the ground's; coasting,
+        the velocity error carries it off at a steady rate, so a vehicle that leaves the ground two
+        hours after TLI crosses `estimator_divergence`'s 1,800 m in about an hour and a half, and
+        one that leaves at fifty-five hours in about fourteen. Gravity's own growth of the error
+        over a coast is not modelled (no free-coast growth figure was found, gnc-nav.md "Not
+        found" 5)
 
   - id: imu_platform
     node: imu
@@ -596,6 +760,9 @@ state:
 # how the note stayed invisible: every other domain has somewhere for an obligation to land.
 # --------------------------------------------------------------------------------------
 open_debts:
+  - "**The vent edge into the ground's tracking arc.** Apollo 8's water dumps and evaporator boiloff disrupted the ground's orbit determination, and about 8 hours of tracking were needed after each (Apollo 8 Mission Report, s. 5.9, printed p. 5-4); Apollo 13's crew asked for the ground's vector after their sightings because \u201cour state vectors take into account the waste water dumps\u201d (034:03:44). The vent is ECLSS's state and is not declared yet; the edge from it restarts `msfn_arc_s` and is this domain's, owed until ECLSS declares the vent. Ledger class: confounder \u2014 a dump before a burn degrades the vector the burn is computed on."
+  - "**The ground's vector assumes a link.** `ground_uplink` takes the ground's sigma whether or not the vehicle can hear the ground. The read of comms' carrier lock (or link margin) into `nav_source`'s effect is owed, so that an occultation or a high-gain dropout leaves the vehicle on the vector it last received."
+  - "**P23 star-horizon sightings, and IMU drift with P52.** `star_sighting` coasts today; the next slice gives it marks that shrink the position sigma (sextant 10 arc-sec, var_TRUN 0.0025 mr^2, GSOP Colossus) and are refused while a vent cloud is in the optics. Gyro drift (2 meru 1-sigma) and P52 torquing angles grow the platform's misalignment and are the slice after. Both wait on carried numeric arguments or an event-driven machine (#47)."
   - "**The jerk limit a `PLAN_VALID` segment is evaluated against.** `gnc_diode.md:753` requires the six-term evaluation, and jerk is the term with no source: the corpus gives no structural or crew limit on the third derivative of position, and the two candidates are different documents\u2019 business \u2014 a structural limit would be the docking interface or the solar-panel hinge, and a crew limit would be `crew_diode.md`\u2019s, which is silent. It matters because a quintic is the *lowest*-order polynomial that satisfies position, velocity and acceleration at both ends, so it is exactly the form whose jerk is unconstrained: `a3` through `a5` set it, and a long slow-looking slew can still be a violent one."
   - "**The plume keep-out volume, and the geometry it is checked against.** The term is owed with the plume geometry rather than on its own: a keep-out is a region other hardware may not be inside while a thruster fires, and this vehicle declares the thruster *directions* (forty-four thrust directions in `rcs_dode.md:685-693`) and no plume extent. The same missing geometry is what leaves the allocator without its wrench matrix `B = [F_i d_i ; r_i \u00d7 F_i d_i]` (rcs_dode.md:685-693), a matrix over directions and lever arms that are themselves unpublished, so the two debts share one unknown \u2014 the fourth time this session that one missing datum has been counted under several names, and the first time the names are in *different* files."
   - "**The third term is not owed, and saying so is the point of listing it.** Pointing is `domains/comms/`\u2019s 9.4-degree beam and is already `rcs.attitude_error_deg`; actuator authority is `rcs.control_authority_margin`. So `plan_valid` is evaluable in three of its six terms and the other three are named here rather than in a sentence \u2014 which is what the round is for: the block said all of this already, in a note, where nothing could count it."

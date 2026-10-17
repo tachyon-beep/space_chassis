@@ -73,3 +73,43 @@ taken.
   (the quaternion; until then `set_attitude_target` assigns the frame and the rate and the target
   is declared but uncarried), and seeding a ruled `dynamics` state's declared vector or record at
   t=0 (taken on #47).
+
+## Navigation sources (2026-10-17)
+
+**Deviation from the corpus.** `gnc_diode.md:790` describes a 15-state error-state Kalman filter
+with a Joseph-form update. This vehicle does not run it. `nav_covariance` stays declared as the
+corpus has it, and the two published sigmas are read from a reduced model instead. The coordinator
+decided this under delegation (option B). The full filter would need measurement models that the
+Apollo record does not give: there is no MSFN position sigma and no free-coast growth curve
+(`/mnt/project-files/sources/gnc-nav.md`, "Not found"). The decisions it would expose are the
+reduced model's: when to stop taking the ground's vector, and what that costs. The corpus file is
+unchanged.
+
+**The model.** Apollo 13's ground rule was that the ground navigates and onboard sightings are the
+backup (Mission Techniques, s. 4). `select_nav_source` sets `nav_source`.
+
+- `msfn_arc_s` is the ground's tracking arc. It grows by the tick whatever the vehicle uses.
+- `nav_vector_arc_s` follows that arc while the vehicle is on `ground_uplink`. When the vehicle
+  leaves the ground's vector, it freezes.
+- `nav_coast_s` counts the time off the ground's vector.
+- The velocity sigma is the ground's 3-sigma table (Mission Techniques, Table 3-2), read at the
+  vector's arc. It is the RSS of the three axes, divided by three.
+- The position sigma is `sqrt(r0^2 + (sigma_v * t_coast)^2)`. Here `r0` = 185 m, a scope decision:
+  0.1 n mi, after Apollo 8's pericynthion accuracy.
+- `estimator_divergence` (1,800 m) guards the four onboard choices. `ground_uplink` is the recovery
+  and is never refused.
+
+**Acceptance.** Two tests pin the timing (`tests/test_gnc_rcs_rules.py`):
+
+- Leaving the ground two hours after TLI crosses 1,800 m in about 1.6 h of coast.
+- Leaving at 55 h crosses it in about 14 h.
+- Taking the ground's vector again returns the position sigma to 185 m.
+
+**Owed** (`domains/gnc/components.yaml#open_debts`):
+
+- The ECLSS vent edge that restarts the ground's arc. This is a confounder: a dump before a burn
+  degrades the vector the burn is computed on.
+- The link the ground's vector assumes.
+- P23 marks for `star_sighting`.
+- IMU drift and P52.
+- `blended`'s weights.

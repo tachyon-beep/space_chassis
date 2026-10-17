@@ -142,6 +142,14 @@ commands:
     authority: A2
     gate: {kind: preference, variable: nav_source_<source>_enable}
     interlocks: [estimator_divergence]
+    interlocks_when:
+      argument: source
+      values: [imu_only, star_sighting, radar, blended]
+      why: >-
+        the guard is a position sigma already past what the best onboard measurement can resolve
+        (`estimator_divergence`), and the four onboard choices are what grow it: each coasts on the
+        vector held. `ground_uplink` is the recovery, taking the ground's vector and its sigma, so
+        the guard never refuses it (ADR 0004 §Direction; ADR 0005, "Navigation sources")
     conflict_domain: gnc.nav_source
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -153,12 +161,16 @@ commands:
       Choose what the vehicle navigates from: the IMU alone, star sightings, the landing radar, a
       ground uplink, or a blend. `imu_only` is the coast, and choosing it deliberately is a
       legitimate decision — during an occultation with no radar lock it may be the only source
-      there is. The interlock is the interesting part: the vehicle refuses to be told which source
-      to trust while its estimator is diverging. That is the same protection the avionics domain
+      there is. The interlock is the interesting part: the vehicle refuses to be told to trust an
+      onboard source while its estimator is diverging, and takes the ground's vector whenever asked. That is the same protection the avionics domain
       puts on `select_sensor` and for the same reason — a fleet that picks a source while the
       navigation solution is failing can pick the wrong one and remove the evidence that it did.
       `weight` matters because `blended` is not a source: it is a policy about the others, and a
       source that cannot be made exclusive is one the vehicle trusts alongside everything else.
+      Today only `ground_uplink` differs: it takes the ground's vector, whose velocity knowledge
+      improves the longer the ground has tracked, and every other choice coasts on the vector held,
+      so `gnc.nav_position_sigma_m` grows at the rate `gnc.nav_velocity_sigma_m_s` says. Leaving
+      the ground early costs a faster growth; `ground_uplink` is never refused.
     provenance:
       basis: apollo
       ref: "apollo_diode.md:240, :123"

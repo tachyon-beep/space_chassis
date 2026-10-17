@@ -189,3 +189,71 @@ def test_ending_the_roll_holds_where_the_vehicle_is_rather_than_turning_back(wor
         values = plant.step(world, values, DT, [])
     assert max(abs(w) for w in _level(world, values, "body_rate")) < 0.001
     assert _level(world, values, "attitude_error") < 0.5
+
+
+# --------------------------------------------------------------------------------------------
+# Navigation sources (ADR 0005, "Navigation sources"): the ground's vector, or a coast on the one
+# held. Hours of coast are stepped through the rules directly at a minute a step; the loop is used
+# only for the claim that the command reaches the state and the sigmas follow.
+# --------------------------------------------------------------------------------------------
+
+
+def _coast_until_divergence(world, leave_after_h):
+    """Track on the ground's vector for `leave_after_h`, then coast; the hours until 1,800 m."""
+    vel = dict(_spec(world, "nav_velocity_sigma"))
+    pos = dict(_spec(world, "nav_position_sigma"))
+    v = {"msfn_arc_s": 0.0, "nav_vector_arc_s": 0.0, "nav_coast_s": 0.0, "nav_source": "ground_uplink"}
+    step = 60.0
+    elapsed = 0.0
+    while True:
+        if elapsed >= leave_after_h * 3600.0:
+            v["nav_source"] = "imu_only"
+        v["msfn_arc_s"] = GNC._msfn_arc_s(v, {}, step)
+        v["nav_vector_arc_s"] = GNC._nav_vector_arc_s(v, {}, step)
+        v["nav_coast_s"] = GNC._nav_coast_s(v, {}, step)
+        v["nav_velocity_sigma"] = GNC._nav_velocity_sigma(v, vel, step)
+        sigma = GNC._nav_position_sigma(v, pos, step)
+        elapsed += step
+        if sigma > 1800.0:
+            return v["nav_coast_s"] / 3600.0, v
+
+
+def test_the_later_the_vehicle_leaves_the_ground_the_longer_it_can_coast(world):
+    early, _ = _coast_until_divergence(world, 2.0)
+    late, _ = _coast_until_divergence(world, 55.0)
+    # sqrt(1800^2 - 185^2) / sigma_v: 0.311 m/s two hours after TLI, 0.0355 m/s at 55 h.
+    assert early == pytest.approx(1.6, abs=0.1)
+    assert late == pytest.approx(14.0, abs=0.5)
+
+
+def test_the_ground_s_vector_takes_the_ground_s_sigma_back(world):
+    _, v = _coast_until_divergence(world, 2.0)
+    v["nav_source"] = "ground_uplink"
+    v["msfn_arc_s"] = GNC._msfn_arc_s(v, {}, 60.0)
+    v["nav_vector_arc_s"] = GNC._nav_vector_arc_s(v, {}, 60.0)
+    v["nav_coast_s"] = GNC._nav_coast_s(v, {}, 60.0)
+    v["nav_velocity_sigma"] = GNC._nav_velocity_sigma(v, _spec(world, "nav_velocity_sigma"), 60.0)
+    assert v["nav_coast_s"] == 0.0
+    # The ground kept tracking while the vehicle coasted, so the vector it takes is the better one.
+    assert v["nav_vector_arc_s"] == v["msfn_arc_s"] > 3.0 * 3600.0
+    assert GNC._nav_position_sigma(v, _spec(world, "nav_position_sigma"), 60.0) == 185.0
+
+
+def test_choosing_an_onboard_source_starts_the_coast_through_the_loop(world):
+    values = plant.initial_values(world, plant.Scenario(name="nav_fixture", initial={}))
+    assert _level(world, values, "nav_source") == "ground_uplink"
+    for _ in range(5):
+        values = plant.step(world, values, DT, [])
+    assert _level(world, values, "nav_position_sigma") == pytest.approx(185.0)
+    assert _level(world, values, "nav_coast_s") == 0.0
+    _apply(values, plant.apply_command(world, values, "select_nav_source", {"source": "imu_only"}))
+    assert _level(world, values, "nav_source") == "imu_only"
+    for _ in range(50):
+        values = plant.step(world, values, DT, [])
+    coast = _level(world, values, "nav_coast_s")
+    assert coast == pytest.approx(50 * DT)
+    sigma_v = _level(world, values, "nav_velocity_sigma")
+    assert sigma_v == pytest.approx(0.311, abs=0.001)
+    assert _level(world, values, "nav_position_sigma") == pytest.approx(
+        math.hypot(185.0, sigma_v * coast)
+    )
