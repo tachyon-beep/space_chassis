@@ -212,3 +212,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 19:51 Governance #62 merged as `e18e022`.
 - 20:12 D54 reviews: #58 clear with follow-ups (merges on green, a lane-0 follow-up PR after); #49 clear with follow-ups (bays marked interim). #48 rebased at `23209b6`, queued for review. Thermal moves the descent stage to `cooled_by: space` in the post-#47 space-sink follow-up, a confounder in the ledger (the thermal half of F-09).
 - 20:23 Aurora #61 (diode-probe deflake) merged as `4f969aa`, all checks green, review clear; branches carrying `main` past it stop hitting the `test_tier1_gate_runs.py` flake.
+- 20:25 Governance #63 reviewed clear with follow-ups (the #49, #58, #48 rows and the header), fixed on #63.
