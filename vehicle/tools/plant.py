@@ -3373,7 +3373,13 @@ def initial_values(world: World, scenario: Scenario | None = None) -> dict[str, 
         # **`effect_owned_movers`, not `command_only_movers`** — the seeder is the fifth reader of
         # the predicate, and it is the one whose silence reads as "the state has no starting
         # position" rather than "this branch did not recognise it".
-        if state.method == "discrete" and effect_owned_movers(state.spec):
+        #
+        # **And a discrete state a domain rule advances**, which reads its own last value — a timer,
+        # a latch with memory, a token's lifecycle — and so needs one at t=0 exactly as a held mode
+        # does. Without it the rule's first read of itself is a gap, and every tick after is too.
+        if state.method == "discrete" and (
+            effect_owned_movers(state.spec) or state.id in world.rules
+        ):
             # **A latched mode's starting position, which is not a number and is not nothing.** The
             # tick's hold reads the state's current value, so a mode the plant carries needs a
             # position at t=0 for the same reason a stock needs a level: without one the first tick

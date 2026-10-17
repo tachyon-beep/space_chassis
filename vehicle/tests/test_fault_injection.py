@@ -297,3 +297,29 @@ def test_the_linter_refuses_an_onset_it_cannot_hold_to_the_state(tmp_path):
         "declares an onset for 'PWR-04-orphan', which `moved_by` does not name",
     ):
         assert needle in out, f"{needle!r} did not fire:\n{out[-3000:]}"
+
+
+def test_a_discrete_state_a_domain_rule_advances_starts_from_its_declared_initial(tmp_path):
+    """Seeding, beside the fault path: a ruled latch reads its own last value, so it needs one at t=0.
+
+    The structure lane's `arm_state` and the FDIR debounce timers are the customers. The fixture gives
+    power's `lcl_tripped` a starting map and a rule that holds it.
+    """
+    copy = faulted_copy(tmp_path / "vehicle")
+    components = copy / "domains" / "power" / "components.yaml"
+    anchor = '    unit: "map[load_id,enum[closed,tripped,retrying,latched]]"\n'
+    replace(components, anchor, anchor + "    initial: {csm_lighting: closed}\n")
+    rules = copy / "domains" / "power" / "rules.py"
+    rules.write_text(
+        rules.read_text()
+        + '\n\ndef _held_trips(inputs, params, dt):\n    return inputs["lcl_tripped"]\n\n\n'
+        + 'RULES["lcl_tripped"] = _held_trips\n'
+    )
+    ruled = plant.load_world(copy)
+    assert "lcl_tripped" in ruled.rules
+    values = plant.initial_values(ruled)
+    assert values["lcl_tripped"] == {"csm_lighting": "closed"}
+    gaps: list[plant.Gap] = []
+    stepped = plant.step(ruled, values, plant.tick_seconds(ruled), gaps)
+    assert stepped["lcl_tripped"] == {"csm_lighting": "closed"}
+    assert not [g for g in gaps if g.state.id == "lcl_tripped"], gaps

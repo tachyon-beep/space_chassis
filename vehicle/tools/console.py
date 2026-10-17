@@ -4852,9 +4852,19 @@ class Executive:
                 f"accepted: {verb!r} armed {event!r} for window {window.slug!r}. Token: {token}\n"
                 "This is the only result on the vehicle that carries a token, and it is bound to "
                 "this window and this event: `execute_event` will refuse a token minted for a "
-                "different one, from a different window, or already consumed. Arming does nothing "
-                "physical — every guard is evaluated at the moment of effect, not now.\n"
+                "different one, from a different window, or already consumed. "
             )
+            if staged is None:
+                verdict.body += (
+                    "Arming does nothing physical — every guard is evaluated at the moment of "
+                    "effect, not now.\n"
+                )
+                return verdict
+            # A domain that declares the armed position (`command_value` for `arm_event`) gets it in
+            # the truth like any other command's effect; the guards on the event itself are still
+            # evaluated at the moment of `execute_event`, not now.
+            verdict.body += "The armed position is staged for this tick.\n"
+            verdict.effect = Effect(0, verb, arguments)
             return verdict
 
         verdict = self._verdict(window, command, "accepted", "", verb=verb, arguments=arguments)
