@@ -48,20 +48,26 @@ def _leak_share(inputs, params, dt):
 
 def _o2_supply(inputs, params, dt):
     """The regulator's demand from one store: the nominal flow while the vehicle's source selects
-    this store and the cabin regulator is open, else nothing, and never more than the store holds
-    for the tick, so an empty tank stops the flow instead of filling the cabin from nothing."""
-    switch = params["source_switch"]
-    selected = inputs[switch["state"]]
-    if switch["element"] not in selected:
-        return params.no_value(f"{switch['state']} names no {switch['element']!r}")
-    if selected[switch["element"]] != params["draws_on"]:
+    this store, its flow band is not `off` and the cabin regulator is open, else nothing.
+
+    The store is debited by this value on the *next* tick, at that tick's step, so the flow stops
+    once the store holds less than a tick of it: a flow scaled down to the last milligrams over this
+    step would be credited to the cabin now and could outrun the store on a shorter step next.
+    """
+    for switch in (params["source_switch"], params["flow_switch"]):
+        if switch["element"] not in inputs[switch["state"]]:
+            return params.no_value(f"{switch['state']} names no {switch['element']!r}")
+    source, flow = params["source_switch"], params["flow_switch"]
+    if inputs[source["state"]][source["element"]] != params["draws_on"]:
+        return 0.0
+    if inputs[flow["state"]][flow["element"]] == "off":
         return 0.0
     if inputs[params["regulator_state"]] not in params["regulator_open"]:
         return 0.0
     demand = float(params["nominal_kg_s"])
-    if dt <= 0:
-        return demand
-    return min(demand, max(float(inputs[params["stock_state"]]), 0.0) / dt)
+    if float(inputs[params["stock_state"]]) < demand * dt:
+        return 0.0
+    return demand
 
 
 def _tank_heaters(inputs, params, dt):

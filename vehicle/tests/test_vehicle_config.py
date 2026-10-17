@@ -8005,7 +8005,7 @@ def test_the_stock_integrator_reads_its_driver():
     pascals-per-kelvin to kilograms-per-hour and calling the result a mass is not an approximation;
     it is a dimension error wearing a number.
 
-    That stop is gone: a tick now walks all 163 states and records what it cannot advance, so the
+    That stop is gone: a tick now walks all 164 states and records what it cannot advance, so the
     integrator is reached by the order rather than only by a hand-written call. It still cannot be
     *exercised* from the live corpus, because every stock's driver is itself gapped — the tick
     reaches `lm_cabin_o2_kg` and gives up on it for a reason that belongs to the other state. The
@@ -12691,8 +12691,9 @@ def test_every_stock_declares_where_it_starts():
     # id and its single-state node's alias, `environment_heat`.
     # 89 -> 91 with ECLSS: `suit_fan` (the switch `set_suit_fan` moves) under its id, and
     # `o2_tank_heaters`, a ruled discrete whose id and single-state node share one name. 94 with the
-    # surge tank: `o2_source` under its id, and `o2_surge_csm_kg` under its id and its node's alias.
-    assert len(on_nodes) == 94, f"{len(on_nodes)} node keys carry a value"
+    # surge tank: `o2_source` under its id, and `o2_surge_csm_kg` under its id and its node's alias,
+    # and 95 with `o2_flow` under its id.
+    assert len(on_nodes) == 95, f"{len(on_nodes)} node keys carry a value"
     # And the map a tick actually starts from is that seed plus the declared arithmetic, so the
     # resolved states are a strict superset and every one of them is `algebraic`.
     assert seeded_integrators.keys() < seeded.keys(), "the resolution added nothing to the seed"
@@ -12707,13 +12708,13 @@ def test_every_stock_declares_where_it_starts():
     # 18 -> 22 with ADR 0003's thermal rules: the amplifier's temperature and the three loop
     # switch maps (`coolant_pump`, `evaporator_feed`, `radiator_bypass`) are sentinel states.
     # 22 -> 23 with ECLSS's `suit_fan`, the compressor switch, also on the sentinel, and 24 with
-    # `o2_source`, the store selection.
-    assert len(seeded_integrators["internal"]) == 24, sorted(seeded_integrators["internal"])
+    # `o2_source`, the store selection, and 25 with `o2_flow`, the flow band.
+    assert len(seeded_integrators["internal"]) == 25, sorted(seeded_integrators["internal"])
     # Five of the sentinel's `algebraic` states resolve at t=0 as well — the bay heat, the cabin
     # pressure differential and three more — so the sentinel's sub-map is the same map the tick
     # commits, merged rather than replaced. (Six until ADR 0003's power rules moved the bus load to
-    # the cells' node.) 28 with ECLSS's `suit_fan`, 29 with `o2_source`.
-    assert len(seeded["internal"]) == 29, sorted(seeded["internal"])
+    # the cells' node.) 28 with ECLSS's `suit_fan`, 30 with `o2_source` and `o2_flow`.
+    assert len(seeded["internal"]) == 30, sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
     # six of the twenty-four declared values are the last of their key rather than a key of their
@@ -12767,6 +12768,7 @@ def test_every_stock_declares_where_it_starts():
         "gyro_bias",
         "o2_supply_pressure_psi",
         "o2_source",
+        "o2_flow",
         "suit_fan",
         "suit_loop_flow_cfm",
         "dps_throttle_pct",
@@ -12815,7 +12817,7 @@ def test_every_stock_declares_where_it_starts():
     # The four switch maps are maps, which a set cannot hold, so they are asserted by name below.
     switch_maps = {k for k, v in seeded_integrators["internal"].items() if isinstance(v, dict)}
     assert switch_maps == {
-        "coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan", "o2_source",
+        "coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan", "o2_source", "o2_flow",
     }, (
         switch_maps
     )
@@ -13061,10 +13063,10 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
     # `evaporator_feed` and `radiator_bypass`, each moved by its own verb.
     # 49 -> 51 with ECLSS: `suit_fan` (`set_suit_fan`) and `o2_tank_heaters`, the tanks' pressure
     # switch, moved by its logic.
-    # 51 -> 52 with `o2_source` (`set_o2_source`).
-    assert states == 52, states
+    # 51 -> 53 with `o2_source` and `o2_flow` (`set_o2_source`, and `set_o2_flow` for the band).
+    assert states == 53, states
     # 23 -> 24 commands and 23 -> 24 logic movers with the same two.
-    assert (commands, triggers, events, logic) == (25, 5, 6, 24), (
+    assert (commands, triggers, events, logic) == (27, 5, 6, 24), (
         commands, triggers, events, logic,
     )
     # Two states still owe it, and they are the two the crew debt names.
@@ -14059,8 +14061,8 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
     # 59 -> 61 with ADR 0003: thermal's three keyed commands (`evaporator_feed`, `coolant_pump`,
     # `radiator_bypass`) are on the sentinel and declared in its order, and power's `bus_a_load_w`
     # left it for `fuel_cell`. 62 with ECLSS's `suit_fan`, the compressor switch `set_suit_fan` moves,
-    # and 63 with `o2_source`, the store selection `set_o2_source` moves.
-    assert sum(len(states) for _, states in declared) == 63, "the sentinel's state count moved"
+    # and 64 with `o2_source` and `o2_flow`, the store and the flow band `set_o2_source` moves.
+    assert sum(len(states) for _, states in declared) == 64, "the sentinel's state count moved"
 
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
@@ -15748,8 +15750,9 @@ def test_a_command_value_says_which_argument_carries_the_value():
     # Five quantity states joined the eight mode ones this round, and one keyed state declares
     # nothing but its key. 17 -> 21 with ADR 0003: thermal's `coolant_pump`, `evaporator_feed` and
     # `radiator_bypass` and power's `load_enabled`, each keyed; 22 with ECLSS's `suit_fan`.
-    # 22 -> 23 with `o2_source`, which `set_o2_source`'s `source` moves.
-    assert declared == 23, declared
+    # 22 -> 25 with `o2_source`, which `set_o2_source`'s `source` moves, and `o2_flow`, which its
+    # `flow` and `set_o2_flow`'s move.
+    assert declared == 25, declared
     assert sorted(constants) == [
         "rcs.thruster_valve.isolate_rcs_manifold",
         "structure.pyro_fired.execute_event",
@@ -16192,8 +16195,8 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     # 14 -> 20 with ADR 0003: `set_coolant_pump`, `set_evaporator_feed`, `set_radiator_bypass`
     # (thermal), `set_load` (power), `set_power_amplifier` and `play_recorder` (comms); 21 with
     # `set_suit_fan` (ECLSS).
-    # 21 -> 22 with `set_o2_source`, which moves `o2_source` now.
-    assert len(applied) == 22, applied
+    # 21 -> 23 with `set_o2_source` and `set_o2_flow`, which move `o2_source` and `o2_flow` now.
+    assert len(applied) == 23, applied
     assert "select_antenna" in applied
     # 7 -> 5: `set_coolant_pump` and `set_power_amplifier` stopped owing (ADR 0003): the pump's speed
     # selects `coolant_pump` (thermal) and the amplifier's power selects `transmitter_on` (comms).
@@ -16520,10 +16523,10 @@ def test_a_commanded_state_is_guarded_by_a_dwell_and_the_executive_reads_it(tmp_
     # none, and that is the second exemption, written down here rather than left as a gap. 23 with
     # ECLSS's `suit_fan`, a keyed map that declares one anyway: a second's lock-out of the LM's switch
     # after a CSM command costs less than an undamped switch.
-    # 23 -> 24 with `o2_source`, which keeps a dwell like `suit_fan`'s.
-    assert len(commanded) == 24, [s.id for s in commanded]
+    # 23 -> 25 with `o2_source` and `o2_flow`, which keep a dwell like `suit_fan`'s.
+    assert len(commanded) == 25, [s.id for s in commanded]
     guarded = [s for s in commanded if s.spec.get("dwell")]
-    assert len(guarded) == 19, [s.id for s in commanded if not s.spec.get("dwell")]
+    assert len(guarded) == 20, [s.id for s in commanded if not s.spec.get("dwell")]
     # The one-way state is the first exemption; the four keyed maps are the second.
     assert sorted(s.id for s in commanded if not s.spec.get("dwell")) == [
         "coolant_pump", "evaporator_feed", "load_enabled", "pyro_fired", "radiator_bypass",
@@ -17854,7 +17857,7 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     result = run_linter(other)
     assert result.returncode == 1, result.stdout[-900:]
     assert "states 'forty-eight states live on it'" in result.stdout, result.stdout[-900:]
-    assert "this vehicle has 63 states on the sentinel" in result.stdout, result.stdout[-900:]
+    assert "this vehicle has 64 states on the sentinel" in result.stdout, result.stdout[-900:]
 
     # A *digits* figure is read too, so the reader is not tied to the spelling the corpus happens
     # to use today.
@@ -18282,7 +18285,7 @@ def test_the_gate_s_own_prose_states_the_vehicle_it_tests():
 def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     """The status line's own sentence, held whole rather than in the three figures a test read.
 
-    The sentence is "148 channels, 163 states over 66 scheduled nodes, 144 thresholds, 59 verbs and
+    The sentence is "148 channels, 164 states over 66 scheduled nodes, 144 thresholds, 59 verbs and
     128 classified events". `test_the_readme_status_matches_the_tools` reads the first three; the
     last three were read by nothing, which is the same defect one clause further along in the same
     line. The fixture moves the threshold count by one, because that is the smallest change the
@@ -19801,7 +19804,7 @@ def test_the_battery_s_smallest_flow_is_its_smallest_load_and_its_quantum_is_fin
 def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     """The lag integrator applies no conversion, and nothing said so — so both were dimensional errors.
 
-    A real tick advanced exactly two of the vehicle's 163 states, and both numbers were nonsense: `crew_workload`
+    A real tick advanced exactly two of the vehicle's 164 states, and both numbers were nonsense: `crew_workload`
     is an `enum-level` and was relaxed toward `water_potable`'s 14 kg of water; `thrust_main_n` is in
     newtons and was relaxed toward `prop_main`'s 18,508 kg of propellant. Neither is a crash — both
     are plausible numbers — which is why the rule has to exist rather than the values being watched.
@@ -20069,8 +20072,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
-    # 27 -> 28 with ECLSS's `suit_fan`, and 29 with `o2_source`.
-    assert len(values["internal"]) == 29, sorted(values["internal"])
+    # 27 -> 28 with ECLSS's `suit_fan`, and 30 with `o2_source` and `o2_flow`.
+    assert len(values["internal"]) == 30, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
@@ -20952,7 +20955,7 @@ def test_the_oxygen_supply_pressure_is_a_state_with_a_published_starting_value(t
     # state, which is the rule the linter holds.
     sentinel = [s["id"] for s in eclss["state"] if s.get("node") == "internal"]
     assert sorted(sentinel) == [
-        "o2_source", "o2_supply_pressure_psi", "suit_fan", "suit_loop_flow_cfm",
+        "o2_flow", "o2_source", "o2_supply_pressure_psi", "suit_fan", "suit_loop_flow_cfm",
     ], sentinel
     assert sorted(eclss["internal_order"]) == sorted(sentinel)
     assert eclss["internal_order_note"]

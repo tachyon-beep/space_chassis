@@ -376,3 +376,21 @@ def test_a_guard_over_two_arguments_applies_to_the_combinations_it_names(world):
     assert guards("primary", "high") == ["o2_reserve_10"]
     # A leak on a low reserve: the surge tank is the one source both guards admit.
     assert guards("surge", "high") == []
+
+
+def test_the_reserve_guard_s_recovery_draws_nothing_once_taken(world, tmp_path):
+    """`o2_reserve_10` admits `primary` at `flow=off` because off spends no S/M oxygen, so taking it
+    must stop the cabin's draw rather than leave the regulator on the tripped reserve."""
+    built = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
+    built.attach("alpha")
+    try:
+        trip(world, built, {"o2_csm_kg": 20.0}, "o2_reserve_10")
+        taken = run(built, tmp_path, "set_o2_source vehicle=csm source=primary flow=off")
+        for _ in range(3):
+            built.cycle()
+        truth = built.truth
+    finally:
+        built.close()
+    assert "state=accepted" in taken and "INTERLOCK" not in taken, taken
+    assert truth["o2_flow"]["csm"] == "off" and truth["o2_source"]["csm"] == "primary"
+    assert truth["cabin_o2_supply_csm_kg_s"] == 0.0

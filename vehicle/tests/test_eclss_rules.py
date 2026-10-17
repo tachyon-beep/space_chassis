@@ -215,7 +215,63 @@ def test_an_isolated_source_or_a_closed_regulator_admits_nothing(world, source, 
     assert after["cabin_o2_surge_supply_csm_kg_s"] == 0.0
 
 
-def test_an_empty_surge_tank_stops_the_flow_rather_than_filling_the_cabin_from_nothing():
+def surge_quanta(world, values, steps):
+    """Step the plant and count the quanta the surge tank lost and the cabin gained through it."""
+    out = into = short = 0
+    for dt in steps:
+        ledger = plant.Ledger()
+        values = plant.step(world, values, dt, [], None, ledger=ledger)
+        for transfer in ledger.transfers:
+            if transfer.edge == "E-O2-SUPPLY-SURGE":
+                out += transfer.quanta
+                short += transfer.shortfall
+            elif transfer.edge == "E-O2-SURGE-ECLSS":
+                into += transfer.quanta
+    return values, out, into, short
+
+
+def on_surge(world, stock_kg):
+    values = plant.initial_values(world)
+    return {**values, "o2_source": {"csm": "surge", "lm": "primary"}, "o2_surge_csm_kg": stock_kg}
+
+
+def test_a_surge_tank_run_to_empty_on_the_plant_gives_the_cabin_what_it_lost(world):
+    """10 mg through the real tick: every quantum the tank loses reaches the cabin, none short."""
+    values, out, into, short = surge_quanta(world, on_surge(world, 1.0e-5), [DT] * 60)
+    assert values["o2_surge_csm_kg"] < SUPPLY["nominal_kg_s"] * DT
+    assert values["cabin_o2_surge_supply_csm_kg_s"] == 0.0
+    assert out == into and short == 0, (out, into, short)
+
+
+@pytest.mark.parametrize("steps", [[1.0, 0.5, 0.5, 0.5], [0.5, 1.0, 1.0, 1.0], [DT, 0.005, DT, 0.005] * 40])
+def test_a_surge_tank_near_empty_never_gives_the_cabin_more_than_it_had(world, steps):
+    """The store is debited at the next step, so a step that shortens or lengthens near empty must
+    not credit the cabin with oxygen the tank never held (the flow scaled to the last milligrams
+    over one step did: a 10 mg tank gave the cabin 15 mg when the step halved)."""
+    start = 1.0e-5
+    values, out, into, short = surge_quanta(world, on_surge(world, start), steps)
+    assert into <= round(start / 1.0e-6), (out, into, short)
+    assert into <= out + short, (out, into, short)
+
+
+def test_flow_off_stops_the_cabin_supply_from_either_store(world):
+    """`o2_reserve_10` admits `primary` at `off` as the recovery, so `off` must stop the draw."""
+    values = walk(world, plant.initial_values(world), 1)
+    assert values["o2_flow"] == {"csm": "nominal", "lm": "nominal"}
+    for source in ("primary", "surge"):
+        staged = plant.apply_command(
+            world, values, "set_o2_source", {"vehicle": "csm", "source": source, "flow": "off"}
+        )
+        after = walk(world, {**values, **staged}, 3)
+        assert after["o2_flow"]["csm"] == "off"
+        assert after["cabin_o2_supply_csm_kg_s"] == 0.0
+        assert after["cabin_o2_surge_supply_csm_kg_s"] == 0.0
+    staged = plant.apply_command(world, values, "set_o2_flow", {"vehicle": "csm", "flow": "off"})
+    after = walk(world, {**values, **staged}, 3)
+    assert after["cabin_o2_supply_csm_kg_s"] == 0.0
+
+
+def test_the_supply_rule_stops_below_a_tick_of_flow():
     rule = rules_module().RULES["cabin_o2_surge_supply_csm_kg_s"]
 
     class Params(dict):
@@ -223,13 +279,17 @@ def test_an_empty_surge_tank_stops_the_flow_rather_than_filling_the_cabin_from_n
             raise AssertionError(why)
 
     params = Params(STATES["cabin_o2_surge_supply_csm_kg_s"])
+    demand = params["nominal_kg_s"]
     inputs = {
         "o2_source": {"csm": "surge", "lm": "primary"},
+        "o2_flow": {"csm": "nominal", "lm": "nominal"},
         "cabin_regulator_position": "primary",
         "o2_surge_csm_kg": 0.0,
     }
     assert rule(inputs, params, DT) == 0.0
-    inputs["o2_surge_csm_kg"] = 1.0e-7
-    assert rule(inputs, params, DT) == pytest.approx(1.0e-7 / DT)
-    inputs["o2_surge_csm_kg"] = 1.0
-    assert rule(inputs, params, DT) == pytest.approx(params["nominal_kg_s"])
+    inputs["o2_surge_csm_kg"] = demand * DT * 0.99
+    assert rule(inputs, params, DT) == 0.0
+    inputs["o2_surge_csm_kg"] = demand * DT
+    assert rule(inputs, params, DT) == pytest.approx(demand)
+    inputs["o2_flow"] = {"csm": "high", "lm": "nominal"}
+    assert rule(inputs, params, DT) == pytest.approx(demand)

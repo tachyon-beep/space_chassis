@@ -56,11 +56,11 @@ writes: [cabin_atm, lm_cabin_atm, cabin_regulator, cabin_o2_supply_csm,
          cabin_o2_supply_lm, co2_removal_csm, co2_removal_lm, cabin_leak_csm, cabin_leak_lm,
          o2_tank_heaters, o2_surge_csm, cabin_o2_surge_supply_csm]
 
-# Four states on the `internal` sentinel, so their order is a declaration rather than the alphabet's,
+# Five states on the `internal` sentinel, so their order is a declaration rather than the alphabet's,
 # and the sentinel is advanced after every node.
-internal_order: [o2_source, suit_fan, suit_loop_flow_cfm, o2_supply_pressure_psi]
+internal_order: [o2_flow, o2_source, suit_fan, suit_loop_flow_cfm, o2_supply_pressure_psi]
 internal_order_note: >-
-  `o2_source` first, as the switch nothing on the sentinel reads: the two regulator flows that read it
+  `o2_flow` and `o2_source` first, as the switches nothing on the sentinel reads: the two regulator flows that read them
   are on their own scheduled nodes, so they act on the selection the previous tick left and a
   `set_o2_source` reaches the cabin one tick after it lands. Then the compressor's switch before the
   flow it gates, so a `set_suit_fan` acts on the tick it lands.
@@ -468,6 +468,7 @@ state:
     nominal_kg_s: 3.798611e-05
     draws_on: primary
     source_switch: {state: o2_source, element: csm}
+    flow_switch: {state: o2_flow, element: csm}
     regulator_state: cabin_regulator_position
     regulator_open: [primary, emergency]
     stock_state: o2_csm_kg
@@ -501,6 +502,7 @@ state:
       nominal_kg_s: domains/eclss/components.yaml:state.cabin_o2_supply_csm_kg_s.nominal_kg_s
     draws_on: surge
     source_switch: {state: o2_source, element: csm}
+    flow_switch: {state: o2_flow, element: csm}
     regulator_state: cabin_regulator_position
     regulator_open: [primary, emergency]
     stock_state: o2_surge_csm_kg
@@ -510,8 +512,11 @@ state:
         the same regulator demand as `cabin_o2_supply_csm_kg_s`, 3.798611e-05 kg/s, from the other
         store: the surge tank sits "in parallel" downstream of the S/M SUPPLY valve
         (`sources/eclss.md` Q3, AOH ECS p. 2.7-7), so with that valve closed the regulator's flow comes
-        from the surge tank alone. Capped at what the tank holds for a tick, so an empty tank stops
-        the flow rather than filling the cabin with oxygen it does not have
+        from the surge tank alone. The flow stops once the tank holds less than a tick of it, so the
+        cabin is never credited with oxygen the tank does not have: a store is debited by the flow
+        the previous tick computed (it is scheduled before its flow node, as every supply stock is),
+        so a flow scaled to the last few milligrams over this tick's step could outrun the tank on a
+        shorter next step. What is stranded is under one tick's flow, 0.76 mg at 50 Hz
       note: >-
         **Not modelled:** the surge tank's other job, "augmenting the SM supply when the operational
         demand exceeds the flow capacity of the inlet restrictors" (same page), because the demand is
@@ -770,6 +775,36 @@ state:
         apollo's set_suit_fan, as a switch the plant holds. The LM's element has no flow state to
         drive yet. The one-second dwell each way is chosen, as `cabin_regulator_position`'s is: a
         compressor switch has a transit and a fleet must not chatter it by re-commanding every tick
+  - id: o2_flow
+    method: discrete
+    node: internal
+    unit: "map[vehicle,enum[off,low,nominal,high]]"
+    initial: {csm: nominal, lm: nominal}
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        chosen: the regulator delivering its nominal demand, which is what the cabin drew before this
+        state existed. No checklist position at TLI was read
+    moved_by: ["command:set_o2_source", "command:set_o2_flow"]
+    command_value:
+      - verb: set_o2_source
+        argument: flow
+        key: vehicle
+        why: "one element per vehicle; `off` stops the regulator's flow from whichever store is selected"
+      - verb: set_o2_flow
+        argument: flow
+        key: vehicle
+        why: "the same band, set without choosing a store"
+    dwell:
+      min_on_s: 1
+      min_off_s: 1
+    provenance:
+      basis: chosen
+      reason: >-
+        the flow band both verbs carry. Only `off` acts: it stops the cabin supply, which is what the
+        two `o2_reserve_10` and `cabin_pressure_caution` guards assume when they admit or refuse it.
+        `low`, `nominal` and `high` all deliver the nominal demand, because no source reached gives
+        their rates. The one-second dwell each way is chosen, as `o2_source`'s is
   - id: o2_source
     method: discrete
     node: internal

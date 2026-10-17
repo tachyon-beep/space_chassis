@@ -309,8 +309,8 @@ thresholds:
   - id: cryo_press_o2_high
     point: eclss.o2_supply_pressure_psi
     comparator: above
-    assert: 950
-    clear: 940
+    assert: 975
+    clear: 965
     dwell_assert_ms: 0
     dwell_clear_s: 10
     latched: true
@@ -320,14 +320,20 @@ thresholds:
     provenance:
       basis: historical
       source: >-
-        AOH SM2A-03-BLOCK II-(1) Vol. 1, p. 2.6-14, as `cryo_press_o2_low`: "exceeds **950 psia**".
-        The Apollo 13 Review Board (5-22) gives 975 psia for CSM-109; the AOH is Apollo 11's
+        Apollo 13 Review Board report, PDF p. 195, printed **p. 5-22**, for CSM-109 as flown: "At
+        55:54:29, when the pressure in oxygen tank no. 2 exceeded the master caution and warning trip
+        level of **975 psia**, the CM master alarm was inhibited by the fact that a warning of low
+        hydrogen pressure was already in effect". Chosen over the AOH's 950 psia (SM2A-03-BLOCK II-(1)
+        Vol. 1, p. 2.6-14, and p. 2.10-6, SC 108 and subsequent) because the target scenario is
+        Apollo 13 (scope decision, 2026-10-17); with 975 the trip at 55:54:29 reproduces
       note: >-
         the overpressure half, and the one a quiet vehicle can reach on its own: with no draw the
         26 Btu/h heat leak drives a full tank up about a psi a minute past the 935 psia switch, so
         a powered-down stack lights CRYO PRESS before the 983 psig relief valve opens. The AOH's
         corrections (p. 2.6-15) are a fuel cell purge, opening ECS DIRECT O2, or more electrical
-        load, each a cost. `clear` and the dwells are chosen, as the low half's
+        load, each a cost. `clear` is chosen 10 psi under the trip, as the low half's is above it;
+        the dwells are chosen, as the low half's. The common lamp's masking of a second trip (same
+        page) is not modelled
 
   # --- the LM's own atmosphere ------------------------------------------------------------
   # Four thresholds that did not exist. The CSM had `cabin_pressure_caution`,
