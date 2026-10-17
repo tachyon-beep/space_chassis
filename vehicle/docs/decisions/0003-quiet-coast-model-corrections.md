@@ -83,3 +83,10 @@ Operator items (proposed; John decides, `09-quiet-coast-episode.md` §8 and the 
   counterpart; they are outside the episode and are not changed here.
 - If John rejects an operator item, the episode design changes as `09-quiet-coast-episode.md` §8
   lists; the maintainer items stand on their evidence either way.
+- 2026-10-17, the power burndown (PR #43): the load-shed ladder is retired (decision b, the crew
+  sheds; `load_shed_class` reports the crew's switches), the battery-to-bus tie lands (decision a),
+  and the standby glycol pump is off at MET 0 (decision d: the MET-0 load is 1,401 W, not 1,651 W).
+  The loop has more margin, so policy D's loss (the coolant supply held past 10 C) moves from
+  about tick 8,686 to tick 10,017 in batch, and `aurora/tests/test_quiet_coast_window.py` runs policy D for
+  11,000 ticks rather than 9,500. That one-line aurora test change rides on the vehicle PR, a one-off
+  cross-stream exception John chose on 2026-10-17, because the vehicle change is what moves it.

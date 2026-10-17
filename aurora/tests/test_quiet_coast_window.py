@@ -264,9 +264,12 @@ def segments(state: Path) -> list[str]:
 
 POLICY_D = VEHICLE / "scenarios" / "quiet_coast" / "policy_d.yaml"
 # Policy D's loss through the window: the coolant supply held past 10 C for its 10 s dwell at about
-# tick 8,686 in batch with the amplifier on (8,973 without it); judged at 9,500 ticks, which is the loss
-# and a margin, not the episode.
-D_TICKS = 9500
+# tick 8,686 in batch with the amplifier on (8,973 without it) while the standby glycol pump drew at
+# MET 0. With that pump off (vehicle PR #43, decision d: MET-0 load 1,401 W, not 1,651 W) the loop
+# has more margin and the loss comes at tick 10,017 in batch (crossed 9,517). Judged at 11,000 ticks,
+# which is the loss and a margin, not the episode. Carried on #43 itself (John's call, 2026-10-17)
+# so the vehicle behaviour and this assertion move in one merge.
+D_TICKS = 11000
 # The batch classes (`vehicle/tests/test_quiet_coast.py`), which the window runs must reach.
 EXPECTED = {"a": "full_success", "b": "full_success", "c": "partial", "d": "physical_loss"}
 
