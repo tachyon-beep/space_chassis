@@ -188,7 +188,7 @@ def test_the_surge_tank_starts_full_and_the_cabin_draws_on_the_service_module(wo
 def test_set_o2_source_surge_moves_the_draw_to_the_surge_tank(world):
     values = walk(world, plant.initial_values(world), 1)
     staged = plant.apply_command(
-        world, values, "set_o2_source", {"vehicle": "csm", "source": "surge", "flow": "nominal"}
+        world, values, "set_o2_source", {"vehicle": "csm", "source": "surge"}
     )
     values = walk(world, {**values, **staged}, 2)  # the regulator acts on the next tick's selection
     sm_before = values["o2_csm_kg"]
@@ -293,13 +293,13 @@ def test_flow_off_stops_the_cabin_supply_from_either_store(world):
         assert after["cabin_o2_surge_supply_csm_kg_s"] == 0.0
 
 
-def test_set_o2_source_s_flow_argument_moves_no_band(world):
-    """One writer for the band (Codex, PR #64): `set_o2_source` cannot bypass `set_o2_flow`'s gate
-    and guards, restart its dwell or lock it under another conflict domain."""
+def test_set_o2_source_moves_no_band(world):
+    """One writer for the band (Codex, PR #64): `set_o2_source` carries no `flow`, so it cannot
+    bypass `set_o2_flow`'s gate and guards, restart its dwell or lock it under another conflict
+    domain."""
+    assert "flow" not in world.verbs["set_o2_source"]["argument_schema"]
     values = walk(world, plant.initial_values(world), 1)
-    staged = plant.apply_command(
-        world, values, "set_o2_source", {"vehicle": "csm", "source": "surge", "flow": "off"}
-    )
+    staged = plant.apply_command(world, values, "set_o2_source", {"vehicle": "csm", "source": "surge"})
     assert "o2_flow" not in staged
     after = walk(world, {**values, **staged}, 3)
     assert after["o2_flow"]["csm"] == "nominal"

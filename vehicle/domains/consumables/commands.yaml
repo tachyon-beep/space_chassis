@@ -110,13 +110,12 @@ commands:
     argument_schema:
       vehicle: {type: enum, values: [csm, lm]}
       source: {type: enum, values: [primary, surge, isolated]}
-      flow: {type: enum, values: ["off", "low", "nominal", "high"]}
     authority: A2
     gate: {kind: preference, variable: o2_<vehicle>_<source>_enable}
     interlocks: [eclss.cabin_pressure_caution, eclss.lm_cabin_pressure_caution, o2_reserve_10]
     # Two arguments together (ADR 0004 §Direction, amended 2026-10-17): which way a command moves
     # each hazard depends on the vehicle *and* the source, so each guard names the combinations it
-    # applies to. `flow` names none: it moves nothing (`eclss.o2_flow` is `set_o2_flow`'s). Owned by
+    # applies to. The flow band is `set_o2_flow`'s (`eclss.o2_flow`), not an argument here. Owned by
     # the ECLSS lane, which owns this verb's interlocks.
     interlocks_when:
       - interlocks: [eclss.cabin_pressure_caution]
@@ -149,7 +148,7 @@ commands:
           `surge` and `isolated` are the recovery, and the surge tank's own floor is not this
           guard's to hold. In the plant `surge` moves the regulator's draw to
           `eclss.o2_surge_csm_kg` (`eclss.o2_source`), so the S/M tanks stop feeding the cabin.
-          `primary` is refused whatever band it names, because this verb's `flow` moves nothing;
+          `primary` is refused whatever the band, because the band is `set_o2_flow`'s;
           `set_o2_flow flow=off` is the other recovery. The LM draws on its own store
           (`consumables.o2_lm_kg`), which this guard does not watch
     conflict_domain: res.<vehicle>.o2_source
@@ -160,15 +159,14 @@ commands:
     execution_class: declarative
     maximum_queue_age_s: 60
     help: >-
-      Select an oxygen source and a flow band. A flow band rather than a rate because the
-      regulator owns the rate; what an agent chooses is which tank the regulator draws from,
+      Select the oxygen source the cabin regulator draws from. How hard it draws is
+      `set_o2_flow`'s band; what an agent chooses here is which tank the regulator draws from,
       and a vehicle that has to reason about its own reserve should be able to say "spend this
-      tank first". The flow band is carried for apollo's argument list and moves nothing; the
-      band an agent sets is `set_o2_flow`'s.
+      tank first".
     provenance:
       basis: apollo
       ref: "apollo_diode.md:238"
-      note: "apollo's set_o2_source; the flow band is added because the cabin regulator's mode is a separate control and a source with no flow control cannot be conserved against a leak"
+      note: "apollo's set_o2_source. It carried a flow band too until PR #64; the band is set_o2_flow's alone, because a second writer bypassed that verb's gate and fire and overpressure guards, and an argument that moved nothing was accepted as though it had"
 
   # `set_absorber_path` used to live here. It moved to `domains/eclss/` in round 6, and the
   # reason is the distinction that runs through the vehicle: **consumables owns the stock and

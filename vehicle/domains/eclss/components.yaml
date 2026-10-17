@@ -800,10 +800,10 @@ state:
     provenance:
       basis: chosen
       reason: >-
-        the flow band `set_o2_flow` sets, and only it: `set_o2_source` carries a `flow` argument too,
-        but a second writer would bypass `set_o2_flow`'s gate and its fire and overpressure guards,
-        restart this state's dwell on a source change, and lock under a different conflict domain, so
-        that argument moves nothing. Only `off` acts: it stops the cabin supply, which is what the
+        the flow band `set_o2_flow` sets, and only it: `set_o2_source` carried a `flow` argument
+        until PR #64, but a second writer bypassed `set_o2_flow`'s gate and its fire and overpressure
+        guards, restarted this state's dwell on a source change, and locked under a different
+        conflict domain, so the argument was dropped. Only `off` acts: it stops the cabin supply, which is what the
         `cabin_pressure_caution` guard on `set_o2_flow` assumes when it refuses it.
         `low`, `nominal` and `high` all deliver the nominal demand, because no source reached gives
         their rates. The one-second dwell each way is chosen, as `o2_source`'s is
@@ -820,7 +820,8 @@ state:
         tank from the system", and the S/M supply feeds the regulator in flight, so the CSM starts on
         `primary`. The LM's is chosen: no LM source was read for its supply valves at TLI, and
         `primary` is its regulator drawing its own store (`cabin_o2_supply_lm_kg_s`), which is what
-        the LM cabin drew before this state existed. Chosen as a whole because one element is
+        the LM cabin drew before this state existed. The map is `chosen` as a whole because one of
+        its two elements is
     moved_by: ["command:set_o2_source"]
     command_value:
       - verb: set_o2_source

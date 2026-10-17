@@ -292,12 +292,12 @@ DEFAULT_WORLD_SAFING = [
         "set_suit_fan vehicle=csm state=on",
         "set_suit_fan vehicle=csm state=off",
     ),
-    # `set_o2_source` (ADR 0004, amended 2026-10-17): its guards name source and flow together.
+    # `set_o2_source` (ADR 0004, amended 2026-10-17): its guards name vehicle and source together.
     (
         "cabin_pressure_caution",
         {"csm_cabin_pressure_pa": 30000.0},  # 4.35 psia, past the 4.5 psia caution, above the emergency
-        "set_o2_source vehicle=csm source=surge flow=high",
-        "set_o2_source vehicle=csm source=isolated flow=nominal",
+        "set_o2_source vehicle=csm source=surge",
+        "set_o2_source vehicle=csm source=isolated",
     ),
     # The same caution on the band (reviewer, PR #64): `off` cuts the cabin's oxygen.
     (
@@ -309,8 +309,8 @@ DEFAULT_WORLD_SAFING = [
     (
         "o2_reserve_10",
         {"o2_csm_kg": 20.0},  # past the 27.9 kg floor
-        "set_o2_source vehicle=csm source=surge flow=nominal",
-        "set_o2_source vehicle=csm source=primary flow=nominal",
+        "set_o2_source vehicle=csm source=surge",
+        "set_o2_source vehicle=csm source=primary",
     ),
     (
         "load_margin_negative",
@@ -365,20 +365,18 @@ def test_every_readable_interlock_names_its_direction_or_is_whole_on_purpose(wor
 
 def test_a_guard_over_two_arguments_applies_to_the_combinations_it_names(world):
     """`set_o2_source` (ADR 0004 §Direction, amended 2026-10-17): each cabin's caution guards
-    isolating that vehicle's supply, and the reserve guards the CSM's `primary` whatever the band,
-    because this verb's `flow` moves nothing (`eclss.o2_flow` is `set_o2_flow`'s, which carries the
-    cautions on `off`, again per vehicle)."""
+    isolating that vehicle's supply, and the reserve guards the CSM's `primary`. The band is
+    `set_o2_flow`'s (`eclss.o2_flow`), which carries the cautions on `off`, again per vehicle."""
     spec = world.verbs["set_o2_source"]
 
-    def guards(vehicle: str, source: str, flow: str = "nominal") -> list[str]:
-        return plant.guarding_interlocks(spec, {"vehicle": vehicle, "source": source, "flow": flow})
+    def guards(vehicle: str, source: str) -> list[str]:
+        return plant.guarding_interlocks(spec, {"vehicle": vehicle, "source": source})
 
-    for flow in ("off", "low", "nominal", "high"):
-        assert guards("csm", "isolated", flow) == ["eclss.cabin_pressure_caution"]
-        assert guards("lm", "isolated", flow) == ["eclss.lm_cabin_pressure_caution"]
-        assert guards("csm", "primary", flow) == ["o2_reserve_10"]
-        assert guards("csm", "surge", flow) == []
-        assert guards("lm", "primary", flow) == []
+    assert guards("csm", "isolated") == ["eclss.cabin_pressure_caution"]
+    assert guards("lm", "isolated") == ["eclss.lm_cabin_pressure_caution"]
+    assert guards("csm", "primary") == ["o2_reserve_10"]
+    assert guards("csm", "surge") == []
+    assert guards("lm", "primary") == guards("lm", "surge") == []
     band = world.verbs["set_o2_flow"]
 
     def band_guards(vehicle: str, flow: str) -> list[str]:
@@ -411,14 +409,14 @@ def test_each_cabin_s_caution_guards_only_its_own_oxygen(world, tmp_path):
 
 
 def test_the_reserve_guard_s_recovery_draws_nothing_once_taken(world, tmp_path):
-    """With `o2_reserve_10` tripped, `set_o2_source primary flow=off` is refused, because its `flow`
-    moves nothing and `primary` keeps the S/M tanks on the cabin; `set_o2_flow flow=off` is the
-    recovery that stops the draw (Codex, PR #64)."""
+    """With `o2_reserve_10` tripped, `set_o2_source source=primary` is refused, because `primary`
+    keeps the S/M tanks on the cabin; `set_o2_flow flow=off` is the recovery that stops the draw
+    (Codex, PR #64)."""
     built = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
     built.attach("alpha")
     try:
         trip(world, built, {"o2_csm_kg": 20.0}, "o2_reserve_10")
-        refused = run(built, tmp_path, "set_o2_source vehicle=csm source=primary flow=off")
+        refused = run(built, tmp_path, "set_o2_source vehicle=csm source=primary")
         trip(world, built, {"o2_csm_kg": 20.0}, "o2_reserve_10")
         taken = run(built, tmp_path, "set_o2_flow vehicle=csm flow=off")
         for _ in range(3):
