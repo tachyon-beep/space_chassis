@@ -33,6 +33,14 @@ commands:
       kind: preference
       variable: o2_flow_<vehicle>_enable
     interlocks: [cabin_pressure_high, o2_supply_low, ppo2_fire_risk]
+    interlocks_when:
+      argument: flow
+      values: [low, nominal, high]
+      why: >-
+        each guard is a hazard that oxygen entering the cabin feeds (ADR 0004 §Direction): a cabin
+        already over pressure (`cabin_pressure_high`), a supply already low (`o2_supply_low`), and an
+        oxygen partial pressure already past the fire threshold (`ppo2_fire_risk`). Any flow adds to
+        all three, and `flow=off` is the recovery from each, so it is never refused by them
     conflict_domain: eclss.<vehicle>.o2_flow
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -63,6 +71,22 @@ commands:
       kind: preference
       variable: regulator_<vehicle>_mode_enable
     interlocks: [cabin_pressure_emergency, ppo2_fire_risk]
+    interlocks_when:
+      - interlocks: [cabin_pressure_emergency]
+        argument: mode
+        values: [closed, primary, isolated]
+        why: >-
+          a cabin below 3.5 psia is what `emergency` is for ("holds the cabin above 3.5 psia for as
+          long as the supply lasts"), so selecting it is never refused by this guard; `closed` and
+          `isolated` cut the cabin from its supply, and `primary` is the regulation that has already
+          let it fall, so each is refused while it has tripped
+      - interlocks: [ppo2_fire_risk]
+        argument: mode
+        values: [primary, emergency]
+        why: >-
+          an oxygen partial pressure past the fire threshold is fed by a regulator that admits
+          oxygen, which `primary` and `emergency` both do; `closed` and `isolated` close the cabin to
+          its supply, the recovery, so they are never refused by this guard
     conflict_domain: eclss.<vehicle>.regulator
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -93,6 +117,19 @@ commands:
       kind: preference
       variable: absorber_<vehicle>_<path>_enable
     interlocks: [co2_absorber_low, co2_caution]
+    interlocks_when:
+      - interlocks: [co2_caution]
+        argument: path
+        values: [bypass]
+        why: >-
+          a cabin CO2 partial pressure past its caution is made worse only by taking the air off
+          every lithium-hydroxide path; routing it through `primary`, `secondary` or `both` is the
+          recovery, so those are never refused by this guard
+      - interlocks: [co2_absorber_low]
+        why: >-
+          unconditional: a low cartridge is a reason against spending a path, and which path's
+          capacity the threshold watches is not something this verb's arguments say, so the guard
+          stays on every command until it is read the same way
     conflict_domain: eclss.<vehicle>.absorber
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -123,6 +160,19 @@ commands:
       kind: preference
       variable: suit_loop_<vehicle>_enable
     interlocks: [suit_loop_flow_low, cabin_pressure_emergency]
+    interlocks_when:
+      - interlocks: [cabin_pressure_emergency]
+        argument: loop
+        values: [cabin, mixed]
+        why: >-
+          a decompression is what the suit loop is for ("the verb a crew reach for during a
+          decompression"): going to `suit` is the recovery and is never refused by this guard; the
+          cabin circuit, and the mixed one that still serves it, are refused while it has tripped
+      - interlocks: [suit_loop_flow_low]
+        why: >-
+          unconditional: a suit loop below its flow floor argues against moving the crew onto it, and
+          a decompression argues for it; which direction worsens the hazard is not plain from this
+          verb's help, so the guard stays on every command
     conflict_domain: eclss.<vehicle>.suit_loop
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -153,6 +203,12 @@ commands:
       kind: preference
       variable: suit_fan_<vehicle>_enable
     interlocks: [suit_loop_flow_low]
+    interlocks_when:
+      argument: state
+      values: ["off"]
+      why: >-
+        a suit loop already below its flow floor is made worse by stopping its fan, and starting the
+        fan is the recovery (ADR 0004 §Direction), so `state=on` is never refused by this guard
     conflict_domain: eclss.<vehicle>.suit_fan
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -182,6 +238,18 @@ commands:
       kind: preference
       variable: vent_<vehicle>_enable
     interlocks: [cabin_pressure_emergency, structure.hatch_open_with_pressure]
+    interlocks_when:
+      - interlocks: [cabin_pressure_emergency]
+        argument: state
+        values: [vent]
+        why: >-
+          a cabin below 3.5 psia is made worse only by venting it; `repress` is the recovery and
+          `closed` stops the loss, so neither is refused by this guard
+      - interlocks: [structure.hatch_open_with_pressure]
+        why: >-
+          unconditional: the hatch guard is about the pressure across an open hatch, which venting
+          lowers and repressurising raises, and which of them is the hazard depends on the hatch's
+          side of it; not plain from the verb, so the guard stays on every command
     conflict_domain: eclss.<vehicle>.vent
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]

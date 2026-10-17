@@ -1702,8 +1702,11 @@ def guarding_interlocks(spec: dict[str, Any], arguments: dict[str, Any]) -> list
     come on, and must always be allowed to go off. `interlocks_when` says which: a condition names an
     enum argument and the values for which its interlocks apply, and for any other value they do not,
     so the safing direction is admitted whatever the guard reads, tripped or unreadable. A condition
-    without `interlocks` covers every interlock the verb declares; one with it covers those. An
-    interlock no condition covers guards every command of the verb."""
+    without `interlocks` covers every interlock the verb declares; one with it covers those. A list
+    entry with `interlocks` and no `argument` is unconditional: it says, explicitly, that those guards
+    have no safing direction this record can name, and they guard every command (the linter refuses a
+    list that leaves a guard covered by no entry). An interlock no condition covers — the single-mapping
+    form's absence, or a verb with no `interlocks_when` — guards every command of the verb."""
     declared = spec.get("interlocks") if isinstance(spec, dict) else None
     names = [str(i) for i in declared] if isinstance(declared, list) else []
     covered: dict[str, list[dict[str, Any]]] = {}
@@ -1715,7 +1718,8 @@ def guarding_interlocks(spec: dict[str, Any], arguments: dict[str, Any]) -> list
     for name in names:
         conditions = covered.get(name)
         if not conditions or any(
-            str(arguments.get(str(c.get("argument")))) in [str(v) for v in c.get("values") or []]
+            "argument" not in c
+            or str(arguments.get(str(c.get("argument")))) in [str(v) for v in c.get("values") or []]
             for c in conditions
         ):
             guarding.append(name)

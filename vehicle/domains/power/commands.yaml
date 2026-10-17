@@ -31,6 +31,13 @@ commands:
     authority: A2
     gate: {kind: preference, variable: source_<source>_enable}
     interlocks: [bus_a_undervoltage, load_margin_negative]
+    interlocks_when:
+      argument: state
+      values: ["off"]
+      why: >-
+        both guards are a bus short of power (ADR 0004 §Direction): disconnecting a source is what
+        makes it worse ("disconnecting the last source on a bus is refused by the interlock"), and
+        connecting one is the recovery, so `state=on` is never refused by them
     conflict_domain: power.source_<source>
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -79,6 +86,12 @@ commands:
     authority: A2
     gate: {kind: preference, variable: contactor_<battery>_enable}
     interlocks: [load_margin_negative]
+    interlocks_when:
+      argument: state
+      values: ["off"]
+      why: >-
+        a negative load margin is made worse by disconnecting a battery and relieved by connecting
+        one ("the last resort after the fuel cells"), so `state=on` is never refused by this guard
     conflict_domain: power.contactor_<battery>
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]

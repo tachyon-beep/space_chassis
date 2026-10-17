@@ -100,10 +100,15 @@ amplifier off is the remedy for all three. A guard that refuses its own remedy i
 So a verb says which of its arguments' values each interlock guards, in `interlocks_when` (already
 the propulsion arm/safe form, now honoured by the executive): a condition names an enum argument and
 the values for which its interlocks apply, and a list of conditions names the interlocks each one
-covers (`interlocks: [...]`), so one verb can guard each direction with a different interlock. An
-interlock no condition covers guards every command of the verb, as before. The linter checks that a
-condition's argument is an enum, its values are the argument's, and in the list form that each
-interlock is covered at most once. As declared:
+covers (`interlocks: [...]`), so one verb can guard each direction with a different interlock. A
+list entry with `interlocks` and a `why` but no `argument` is unconditional: it declares, on purpose,
+that those guards refuse every command of the verb. A verb with no `interlocks_when` guards every
+command with every interlock, as before. The linter checks that a condition's argument is an enum and
+its values are the argument's, and in the list form that each interlock is covered exactly once,
+by a condition or by an unconditional entry, so a list cannot leave a guard whole-verb by omission.
+Every verb with a readable interlock declares one, guarding only the direction that worsens the
+hazard its threshold watches, and admitting only the values the verb's help or the threshold make
+plainly the recovery. As declared:
 
 | verb | interlock | guards | always admitted |
 |---|---|---|---|
@@ -115,12 +120,34 @@ interlock is covered at most once. As declared:
 | set_radiator_bypass | `coolant_supply_high` | `state=bypass` | `state=radiator` |
 | set_radiator_bypass | `coolant_supply_low` | `state=radiator` | `state=bypass` |
 | arm_engine | the three feed guards | `state=armed` | `state=safe` |
+| set_o2_flow | `cabin_pressure_high`, `o2_supply_low`, `ppo2_fire_risk` | `flow=low`, `nominal`, `high` | `flow=off` |
+| set_cabin_regulator | `cabin_pressure_emergency` | `mode=closed`, `primary`, `isolated` | `mode=emergency` |
+| set_cabin_regulator | `ppo2_fire_risk` | `mode=primary`, `emergency` | `mode=closed`, `isolated` |
+| set_absorber_path | `co2_caution` | `path=bypass` | `primary`, `secondary`, `both` |
+| set_absorber_path | `co2_absorber_low` (unreadable) | every command (unconditional) | — |
+| set_suit_fan | `suit_loop_flow_low` | `state=off` | `state=on` |
+| set_suit_loop | `cabin_pressure_emergency` | `loop=cabin`, `mixed` | `loop=suit` |
+| set_suit_loop | `suit_loop_flow_low` | every command (unconditional) | — |
+| set_vent_valve | `cabin_pressure_emergency` | `state=vent` | `state=repress`, `closed` |
+| set_vent_valve | `structure.hatch_open_with_pressure` (unreadable) | every command (unconditional) | — |
+| set_source | `bus_a_undervoltage`, `load_margin_negative` | `state=off` | `state=on` |
+| set_battery_contactor | `load_margin_negative` | `state=off` | `state=on` |
+| select_sensor | `redundancy_degraded` | `source=primary`, `secondary` | `source=auto` |
+
+Guarded whole, because no argument value is plainly the recovery: `request_translation`
+(`rcs_propellant_reserve`; every translation spends propellant), `start_burn` (`feed_pressure_low`;
+the safing verb is `stop_burn`), `select_nav_source` (`estimator_divergence`; the help refuses
+choosing any source while the estimator diverges, and whether `blended` is a recovery is not said),
+and `set_o2_source` (`cabin_pressure_caution` and `o2_reserve_10`; the hazardous direction depends
+on two arguments, `source` and `flow`, together, which one condition cannot name). The unconditional
+entries above are the same judgement for one guard of a verb whose other guard has a direction.
 
 The same rule applies to UNEVALUATED: a safing command needs no guard, so an unreadable interlock
 that guards only the other direction does not refuse it. The accepted result says which it was
 ("evaluated and none tripped", or "guard the other direction of this verb, not this one"). HELP
-prints each interlock with the values it applies to. The verbs outside the episode keep
-whole-verb guards until each is read the same way; the rule refuses more for them, not less.
+prints each interlock with the values it applies to. A guard left whole, by an unconditional entry
+or on a verb with no condition, refuses its own remedy while it is tripped, the defect this section
+names; each is a question for the domain's owner, not a conservative default.
 
 Limitations, stated rather than modelled:
 - The `clear` value, `dwell_clear_s` and `latched` are not evaluated. A threshold trips while its
@@ -134,7 +161,12 @@ Limitations, stated rather than modelled:
   threshold is evaluated unconditionally, and a stopped loop's zero flow trips it after 4 s. Under
   §Direction that no longer blocks anything it should not: the guard applies to stopping a pump
   (`state=off`) and isolating a loop, never to starting a pump, so the restart is admitted while it
-  is tripped. The condition is still owed as a declared field.
+  is tripped. The condition is still owed as a declared field. The cost of the direction rule here:
+  `set_coolant_pump state=off` on the last running pump is no longer prevented. `pump_no_flow` trips
+  only after 4 s without flow, so it cannot refuse the stop that causes it, and `coolant_supply_high`
+  trips only once the loop has run hot for its dwell; the stop itself is accepted. Preventing it
+  needs a predictive guard — a running-pump count on the loop, or the owed `gated_by` — which is
+  WP05's.
 
 ## Operator items (decided by John, 2026-10-16 20:41Z)
 

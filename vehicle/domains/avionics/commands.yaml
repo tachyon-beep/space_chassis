@@ -96,6 +96,13 @@ commands:
     authority: A2
     gate: {kind: preference, variable: sensor_<group>_<source>_enable}
     interlocks: [redundancy_degraded]
+    interlocks_when:
+      argument: source
+      values: [primary, secondary]
+      why: >-
+        the guard is against taking a side while the redundancy vote disagrees ("the vehicle refuses
+        to be told which side to take"); `auto` is the vote itself, the normal state, and is never
+        refused by it
     conflict_domain: avionics.sensor_<group>
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]

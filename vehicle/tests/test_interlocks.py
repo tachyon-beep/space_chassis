@@ -263,3 +263,81 @@ def test_an_operator_s_closed_interlock_still_wins(world, tmp_path):
         built.close()
     assert "state=refused" in body and "is closed" in body, body
     assert "INTERLOCK TRIPPED" not in body and "UNEVALUATED" not in body, body
+
+
+# The same rule outside the episode (re-review A): every verb with a readable interlock names the
+# direction it guards, so in the default world the recovery is taken while the guard is tripped.
+DEFAULT_WORLD_SAFING = [
+    (
+        "cabin_pressure_emergency",
+        {"csm_cabin_pressure_pa": 20000.0},  # 2.9 psia, past the 3.5 psia assert
+        "set_cabin_regulator vehicle=csm mode=emergency",
+        "set_cabin_regulator vehicle=csm mode=isolated",
+    ),
+    (
+        "ppo2_fire_risk",
+        {"csm_cabin_o2_kg": 3.5},  # about 341 mmHg, past the 300 mmHg assert
+        "set_o2_flow vehicle=csm flow=off",
+        "set_o2_flow vehicle=csm flow=high",
+    ),
+    (
+        "cabin_pressure_high",
+        {"csm_cabin_pressure_pa": 40000.0},  # 5.8 psia, past the 5.6 psia assert
+        "set_o2_flow vehicle=csm flow=off",
+        "set_o2_flow vehicle=csm flow=nominal",
+    ),
+    (
+        "suit_loop_flow_low",
+        {"suit_loop_flow_cfm": 0.0},
+        "set_suit_fan vehicle=csm state=on",
+        "set_suit_fan vehicle=csm state=off",
+    ),
+    (
+        "load_margin_negative",
+        {"bus_a_load_w": 3000.0},  # above bus A's 2,840 W rated generation
+        "set_battery_contactor battery=battery_csm_1 state=on",
+        "set_battery_contactor battery=battery_csm_1 state=off",
+    ),
+    (
+        "bus_a_undervoltage",
+        {"bus_a_v": 20.0},
+        "set_source source=fc_1 state=on",
+        "set_source source=fc_1 state=off",
+    ),
+]
+
+
+@pytest.mark.parametrize(("name", "overrides", "safing", "guarded"), DEFAULT_WORLD_SAFING)
+def test_outside_a_scenario_the_safing_direction_is_taken_while_tripped(
+    world, tmp_path, name, overrides, safing, guarded
+):
+    built = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
+    built.attach("alpha")
+    try:
+        trip(world, built, overrides, name)
+        taken = run(built, tmp_path, safing)
+        trip(world, built, overrides, name)
+        refused = run(built, tmp_path, guarded)
+    finally:
+        built.close()
+    assert "state=accepted" in taken and "INTERLOCK" not in taken, taken
+    assert "refused: INTERLOCK TRIPPED" in refused and name in refused, refused
+
+
+def test_every_readable_interlock_names_its_direction_or_is_whole_on_purpose(world):
+    """A verb with a readable interlock declares `interlocks_when`, except the four ADR 0004 lists as
+    guarded whole because no argument value is plainly the recovery."""
+    whole = {"request_translation", "start_burn", "select_nav_source", "set_o2_source"}
+    for verb, spec in world.verbs.items():
+        readable = [
+            name
+            for name in (spec or {}).get("interlocks") or []
+            if plant.resolve_interlock(world, str(name))[0] is not None
+        ]
+        if readable and verb not in whole:
+            assert plant.interlock_conditions(spec), verb
+    # An unconditional entry guards every command: the vent valve's hatch guard.
+    vent = world.verbs["set_vent_valve"]
+    for state in ("closed", "vent", "repress"):
+        assert "structure.hatch_open_with_pressure" in plant.guarding_interlocks(vent, {"state": state})
+    assert "cabin_pressure_emergency" not in plant.guarding_interlocks(vent, {"state": "repress"})

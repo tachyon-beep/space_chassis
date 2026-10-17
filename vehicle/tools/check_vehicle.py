@@ -5312,15 +5312,41 @@ def check_domain(
                         )
                     else:
                         covered_by[name] = position
+                # An unconditional entry: these guards have no safing direction this record can name,
+                # which is a claim about the vehicle, so it says why like any condition.
+                unconditional = listed_form and "argument" not in condition and "values" not in condition
+                if unconditional and not str(condition.get("why") or "").strip():
+                    shape.append(
+                        (
+                            f"{cwhere2}.why",
+                            "is empty. An unconditional entry says these guards refuse every "
+                            "command of the verb, in both directions, and that needs a reason",
+                        )
+                    )
             elif listed_form:
                 shape.append(
                     (f"{cwhere2}.interlocks", "is absent. In the list form each condition names the guards it covers")
                 )
+        if listed_form and raw_condition:
+            # A list names a direction per guard, so a guard it leaves out has silently become a
+            # whole-verb guard. Say so, or list it under an unconditional entry (`interlocks` and
+            # `why`, with no `argument`), which is the same guard declared on purpose.
+            for name in declared_guards:
+                if name not in covered_by:
+                    shape.append(
+                        (
+                            f"{vwhere}.interlocks_when",
+                            f"has no entry for {name!r}, one of the verb's `interlocks`. Name "
+                            "the direction it guards, or list it under an unconditional entry",
+                        )
+                    )
         for where, why in shape:
             report.refuse(where, why)
         for position, condition in enumerate(conditions):
             cwhere2 = f"{vwhere}.interlocks_when[{position}]" if listed_form else f"{vwhere}.interlocks_when"
             if not isinstance(condition, dict) or not condition:
+                continue
+            if listed_form and "argument" not in condition and "values" not in condition:
                 continue
             if not isinstance(interlocks, list) or not interlocks:
                 report.refuse(

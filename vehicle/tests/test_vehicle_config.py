@@ -15540,6 +15540,28 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
     listed("unknown-guard", "      - interlocks: [pump_no_flow]\n", "which is not one of the verb's `interlocks`")
     listed("twice", "      - interlocks: [coolant_supply_high]\n", "already covers; one guard has one condition")
     listed("absent", "      - argument_note: x\n", "In the list form each condition names the guards it covers")
+    # A list that leaves a declared guard out has made it whole-verb by omission; an unconditional
+    # entry (`interlocks` and `why`, no `argument`) is the same guard declared on purpose, and it
+    # needs its reason like any condition. The declared vehicle uses one (`set_vent_valve`).
+    declared = "    interlocks: [coolant_supply_high, res.cooling_water_reserve]\n"
+    listed(
+        "uncovered",
+        "    interlocks: [coolant_supply_high, res.cooling_water_reserve, coolant_supply_low]\n",
+        "has no entry for 'coolant_supply_low'",
+        replaced=declared,
+    )
+    reserve = (
+        "      - interlocks: [res.cooling_water_reserve]\n"
+        "        argument: state\n"
+        '        values: ["on"]\n'
+        "        why: >-\n"
+    )
+    listed(
+        "unconditional-without-why",
+        "      - interlocks: [res.cooling_water_reserve]\n        note: >-\n",
+        "An unconditional entry says these guards refuse every command",
+        replaced=reserve,
+    )
 
 
 def test_a_command_value_says_which_argument_carries_the_value():
