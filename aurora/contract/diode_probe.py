@@ -270,26 +270,37 @@ class Probe:
             self.check("published state is a mirror, never an input", False, "no state.json")
             return
         original = self.state.read_bytes()
+        doctored = json.dumps(
+            {
+                "available_commands": ["everything_is_open"],
+                "budget": {"limit_per_window": 999999},
+            }
+        ).encode("utf-8")
         try:
-            self.state.write_text(
-                json.dumps(
-                    {
-                        "available_commands": ["everything_is_open"],
-                        "budget": {"limit_per_window": 999999},
-                    }
-                ),
-                encoding="utf-8",
-            )
-            time.sleep(self.poll_seconds * 1.5)
-            rewritten = read_bounded(self.state, 2_000_000) or b""
+            self.state.write_bytes(doctored)
+            # Judge the next publication, not the clock: a window on a loaded host, or one serving
+            # many windows from one executive, can take longer than a poll or two to come round,
+            # and a fixed sleep then reads a late cycle as state read back. A window that never
+            # republishes still fails, at the timeout, the same as a command never answered.
+            started = time.monotonic()
+            deadline = started + self.timeout
+            while True:
+                rewritten = read_bounded(self.state, 2_000_000) or b""
+                republished = rewritten not in (b"", doctored)
+                if republished or time.monotonic() >= deadline:
+                    break
+                time.sleep(min(self.poll_seconds, 0.25))
+            waited = time.monotonic() - started
             verbs_after = self.published_verbs()
-            restored = b"everything_is_open" not in rewritten
+            restored = republished and b"everything_is_open" not in rewritten
             self.check(
                 "published state is rewritten, not read back",
                 restored,
-                "the doctored state.json survived a cycle"
+                f"no state.json replaced the doctored one in {waited:.1f}s"
+                if not republished
+                else "the republished state.json carried the doctored verb"
                 if not restored
-                else f"state.json was republished within {self.poll_seconds * 1.5:.1f}s",
+                else f"state.json was republished after {waited:.1f}s",
             )
             self.check(
                 "editing published state does not open anything",
