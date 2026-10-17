@@ -194,3 +194,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 15:03 Governance #55 merged as `7ad188f` (D41–D44, lane events to 14:30); the next batch carries D45–D51.
 - 15:23 D52: GNC navigation (`select_nav_source`) as a reduced Apollo-shaped covariance model, not the corpus's 15×15 EKF; recorded as a dated deviation in ADR 0005 on #56. ECLSS owes a vent state; GNC owns the edge into navigation.
 - 15:26 Merge order becomes #46 → #58 → #47 → the rest. Lane 0's draft #58 (`11c8a95`) unpins the census figures #45 kept on purpose, judging that keeping them pinned was the wrong call for a parallel sprint.
+- 15:26 ECLSS sources LiOH CO2 removal (`sources/eclss-co2.md`) and finds two repo ratings wrong (LM secondary cartridge, CSM element count); D53 gives ECLSS the removal stock, absorber counters, vent state and `set_overboard_dump`.
