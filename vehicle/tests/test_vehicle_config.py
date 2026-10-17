@@ -3591,8 +3591,9 @@ def test_the_engines_the_mission_is_flown_on_are_one_set_of_figures(tmp_path):
         "    thrust_max_n: 43000",
         "described twice",
     )
-    # The arithmetic: 16 + 12 + 16 = 44, and each system's strings sum to that system.
-    refusal("domains/rcs/components.yaml", "    count: 44", "    count: 40", "total 44 thrusters")
+    # The arithmetic: 16 + 16 = 32 and 12, and each system's strings sum to that system.
+    refusal("domains/rcs/components.yaml", "    count: 32", "    count: 30", "total 32 thrusters")
+    refusal("domains/rcs/components.yaml", "    count: 12", "    count: 10", "total 12 thrusters")
     refusal(
         "domains/rcs/components.yaml",
         "  - id: rcs_string_cm\n    kind: discrete\n    class: string\n    thrusters: 12",

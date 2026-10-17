@@ -119,15 +119,16 @@ capability:
     unit: N*s
     values:
       rcs_sm: 1656367
-      rcs_cm: 305120
+      rcs_cm: 298750
       rcs_lm: 784595
     provenance:
       basis: derived
       relation: "load * Isp * g0, loads from vehicle.yaml#propulsion.rcs_* (A11 Tbl 8-XI, 9-XV)"
       note: >-
-        the total impulse each load can produce if every kilogram is burned through a 100 lbf
-        thruster — 1.656e6 N*s for the service module, 3.051e5 for the command module, 7.846e5
-        for the LM, at C-26's 277.8 s (they were 1.729e6 / 3.185e5 / 8.191e5 at the unsourced
+        the total impulse each load can produce if every kilogram is burned through its own
+        thrusters — 1.656e6 N*s for the service module and 7.846e5 for the LM at C-26's 277.8 s,
+        and 2.987e5 for the command module at its own engine's 272.0 s (it was 3.051e5 while the
+        CM engine was taken to be the SM article) (they were 1.729e6 / 3.185e5 / 8.191e5 at the unsourced
         290 s: **the same tanks now price 4.2 % less impulse**, which is the direction the
         decision moves the tightest load in the mission). It is an upper bound and the ceiling of `rcs.total_impulse_ns`, which is
         what makes the published total impulse checkable against the published load: a total
@@ -194,7 +195,8 @@ capability:
         0.24 lb/s and fuel 0.12 lb/s, expansion ratio 40:1 and weight 6 lb
       note: >-
         declared here rather than in `domains/propulsion/` because these are the *thruster's*
-        qualifications and all forty-four are the same article. The two life limits are separate
+        qualifications. They are the SM and LM article's (`thruster_100lbf`); the CM engine
+        (`thruster_cm`) is a different engine whose life limits are not declared here. The two life limits are separate
         numbers rather than one: 500 s of steady-state operation and 500 s of pulse-mode operation
         are different duty, and a total of 1,000 s is their sum rather than a third allowance. What
         spends them is the mission's own firing time, which is not declared yet — the RCS budget is
@@ -291,7 +293,7 @@ geometry:
   # meets the outer mould line (the roll pairs at their centrelines' intersection), and the unit
   # thrust in CM axes. `check_rcs_geometry` rebuilds every vector from the drawing's angles and
   # refuses one that disagrees, or whose torque about `torque_check_point_in` turns the CM the
-  # wrong way. Thrust and Isp are the CM article's, owed with G-7.
+  # wrong way. Thrust and Isp are the CM article's, `thruster_cm` (G-7).
   rcs_cm:
     frame: CM_XC
     aft_engine_angle_deg: 47.0
@@ -757,21 +759,43 @@ components:
     class: thruster
     thrust_n: 445
     isp_s: 277.8
-    count: 44
-    vehicle_keys: [rcs_sm, rcs_cm, rcs_lm]
+    count: 32
+    vehicle_keys: [rcs_sm, rcs_lm]
     provenance:
       basis: historical
-      source: "vehicle.yaml#propulsion.rcs_sm/rcs_cm/rcs_lm — 16 SM + 12 CM + 16 LM = 44 thrusters, all 100 lbf, from A11 Tbl 8-XI and 9-XV"
+      source: "vehicle.yaml#propulsion.rcs_sm/rcs_lm — 16 SM + 16 LM = 32 thrusters, all 100 lbf, from A11 Tbl 8-XI and 9-XV"
       note: >-
-        one component for all forty-four because they are the same article at the same
-        throttle, and forty-four near-identical entries would be forty-four places for the
-        arithmetic to differ. **C-26 is closed and this article carries the guide's figure now**:
+        one component for the thirty-two SM and LM thrusters because they are the same article at
+        the same throttle, and thirty-two near-identical entries would be thirty-two places for the
+        arithmetic to differ. The twelve CM engines were in this article until the CSM Data Book
+        showed them to be a different engine; they are `thruster_cm`. **C-26 is closed and this article carries the guide's figure now**:
         the 290 s that stood here was sourced to nothing, `lm_propulsion_rcs_study_guide.pdf` PDF
         p. 90 states both an Isp (275 s approx) and the flow rates of the same thruster
         (0.24 + 0.12 lb/s at 100 lbf), and those two agree with each other on 277.78 s. The
         operator's decision is recorded in `../integration/reconciliation/01-conflict-register.md`;
         what it moved is `E-RCSP-RCS`, `mass_flow_per_thruster` and the three `impulse_capacity`
         figures, together and in one round
+
+  - id: thruster_cm
+    kind: flow
+    class: thruster
+    thrust_n: 427
+    isp_s: 272.0
+    count: 12
+    vehicle_keys: [rcs_cm]
+    provenance:
+      basis: historical
+      source: >-
+        CSM/LM Spacecraft Operational Data Book, Vol. I CSM Data Book, SNA-8-D-027(I) Rev 3,
+        Table 4.4-1 "Command Module RCS Engine Vacuum Steady-State Performance", printed p. 4.4-9:
+        thrust 96.0 lb (+3.6/-3.7) = 427 N, Isp 272.0 +/- 6.9 s, expansion ratio 9.00
+        (https://www.ibiblio.org/apollo/Documents/HSI-41539.pdf)
+      note: >-
+        the CM engine is its own article: ablatively cooled at 9:1 where the SM engine is
+        radiation-cooled at 40:1 (TN D-7151 pp. 3, 9-10; AOH printed p. 2.5-47 "nominal thrust 93
+        pounds"). The Data Book's qualification figures are the ones taken, as its Table 4.3-1 is
+        for the SM. A declaration only: the jets are `geometry.rcs_cm.jets` and the decision is
+        docs/evidence/wp03-rcs-geometry.md G-7
 
   - id: pulse_generator
     kind: discrete
@@ -855,5 +879,5 @@ open_debts:
   - "The per-thruster minimum command-ON floor is owed until each thruster has SM, CM or LM membership and the controller path is named. Group enable/inhibit has a chosen zero policy dwell in both directions so inhibit and deliberate re-enable remain available; it is not an injector-pulse qualification. LM pulse-mode 10 ms and SM automatic-controller earliest OFF 12 ms are separately sourced under `capability.minimum_command_on_s`; CM hardware command timing remains unpublished in the sources reached. None is a delivered impulse bit or a universal qualification. The maximum ON time and duty cycle remain owed."
   - "Thrust rise and tailoff time constants. The asymmetry between them is what a total-impulse gauge misreads, and no source gives either."
   - "Inertia tensor and centre of mass, owed by `vehicle.yaml` and owed *to* this domain before the deadband, the allocator's wrench matrix and E-RCS-DYN can exist. Three of this domain's twelve states are waiting on it. **The docked stack's tensor landed in round 9** (`vehicle.yaml#mass_properties`) and four configurations' are still owed there by name; what this domain still cannot build is the wrench matrix, which needs the thrusters' own lever arms rather than the vehicle's tensor."
-  - "Thruster geometry: what is left after WP03. **All three tables have landed** (`geometry`: SM jets 1-16 on quads A-D with their AOH engine names, CM engines 11-26 with positions and thrust directions, LM jets 1-16), so the allocator can build `B = [F_i d_i ; r_i x F_i d_i]` (rcs_dode.md:685-693) once each configuration supplies its centre of mass. What stays approximate, each recorded in `docs/evidence/wp03-rcs-geometry.md`: the SM roll thrust lines' 0.94 in fore-aft offset, the CM forward pitch engines' undimensioned tilt and the CM nozzle extensions' alignment angles. This entry retires with the CM article split (G-7), which lands after the test-figure unpin."
+  - "Thruster geometry: what is left after WP03. **All three tables have landed** (`geometry`: SM jets 1-16 on quads A-D with their AOH engine names, CM engines 11-26 with positions and thrust directions, LM jets 1-16), so the allocator can build `B = [F_i d_i ; r_i x F_i d_i]` (rcs_dode.md:685-693) once each configuration supplies its centre of mass. What stays approximate, each recorded in `docs/evidence/wp03-rcs-geometry.md`: the SM roll thrust lines' 0.94 in fore-aft offset, the CM forward pitch engines' undimensioned tilt and the CM nozzle extensions' alignment angles. The CM article split (G-7) has landed as `thruster_cm`; this entry stays open for those three approximations."
   - "The mission's RCS propellant allocation. `rcs.total_impulse_ns` can be checked against the load (capability.impulse_capacity) but the mission declares no RCS budget, so the three systems still carry the linter's 'no mission burn' note while their loads are flown by attitude control, which no budget line can price."
