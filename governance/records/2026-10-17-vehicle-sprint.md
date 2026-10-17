@@ -173,3 +173,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 14:22 #47 (`4a531df`) adds `refused_bands` and enforces `minimum`/`maximum` everywhere. Lane 9's order after #47 now starts with `gated_by` on state conditions.
 - 14:27 The coordinator chooses the crew-day values under D33 (D44). The potable-water heater's sleep switch-off goes to power as a PWR-02 confounder. #47's interlock test fixed at `fdbedf9`.
 - 14:28 ECLSS puts the O2 tank heaters on their own node (#46 commit 0007). Metabolic figures in `vehicle.yaml` differ from the AOH; recorded as unowned debt in `status.md`.
+- 14:29 Thermal's MET-0 re-derivation is on #43 (`efd60cf`). Policy D's non-loss is the corrected physics, so #43 carries the `aurora/tests` expectation change (D42).
