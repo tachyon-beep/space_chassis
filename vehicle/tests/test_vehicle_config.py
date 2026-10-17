@@ -32745,9 +32745,9 @@ def test_live_equals_replay_at_k_5_including_the_dwell_a_commands_first_step_sta
         """`mode`'s value as `plant.state_level` reads it: the flat key first, the sentinel's map second."""
         return truth["mode"] if "mode" in truth else (truth.get("internal") or {}).get("mode")
 
-    def drifting(world_, truth, dt, rng, effects):
+    def drifting(world_, truth, dt, rng, effects, **kwargs):
         # Both representations move together (candidate 2, Codex P3: `plant.state_level` prefers the flat key).
-        stepped = real_step(world_, truth, dt, rng, effects)
+        stepped = real_step(world_, truth, dt, rng, effects, **kwargs)
         if not effects and level(truth) == "manual":
             stepped = dict(stepped)
             if "mode" in stepped:
