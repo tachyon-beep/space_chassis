@@ -8433,14 +8433,18 @@ RADIATIVE_COOLING = "space"
 # other. `near_isotropic` means they are independent — a flush omni's 180 degrees is a nominal
 # coverage figure rather than a half-power width this close to isotropic — and the claim carries a
 # `pattern_note`, the way `state_order: independent` carries a `state_order_note`. `measured` means
-# both figures are published for the real antenna, so neither is derived from the other: a real
-# aperture's illumination taper and losses put its gain *below* the ideal product's, never above it,
-# so the pair is held to the bound `G <= 41253 / theta^2` rather than to equality. The CSM S-band
-# HGA's 25.7 dB with a 4.4-degree beam (TN D-6723 Table I) is such a pair, at about 17 % of the
-# ideal product. Its provenance is `historical`, because the claim is that both numbers came from a
+# both figures are published for the real antenna, so neither is derived from the other. The
+# product `41253 / theta^2` is Kraus's estimate for a beam with all its power inside its half-power
+# width (NTIA TM-13-489 §4.2), **not a physical limit**: a pattern held close to flat out to its
+# half-power edge can exceed it, while real apertures, with their taper and losses, sit at about
+# 26,000 to 35,000. So a measured pair is a plausibility check against `MEASURED_PRODUCT_CEILING`,
+# twice the estimate, which catches a transcribed gain or width a step out without claiming a bound
+# the physics does not set. The CSM S-band HGA's 25.7 dB with a 4.4-degree beam (TN D-6723
+# Table I) is such a pair, at about 17 % of the estimate. Its provenance is `historical`, because the claim is that both numbers came from a
 # source and the bound alone would let a guess through; the source that names both is its reason,
 # so it needs no `pattern_note` beside it.
 ANTENNA_PATTERNS = {"aperture", "measured", "near_isotropic"}
+MEASURED_PRODUCT_CEILING = 2 * IDEAL_APERTURE_PRODUCT
 
 # How far a declared beamwidth may sit from the one a gain implies, in degrees. The corpus declares
 # beamwidths to one decimal place, so half a unit in the last place is the widest two figures can
@@ -8556,20 +8560,18 @@ def check_antenna_patterns(root: Path, vehicle: dict[str, Any], report: Report) 
                     where,
                     f"declares its pattern measured on a {basis!r} provenance. A measured pair is "
                     "two published figures, so its basis is `historical`; anything else is a gain "
-                    "and a width held only to the bound `G <= 41253 / theta^2`, which a guess "
-                    "satisfies as easily as a measurement",
+                    "and a width held only to a plausibility ceiling, which a guess satisfies as "
+                    "easily as a measurement",
                 )
             for label, gain, width in pairs:
-                derived = math.sqrt(IDEAL_APERTURE_PRODUCT / (10 ** (float(gain) / 10.0)))
-                if float(width) - derived > BEAMWIDTH_TOLERANCE_DEG:
-                    product = (10 ** (float(gain) / 10.0)) * float(width) * float(width)
+                product = (10 ** (float(gain) / 10.0)) * float(width) * float(width)
+                if product > MEASURED_PRODUCT_CEILING:
                     report.refuse(
                         f"{where}{label}",
-                        f"declares {gain} dB with a {width}-degree beamwidth, wider than the "
-                        f"{derived:.2f} degrees an ideal aperture of that gain has (the declared "
-                        f"pair gives {product:,.0f} against 41,253). A measured pair may fall below "
-                        "the ideal product, never above it: that gain from that beam would need "
-                        "more directivity than the beam's solid angle allows",
+                        f"declares {gain} dB with a {width}-degree beamwidth, a product of "
+                        f"{product:,.0f}: more than twice the 41,253 of Kraus's estimate, where "
+                        "published antennas sit below it. A pair that far out is a gain or a width "
+                        "transcribed wrongly, not a measurement",
                     )
             continue
         for label, gain, width in pairs:

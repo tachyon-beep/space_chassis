@@ -3912,10 +3912,10 @@ def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
         ],
         ["without a `pattern_note`"],
     )
-    # A measured pair: both figures published, held to the bound rather than to equality. The
-    # high-gain antenna's own pair sits on the ideal product, so declared measured on its
-    # `historical` basis it raises nothing; a beam wider than the ideal for its gain is impossible
-    # either way, and the claim on another basis is refused.
+    # A measured pair: both figures published, held to a plausibility ceiling rather than to
+    # equality. The high-gain antenna's own pair sits on the ideal product, so declared measured on
+    # its `historical` basis it raises nothing; a pair past twice Kraus's estimate is refused as a
+    # transcription error, a pair between the two is not, and the claim on another basis is refused.
     measured = "      pattern: measured\n      gain_db: 26.7\n"
     definition = copy_definition(tmp_path / "measured")
     for rel, old, new in [
@@ -3930,14 +3930,24 @@ def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
         "measured_wide",
         [
             ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
-            ("vehicle.yaml", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 18.7}", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 20.0}"),
-            ("vehicle.yaml", "    - id: omni_a\n      pattern: near_isotropic\n", "    - id: omni_a\n      pattern: measured\n"),
+            ("vehicle.yaml", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 18.7}", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 30.0}"),
         ],
-        [
-            "declares 20.7 dB with a 20.0-degree beamwidth, wider than the",
-            "declares 2 dB with a 180-degree beamwidth, wider than the",
-        ],
+        ["declares 20.7 dB with a 30.0-degree beamwidth, a product of 105,741"],
     )
+    # 20.7 dB over 20 degrees is about 47,000, above the estimate and below the ceiling: not refused.
+    definition = copy_definition(tmp_path / "measured_between")
+    for rel, old, new in [
+        ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
+        (dom, "    pattern: aperture\n    gain_db: 26.7\n", "    pattern: measured\n    gain_db: 26.7\n"),
+        ("vehicle.yaml", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 18.7}", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 20.0}"),
+    ]:
+        path = definition / rel
+        text = path.read_text()
+        assert old in text, old
+        path.write_text(text.replace(old, new, 1))
+    out = run_linter(definition).stdout
+    assert "COMPOSES" in out or "REFUSED" in out, out[-1500:]
+    assert "beamwidth, a product of" not in out, out[-1500:]
     refusal(
         "measured_unsourced",
         [
