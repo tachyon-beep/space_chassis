@@ -7395,6 +7395,14 @@ def check_domain(
                         "declares a constant with no `argument`, so nothing says which element of a "
                         "keyed state the command sets",
                     )
+                vocabulary = unit_vocabulary(state.get("unit"))
+                if constant is not None and vocabulary is not None and str(constant) not in vocabulary:
+                    report.refuse(
+                        f"{cwhere2}.constant",
+                        f"is {constant!r}, which {sid}'s `unit` ({state.get('unit')!r}) cannot hold — "
+                        f"the vocabulary is {sorted(vocabulary)}. A command that writes a value its "
+                        "state cannot report is a transition the vehicle cannot describe afterwards",
+                    )
                 if not isinstance(becomes, dict):
                     continue
                 allowed_args = [str(v) for v in (arg_spec or {}).get("values") or []]
