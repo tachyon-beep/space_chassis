@@ -156,3 +156,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
   volume is published (11.6 ft³, ODB Vol I Fig 4.2-8.1). Docked burns need 9 of 12 latches: routed
   to propulsion as an interlock edge.
 - 14:08 ECLSS models O2 supply pressure on the heater relay (865/935 psia) on #46; 21 of 25 ready.
+- 14:12 Draft #54 (crew). It merges after #47 with the rest. ECLSS writes its CO2 edges against it.
