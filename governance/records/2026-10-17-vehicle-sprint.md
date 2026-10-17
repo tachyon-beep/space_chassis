@@ -129,3 +129,6 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 13:50 The coordinator answers ten lane questions under D33 (D35); only the arc report's eleven,
   the D22 credentials and the `space_vehicle` archive still wait on John. #47 carries six engine
   fixes for other lanes.
+- 13:49 John: borderline scope questions get an independent Fable evaluation (D36). The
+  "Independent review of the arc report decisions" thread starts on the eleven, pointing modes and
+  D-06 first.

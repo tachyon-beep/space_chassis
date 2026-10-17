@@ -65,8 +65,9 @@ Only these, because they spend money, change a setting only he can change, or ac
 
 Everything else a stream may decide, recording it in its `decisions.md` as *coordinator* or
 *governance*, open to his revision. A blocked lane's scope question with an obvious answer is the
-coordinator's to answer and list to John (`decisions.md` D33); only a question without one waits on
-him.
+coordinator's to answer and list to John (`decisions.md` D33); a question on the border of
+significant delivery risk goes to an independent Fable agent for evaluation first (D36); only a
+question without an obvious answer waits on him.
 
 ## Where work runs
 

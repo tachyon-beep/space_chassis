@@ -33,7 +33,7 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | 2 | Finish thermal | [#49](https://github.com/tachyon-beep/space_chassis/pull/49) | draft; bays and pump speed advance; re-deriving MET-0 at 1,401 W; `heater_bank_duty` held | #45; the numeric-argument engine change (lane 9) |
 | 3 | Propulsion and propellant | [#50](https://github.com/tachyon-beep/space_chassis/pull/50) | draft | #45; primary sources (now reachable, D32) |
 | 4 | Structure states | [#51](https://github.com/tachyon-beep/space_chassis/pull/51) | draft; `arm_state` waits on #47's seeding; configuration states move to device firing after #47 | #45, #47 |
-| 7 | GNC + RCS | — | not started | the geometry lane (#44); John's pointing-modes answer |
+| 7 | GNC + RCS | — | not started | the geometry lane (#44); the pointing-modes answer (independent review, D36) |
 | 8 | Crew | — | not started | John: design item D-06 |
 | 10 | Avionics FDIR | — | not started | last; needs lane 9's faults |
 
@@ -55,7 +55,7 @@ which thermal cherry-picks onto power's branch. Power has applied *off* on #43 (
 
 | item | options | asked in |
 |---|---|---|
-| the arc report's eleven decisions, including attitude as pointing modes (lane 7) and D-06 (lane 8) | in the report | Whole-vehicle arc assessment |
+| the arc report's eleven decisions, including attitude as pointing modes (lane 7) and D-06 (lane 8) | under independent evaluation first (D36), pointing modes and D-06 leading | Whole-vehicle arc assessment; Independent review of the arc report decisions |
 | D22 pilot credentials for the 10-minute smoke | — | Vehicle to smoke-ready |
 | archive `space_vehicle` (D21) | a repository setting; safe since PR #35 | `records/2026-10-15-space-vehicle-archive-check.md` |
 
