@@ -2912,7 +2912,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     path.write_text(without_block(path.read_text(), "coverage"))
     result = run_linter(definition)
     assert result.returncode == 0, result.stdout[-900:]
-    assert "declares 148 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
+    assert "declares 149 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
     assert "derived here as 20 unperturbed, 15 of them `service`" in result.stdout
     # One block deleted is one debt added, so the ablation is the corpus's own count plus one.
     assert f"COMPOSES, with {corpus_debts() + 1} declared debt(s)." in result.stdout
@@ -12389,7 +12389,7 @@ def test_the_registry_coverage_claim_is_data_rather_than_a_sentence(tmp_path):
             if isinstance(row, dict) and row.get("id"):
                 registry.add(flatten(row["id"]))
                 layers[flatten(row["id"])] = row.get("layer")
-    assert len(registry) == 148, f"the registry is {len(registry)} channels, not 148"
+    assert len(registry) == 149, f"the registry is {len(registry)} channels, not 149"
 
     perturbed = set()
     for policy_path in sorted((VEHICLE / "domains").glob("*/fault_policy.yaml")):
@@ -12416,14 +12416,14 @@ def test_the_registry_coverage_claim_is_data_rather_than_a_sentence(tmp_path):
     definition = copy_definition(tmp_path / "coverage")
     path = definition / "channels.yaml"
     text = path.read_text()
-    broken = text.replace("perturbed_service_layer: 42", "perturbed_service_layer: 117", 1)
+    broken = text.replace("perturbed_service_layer: 43", "perturbed_service_layer: 117", 1)
     assert broken != text, "the fixture no longer matches channels.yaml"
     path.write_text(broken)
 
     result = run_linter(definition)
     assert result.returncode == 1, result.stdout[-900:]
     assert "channels.yaml:coverage.perturbed_service_layer" in result.stdout, result.stdout[-900:]
-    assert "claims 117 and the policies give 42" in result.stdout, result.stdout[-900:]
+    assert "claims 117 and the policies give 43" in result.stdout, result.stdout[-900:]
 
 
 def test_a_configuration_cannot_declare_two_different_masses(tmp_path):
@@ -13156,7 +13156,7 @@ def test_a_points_layer_is_the_registrys_layer(tmp_path):
         for row in rows:
             if isinstance(row, dict) and row.get("id") and row.get("layer"):
                 registered[str(row["id"])] = str(row["layer"])
-    assert len(registered) == 148, len(registered)
+    assert len(registered) == 149, len(registered)
     assert set(registered.values()) == {"measurement", "estimate", "service"}
 
     points = 0
@@ -13171,7 +13171,7 @@ def test_a_points_layer_is_the_registrys_layer(tmp_path):
             else:
                 # A template instantiation; its layer must still be one of the three.
                 assert row["layer"] in set(registered.values()), (cid, row["layer"])
-    assert points == 142, points
+    assert points == 143, points
 
     mapping = yaml.safe_load((VEHICLE / "presentation.yaml").read_text())["epistemic_layers"][
         "mapping"
