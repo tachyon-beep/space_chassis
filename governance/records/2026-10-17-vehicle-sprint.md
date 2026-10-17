@@ -206,3 +206,10 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 17:07 GNC + RCS #56 at `312c89c` (24 census-pin fixes): `select_nav_source` now acts, with a divergence alarm whose timing depends on when the ground was last used.
 - 17:11 D56: John puts the quiet-coast window `D_TICKS` change on #43 ("On #43"). Power raises the main bus band ceiling to 31.0 V and records the O2 tank split (113.88 W DC heater, 52.8 W AC fans); #43 goes green after #58.
 - 16:55 The D54 review of #46 turns blocking on one stale test assertion (`test_vehicle_config.py:3313`) until ECLSS pushes a one-line fix.
+- 18:26 Governance #60 merged as `cd80375` (D56).
+- 19:33 ECLSS #46 merged as `9a0430a` after a clear D54 review with follow-ups, the first lane on `main`; `main` now 160 states, 86 ready, 261 debts (`plant.py --build-order`, `check_vehicle.py`). Aurora #61 (diode-probe deflake) reviewed clear. The vehicle status report is out; a trial merge of nine PRs measured 124 of 179 ready. #49 and #50 are green, waiting for their slots; power #43 and GNC #56 resolve #46 conflicts by hand; #58 goes ready next, then #47.
+- 19:36 Governance #62 reviewed clear. #47 is out of draft at `fbaf9bb`, with `main` merged through #46, and in review. #49 and #50 were green only on a pre-#46 base; both still need a rebase, a CI run and a review.
+- 19:51 Governance #62 merged as `e18e022`.
+- 20:12 D54 reviews: #58 clear with follow-ups (merges on green, a lane-0 follow-up PR after); #49 clear with follow-ups (bays marked interim). #48 rebased at `23209b6`, queued for review. Thermal moves the descent stage to `cooled_by: space` in the post-#47 space-sink follow-up, a confounder in the ledger (the thermal half of F-09).
+- 20:23 Aurora #61 (diode-probe deflake) merged as `4f969aa`, all checks green, review clear; branches carrying `main` past it stop hitting the `test_tier1_gate_runs.py` flake.
+- 20:25 Governance #63 reviewed clear with follow-ups (the #49, #58, #48 rows and the header), fixed on #63.
