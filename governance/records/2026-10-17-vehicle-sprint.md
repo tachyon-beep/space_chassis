@@ -175,3 +175,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 14:28 ECLSS puts the O2 tank heaters on their own node (#46 commit 0007). Metabolic figures in `vehicle.yaml` differ from the AOH; recorded as unowned debt in `status.md`.
 - 14:29 Thermal's MET-0 re-derivation is on #43 (`efd60cf`). Policy D's non-loss is the corrected physics, so #43 carries the `aurora/tests` expectation change (D42).
 - 14:31 Governance PR #53 merged (`e90d9f1`).
+- 14:32 Structure publishes the docking-latch count on #51 (`3dd1e64`) for propulsion's docked-burn guard.

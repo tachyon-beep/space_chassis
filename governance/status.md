@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:30 UTC**, `tachyon-beep/space_chassis` `main` @ `e90d9f1`. Kept by the
+As of **2026-10-17 14:33 UTC**, `tachyon-beep/space_chassis` `main` @ `e90d9f1`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -32,7 +32,7 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | 5 | Comms remainder | [#48](https://github.com/tachyon-beep/space_chassis/pull/48) | draft; occultation from the orbit; `carrier_lock` waits on #47's seeding | #45, #47 |
 | 2 | Finish thermal | [#49](https://github.com/tachyon-beep/space_chassis/pull/49) | draft; bays and pump speed advance; `fleet_class` and `acts` added (`efdb857`); ADR 0003 records Fraction and Chosen (`b60c310`); the service-bay 380 W figures follow #43 onto `main`; `heater_bank_duty` held (will declare 0–100, no refused bands) | #45; the numeric-argument engine change (lane 9) |
 | 3 | Propulsion and propellant | [#50](https://github.com/tachyon-beep/space_chassis/pull/50) | draft, head `26532d3`; on its branch ready 74 → 80, debts 265 → 256; scope answers D41 | #45; primary sources (now reachable, D32) |
-| 4 | Structure states | [#51](https://github.com/tachyon-beep/space_chassis/pull/51) | draft; hatch starts *Latched* (`173216c`); `arm_state` waits on #47's seeding; configuration states move to device firing after #47; the interrupter edge goes to power if the states are power's | #45, #47 |
+| 4 | Structure states | [#51](https://github.com/tachyon-beep/space_chassis/pull/51) | draft at `3dd1e64`; hatch starts *Latched*; `structure.latches_engaged` and point `structure.docking_latches` (burn threshold 9, ODB Vol I §3.8.2.5) for propulsion's docked-burn guard; talkback indication after #47 (wiring owed: AOH Fig A-7 and the Apollo 17 report disagree); `hatch_open_with_pressure` stays unreadable; `arm_state` waits on #47's seeding; configuration states move to device firing after #47; the interrupter edge goes to power if the states are power's | #45, #47 |
 | 7 | GNC and RCS lane | — | started 13:59; attitude as pointing modes, a rate-limited slew law behind `set_attitude_target` (D38) | the geometry lane (#44) |
 | 8 | Crew lane | [#54](https://github.com/tachyon-beep/space_chassis/pull/54) | draft (`claude/vehicle-crew-bogej1`); per-cabin crew count, location as a rule, potable water drains; next the crew day (sleep, meals, work as sourced activities; meals as water draws to tell from a leak); D-06 revision 1 (D38), dialogue per console (D39) | #45, #47 |
 | 10 | Avionics FDIR | — | not started | last; needs lane 9's faults |
