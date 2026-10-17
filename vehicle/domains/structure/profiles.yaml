@@ -121,6 +121,50 @@ thresholds:
         pressurised cabin — which is a life-safety interlock and therefore service-owned, never
         an agent-writable gate (D-03).
 
+  # The two guards `set_hatch_valve` evaluates, one per hatch. `hatch_open_with_pressure` above is
+  # the vehicle-wide condition other verbs name, and it is gated on hatch positions no field
+  # declares, so it cannot be read; these are the same 0.5 psid on the differential behind *one*
+  # hatch, which a command to open that hatch is asking about whatever the hatch reads now.
+  - id: hatch_csm_open_with_pressure
+    acts: crew
+    point: structure.cabin_dp_psi
+    comparator: above
+    assert: 0.5
+    clear: 0.5
+    dwell_assert_ms: 0
+    dwell_clear_s: 0
+    latched: false
+    interlock: true
+    severity: EMERGENCY
+    point_units: "psi, the differential behind the CSM side hatch: the CSM cabin against vacuum"
+    provenance:
+      basis: derived
+      relation: >-
+        `hatch_open_with_pressure`'s 0.5 psid (apollo_diode.md:207, "incompatible with pressure"),
+        read on the one compartment the CSM side hatch closes. The hatch opens onto vacuum, so the
+        differential across it is the cabin's own, which `structure.cabin_dp_psi` is
+  - id: hatch_lm_open_with_pressure
+    acts: crew
+    point: eclss.lm_cabin_pressure_psia
+    comparator: above
+    assert: 0.5
+    clear: 0.5
+    dwell_assert_ms: 0
+    dwell_clear_s: 0
+    latched: false
+    interlock: true
+    severity: EMERGENCY
+    point_units: "psia, the LM cabin, which is the differential behind the forward hatch"
+    provenance:
+      basis: derived
+      relation: >-
+        the same 0.5 psid on the LM: the forward hatch opens onto the surface or onto space, so the
+        differential across it is the LM cabin's absolute pressure, which ECLSS publishes. The LM's
+        differential has no structure channel of its own (this domain's debts), and the absolute
+        pressure is that number. The hatch swings inboard and cabin pressure seats it, so it cannot
+        be opened against pressure in any case; what the guard refuses is the command, which is
+        the vehicle stating the interlock rather than relying on the hinge
+
   # --- pyro and relief ----------------------------------------------------------------------
   - id: pyro_continuity_loss
     acts: crew

@@ -220,7 +220,7 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 149 channels, 165 states over 64 scheduled nodes, 142
+**All eleven domains have landed** — 149 channels, 165 states over 64 scheduled nodes, 144
 thresholds, 59 verbs and 128 classified events across the eleven directories, with every debt
 named. Those are the corpus's declarations, and the linter holds each of them against the files
 (`check_readme_figures`); they move when a domain adds a channel, a state or a verb, not when one
@@ -291,7 +291,7 @@ determines them, with the relation stated so the linter can disagree:
 `events_diode.md` is labelled "Structural, Pressure, and Sequential Events" and contains **no**
 staging, pyro, hatch, docking, jettison, latch or separation event — the words occur zero times —
 while describing modal and spectral health monitoring that `apollo_diode.md:753` explicitly rules
-out. So the taxonomy is authored rather than extracted. It declares 15 states, 9 thresholds, 6
+out. So the taxonomy is authored rather than extracted. It declares 15 states, 11 thresholds, 6
 verbs, 11 faults, and a five-entry **one-way event taxonomy** that records each irreversible
 action with its predecessor configuration, its consequence in terms of what the vehicle *becomes*,
 and the channels that would reveal the change.
