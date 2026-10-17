@@ -4449,6 +4449,10 @@ def command_effect(world: World, state: State, verb: str, arguments: dict[str, A
 NUMERIC_ARGUMENTS = ("integer", "number")
 
 
+NUMERIC_INTEGER = re.compile(r"[+-]?[0-9]+")
+NUMERIC_DECIMAL = re.compile(r"[+-]?[0-9]+(?:\.[0-9]+)?")
+
+
 def numeric_argument(verb: str, argument: str, raw: Any, declared: dict[str, Any]) -> int | float:
     """A numeric argument's value, parsed from the command text and held to its declared `range`.
 
@@ -4459,15 +4463,16 @@ def numeric_argument(verb: str, argument: str, raw: Any, declared: dict[str, Any
     is the plant deciding what the caller meant.
     """
     kind = declared.get("type")
-    text = str(raw).strip()
-    try:
-        value: int | float = int(text) if kind == "integer" else float(text)
-    except ValueError:
+    text = raw if isinstance(raw, str) else str(raw)
+    # **Plain decimals only.** Python's own parsers take `4_0`, `1e2`, ` 40 ` and `inf`, which are
+    # four commands a reader of the window's text would not take as forty, a hundred and infinity.
+    pattern = NUMERIC_INTEGER if kind == "integer" else NUMERIC_DECIMAL
+    if pattern.fullmatch(text) is None:
         raise EffectRefused(
-            f"plant.py:verb {verb}: {argument}={raw!r} is not {'an integer' if kind == 'integer' else 'a number'}"
-        ) from None
-    if isinstance(value, float) and not math.isfinite(value):
-        raise EffectRefused(f"plant.py:verb {verb}: {argument}={raw!r} is not finite")
+            f"plant.py:verb {verb}: {argument}={raw!r} is not "
+            f"{'an integer' if kind == 'integer' else 'a number'} written as plain decimal digits"
+        )
+    value: int | float = int(text) if kind == "integer" else float(text)
     low, high = numeric_bounds(declared)
     if (low is not None and value < low) or (high is not None and value > high):
         raise EffectRefused(

@@ -406,7 +406,19 @@ def test_a_numeric_argument_is_carried_as_its_number_and_refused_outside_its_ran
     )
     assert staged["heater_duty_commanded"] == {"csm_cabin": 0, "csm_avionics_bay": 40}
     assert isinstance(staged["heater_duty_commanded"]["csm_avionics_bay"], int)
-    for bad, why in (("150", "outside its declared range"), ("40.5", "is not an integer")):
+    # `+40` is forty; Python's parsers would also take `4_0`, ` 40` and `1e1`, which are not.
+    signed = plant.apply_command(
+        heated, values, "set_heater", {"bank": "heater_bank_csm", "zone": "csm_cabin", "duty": "+40"}
+    )
+    assert signed["heater_duty_commanded"]["csm_cabin"] == 40
+    for bad, why in (
+        ("150", "outside its declared range"),
+        ("40.5", "is not an integer"),
+        ("4_0", "plain decimal digits"),
+        (" 40", "plain decimal digits"),
+        ("1e1", "plain decimal digits"),
+        ("", "plain decimal digits"),
+    ):
         with pytest.raises(plant.EffectRefused, match=why):
             plant.apply_command(
                 heated,
@@ -450,6 +462,11 @@ def test_a_refused_band_is_a_hole_in_a_numeric_argument_s_range(tmp_path):
     ):
         with pytest.raises(plant.EffectRefused, match=why):
             plant.numeric_argument("set_throttle", "throttle_pct", bad, declared)
+    # A number is plain decimals too: no exponent, no leading point, no `inf`.
+    for bad in ("1e1", ".5", "inf", "nan", "64."):
+        with pytest.raises(plant.EffectRefused, match="plain decimal digits"):
+            plant.numeric_argument("set_floor", "floor", bad, {"type": "number", "minimum": 0})
+    assert plant.numeric_argument("set_floor", "floor", "+0.5", {"type": "number", "minimum": 0}) == 0.5
     # A one-sided bound bounds one side.
     with pytest.raises(plant.EffectRefused, match=r"\[0, inf\]"):
         plant.numeric_argument("set_floor", "floor", "-1", {"type": "number", "minimum": 0})
