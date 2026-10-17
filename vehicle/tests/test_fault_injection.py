@@ -453,3 +453,45 @@ def test_an_onset_can_take_the_fault_policy_s_own_magnitude(tmp_path):
     assert text.count(marker) == 1
     policy.write_text(text.replace(marker, marker.replace('"g/s"', '"g/h"')))
     assert "takes the fault's magnitude in 'g/h' into leak_sources_g_s" in run_linter(copy).stdout
+
+
+def test_an_interlock_on_a_point_read_from_a_coupling_node_is_evaluated(tmp_path):
+    """The propulsion lane's ask, beside the fault path: `prop_cutoff_guard_5` reads `prop_main`.
+
+    A point may not name another domain's state, so a cross-domain reading names the node, and
+    `point_reading` reads one by its derivation. The threshold's `point_units` still has to name the
+    channel's unit, which the fixture states plainly.
+    """
+    copy = faulted_copy(tmp_path / "vehicle")
+    replace(
+        copy / "domains" / "propulsion" / "profiles.yaml",
+        'point_units: "% remaining, checked at burn start"',
+        'point_units: "%"',
+    )
+    guarded = plant.load_world(copy)
+    interlock, problem = plant.resolve_interlock(guarded, "prop_cutoff_guard_5")
+    assert problem is None and interlock is not None, problem
+    assert interlock.point == "prop.propellant_remaining_pct"
+    values = plant.initial_values(guarded)
+    assert plant.point_reading(guarded, interlock.point, values) == 100.0
+    stepped = plant.step(guarded, values, plant.tick_seconds(guarded))
+    assert stepped[plant.INTERLOCK_DWELL][interlock.key] == 0
+    assert not plant.interlock_tripped(guarded, interlock, stepped)
+
+
+def test_every_sentinel_state_s_two_copies_agree_after_a_tick(world):
+    """The ECLSS lane's finding, beside the fault path: a walk kept only the last sentinel entry.
+
+    `values[id]` and `values["internal"][id]` are one value written twice, and a tick that advanced
+    two sentinel states left the first one's sub-map entry where it was.
+    """
+    dt = plant.tick_seconds(world)
+    values = plant.initial_values(world)
+    for _ in range(3):
+        values = plant.step(world, values, dt)
+    sentinel, _ = world.sentinel_states()
+    inner = values["internal"]
+    stale = [
+        s.id for s in sentinel if s.id in values and s.id in inner and inner[s.id] != values[s.id]
+    ]
+    assert not stale, stale
