@@ -116,50 +116,6 @@ def copy_definition(destination: Path) -> Path:
     return destination
 
 
-def _in_words(n: int) -> str:
-    """Enough of a number-to-words conversion for a count in the low hundreds.
-
-    Written rather than imported because the alternative is a dependency the operator-side services
-    are not allowed to have, and because the range is small and known: this file's test count, in
-    the hundreds, spelled the way the reconciliation README spells it.
-    """
-    units = (
-        "zero",
-        "one",
-        "two",
-        "three",
-        "four",
-        "five",
-        "six",
-        "seven",
-        "eight",
-        "nine",
-        "ten",
-        "eleven",
-        "twelve",
-        "thirteen",
-        "fourteen",
-        "fifteen",
-        "sixteen",
-        "seventeen",
-        "eighteen",
-        "nineteen",
-    )
-    tens = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
-    if n < 20:
-        return units[n]
-    if n < 100:
-        return tens[n // 10] + (f"-{units[n % 10]}" if n % 10 else "")
-    # **The hundreds digit, which this dropped.** The first version returned a bare "hundred" for a
-    # round hundred and the caller prefixed a hard-coded "One", so 200 and 100 spelled the same —
-    # and this file reached exactly 200 tests, which is when an ambiguity stops being theoretical.
-    # The caller no longer prefixes anything and the digit is spelled here.
-    head = f"{units[n // 100]} hundred"
-    if n % 100 == 0:
-        return head
-    return f"{head} {_in_words(n % 100)}"
-
-
 def test_the_vehicle_passes_the_contract_probe(tmp_path):
     """The window is frozen, shared, and this is the only thing that proves the vehicle meets it.
 
@@ -384,92 +340,54 @@ def test_the_crews_error_model_is_a_distribution(tmp_path):
     assert run_linter(fixture).returncode == 0, "a rounded set of weights was refused"
 
 
-def test_the_changelog_row_for_the_linter_is_held_against_the_linter():
-    """A row of prose about the linter, and four of its five countable figures were stale.
+def test_the_reconciliation_rows_for_the_linter_and_the_referee_pin_no_live_figure():
+    """The rows for `check_vehicle.py` and `test_vehicle_config.py` describe; they do not count.
 
-    `integration/reconciliation/README.md` carries one row per file, and the row for
-    `vehicle/tools/check_vehicle.py` states what the tool is: **294** declared debts, **661**
-    `report.refuse` call sites, a **41**-node tick order, **138** severity declarations, and **41**
-    named channels with **3** described categories withheld. Counted against the tools, they were
-    263, 767, 57, 142 and 38 with none — four stale figures in the sentence a reader uses to size
-    the tool, and nothing read any of them. That is this folder's oldest finding (*a declaration no
-    tool reads has already drifted*) arriving in the one file the vehicle's README cannot hold: it
-    is one directory away, and when the vehicle moves to its own repository it stays behind.
-
-    **So the reader is here rather than in the linter**, which is the same choice this test file
-    already makes for that README's test count: the linter must not depend on a file that is not
-    part of the vehicle. Every figure is derived rather than repeated — the debts and the node count
-    from the linter's own output, the call sites from the tool's source, the severities and the
-    withheld split from the corpus — and the reader is exercised against a stale row per figure, so
-    a rule that matched nothing could not pass by accident.
+    `integration/reconciliation/README.md` sits in the frozen corpus, yet two tests here once held
+    its rows to the linter's debts, call sites, node count, severities and withheld channels, and
+    to the vehicle suite's test count. Every vehicle change that moved a figure had to edit the
+    frozen file, and two vehicle changes in flight conflicted on it (#40 and #41). The figures now
+    live in `vehicle/README.md`, which `test_the_readme_status_matches_the_tools` holds to the
+    tools; this test keeps them from coming back here, and checks its own reader against each
+    figure the rows used to carry, so a pattern that matched nothing could not pass by accident.
     """
-    row = next(
-        (
-            line
-            for line in (
-                REPO / "docs" / "deep_research" / "integration" / "reconciliation" / "README.md"
-            )
-            .read_text()
-            .splitlines()
-            if line.startswith("| `../../vehicle/tools/check_vehicle.py`")
-        ),
-        None,
+    rows = [
+        line
+        for line in (
+            REPO / "docs" / "deep_research" / "integration" / "reconciliation" / "README.md"
+        )
+        .read_text()
+        .splitlines()
+        if line.startswith(
+            ("| `../../vehicle/tools/check_vehicle.py`", "| `tests/test_vehicle_config.py`")
+        )
+    ]
+    assert len(rows) == 2, "the changelog lost its row for the linter or for the referee"
+
+    figures = (
+        re.compile(r"\d+ declared debts?"),
+        re.compile(r"\d+ `report\.refuse` call sites"),
+        re.compile(r"\d+-node tick order"),
+        re.compile(r"\(\d+ severity declarations"),
+        re.compile(r"\d+ named channels and \d+ described categories"),
+        re.compile(r"\b(?:One|Two|Three|Four|Five|Six|Seven|Eight|Nine) hundred [a-z -]*tests\b"),
     )
-    assert row is not None, "the changelog carries no row for the linter"
 
-    lint = run_linter(VEHICLE)
-    assert lint.returncode == 0, lint.stdout[-900:]
-    debts = re.search(r"with (\d+) declared debt", lint.stdout).group(1)
-    nodes = re.search(r"the node schedule is (\d+) nodes", lint.stdout).group(1)
-    calls = str((VEHICLE / "tools" / "check_vehicle.py").read_text().count("report.refuse("))
-    thresholds = sum(
-        len((yaml.safe_load(path.read_text()) or {}).get("thresholds") or [])
-        for path in sorted((VEHICLE / "domains").glob("*/profiles.yaml"))
-    )
-    named = described = 0
-    for path in sorted((VEHICLE / "domains").glob("*/points.yaml")):
-        for entry in (yaml.safe_load(path.read_text()) or {}).get("not_published") or []:
-            if isinstance(entry, dict) and entry.get("channel"):
-                named += 1
-            else:
-                described += 1
+    def pinned(text: str) -> list[str]:
+        return [pattern.pattern for pattern in figures if pattern.search(text)]
 
-    def stated(text: str) -> dict[str, str]:
-        return {
-            "debts": re.search(r"(\d+) declared debts?", text).group(1),
-            "calls": re.search(r"(\d+) `report\.refuse` call sites", text).group(1),
-            "nodes": re.search(r"(\d+)-node tick order", text).group(1),
-            "severities": re.search(r"\((\d+) severity declarations", text).group(1),
-            "withheld": "/".join(
-                re.search(r"(\d+) named channels and (\d+) described categories", text).groups()
-            ),
-        }
+    for row in rows:
+        assert not pinned(row), pinned(row)
 
-    live = {
-        "debts": debts,
-        "calls": calls,
-        "nodes": nodes,
-        "severities": str(thresholds),
-        "withheld": f"{named}/{described}",
-    }
-    assert stated(row) == live, (stated(row), live)
-
-    # And the reader itself, one stale figure at a time: each is replaced by what the row said
-    # before this round, and the reader has to notice.
-    for key, old, stale in (
-        ("debts", f"{debts} declared debts", "294 declared debts"),
-        ("calls", f"{calls} `report.refuse` call sites", "661 `report.refuse` call sites"),
-        ("nodes", f"{nodes}-node tick order", "41-node tick order"),
-        ("severities", f"({thresholds} severity declarations", "(138 severity declarations"),
-        (
-            "withheld",
-            f"{named} named channels and {described} described categories",
-            "41 named channels and 3 described categories",
-        ),
+    for stale in (
+        "265 declared debts",
+        "891 `report.refuse` call sites",
+        "61-node tick order",
+        "(142 severity declarations",
+        "39 named channels and 0 described categories",
+        "Five hundred seventy-four tests",
     ):
-        assert old in row, old
-        mutated = stated(row.replace(old, stale, 1))
-        assert mutated[key] != live[key], f"the reader did not see the stale {key}: {mutated[key]}"
+        assert pinned(f"{rows[0]} {stale}"), f"the reader did not see {stale!r}"
 
 
 def test_the_vehicle_is_servable_from_the_compose_file(tmp_path):
@@ -701,30 +619,3 @@ def test_the_vehicle_s_presentation_references_resolve_in_this_repository():
         coupling["provenance_rules"],
     ):
         assert (REPO / str(value).split("#", 1)[0]).exists(), value
-
-
-def test_the_reconciliation_readme_states_the_vehicle_suite_s_test_count():
-    """The one figure about the vehicle's suite that has to be read from *this* side.
-
-    `integration/reconciliation/README.md` carries a row per file, and the row for the vehicle's
-    referee states how many tests it holds. That sentence is a claim about the vehicle — and the
-    reader of it cannot live in the vehicle, because the reconciliation README is one directory away
-    and the vehicle's suite may not read outside its own folder. So this is the residue's job: count
-    the tests in the vehicle stream's referee and hold the sentence to it. It said one hundred
-    twenty-six while the file held a hundred and thirty-four once, and it was wrong for eight
-    rounds; the number is derived here rather than repeated, so adding a test and forgetting the
-    sentence fails here rather than in a reader's estimate of the folder.
-    """
-    reconciliation = (
-        REPO / "docs" / "deep_research" / "integration" / "reconciliation" / "README.md"
-    ).read_text()
-    suite = (VEHICLE / "tests" / "test_vehicle_config.py").read_text()
-    mine = len(re.findall(r"^def test_", suite, re.M))
-    assert mine > 100, f"the self-count found {mine} tests, which is not this suite's shape"
-    # Sentence-initial in the README, so the first letter is capitalised here rather than the
-    # helper returning a capital it would have to un-capitalise everywhere else.
-    needle = f"{_in_words(mine).capitalize()} tests"
-    assert needle in reconciliation, (
-        f"the reconciliation README does not say {needle!r} about the vehicle's suite, "
-        f"which holds {mine}"
-    )
