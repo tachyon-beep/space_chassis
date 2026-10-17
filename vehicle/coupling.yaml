@@ -518,8 +518,10 @@ nodes:
       record, the quiet-coast episode's completion oracle. Nothing draws from it because nothing
       aboard can — the data has left the vehicle — so it only rises, and the conservation it closes
       is `recorder + delivered_bits` = the task volume
-    # The most the ground can receive is what the tape can hold, so the counter's rating is the
-    # recorder's capacity — owed (`domains/comms/components.yaml:components[recorder].capacity_bit`).
+    # Owed, and not the tape's capacity even now that it is sourced (92.16 Mbit,
+    # `domains/comms/components.yaml:components[recorder].capacity_bit`, AOH §2.8): one tape bounds
+    # one dump, and a mission dumps the tape many times, so what the ground can receive is bounded by
+    # the mission rather than the recorder.
     exhausted_at: UNCONFIGURED
     state_order: [link_ok, playback_rate, delivered_bits]
     state_order_note: >-

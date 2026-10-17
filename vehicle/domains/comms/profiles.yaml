@@ -219,9 +219,9 @@ thresholds:
         where the vehicle must choose what to forget. The choice is the interesting failure and
         the threshold exists to make it visible *before* it happens rather than after — a fleet
         that sees 80 % can spend the next blackout on `emergency`, and a fleet that sees 99 % has
-        already lost the argument. The capacity it is a percentage of is owed
-        (`components.yaml#open_debts`), which is why the number is a fraction rather than a
-        duration
+        already lost the argument. The capacity it is a percentage of is 92.16 Mbit, 30 minutes of
+        high-rate record (`components.yaml#components[recorder]`, AOH §2.8), so 80 % is 6 minutes of
+        high-rate record left, or about 24 minutes of tape at the low rate
 
   # --- the link's discrete state, where the *change* is the event -------------------------
   - id: carrier_lock_loss

@@ -174,24 +174,26 @@ components:
   - id: recorder
     kind: stock
     class: storage
-    # In bits, the unit `state recorder` counts. Owed, and the quiet-coast episode does not need it
-    # to advance: playback only drains, so the stock never meets its ceiling, and ADR 0003 item 7
-    # (B2) bounds the task volume D1 + D2 below this unknown capacity instead.
-    capacity_bit: UNCONFIGURED
+    # In bits, the unit `state recorder` counts: the CM PCM record at the high bit rate, 30 minutes
+    # of tape at 15 in/s x 51,200 bit/s. The same tape holds 2 hours at 3-3/4 in/s, which at
+    # 1,600 bit/s is 11.52 Mbit, so the capacity in bits depends on the rate recorded; the figure is
+    # the high-rate one because the high-rate dump is what the vehicle plays back (`playback_rate`).
+    # The quiet-coast episode's task volume D1 + D2 is the same 92.16 Mbit: a full tape.
+    capacity_bit: 92160000
+    capacity_provenance:
+      basis: historical
+      source: "CSM AOH Block II Vol 1 (SM2A-03-BLOCK II-(1), 15 Oct 1969) §2.8, printed 2.8-24A/B: '2250 feet of tape giving record times of 2 hours at 3-3/4 ips and 30 minutes at 15 ips'; printed 2.8-60: 'If PCM HIGH is selected, the record speed will be 15 ips ... High-bit rate PCM is dumped at 15 ips (1:1)'"
     provenance:
       basis: apollo
       ref: "apollo_diode.md:903"
       note: >-
         the on-board record. Apollo could "record telemetry via the CSM, and later retransmit
         stored information", which is what makes a lunar occultation an operational condition
-        rather than a data loss. Capacity is owed and matters: it is the bound on how long a
-        blackout can last before the vehicle starts choosing what to forget, and nobody has
-        published a figure for either spacecraft's recorder in the sources reached. Searched for
-        the block II data storage equipment (DSE) in the quiet-coast pass: TN D-7598 p. 7 gives
-        only "14 tracks on 1-inch tape at 15 in/sec" for the development flight instrumentation
-        recorders, and TN D-7684 p. 2 says only that "the CSM could record data for later
-        transmission" (`09-quiet-coast-episode.md` §9). What would answer it is the CSM/LM
-        Systems Handbook telecom section or AOH Vol 1 §2.8
+        rather than a data loss. Capacity matters: it is the bound on how long a blackout can
+        last before the vehicle starts choosing what to forget. The quiet-coast pass did not find
+        it (TN D-7598 and TN D-7684 describe the recorder without a size); AOH Vol 1 §2.8 has it,
+        as `capacity_provenance` quotes. What the vehicle still does not model is the record side:
+        nothing fills this stock while the link is down, so the fill only falls
 
   - id: gimbal
     kind: discrete
@@ -757,11 +759,12 @@ state:
       - "logic:the playback rate while the recorder plays over an ok link"
     play_rate_bps: 51200
     parameter_provenance:
-      basis: chosen
-      reason: >-
-        ADR 0003 item 7 (B2a): the DSE's playback rate was not found, so playback runs at the
-        published high bit rate, 51.2 kbit/s (`apollo_diode.md:165`, "the high-rate/low-rate
-        telemetry distinction was 51.2 and 1.6 kbit/s"; `09-quiet-coast-episode.md` §1)
+      basis: historical
+      source: "CSM AOH Block II Vol 1 §2.8, printed 2.8-60: 'High-bit rate PCM is dumped at 15 ips (1:1) while low-bit rate PCM is dumped at 120 ips (32:1)', so a high-rate record plays back at its own 51,200 bit/s"
+      note: >-
+        ADR 0003 item 7 (B2a) chose the published high bit rate (`apollo_diode.md:165`) because
+        the DSE's playback rate was not found; the AOH confirms it for a high-rate record. A
+        low-rate record dumps at 32 x 1,600 = 51,200 bit/s too, so the rate is the same either way
     provenance:
       basis: chosen
       reason: >-
@@ -796,8 +799,7 @@ state:
 open_debts:
 
   - "**The occultation the phase table says cannot happen.** `blackout` is computed from the orbit, and on the declared free return it is `occulted` from MET 72.78 h to 73.23 h — 27 minutes at closest approach, which is where Apollo flew its lunar-orbit insertion burns, out of contact (`tests/test_comms_rules.py`). `translunar_coast` ends at 73.0 h, and `mission.yaml#comms_blackout.not_affected` lists it. The block budgets a circular 100 km orbit per phase (`plant.py --blackout`), so it cannot see a flyby, and adding the phase to `phases_affected` would budget 73 hours of revolutions that are not flown. What is owed is the LOI timing against the arrival: whether the coast ends before, at or after loss of signal is the ladder's choice, and the burn that ends it is the propulsion lane's."
-  - "Recorder capacity in bits (`components[recorder].capacity_bit`), the figure `comm.recorder_fill_pct` is a percentage of. Not published for either spacecraft in the sources reached, and it is the bound on how long a blackout can last before the vehicle chooses what to forget."
   - "Gimbal range and slew rate. Both owed, and both needed to separate a pointing error the gimbal can still fix from one it cannot — which is the difference between `point_hga` being a control action and being a message nobody can act on."
   - "`E-BUS-COMM`'s dB per volt, and `E-PLATE-COMM`'s dB per kelvin. Both need the amplifier's gain-versus-supply and gain-versus-temperature curves, which are not published. They stay UNCONFIGURED and they are the two edges that make the flagship cycle quantitative rather than qualitative."
   - "The LM steerable S-band antenna's gain and beamwidth (`vehicle.yaml#comms.antennas.sband_steerable`). Owed rather than picked, because a gain invented there propagates into `E-GEOM-LINK` and from there into every SNR a fleet ever reads."
-  - "The link budget's constant terms: the receiver threshold, the range loss at lunar distance, and the CSM/LM relay geometry during the docked and rendezvous phases. `comm.snr_db`'s 8-30 dB band is apollo's and is a *range*, not a budget — the derivation that would turn transmit power, antenna gain and range into an SNR is the one piece of this domain that is physics rather than configuration."
+  - "The link budget's missing terms. `link_snr` scales Bellcomm's Apollo 14 lunar-range prediction (CR-125670 Table II) by range, the amplifier and pointing loss, because the North American circuit-margin ICDs it was built on (MH01-13001-414, MH01-13021-414) were not reachable. Still owed: which station is tracking (the 210-ft adds 8.0 dB and no state says when it is in view), the station's coordinates as the ground end (GSFC TM X-68818 has them, on local datums), the ground receiver's noise rising above -125 dBm and saturating above -70 dBm, the Moon in the ground beam, an omni's gain with look angle, the medium and wide beams (the budget assumes the narrow), and the CSM/LM relay geometry during the docked and rendezvous phases."
