@@ -308,11 +308,13 @@ def test_the_evaluator_reads_no_result_file(smoke, tmp_path):
 
 
 def _cli(*args: str) -> subprocess.CompletedProcess:
+    # Policy D, the slowest run, took 46 minutes on four idle cores and passed an hour on a hosted
+    # runner with three other runs beside it (2026-10-17); the limit catches a hung run, not a slow one.
     return subprocess.run(
         [sys.executable, str(TOOL), "--run", "quiet_coast", *args],
         capture_output=True,
         text=True,
-        timeout=3600,
+        timeout=3 * 3600,
         check=False,
     )
 

@@ -185,13 +185,13 @@ jobs:
     # The bounded quiet-coast episode (D14; docs/vehicle-completion/09-quiet-coast-episode.md): the
     # four policies over the whole 120,000 ticks, each judged its class by the evaluator, and the
     # restart check at tick 60,000. The runs share a lock so each policy runs once. On four idle
-    # cores the tier takes 52 minutes (2026-10-17); a hosted runner has run it in 67 and failed to
-    # finish it in 140, so the limit is wide and the window run has a job of its own.
+    # cores the tier takes 52 minutes (2026-10-17); a hosted runner took 104, policy D's run alone
+    # past an hour, so the limit is wide and the window run has a job of its own.
     name: quiet-coast episode
     needs: changes
     if: ${{ needs.changes.outputs.vehicle == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 200
+    timeout-minutes: 240
     defaults:
       run:
         working-directory: vehicle
