@@ -1,7 +1,8 @@
 # Governance
 
-As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `0036b88`. Owned by the governance
-stream. **Verify against the code before trusting any line here.**
+As of **2026-10-17**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Owned by the governance
+stream; during the vehicle sprint one governance thread is its only writer outside `vehicle/` and
+`chassis/` (`decisions.md` D30). **Verify against the code before trusting any line here.**
 
 This is the place a new session, agent or person reads first, to learn who owns what, what has been
 decided, and where each stream stands. The code, the issues and the decision records it points to are
@@ -14,11 +15,13 @@ project works (design, specs, plans, the contract, the corpus, the vehicle-compl
 ## Read in this order
 
 1. [`status.md`](status.md): where the programme is, reconciled against the code.
-2. [`decisions.md`](decisions.md): the programme decision log, including the 2026-10-15 lifting of
-   John's restrictions (D1–D17) and the residual decisions that still need him.
+2. [`decisions.md`](decisions.md): the programme decision log: the 2026-10-15 lifting of John's
+   restrictions (D1–D23) and the 2026-10-17 vehicle sprint (D24 onward).
 3. [`practice.md`](practice.md): how every stream works: the loop, the gates, what is still not
    allowed, what is still John's.
 4. [`coordination.md`](coordination.md): channels and the rules between streams.
+   During the vehicle sprint, also [`records/2026-10-17-vehicle-sprint.md`](records/2026-10-17-vehicle-sprint.md):
+   the lanes, their ownership and merge order.
 5. The stream you are working in: `vehicle/` or `chassis/` (`snapshot.md`, `open.md`,
    `decisions.md`, `practice.md`, `interface.md`, `records/`).
 
