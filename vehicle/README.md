@@ -87,8 +87,9 @@ flag.
 It needs `PyYAML`. It is deliberately *not* wired into the operator-side services, which are
 standard library only.
 
-Current state: **composes, with 262 declared debts.** A debt is reported and is fatal under
-`--strict`; a refusal is fatal always. The linter refuses a build, it does not warn:
+Current state: **composes, with every debt declared and named** — the linter's last line gives the
+count, and this file does not copy it (*The live figures are the tools'*, below). A debt is reported
+and is fatal under `--strict`; a refusal is fatal always. The linter refuses a build, it does not warn:
 
 **The direction of travel, because the headline alone reads the wrong way.** The count went
 **247 → 261** across the last twelve hours of rounds, and ten of that +14 are obligations that were
@@ -220,28 +221,31 @@ ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.m
 pricing is now derived from a phase list rather than assumed.
 
 **All eleven domains have landed** — 148 channels, 157 states over 60 scheduled nodes, 139
-thresholds, 59 verbs and 127 classified events across the eleven directories, with 262 declared debts
-and every one of them named. **131 of the 157 states are fully configured and 26 carry a debt**, and
-a real tick advances **81** of the 157 states, and the build order's **81** ready are that same set
-— the second of those figures is the objective's own second completion criterion, and both
-are read out of `tools/plant.py`'s output by `test_the_readme_status_matches_the_tools`. Since round
-58 the first line of `--build-order` *is* a tick's own gap list rather than a second opinion about
-which declarations look complete, which is what makes the two equal rather than merely close. The sentence above claimed
-"every figure in this sentence is derived by the tools and asserted against this file" while the two
-figures that measure the remaining work were neither stated here nor asserted anywhere. Every figure in this sentence is derived by the tools and asserted
-against this file by `test_the_readme_status_matches_the_tools`, because it had drifted in three
-places across three rounds while the commit messages stayed right — which is this folder's own
-recurring finding arriving at its own status section. That completes the design's spike many times over (`simulator-design.md:113`
+thresholds, 59 verbs and 127 classified events across the eleven directories, with every debt
+named. Those are the corpus's declarations, and the linter holds each of them against the files
+(`check_readme_figures`); they move when a domain adds a channel, a state or a verb, not when one
+closes.
+
+**The live figures are the tools'.** How many states are fully configured and how many carry a debt
+(`plant.py --readiness`), how many a real tick advances and how the rest are blocked
+(`plant.py --build-order`, whose ready bucket *is* the set a tick advances, since round 58), and the
+debt count (`check_vehicle.py`'s last line) move with every state a domain closes. This paragraph
+used to state them, and `test_the_readme_status_matches_the_tools` held each one to the tools'
+output, because they had drifted in three places across three rounds while the commit messages stayed
+right. It worked, and it made the paragraph a line every vehicle change had to edit, so parallel
+changes conflicted on it every time. Since the 2026-10-17 sprint's lane 0 the paragraph states none
+of them, and the same test now refuses one that comes back: a figure that is not written cannot
+drift. Run the tools for the numbers. That completes the design's spike many times over (`simulator-design.md:113`
 asks for the dictionary and linter, then a spike on electrical, thermal and consumables) and goes
 well past it: what remains is not a domain but the **plant**, and the debts are its shopping list.
 
-Two counts, and the difference is deliberate. The **265** is every obligation the linter can name:
-**183** literal `UNCONFIGURED` scalars and **82** prose obligations in `open_debts` and edge records.
-The plant independently reports **182** literal unset scalars, matching that subtotal but for one:
-`tx_power_high` (ADR 0004 operator item 2) has its `assert` now and owes only its `clear`. The linter
-reported the unset pair as one missing limit and reports the lone `clear` as one, so its 265 did not
-move; the plant counts literal fields, so its figure fell by one. The linter also names the **82**
-prose obligations. Graph sensitivities are reported against their owning
+Two counts, and the difference is deliberate. The linter's headline is every obligation it can
+name: the literal `UNCONFIGURED` scalars and the prose obligations in `open_debts` and edge records
+(`check_vehicle.py --debts` splits the two). The plant independently counts literal unset scalars
+(`plant.py --readiness`), and the two scalar figures need not match: `tx_power_high` (ADR 0004
+operator item 2) has its `assert` and owes only its `clear`. The linter reported the unset pair as one
+missing limit and reports the lone `clear` as one, so its headline did not move; the plant counts
+literal fields, so its figure fell by one. Graph sensitivities are reported against their owning
 edges rather than added a second time. Until round 46 the scalar subtotal was
 itself incomplete: the domain files were walked for unset values by `check_domain` and the coupling
 graph by its edge walk, so every literal `UNCONFIGURED` was counted *except the eleven in the two
@@ -1632,7 +1636,8 @@ The reference plant's `advance()` implements two of `plant.md` §3's seven integ
 this was written, and the split is worth stating plainly: **`algebraic`, `discrete` and `dynamics`
 are rules the configuration deliberately does not carry** — `delay` *is* carried, as a `delay_s` and
 a ring, and the vehicle's one delay state is in *ready now* — and counting them together with the
-states a tick cannot reach because a coupling is missing, so 40 of the 152 states need code.
+states a tick cannot reach because a coupling is missing, so the states in `--build-order`'s
+*owes a rule* bucket need code.
 (This said *before the plant can walk a whole tick*, which was true when it was written and is not
 now: a tick walks all 139 of them and records what it cannot advance. See *The tick stopped at its
 first debt* below.)
@@ -1824,25 +1829,29 @@ implementer should open first. That is round 58's change, and it replaced a seco
 worklist used to run its own sequence of tests over each state's spec and answer a different question
 from the one a tick answers, which left nine states filed *ready now* and refused by the first tick
 in round 57 and two more still after it. `test_the_build_order_is_the_ticks_own_gap_list` holds the
-two sets equal, and `--readiness` still counts what a *declaration* is missing: 28 states carry a
-debt and 24 of them are in this bucket — the four that differ are debts a tick walks past, which is
-the distinction between a value nobody has written down and a state nothing can reach.
+two sets equal, and `--readiness` still counts what a *declaration* is missing: the states that carry
+a debt and the states this view files under *owes a value* are not the same set, and the difference
+is debts a tick walks past, which is the distinction between a value nobody has written down and a
+state nothing can reach.
+
+The view has four buckets, and their sizes are the tool's to print rather than this file's to copy
+(they move with every state a domain closes):
 
 ```
-152 states, by what blocks them:
+python3 tools/plant.py --build-order
 
-    74   49 %  ready now — the states a real tick advances
-    24   16 %  owes a value — the cheapest to close, and the debt count already tracks them
-    14    9 %  owes an edge — a coupling with no sensitivity, or a state nothing drives
-    40   26 %  owes a rule — `algebraic`, `discrete`, `dynamics` or `hazard`: domain code
+    ready now    — the states a real tick advances
+    owes a value — the cheapest to close, and the debt count already tracks them
+    owes an edge — a coupling with no sensitivity, or a state nothing drives
+    owes a rule  — `algebraic`, `discrete`, `dynamics` or `hazard`: domain code
 ```
 
-**A quarter of the vehicle still owes a rule, and that is by construction.** `plant.md` §3's four rule classes are
+**A large share of the vehicle still owes a rule, and that is by construction.** `plant.md` §3's four rule classes are
 domain code the configuration deliberately does not carry, so the build order is mostly a list of
 missing *code* rather than missing numbers — which is the honest shape of the remaining work and was
 not visible anywhere before this view existed.
 
-The eight per cent that owe an edge is the class rounds 48 to 51 kept finding, and it contains one the graph
+The states that owe an edge are the class rounds 48 to 51 kept finding, and it contains one the graph
 has been hiding since the beginning: **`zone_csm_cabin_t` has no inbound edge at all.** The cabin's
 temperature is a `lag` with nothing driving it, because `E-ZONE-ATM` was its only edge and that edge
 points *out* of the node. So the cabin has no heat input in the graph — the crew, the equipment and

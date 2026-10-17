@@ -1,6 +1,6 @@
 # Practice — how every stream works
 
-As of **2026-10-15**, `tachyon-beep/space_chassis` `main` @ `0036b88`. Replaces the permission and
+As of **2026-10-17**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Replaces the permission and
 slot rules in `chassis/practice.md`, `vehicle/practice.md` and `coordination.md` (`decisions.md` D1,
 D2). Each stream's own `practice.md` keeps only what is particular to it: the chassis's plan, review
 and live-check cycle, and the vehicle's gate and evidence discipline. Where they disagree with this
@@ -49,6 +49,8 @@ These are safety and hygiene rules, not permissions, and D1 does not lift them:
   input with a plausible number to unblock a state.
 - No `git stash` and no broad `git add` (both hide or sweep up another session's work); no rewriting
   history on a branch someone else has cited.
+- Nothing on the internet is changed: research reads any domain, but no post, upload, sign-up or
+  other write outside this project and repository (`decisions.md` D32).
 - No root, mount or volume-image action on John's host, and no `prepare_host.sh` against his real tree.
 
 ## Still John's
@@ -62,7 +64,50 @@ Only these, because they spend money, change a setting only he can change, or ac
 - a change to the vehicle's objective (eleven domains, 192 hours, 50 Hz) or its evidence standard.
 
 Everything else a stream may decide, recording it in its `decisions.md` as *coordinator* or
-*governance*, open to his revision.
+*governance*, open to his revision. A blocked lane's scope question with an obvious answer is the
+coordinator's to answer and list to John (`decisions.md` D33); a question on the border of
+significant delivery risk goes to an independent Fable agent for evaluation first (D36); only a
+question without an obvious answer waits on him.
+
+## Where work runs
+
+Only in the cloud or on nyx (`decisions.md` D27). nyx is a Remote Control device for the project
+(`nyx.foundryside.dev`, `/home/john/space_chassis`, D28); start a session there only when John asks
+for work on nyx. Never start a device session on his Windows/WSL machine.
+
+## Vehicle sprint (from 2026-10-17)
+
+The vehicle is being burned down in parallel lanes, one per subsystem (D24, D25). The lane table,
+the full rules and the running log are in
+[`records/2026-10-17-vehicle-sprint.md`](records/2026-10-17-vehicle-sprint.md); who holds what now is
+in [`status.md`](status.md). While the sprint runs these rules add to the loop above:
+
+- **A lane is a project thread with one draft PR.** It edits only its own blocks in shared YAML: an
+  edge belongs to the lane owning its target state, a channel to the lane whose prefix it carries.
+- **Engine code (`vehicle/tools/plant.py`, `check_vehicle.py`, `faults.py`) belongs to the
+  fault-injection lane.** Other lanes route engine needs through the coordinator, or land them as a
+  small PR merged before the domain PR that uses them.
+- **Merge order**: #45 (unpin), then #46 (ECLSS engine helper), then #47 (fault injection), then the
+  rest rebase and merge when `required` is green. Figures are rewritten from the tools on rebase,
+  never hand-merged.
+- **Shared decision records take one dated section per verb.** ADR 0004
+  (`vehicle/docs/decisions/0004-interlock-evaluation.md`) is being amended by ECLSS (#46), structure
+  (#51) and possibly propulsion (#50): each lane adds its own dated, verb-named section and rebases
+  over the others, never editing another lane's section.
+- **The quiet-coast episode must stay green; its numbers may move** (D29).
+- **Fidelity**: "preference more fidelity where it doesn't start creating significant delivery
+  risk" (John, D34; D31), and only where it adds an interesting option for a scenario, behaviour,
+  decision or challenge, not a single forced move (D37); otherwise a documented approximation. A new
+  signal to debug or a new confounder is worth it; a quantity that only drains from full to empty is
+  not, but the events around it (meals that make barks and noise) are; propellant is not in that
+  class (D40). Each
+  lane tells the coordinator the fidelity it builds to and any approximation it keeps; the
+  coordinator evens the lanes out, and the governance thread writes the ledger in `status.md`.
+- **Sources**: any domain may be read (D32). Lanes started before 13:46 on 2026-10-17 get primary
+  documents through the "Primary source research for the lanes" thread, as cited excerpts in the
+  project's shared folder (`sources/<lane>.md`); values from them carry the document and page.
+- **Reporting**: lanes report to the coordinator; the governance thread is the only writer of
+  `governance/` outside `vehicle/` and `chassis/` for the sprint (D30).
 
 ## Reporting
 

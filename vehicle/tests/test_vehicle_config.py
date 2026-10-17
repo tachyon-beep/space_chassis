@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import errno
+import functools
 import hashlib
 import io
 import itertools
@@ -61,6 +62,36 @@ def run_linter(vehicle_dir: Path, strict: bool = False) -> subprocess.CompletedP
     if strict:
         argv.append("--strict")
     return subprocess.run(argv, capture_output=True, text=True, check=False)
+
+
+# **Floors, not pins** (lane 0 of the 2026-10-17 sprint). Every state a lane closes moved figures this
+# file used to assert with `==` — the state total, the build order's four buckets, the states a tick
+# advances, the edges with a sensitivity, the linter's debt headline — and parallel lanes each moved
+# them, so every pair of vehicle PRs conflicted on the same lines. What those pins caught is kept two
+# ways. A figure the tools derive is now compared to the tools (the debt count to the linter's own
+# run, the ready bucket to a tick), so it cannot drift and needs no edit when it moves. A figure that
+# only moves one way in the work the vehicle is doing is held to a floor: the vehicle's shape when
+# the pins came out, at main `b525b48`. A lane that closes a state leaves these alone; a change that
+# takes a figure *below* its floor is the regression the pin existed to catch, and lowering a floor
+# is a decision the change has to argue here.
+STATES_FLOOR = 152
+READY_FLOOR = 74
+# 74 -> 73 (power lane, PR #43): `E-BUS-SHED` and its regime table left with the automatic shed
+# ladder Apollo never had (AOH p. 2.6-38; decision b). An edge retired as false, not a sensitivity lost.
+SENSITIVITY_FLOOR = 73
+
+
+@functools.lru_cache(maxsize=1)
+def corpus_debts() -> int:
+    """The linter's headline debt count for the vehicle as it stands, read from the linter's own run.
+
+    Fixtures that add or remove one obligation assert the base plus or minus one; they used to spell
+    the base as a literal, so every lane that answered a debt edited a dozen of them. The base is the
+    linter's, once per process, and what each fixture asserts is the *difference* it makes.
+    """
+    result = run_linter(VEHICLE)
+    assert result.returncode == 0, result.stdout[-1200:]
+    return int(re.search(r"COMPOSES, with (\d+) declared debt\(s\)\.", result.stdout).group(1))
 
 
 _FIXTURE_COUNTER = itertools.count()
@@ -759,8 +790,8 @@ def test_the_build_order_is_the_ticks_own_gap_list():
         {state.id for state in buckets["ready"]} ^ advanced
     )
     # 140 -> 152: ADR 0003 quiet coast: the thermal, power and comms rules together (thermal 24 -> 28,
-    # comms 10 -> 16, power 14 -> 16).
-    assert sum(len(rows) for rows in buckets.values()) == 152
+    # comms 10 -> 16, power 14 -> 16). A floor since lane 0: see `STATES_FLOOR`.
+    assert sum(len(rows) for rows in buckets.values()) == len(world.states) >= STATES_FLOOR
 
     # Every blocked state is filed under what its *root* owes, and the root is the state an
     # implementer should open. The sentinel's sequencing is deliberately not part of the chain: it
@@ -803,13 +834,13 @@ def test_the_build_order_is_the_ticks_own_gap_list():
         if state.id in advanced
         and [owed for owed in state.owed if not owed.startswith("command_value")]
     ], "a state the tick advanced is missing a declaration its own integrator reads"
-    # The bucket totals are the guard that used to be the disagreement counters: a state moving
-    # between them, or a new way of being blocked arriving, moves one of these four numbers.
+    # The bucket totals were the guard that used to be the disagreement counters: a state moving
+    # between them, or a new way of being blocked arriving, moved one of these four numbers. **Since
+    # lane 0 the ready total is a floor and the other three are not pinned**, because every lane
+    # moves them and the disagreement they once counted is the set equality at the top of this test.
+    # The history below is what they recorded while they were pins.
+    assert len(buckets["ready"]) >= READY_FLOOR, len(buckets["ready"])
     assert (
-        len(buckets["ready"]),
-        len(buckets["value"]),
-        len(buckets["edge"]),
-        len(buckets["rule"]),
     # **Unchanged in round 70, and that is the round's own measurement.** Splitting the source
     # regulator off the fuel cell's node closed five debts and made the cell's power readable — and
     # moved no state between these four buckets, because every state that was blocked on that node
@@ -834,7 +865,8 @@ def test_the_build_order_is_the_ticks_own_gap_list():
         # 52 -> 53 ready and 45 -> 44 rule: `orbital_state` coasts under `cislunar_point_masses`.
         # 53 -> 54 ready: power's `load_enabled`, the switch map `set_load` writes, is held.
         # (54, 27, 15, 44) -> (74, 24, 14, 40): ADR 0003 quiet coast: the thermal, power and comms rules together.
-        ) == (74, 24, 14, 40), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
+        sum(len(buckets[key]) for key in ("ready", "value", "edge", "rule"))
+    ) == len(world.states), [len(buckets[key]) for key in ("ready", "value", "edge", "rule")]
 
 
 def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
@@ -2883,8 +2915,8 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "declares 148 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
     assert "derived here as 20 unperturbed, 15 of them `service`" in result.stdout
-    # One block deleted is one debt added: the corpus stands at 268, so the ablation is 269.
-    assert "COMPOSES, with 266 declared debt(s)." in result.stdout
+    # One block deleted is one debt added, so the ablation is the corpus's own count plus one.
+    assert f"COMPOSES, with {corpus_debts() + 1} declared debt(s)." in result.stdout
 
     # The failure chains, which are owed *and* refused: the README's front table names fifteen.
     definition = copy_definition(fixture_dir(tmp_path, "no-chains"))
@@ -2906,7 +2938,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "declares no coverage block. The domain publishes 15 channel(s)" in result.stdout
     assert "no fault perturbs 1 of them" in result.stdout
-    assert "COMPOSES, with 266 declared debt(s)." in result.stdout
+    assert f"COMPOSES, with {corpus_debts() + 1} declared debt(s)." in result.stdout
 
     # The filter's rates. The block is nested rather than top level, and the obligation is C-07's
     # rather than this check's — which is why the first reading of it in this round was wrong.
@@ -2920,7 +2952,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 0, result.stdout[-900:]
     assert "domains/gnc/components.yaml:estimator.sub_stepping: is not declared" in result.stdout
     assert "C-07's resolution requires the interface" in result.stdout
-    assert "COMPOSES, with 266 declared debt(s)." in result.stdout
+    assert f"COMPOSES, with {corpus_debts() + 1} declared debt(s)." in result.stdout
 
 
 def test_the_readme_s_chain_count_is_held_against_the_file(tmp_path):
@@ -6700,7 +6732,7 @@ def test_a_debt_written_in_a_key_nobody_reads_is_not_a_debt(tmp_path):
     # Removing this file's own prose obligations takes the headline down by the number of entries
     # that file carries, which is one here — so the figure is the base minus one, and it moves with
     # the base rather than with the runs of fixtures that inject a debt.
-    assert "with 264 declared debt(s)" in result.stdout
+    assert f"with {corpus_debts() - 1} declared debt(s)" in result.stdout
 
 
 THERMAL_CABIN_LOADS = (
@@ -7116,7 +7148,7 @@ def test_the_trajectory_check_compares_every_element_it_computes(tmp_path):
     set_element("transfer_period_h", "UNCONFIGURED")
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 266 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert f"with {corpus_debts() + 1} declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
@@ -7222,7 +7254,7 @@ def test_an_argument_that_names_a_vocabulary_says_so(tmp_path):
     path.write_text(yaml.safe_dump(doc, sort_keys=False, width=100))
     result = run_linter(fixture)
     assert result.returncode == 0, result.stdout[-800:]
-    assert "with 266 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert f"with {corpus_debts() + 1} declared debt(s)" in result.stdout, result.stdout[-400:]
     assert "every one of which is a declared `frame`" in result.stdout
     assert "declare `names: frame`" in result.stdout
 
@@ -10110,8 +10142,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # state carried, and the ingredient the loop's collected load was missing.
     # 136 -> 138 in round 41, with the two loops' collected loads: the sums that ingredient fed.
     # 140 -> 152: ADR 0003 quiet coast: the thermal, power and comms rules together (thermal 24 -> 28,
-    # comms 10 -> 16, power 14 -> 16).
-    assert sum(len(rows) for rows in buckets.values()) == 152
+    # comms 10 -> 16, power 14 -> 16). A floor since lane 0: see `STATES_FLOOR`.
+    assert sum(len(rows) for rows in buckets.values()) == len(world.states) >= STATES_FLOOR
 
     # `ready` means what it says: only the classes the reference plant can actually advance.
     # It is no longer only the plant's two integrators — round 20 taught it to evaluate an
@@ -10135,8 +10167,11 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # And a state that owes a rule is never also counted as ready.
     assert not ({s.id for s in buckets["rule"]} & {s.id for s in buckets["ready"]})
 
-    # The counts are the vehicle's current shape, and a change here is a change in the build order
-    # rather than a cosmetic difference — which is exactly what makes it worth asserting.
+    # The counts were the vehicle's current shape, and a change in them is a change in the build order
+    # rather than a cosmetic difference — which is what made them worth asserting while one round at a
+    # time moved them. **Since lane 0 they are not pinned**: parallel lanes each move them, so the ready
+    # count is a floor (`READY_FLOOR`), the four buckets are held to the state total above, and the
+    # comments below are the record of what the pins saw.
     #
     # `ready` fell 13 -> 11 when the ten stocks with no declared initial condition were marked
     # owed. That is the classification working: an integrator with no level to integrate from
@@ -10186,7 +10221,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # Post-ejection P00 and active CMC DAP give two more commanded modes a sourced initial.
     # 53 -> 54: power's `load_enabled`, the switch map `set_load` writes, is held.
     # 54 -> 74: ADR 0003 quiet coast: the thermal, power and comms rules together.
-    assert len(buckets["ready"]) == 74
+    assert len(buckets["ready"]) >= READY_FLOOR, len(buckets["ready"])
     # `rule` went 71 -> 69 -> 82 across two rounds. The first move was `moved_by`: the two still
     # owed put an `UNCONFIGURED` in their spec and `walk_unset` counts any unset scalar as a value
     # the plant wants, so they left this bucket without the code they need going away. The second
@@ -10233,8 +10268,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 44 -> 42: ADR 0003 quiet coast: the thermal, power and comms rules together.
     # 42 -> 40 with the power rules merged after them: `bus_a_v` and `bus_b_v` left for `ready`, and
     # the two states the power rules added (`bus_b_load_w`, `fuel_cell_current_a`) are ready too.
-    assert len(buckets["rule"]) == 40, "about a quarter of the vehicle is domain code"
-    # Two more moved *in* when a discrete state began owing a value by field name rather than
+    #
+    # The `value` bucket's record. Two more moved *in* when a discrete state began owing a value by field name rather than
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
     # One more moved in with the pump: its `on` mapping is an owed rated speed, so what blocks
@@ -10271,8 +10306,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # The RCS per-thruster pulse floor became an honest owed value when the LM command time
     # stopped being applied globally, moving one state here from the rule bucket.
     # 27 -> 24: ADR 0003 quiet coast: the thermal, power and comms rules together.
-    assert len(buckets["value"]) == 24
-    # Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
+    #
+    # The `edge` bucket's record. Two of the twenty-eight "owed an edge" were not owed one at all: the three preloaded tanks
     # are advanceable, and the thirteen `internal` states need code. Three more left the bucket
     # when it stopped asking the integrator's question — a `regimes` table is a *declared*
     # coupling, and `instrumentation_power`, `bus_tie_closed` and `thruster_valve` each have every
@@ -10294,7 +10329,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # 16 -> 15 in round 72, the other half of the ready move: the coolant's drain stopped owing the
     # declaration that names which state on `radiator_reject` it reads.
     # 15 -> 14: ADR 0003 quiet coast: the thermal, power and comms rules together.
-    assert len(buckets["edge"]) == 14
+    # (40 rule, 24 value and 14 edge when the pins came out, at main `b525b48`.)
 
 
 def test_the_plant_advances_a_node_s_states_in_the_order_the_node_declares(tmp_path):
@@ -11421,7 +11456,10 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "152 states, by what blocks them" in result.stdout
+    # The header counts the whole vehicle; a floor since lane 0 (`STATES_FLOOR`), because the count
+    # is the vehicle's and the contract is the header's form.
+    header = re.search(r"(?m)^(\d+) states, by what blocks them:$", result.stdout)
+    assert header and int(header.group(1)) >= STATES_FLOOR, result.stdout[:200]
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -11669,7 +11707,7 @@ def test_every_heated_zone_declares_the_state_that_carries_its_heat(tmp_path):
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
     # 268 -> 265: the thermal rules (ADR 0003) and the power and comms rules they merged with.
-    assert "COMPOSES, with 265 declared debt(s)." in intact.stdout
+    assert f"COMPOSES, with {corpus_debts()} declared debt(s)." in intact.stdout
     assert "names no heat-rate state" not in intact.stdout
 
     def fixture(name: str, old: str, new: str) -> subprocess.CompletedProcess[str]:
@@ -11765,7 +11803,7 @@ def test_a_loop_s_collected_load_is_the_sum_over_the_zones_that_name_it(tmp_path
     # The note rather than a debt, in the linter's own words, and the count unmoved by it.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 265 declared debt(s)." in intact.stdout
+    assert f"COMPOSES, with {corpus_debts()} declared debt(s)." in intact.stdout
     assert (
         "vehicle.yaml#thermal.loops.loop_secondary.load_state: is not declared, and no zone names "
         "this loop" in intact.stdout
@@ -12174,9 +12212,15 @@ def test_the_readme_status_matches_the_tools():
     has already drifted.** The paragraph even said "with every one of them named", about a number
     that was two out of date.
 
-    So every figure is derived here from the tools' own output rather than from a second counter. A
-    counter written for this test would be one more declaration to drift; the linter and the plant
-    already compute all of them, and a test that reads their reports cannot disagree with them.
+    So every figure was derived here from the tools' own output rather than from a second counter,
+    and that worked — and made the status paragraph a line every vehicle change had to edit. The
+    2026-10-17 sprint runs one lane per domain in parallel, every lane that closes a state moves the
+    debt count, the ready bucket and the configured count, and two lanes in flight conflicted on the
+    same README lines every time. **So the figures that move with a closure are not written at all
+    now** (lane 0), the way the reconciliation README's rows stopped carrying the linter's counts:
+    a figure that is not written cannot drift. What the README still states is the corpus's census —
+    channels, states over nodes, thresholds, verbs, events — which moves when a domain *adds* a
+    declaration, and which this test and `check_readme_figures` hold to the tools as before.
     """
     readme = (VEHICLE / "README.md").read_text()
     lint = run_linter(VEHICLE)
@@ -12194,107 +12238,63 @@ def test_the_readme_status_matches_the_tools():
         check=False,
     ).stdout
 
-    channels, edges = re.search(r"(\d+) channels, (\d+) edges,", lint.stdout).groups()
-    debts = re.search(r"with (\d+) declared debt", lint.stdout).group(1)
+    channels = re.search(r"(\d+) channels, \d+ edges,", lint.stdout).group(1)
     states, nodes = re.search(r"world: (\d+) states over (\d+) nodes", plant).groups()
-    scalars = re.search(r"UNCONFIGURED scalars\s+(\d+)", plant).group(1)
-    # **The figure the definition of done watches, which nothing pinned.** Every needle below is a
-    # number the tools derive; the count of states the plant can actually advance was stated nowhere
-    # in this file and asserted nowhere either, so it could move — and did, twice, silently. It is
-    # a declaration now, in the status paragraph and in this list.
-    configured = re.search(r"states fully configured\s+(\d+)", plant).group(1)
-    with_debt = re.search(r"states with a debt\s+(\d+)", plant).group(1)
-    # **And the definition of done's own second figure.** `--build-order`'s ready-now bucket is what
-    # an implementer reads; what a tick actually does with the same corpus is printed by
-    # `--readiness`, and until round 17 nothing held the two against each other anywhere outside
-    # this file's own prose. The objective states the gap as its second completion criterion
-    # ("today 15 versus 1"), so the number belongs in the README beside the others.
-    advanced = re.search(r"(\d+) of \d+ states advanced", plant).group(1)
-    # The build order is a *second* run of the tool, so its ready bucket is parsed from that.
-    ready = re.search(
-        r"(\d+)\s+\d+ %\s+ready now",
-        subprocess.run(
-            [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--build-order"],
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout,
-    ).group(1)
-    rule = re.search(r"(\d+)\s+\d+ %\s+owes a rule", order).group(1)
+    # The census line, held to the plant's own world. `check_readme_figures` holds the same line to
+    # the files, so the plant's state and node counts and the linter's are held to each other here.
+    needle = f"{channels} channels, {states} states over {nodes} scheduled nodes"
+    assert needle in readme, f"the status line is stale: expected {needle!r} in the README"
 
-    # The sentence that carries them, and the paragraphs that restate two of them.
-    for needle, what in (
-        (f"{channels} channels, {states} states over {nodes} scheduled nodes", "the status line"),
-        (f"with {debts} declared debts", "the debt count"),
-        (f"Current state: **composes, with {debts} declared debts.**", "the header"),
-        (f"**{scalars}** literal unset scalars, matching that subtotal", "the plant's scalar count"),
-        (f"so {rule} of the {states} states need code", "the domain-code count"),
-        (f"{states} states, by what blocks them", "the build-order view"),
-        (
-            f"{configured} of the {states} states are fully configured and {with_debt} carry a debt",
-            "the configured-state count, which is the one the objective watches",
-        ),
-        (
-            f"a real tick advances **{advanced}** of the {states} states, and the build order's "
-            f"**{ready}** ready are that same set",
-            "the tick figure, which is the objective's second completion criterion",
-        ),
-    ):
-        assert needle in readme, f"{what} is stale: expected {needle!r} in the README"
-
-    # Every occurrence, not just the first. The loop above pins the *presence* of the right figure,
-    # and that is what let the same paragraph keep a second, stale one for eleven rounds: line 59
-    # carried "223 declared debts" and line 177 carried "252", so a test satisfied by either was
-    # satisfied by a file that contradicted itself. It is this folder's own finding arriving at the
-    # test that exists to catch it — a check that reads the declaration it is looking for cannot see
-    # the one beside it.
-    #
-    # A figure the README *asserts* is unquoted; a figure it *quotes* is history. The section that
-    # records this very drift says *it said "… with 254 declared debts …" while the tools said 124,
-    # 45 and 252* — and those are the evidence, not a claim, so the quoted spans come out first and
-    # what remains is what the file is currently telling a reader.
-    # And the build-order view the README embeds, which is an *output* rather than a figure and had
-    # therefore drifted further than any of them: it read "12 owes a value / 36 owes an edge / 61
-    # owes a rule" against the tool's 24 / 28 / 71, under a sentence promising that "`plant.py
-    # --build-order` classifies every state by `advance()`'s own refusal order ... so the two cannot
-    # disagree". They disagreed by ten states in one bucket and fifteen in another. An embedded
-    # transcript is the most convincing thing in a README and the least likely to be re-run.
-    order_view = subprocess.run(
-        [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--build-order"],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout
-    # The four bucket lines are the block the README embeds; the "first of the N" listings below
-    # them are the view's tail and are not quoted.
-    buckets = [line for line in order_view.splitlines() if re.match(r"^\s+\d+\s+\d+ %", line)]
-    assert len(buckets) == 4, buckets
-    for line in buckets:
-        assert line in readme, f"the README's build-order block is stale: missing {line!r}"
-
+    # **The figures that move with every closure, which the README no longer states.** Each of these
+    # was a needle this test required, with the tools' current figure in it; now each is a form the
+    # README must not carry outside a quotation. A figure the README *quotes* is history — the round
+    # log records "… with 254 declared debts …" as evidence — so quoted spans come out first, as they
+    # did when this test was the one holding every occurrence of the debt count to the linter's.
     asserted = re.sub(r'"[^"]*"', "", readme)
-    written = re.findall(r"(\d+) declared debts?", asserted)
-    assert written, "the README states no debt count at all"
-    assert set(written) == {debts}, (
-        f"the README states the debt count as {sorted(set(written))}; the linter says {debts}"
+    configured = re.search(r"states fully configured\s+(\d+)", plant).group(1)
+    live = (
+        re.compile(r"\d+ declared debts?"),
+        re.compile(r"\*\*\d+\*\* literal unset scalars"),
+        re.compile(r"a real tick advances \*\*\d+\*\*"),
+        re.compile(r"so \d+ of the \d+ states need code"),
+        re.compile(r"\d+ states, by what blocks them"),
+        re.compile(r"\d+\s+\d+ %\s+ready now — the states a real tick advances"),
+        # The round log records earlier configured counts in this form ("114 of the 134"), so the
+        # form is refused only with the tool's current figures in it: that is the status claim.
+        re.compile(rf"{configured} of the {states} states are fully configured"),
     )
+
+    def stated(text: str) -> list[str]:
+        return [pattern.pattern for pattern in live if pattern.search(text)]
+
+    assert not stated(asserted), (
+        f"the README states a figure that moves with every closure: {stated(asserted)}. Run the "
+        "tools for it instead; the status paragraph says why"
+    )
+    # And the reader is checked against what the paragraph used to say, so a pattern that matches
+    # nothing cannot pass by accident — the reconciliation test's own guard, for the same reason.
+    bucket = next(line for line in order.splitlines() if "ready now" in line)
+    for former in (
+        "Current state: **composes, with 265 declared debts.**",
+        "**182** literal unset scalars, matching that subtotal",
+        "a real tick advances **74** of the 152 states",
+        "so 40 of the 152 states need code",
+        f"{states} states, by what blocks them",
+        bucket,
+        f"**{configured} of the {states} states are fully configured and 28 carry a debt**",
+    ):
+        assert stated(former), f"the reader did not see {former!r}"
 
     # And the tools' own prose, which is the same claim in the same shape one directory over and
     # had drifted further. `tools/plant.py` told a reader that "`check_vehicle.py` ... reports 202
     # declared debts by path" and that "the linter reports 202 debts" — both true when they were
-    # written, both read by nothing since, and both 51 adrift by the time this was added. A figure a
-    # reader uses to size the remaining work is exactly the figure this folder exists to keep
-    # honest, and where it is written makes no difference to that.
-    #
-    # Only the tools are scanned, and only the `N declared debts` form: the quotation marks are
-    # everywhere in Python and stripping them the way the README's scan does would mangle the text,
-    # so the phrase itself is the marker. A tool that wants to record a *historical* count quotes
-    # it, exactly as the README's own history section does.
+    # written, both read by nothing since, and both 51 adrift by the time this was added. They were
+    # held to the linter's count after that, which made every closure an edit to `tools/plant.py` as
+    # well; since lane 0 the tools state no debt count in this form at all. (Quotation marks are
+    # everywhere in Python, so the README's quoted-history exemption does not carry over.)
     for tool in sorted((VEHICLE / "tools").glob("*.py")):
         in_tool = re.findall(r"(\d+) declared debts?", tool.read_text())
-        assert set(in_tool) <= {debts}, (
-            f"{tool.name} states the debt count as {sorted(set(in_tool))}; the linter says {debts}"
-        )
+        assert not in_tool, f"{tool.name} states the debt count as {sorted(set(in_tool))}"
 
 def _in_words(n: int) -> str:
     """Enough of a number-to-words conversion for a count in the low hundreds.
@@ -14749,8 +14749,13 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
         "- domains/comms/profiles.yaml.thresholds[5].clear: is UNCONFIGURED"
     ], alone
 
-    # And the count is the honest one, not the inflated one.
-    assert "with 265 declared debt(s)" in result.stdout, result.stdout[-400:]
+    # And the count is the honest one, not the inflated one: the headline is the number of lines the
+    # owed list prints, so a pair reported twice would have to print twice. (A literal pinned this
+    # until lane 0; the pairing asserts above are what find the inflation, and this holds the
+    # headline to the list it summarises.)
+    listed = result.stdout.split("OWED (a value that is needed and unset)")[1].split("\nnotes")[0]
+    listed = [line for line in listed.splitlines() if line.startswith("  - ")]
+    assert f"with {len(listed)} declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -14927,7 +14932,8 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     # prose obligation in `coupling.yaml#open_debts` for the three bands whose vocabulary is wider
     # than their comparator. The round adds a field to four states; nothing was answered, so nothing
     # fell.
-    assert owed == "265", "the view must agree with the headline count"
+    # The figures above are history; what is asserted is the agreement, against the linter's own run.
+    assert owed == str(corpus_debts()), "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -15247,8 +15253,8 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     # 8 -> 7: `E-BUS-SHED` left with the automatic shed ladder (power lane, 2026-10-17).
     assert len(tables) == 7, f"the regime edges changed: {[e.id for e in tables]}"
     # 69 -> 74: ADR 0003 quiet coast: the thermal, power and comms rules together (E-PUMP-COOL, E-RAD-THERM and E-AMP-HEAT among them).
-    # 74 -> 73: `E-BUS-SHED` retired.
-    assert len(scalar) + len(tables) == 73
+    # A floor since lane 0 (`SENSITIVITY_FLOOR`); the tool's figure is held to this count below.
+    assert len(scalar) + len(tables) >= SENSITIVITY_FLOOR, len(scalar) + len(tables)
     ready = subprocess.run(
         [sys.executable, str(VEHICLE / "tools" / "plant.py"), "--readiness"],
         capture_output=True,
@@ -15257,7 +15263,10 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     )
     assert ready.returncode == 0, ready.stderr
     found = re.search(r"edges with a sensitivity\s+(\d+) / (\d+)", ready.stdout)
-    assert (int(found.group(1)), int(found.group(2))) == (73, len(edges)), found.group(0)
+    assert (int(found.group(1)), int(found.group(2))) == (
+        len(scalar) + len(tables),
+        len(edges),
+    ), found.group(0)
 
 
 def test_a_verb_that_starts_a_state_is_declared_rather_than_described(tmp_path):
@@ -16823,7 +16832,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 265 declared debt(s)",
+        f"COMPOSES, with {corpus_debts()} declared debt(s)",
         composes=True,
     )
     refusal(
@@ -16831,7 +16840,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 265 declared debt(s)",
+        f"COMPOSES, with {corpus_debts()} declared debt(s)",
         composes=True,
     )
 
@@ -16846,7 +16855,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         "cannot be held against the channel's `range`",
         composes=True,
     )
-    assert "with 266 declared debt(s)" in out, out[-300:]
+    assert f"with {corpus_debts() + 1} declared debt(s)" in out, out[-300:]
 
 
 def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
@@ -17005,7 +17014,7 @@ def test_a_stocks_rating_is_joined_to_the_counter_it_is_spent_at(tmp_path):
         "no component in any domain is the article of",
         composes=True,
     )
-    assert "with 266 declared debt(s)" in out, out[-400:]
+    assert f"with {corpus_debts() + 1} declared debt(s)" in out, out[-400:]
 
     # A rating on an article whose counter is owed is skipped by the join rather than refused twice:
     # the unset `node` is already a debt, and one missing datum under two names reads like two.
@@ -17152,7 +17161,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "names no `power_load`",
         composes=True,
     )
-    assert "with 266 declared debt(s)" in out, out[-400:]
+    assert f"with {corpus_debts() + 1} declared debt(s)" in out, out[-400:]
     # And the LM pump's figures are unchecked by this join *because* it names no load — the case
     # documents the gap the debt reports rather than a property worth having. Moving its rating
     # 200 -> 210 changes nothing: no other file states it, so there is nothing to disagree with.
@@ -17162,7 +17171,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 265 declared debt(s)",
+        f"COMPOSES, with {corpus_debts()} declared debt(s)",
         composes=True,
     )
 
@@ -17304,7 +17313,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 265 declared debt(s)",
+        f"COMPOSES, with {corpus_debts()} declared debt(s)",
         composes=True,
     )
 
@@ -19886,7 +19895,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # commanded modes the launch checklist publishes a position for, which the hold then carries.
     # 53 -> 54: power's `load_enabled`, the switch map `set_load` writes, is held.
     # 54 -> 74: ADR 0003 quiet coast: the thermal, power and comms rules together.
-    assert len(advanced) == 74, sorted(advanced)
+    # A floor since lane 0 (`READY_FLOOR`): every lane that lands a rule moves it.
+    assert len(advanced) >= READY_FLOOR, sorted(advanced)
 
     # The arithmetic is the corpus's, at the values the corpus declares: 733 W less the 72 W
     # amplifier, which starts off (ADR 0003: heat is summed over the loads `load_enabled` has on).
@@ -22085,14 +22095,16 @@ def test_the_tick_can_read_what_the_build_order_promises():
     assert set(resolved) <= ready, sorted(set(resolved) - ready)
     assert set(resolved) <= advanced, sorted(set(resolved) - advanced)
 
-    # The figures this rests on, so a round that moves them has to say so here.
-    assert len(world.states) == 152
+    # The figures this rests on. They were pinned so a round that moved them had to say so here;
+    # since lane 0 they are floors (`STATES_FLOOR`, `READY_FLOOR`), and the set equality above is
+    # what holds the two of them to each other.
+    assert len(world.states) >= STATES_FLOOR, len(world.states)
     # 139 -> 140: power's `load_enabled`, the switch map `set_load` writes.
     # 38 -> 41 in round 75: the three event-moved states, held by the tick and moved by the effect.
     # 41 -> 45 in round 76 and 45 -> 48 in round 80: the seven positions `mission.yaml#launch_state`
     # now declares, the last three of them read out of the launch checklist.
     # 54 -> 74: ADR 0003 quiet coast: the thermal, power and comms rules together.
-    assert len(ready) == 74 and len(advanced) == 74
+    assert len(ready) == len(advanced) >= READY_FLOOR, (len(ready), len(advanced))
 
 
 # ---------------------------------------------------------------------------------------------
