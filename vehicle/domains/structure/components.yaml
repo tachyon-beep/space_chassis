@@ -794,15 +794,24 @@ components:
   - id: tunnel
     kind: state
     class: volume
-    volume_m3: UNCONFIGURED
+    volume_m3: 0.3285
     provenance:
-      basis: UNCONFIGURED
+      basis: historical
+      source: >-
+        CSM/LM Spacecraft Operational Data Book, Vol. I, SNA-8-D-027(I) Rev 3, Fig. 4.2-8.1, PDF
+        p. 325, printed p. 4.2-32.1 (Amd 86, 21 Jan 1972), the figure's legend: "TUNNEL VOLUME 11.6
+        FT3 / CM TEMPERATURE 70°F / TUNNEL/CM ΔP ≥2.6 PSID" (quoted and checked against the rendered
+        page in /mnt/project-files/sources/structure.md, 2026-10-17). 11.6 ft3 x 0.0283168 m3/ft3 =
+        0.3285 m3
       note: >-
-        the docking tunnel's volume is not published — **searched:** the Operational Data Book
-        (`ODB3.txt`, whole) for the word "tunnel", which appears nowhere in it, and the CSM ECS
-        guide, whose station table lists the tunnel's hatches and no volume. It matters because the tunnel is a third
-        atmosphere: pressurised or not, it is what a crew pass through, and `apollo_diode.md:207`'s
-        hatch interlock is really a statement about three volumes and two hatches.
+        the volume between the CM forward hatch and the LM upper hatch. **This said the volume was
+        unpublished** after a search of Vol. III only (`ODB3.txt`, whole, where the word does not
+        appear); it is in Vol. I. Cross-check, same volume §4.1.3.7, printed 4.1-12: "approximately
+        0.3 lb for the tunnel" to pressurise, and oxygen at 5.0 psia and 70°F in 11.6 ft3 is 0.33
+        lb. It matters because the tunnel is a third atmosphere: pressurised or not, it is what a
+        crew pass through, and so small a volume makes the tunnel's pressure a sensitive gauge of
+        the hatch seals — the same figure maps a CM hatch leak to a tunnel pressure rate, which is
+        the integrity check Apollo 15 flew and slipped the LM jettison a revolution over.
 
 # --------------------------------------------------------------------------------------
 # The one-way event taxonomy. This is the artifact C-13 says does not exist: the vehicle's
@@ -881,8 +890,8 @@ one_way_events:
 
 open_debts:
   - "**Two events still name no devices.** `pyro_fired.fires_lm_undocking` and `fires_pyro_fire` are unset: undocking is believed to be the probe and latches with no pyro, and no source reached says so; `pyro_fire` cannot name a device because `execute_event` has no device argument. Either one is a gap on the tick its event is executed and nowhere else."
-  - "The tunnel volume and the hatch seal leak rates are unpublished and declared unset above. Without them an unsealed hatch or ring with pressure behind it is a gap in `structural_leak_g_s` rather than a vent rate."
-  - "**The tunnel's own pressure is not a state.** A tunnel hatch is opened after the crew equalises the tunnel through the hatch's valve (News Reference p. 87), so the differential across a tunnel hatch is cabin minus tunnel, and the vehicle carries neither the tunnel volume nor its pressure. Until it does, `set_hatch_valve` guards the two crew hatches against pressure and not the tunnel hatches, and an open tunnel hatch on a sealed ring is treated as joining the tunnel to its cabin with no loss."
+  - "The hatch seal leak rates and the vent rate through an open hatch or an unseated ring seal are unpublished and declared unset above (the research of 2026-10-17 searched for both and found neither; /mnt/project-files/sources/structure.md, 'Not found'). Without them an unsealed hatch or ring with pressure behind it is a gap in `structural_leak_g_s` rather than a vent rate. The tunnel volume is no longer among them (`tunnel.volume_m3`, ODB Vol. I)."
+  - "**The tunnel's own pressure is not a state.** A tunnel hatch is opened after the crew equalises the tunnel through the hatch's valve (News Reference p. 87), so the differential across a tunnel hatch is cabin minus tunnel, and the vehicle carries the tunnel's volume and not its pressure. The figures to build it are held — the volume, and the ODB Vol. I curves for the hatch's equalization valve and the CM's LM-tunnel vent valve (Figs 4.2-17, 4.2-19 and 4.2-19.1) — and what is owed is the state, the valve's verb and the cabin edge, which is ECLSS's. Until then, `set_hatch_valve` guards the two crew hatches against pressure and not the tunnel hatches, and an open tunnel hatch on a sealed ring is treated as joining the tunnel to its cabin with no loss."
   - "**Working a single latch is owed.** `set_docking_latch` takes `latch: one`, and nothing says whether a crew in the tunnel can re-cock a failed ring latch or with what chance; the `one` drive is recorded and acts on nothing until the fault path can fail a latch, and what it does then is this debt."
   - "The pressure vessel's proof and burst pressures are unset, and deliberately: apollo_diode.md:753 puts finite-element structural mechanics out of scope, so a vessel failure model is not wanted — but the *differential limit* that a relief valve protects is, and it is owed."
   - "Micrometeoroid and debris damage is not modelled. It is the one structural hazard that is genuinely stochastic on a lunar mission, and it belongs in the scenario layer rather than in the domain."
