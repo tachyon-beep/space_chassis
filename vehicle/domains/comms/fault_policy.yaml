@@ -3,6 +3,13 @@
 # ## The distinction the whole domain turns on
 #
 # On this vehicle, "nothing is arriving" has four causes and only three of them are faults:
+
+# `fleet_class` (the cross-lane fault classification of 2026-10-17): `onboard` where the vehicle's
+# own service response acts first (`response.kind: service`) and the fleet decides what follows;
+# `precursor` where the harm accrues over minutes to an orbit behind a published signal — a thin
+# SNR, a rising frame loss, a recorder that will have nowhere to write at the next occultation, a
+# late acquisition of signal — so a fleet can be held to having acted. None is `out_of_scope`: no
+# comms fault does its harm faster than its first symptom is published.
 #
 #   the Moon is in the way        planned — `comm.blackout_state`, no alarm, the recorder fills
 #   the vehicle is not pointing   a control problem — the gimbal, the attitude, or a scan limit
@@ -32,6 +39,7 @@ domain: comms
 faults:
 
   - id: COM-01-antenna-gimbal
+    fleet_class: onboard
     component: antenna_pointing
     mechanism: "the gimbal fails or jams: a drive, a resolver, a bearing; the dish stops tracking and the beam walks off Earth"
     kind: discrete
@@ -74,6 +82,7 @@ faults:
         apollo's chain, whose third order is the reason this domain exists in the shape it does
 
   - id: COM-02-amplifier-failure
+    fleet_class: onboard
     component: sband_power_amplifier
     mechanism: "the power amplifier fails: an output stage, a bias supply, a thermal cutout that has latched"
     kind: discrete
@@ -114,6 +123,7 @@ faults:
         fleet will misattribute to communications if it is not careful
 
   - id: COM-03-weak-link
+    fleet_class: precursor
     component: link_snr
     mechanism: "the link budget closes but thinly: range at lunar distance, a partially deployed antenna, a degraded feed"
     kind: sustained
@@ -149,6 +159,7 @@ faults:
       ref: "apollo_diode.md:164, :166"
 
   - id: COM-04-carrier-lock-loss
+    fleet_class: onboard
     component: carrier_lock
     mechanism: "the receiver loses the carrier: a frequency excursion, a pointing transient through the beam edge, an amplifier that has drifted off frequency"
     kind: discrete
@@ -178,6 +189,7 @@ faults:
       ref: "apollo_diode.md:162"
 
   - id: COM-05-frame-corruption
+    fleet_class: precursor
     component: frame_loss
     mechanism: "frames are being dropped or corrupted at a rate the link does not explain: a noisy receiver, a marginal demodulator, interference on the channel"
     kind: instrument
@@ -211,6 +223,7 @@ faults:
       ref: "apollo_diode.md:166, :901"
 
   - id: COM-06-antenna-selection-fault
+    fleet_class: onboard
     component: antenna_selection
     mechanism: "the selection sticks or the switch fails: the vehicle believes it is on the HGA and is radiating through an omni, or the reverse"
     kind: discrete
@@ -239,6 +252,7 @@ faults:
       ref: "apollo_diode.md:167"
 
   - id: COM-07-amplifier-overheat
+    fleet_class: onboard
     component: sband_power_amplifier
     mechanism: "the amplifier runs hot: a stalled coolant loop, a blocked coldplate, an amplifier whose own dissipation has risen"
     kind: sustained
@@ -273,6 +287,7 @@ faults:
         poor attitude raises battery temperature", and the amplifier is on the same coldplate
 
   - id: COM-08-transmitter-unpowered
+    fleet_class: onboard
     component: sband_transceiver
     mechanism: "the transmitter loses power: an open breaker, a failed converter, a bus below the transmitter's hold threshold"
     kind: discrete
@@ -305,6 +320,7 @@ faults:
       note: "`E-BUS-COMM`'s edge; the sensitivity (dB per volt) is owed because it needs the amplifier's gain-versus-supply curve"
 
   - id: COM-09-recorder-failure
+    fleet_class: precursor
     component: recorder
     mechanism: "the on-board record fails or fills: a tape or solid-state store, a write head, a capacity reached"
     kind: discrete
@@ -340,6 +356,7 @@ faults:
       note: "the recorder is the mechanism that makes an occultation survivable; its capacity is not published and is recorded as a debt rather than invented"
 
   - id: COM-10-occultation-longer-than-predicted
+    fleet_class: precursor
     component: blackout
     mechanism: "the blackout runs longer than the geometry predicts: a navigation error, a higher orbit, a vehicle that is not where its own state says"
     kind: discrete
@@ -379,6 +396,7 @@ faults:
         is a measurement, and this one is free — the vehicle is silent anyway
 
   - id: COM-11-unexplained-blackout
+    fleet_class: onboard
     component: link_snr
     mechanism: "the link is lost with the geometry clear and nothing else wrong: an occultation that should not be happening"
     kind: emergent
