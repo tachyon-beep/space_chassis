@@ -154,7 +154,9 @@ def test_restart_and_replay_reproduce_every_hash_with_faults_either_side(world, 
         f"  - {{tick: 2, offset_us: 5000, fault: {TRIP}}}\n  - {{tick: 7, fault: {HEAT}}}\n",
     )
     straight: list[str] = []
-    plant.run_scenario(world, run, 10, on_tick=lambda t, v, *_: straight.append(plant.state_hash(v)))
+    plant.run_scenario(
+        world, run, 10, on_tick=lambda t, v, *_: straight.append(plant.state_hash(v))
+    )
 
     first: list[str] = []
     stopped = plant.run_scenario(
@@ -323,3 +325,52 @@ def test_a_discrete_state_a_domain_rule_advances_starts_from_its_declared_initia
     stepped = plant.step(ruled, values, plant.tick_seconds(ruled), gaps)
     assert stepped["lcl_tripped"] == {"csm_lighting": "closed"}
     assert not [g for g in gaps if g.state.id == "lcl_tripped"], gaps
+
+
+HEATER_DUTY = """state:
+  - id: heater_duty_commanded
+    node: internal
+    method: discrete
+    unit: "map[zone_id,%]"
+    initial: {csm_cabin: 0}
+    initial_provenance: {basis: chosen, reason: "a test fixture: the heaters start off"}
+    moved_by: ["command:set_heater"]
+    command_value:
+      - verb: set_heater
+        argument: duty
+        key: zone
+        why: "identity: the commanded duty, as the percentage the verb carries"
+    provenance: {basis: chosen, reason: "a test fixture for a carried numeric argument"}
+"""
+
+
+def test_a_numeric_argument_is_carried_as_its_number_and_refused_outside_its_range(tmp_path):
+    """The thermal lane's ask, beside the fault path: `set_heater duty=40` makes the state 40."""
+    copy = faulted_copy(tmp_path / "vehicle")
+    components = copy / "domains" / "thermal" / "components.yaml"
+    replace(components, "\nstate:\n", "\n" + HEATER_DUTY)
+    replace(
+        components,
+        "internal_order: [heater_bank_duty,",
+        "internal_order: [heater_duty_commanded, heater_bank_duty,",
+    )
+    out = run_linter(copy).stdout
+    assert "command_value[set_heater]" not in out, out[-3000:]
+    heated = plant.load_world(copy)
+    values = plant.initial_values(heated)
+    staged = plant.apply_command(
+        heated,
+        values,
+        "set_heater",
+        {"bank": "heater_bank_csm", "zone": "csm_avionics_bay", "duty": "40"},
+    )
+    assert staged["heater_duty_commanded"] == {"csm_cabin": 0, "csm_avionics_bay": 40}
+    assert isinstance(staged["heater_duty_commanded"]["csm_avionics_bay"], int)
+    for bad, why in (("150", "outside its declared range"), ("40.5", "is not an integer")):
+        with pytest.raises(plant.EffectRefused, match=why):
+            plant.apply_command(
+                heated,
+                values,
+                "set_heater",
+                {"bank": "heater_bank_csm", "zone": "csm_cabin", "duty": bad},
+            )

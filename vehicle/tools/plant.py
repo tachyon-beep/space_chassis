@@ -4242,8 +4242,9 @@ def command_effect(world: World, state: State, verb: str, arguments: dict[str, A
     for match in re.findall(r"enum\[([^\]]*)\]", str(state.spec.get("unit") or "")):
         values.update(v.strip() for v in match.split(","))
 
-    def carried() -> str:
-        """The value of the argument that carries this state's value."""
+    def carried() -> Any:
+        """The value of the argument that carries this state's value: its text, or its number when
+        the verb declares the argument `integer` or `number` with a `range`."""
         if entry is not None:
             argument = str(entry.get("argument"))
         else:
@@ -4266,6 +4267,9 @@ def command_effect(world: World, state: State, verb: str, arguments: dict[str, A
                 f"{where}.command_value",
                 f"needs {verb!r}'s {argument!r} argument, which the call did not supply",
             )
+        declared = schema.get(argument)
+        if isinstance(declared, dict) and declared.get("type") in NUMERIC_ARGUMENTS:
+            return numeric_argument(verb, argument, arguments[argument], declared)
         return str(arguments[argument])
 
     if entry is not None and entry.get("computed") is not None:
@@ -4301,6 +4305,38 @@ def command_effect(world: World, state: State, verb: str, arguments: dict[str, A
             f"it; it holds {sorted(values)}",
         )
     return source
+
+
+# The argument types whose value a command carries into a state as a number rather than as text.
+NUMERIC_ARGUMENTS = ("integer", "number")
+
+
+def numeric_argument(verb: str, argument: str, raw: Any, declared: dict[str, Any]) -> int | float:
+    """A numeric argument's value, parsed from the command text and held to its declared `range`.
+
+    The window hands the plant text (`duty=40`), and a state that holds a duty cycle holds 40, not
+    `'40'`: a string there compares, sums and hashes as a different value from the number a rule
+    computes. An `integer` takes whole numbers only — `40.5` is a different command, not a rounded
+    one — and a value outside the verb's own `range` is refused rather than clamped, because a clamp
+    is the plant deciding what the caller meant.
+    """
+    kind = declared.get("type")
+    text = str(raw).strip()
+    try:
+        value: int | float = int(text) if kind == "integer" else float(text)
+    except ValueError:
+        raise EffectRefused(
+            f"plant.py:verb {verb}: {argument}={raw!r} is not {'an integer' if kind == 'integer' else 'a number'}"
+        ) from None
+    if isinstance(value, float) and not math.isfinite(value):
+        raise EffectRefused(f"plant.py:verb {verb}: {argument}={raw!r} is not finite")
+    low, high = (declared.get("range") or [None, None])[:2]
+    if low is not None and high is not None and not low <= value <= high:
+        raise EffectRefused(
+            f"plant.py:verb {verb}: {argument}={raw!r} is outside its declared range "
+            f"[{low}, {high}], so it is refused rather than clamped"
+        )
+    return value
 
 
 def _refuse_unmapped(where: str, verb: str, source: str, values: set[str]) -> Any:

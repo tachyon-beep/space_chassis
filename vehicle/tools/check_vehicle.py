@@ -7003,13 +7003,40 @@ def check_domain(
                 spec2 = command_movers[verb_name]
                 argument = str(entry.get("argument"))
                 arg_spec = (spec2.get("argument_schema") or {}).get(argument)
-                if not isinstance(arg_spec, dict) or arg_spec.get("type") != "enum":
+                # **A numeric argument with a declared range is carried as its value**, which is
+                # the identity form with numbers rather than words: `set_heater`'s `duty` is a
+                # percentage the zone's commanded-duty state holds. It has no values to `maps` from,
+                # and without a range the plant would have nothing to refuse it against.
+                numeric = isinstance(arg_spec, dict) and arg_spec.get("type") in ("integer", "number")
+                if numeric:
+                    span = arg_spec.get("range")
+                    if not (
+                        isinstance(span, list)
+                        and len(span) == 2
+                        and all(
+                            isinstance(v, int | float) and not isinstance(v, bool) for v in span
+                        )
+                        and span[0] <= span[1]
+                    ):
+                        report.refuse(
+                            f"{cwhere2}.argument",
+                            f"names {argument!r}, a numeric argument of {verb_name!r} with no "
+                            f"`range` of two ordered numbers ({span!r}). A carried number is "
+                            "refused outside the verb's range, so the range is what makes it a value",
+                        )
+                    if entry.get("maps") is not None:
+                        report.refuse(
+                            f"{cwhere2}.maps",
+                            f"maps {argument!r}, a numeric argument: it has no vocabulary to map "
+                            "from, so its value is carried as the number it is",
+                        )
+                elif not isinstance(arg_spec, dict) or arg_spec.get("type") != "enum":
                     report.refuse(
                         f"{cwhere2}.argument",
                         f"names {argument!r}, which is not an enum argument of {verb_name!r} (it "
                         f"has {sorted(spec2.get('argument_schema') or {})}). An effect is a mapping "
                         "from an argument's values, and an argument with no vocabulary has no "
-                        "values to map from",
+                        "values to map from, unless it is an `integer` or `number` with a `range`",
                     )
                 if not str(entry.get("why") or "").strip():
                     report.refuse(

@@ -257,6 +257,7 @@ from faults import load_faults, load_postures, scenario_report  # noqa: E402
 from generate_help import generate as generate_help  # noqa: E402
 from generate_readme import generate as generate_readme  # noqa: E402
 from plant import (  # noqa: E402
+    NUMERIC_ARGUMENTS,
     Effect,
     EffectRefused,
     Scenario,
@@ -275,6 +276,7 @@ from plant import (  # noqa: E402
     interlock_tripped,
     load_scenario,
     load_world,
+    numeric_argument,
     point_reading,
     resolve_interlock,
     state_hash,
@@ -4503,6 +4505,12 @@ class Executive:
                     f"refused: {name!r} is {size} bytes, past its {source} of {bound}. A value with "
                     "no size is a result file and a value map with no size either.\n"
                 )
+            if declared.get("type") in NUMERIC_ARGUMENTS:
+                # A number's range is the verb's declaration, and the plant holds the call to it.
+                try:
+                    numeric_argument(verb, name, value, declared)
+                except EffectRefused as exc:
+                    return f"refused: {exc}.\n"
             if declared.get("type") == "enum":
                 values = [str(v) for v in declared.get("values") or []]
                 if values and value not in values:
