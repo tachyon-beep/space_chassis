@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:16 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 14:17 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -30,7 +30,7 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | 1 | Burn down power subsystem | [#43](https://github.com/tachyon-beep/space_chassis/pull/43) | draft; per-cell fuel cells and PWR-02 pushed; standby pump *off* | #45; #47 before the PWR-02 `fault:` row |
 | — | Source RCS thruster geometry | [#44](https://github.com/tachyon-beep/space_chassis/pull/44) | draft; SM and LM jets sourced; CM jets, SM offsets, minimum impulse bit owed | #45; primary sources (now reachable, D32) |
 | 5 | Comms remainder | [#48](https://github.com/tachyon-beep/space_chassis/pull/48) | draft; occultation from the orbit; `carrier_lock` waits on #47's seeding | #45, #47 |
-| 2 | Finish thermal | [#49](https://github.com/tachyon-beep/space_chassis/pull/49) | draft; bays and pump speed advance; re-deriving MET-0 at 1,401 W; `heater_bank_duty` held | #45; the numeric-argument engine change (lane 9) |
+| 2 | Finish thermal | [#49](https://github.com/tachyon-beep/space_chassis/pull/49) | draft; bays and pump speed advance; `fleet_class` and `acts` added (`efdb857`); ADR 0003 records Fraction and Chosen (`b60c310`); MET-0 re-derivation for #43 pending its test run; `heater_bank_duty` held | #45; the numeric-argument engine change (lane 9) |
 | 3 | Propulsion and propellant | [#50](https://github.com/tachyon-beep/space_chassis/pull/50) | draft | #45; primary sources (now reachable, D32) |
 | 4 | Structure states | [#51](https://github.com/tachyon-beep/space_chassis/pull/51) | draft; hatch starts *Latched* (`173216c`); `arm_state` waits on #47's seeding; configuration states move to device firing after #47; the interrupter edge goes to power if the states are power's | #45, #47 |
 | 7 | GNC and RCS lane | — | started 13:59; attitude as pointing modes, a rate-limited slew law behind `set_attitude_target` (D38) | the geometry lane (#44) |

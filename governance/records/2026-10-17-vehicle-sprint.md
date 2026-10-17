@@ -164,3 +164,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
   with the RCS lane.
 - 14:14 ECLSS holds its crew-count CO2 edges until #54 is on `main`; CO2 removal becomes a rule after CRYO PRESS.
 - 14:15 Lane 9 publishes the `fleet_class` vocabulary; every fault-owning lane adds the field now.
+- 14:16 Thermal adds `fleet_class` and `acts` on #49 (`efdb857`; only `pump_no_flow` and `heater_stuck_on` act automatically) and records Fraction and Chosen in ADR 0003 (`b60c310`).
