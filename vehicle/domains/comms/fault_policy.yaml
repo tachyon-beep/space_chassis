@@ -52,8 +52,8 @@ faults:
     detection:
       evidence: >-
         F-11's chain, and its first clue is the pointing error itself. What makes it diagnosable
-        rather than merely visible is the pattern's shape: with a 9.4-degree beam the loss is
-        0.54 dB at 2 degrees and 3.4 dB at 5, so a fleet sees a *growing* pointing error long
+        rather than merely visible is the pattern's shape: with a 4.4-degree beam the loss is
+        0.6 dB at 1 degree and 2.5 dB at 2, so a fleet sees a *growing* pointing error long
         before it sees a link problem — and the growth rate is what separates a jammed gimbal
         (linear in the vehicle's rotation, immediately) from an attitude excursion (bounded, and
         visible in `gnc.attitude_q[0..3]` first). `E-DYN-GEOM` is 1 degree per degree and

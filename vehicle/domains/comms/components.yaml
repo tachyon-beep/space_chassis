@@ -49,7 +49,7 @@
 domain: comms
 
 # 1 Hz: the rate of the link's published state. The RF layer has no meaningful faster cadence on
-# a vehicle whose slowest physical process is a 9.4-degree beam crossing a 2-degree error band.
+# a vehicle whose slowest physical process is a 4.4-degree beam crossing a 2-degree error band.
 natural_rate_hz: 1
 
 reads: [bus_a, coldplate_t, vehicle_dynamics, command_executive]
@@ -74,21 +74,23 @@ components:
     # Which relation governs the two figures below. Declared in both files, so `check_comms_bindings`
     # compares it for free: what the vehicle-level file and this component must agree about is not
     # only the gain and the width but what kind of pair they are.
-    pattern: aperture
-    gain_db: 26.7
-    beamwidth_deg: 9.4
+    pattern: measured
+    gain_db: 25.7
+    beamwidth_deg: 4.4
     steerable: true
     provenance:
       basis: historical
-      source: "vehicle.yaml#comms.antennas.high_gain — NR ch.18's four 31-inch parabolas with 9.2/20.7/26.7 dB wide/medium/narrow feeds"
+      source: "vehicle.yaml#comms.antennas.high_gain — NASA TN D-6723 printed p. 10, Table I: four 31-inch parabolas and an 11-inch horn, transmit 8.0/18.0/25.7 dB at 40.0/11.3/4.4 deg wide/medium/narrow"
       note: >-
-        the beamwidth was 1.0 in the first version of `vehicle.yaml` and is 9.4 here because the
-        gain-beamwidth product says so: `G = 41253 / theta^2`, so 26.7 dB is a 9.4-degree beam and
-        a 1.0-degree beam would need 46 dB. The corrected figure is what makes apollo's own
-        threshold coherent — 0-2 degrees is a good link (`apollo_diode.md:163`) only if 2 degrees
-        off boresight is a fraction of a dB down, and against a 1-degree beam it would be 48 dB
-        down, which is a range in which no link exists. This is the domain that surfaced it
-        because the beamwidth is what the pointing channel and `E-GEOM-LINK` scale against
+        the beamwidth was 1.0 in the first version of `vehicle.yaml`, then 9.4 derived from NR's
+        26.7 dB through the ideal-aperture product, and it is 4.4 now because the primary source
+        publishes it: TN D-6723 gives gain and width side by side, and the four-dish array is
+        about 17 % efficient against an ideal aperture of its width, so neither earlier figure
+        could have been derived. What the published pair makes true is operational: 2 degrees off
+        boresight is 2.5 dB down, just inside the 2.2-degree half-power edge, so apollo's 0-2
+        degree "good link" (`apollo_diode.md:163`) is a margin the pointing spends. This is the
+        domain that surfaced it because the beamwidth is what the pointing channel and
+        `E-GEOM-LINK` scale against
 
   - id: omni
     kind: state
@@ -99,7 +101,7 @@ components:
     # selectable antennas and is not a quantity either file states twice.
     vehicle_keys: [omni_a, omni_b]
     pattern: near_isotropic
-    gain_db: 2
+    gain_db: 0
     count: 4
     provenance:
       basis: historical
@@ -203,7 +205,7 @@ components:
     provenance:
       basis: UNCONFIGURED
       note: >-
-        the mechanism that keeps a 9.4-degree beam on Earth while the vehicle rotates underneath
+        the mechanism that keeps a 4.4-degree beam on Earth while the vehicle rotates underneath
         it, and the component F-11 fails. Both parameters are owed: the Apollo HGA's gimbal range
         and slew rate are what decide whether a pointing error is a control problem (the gimbal has
         not caught up) or an attitude problem (the vehicle is not where it thinks), and
@@ -471,7 +473,7 @@ state:
         apollo's enum with its "unexpected switch" event, and the four members are exactly the
         antennas `vehicle.yaml#comms.antennas` declares — the linter refuses a mismatch, the same
         discipline the phase, posture and crew-station vocabularies get. Ten seconds of dwell
-        (chosen) because the members are 26.7 dB and 2 dB apart: a selection that can be
+        (chosen) because the members are 25.7 dB and 0 dB apart: a selection that can be
         re-commanded every tick is one whose outage a fleet cannot attribute, since the antenna
         changed twice while the link was down
 

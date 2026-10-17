@@ -79,8 +79,8 @@ commands:
     execution_class: declarative
     maximum_queue_age_s: 30
     help: >-
-      Choose which of the four antennas carries the link. The members are 26.7 dB and 2 dB apart,
-      so this is a 25 dB decision: the high gain needs pointing and carries 51.2 kbit/s, and the
+      Choose which of the four antennas carries the link. The members are 25.7 dB and 0 dB apart,
+      so this is a 26 dB decision: the high gain needs pointing and carries 51.2 kbit/s, and the
       omnis need nothing and carry very little. `omnib` is a separate argument value from `omni_a`
       rather than one "omni" option because the second one is the reason antenna selection has a
       safety-relevant alternative at all — a stuck switch, a failed feed, and the vehicle still

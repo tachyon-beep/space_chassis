@@ -62,9 +62,10 @@ thresholds:
       basis: apollo
       ref: "apollo_diode.md:163"
       note: >-
-        apollo says 0-2 degrees is a "good link" and warns above 2 — and with the derived
-        9.4-degree beamwidth, 2 degrees off boresight is 0.54 dB down, so apollo's wording is
-        exactly right and the warning is about *pointing* rather than about the link. A fleet
+        apollo says 0-2 degrees is a "good link" and warns above 2 — and with the published
+        4.4-degree beamwidth (TN D-6723 Table I), 2 degrees off boresight is 2.5 dB down, just
+        inside the 2.2-degree half-power edge, so the warning is where pointing starts to spend the
+        link's margin. A fleet
         that treats it as a link alarm will chase a margin it has not lost; a fleet that ignores
         it will discover the pattern's quadratic shape over the next seven degrees, where the
         loss goes from 0.5 dB to 12. Two seconds to assert because the gimbal is chasing, ten to

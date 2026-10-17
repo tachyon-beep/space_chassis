@@ -55,9 +55,10 @@ points:
       are adopted. The residual rather than the raw attitude error, and the distinction is what
       makes a gimbal failure diagnosable: `E-DYN-GEOM` says a degree of attitude error is a
       degree of boresight error, and this says how much of it is left once the mechanism has
-      done its work. With the corrected 9.4-degree beam (`vehicle.yaml#comms.antennas`), 2
-      degrees is 0.54 dB down — a *pointing* warning rather than a link warning, which is exactly
-      what apollo's two-sided wording says.
+      done its work. With the published 4.4-degree beam (`vehicle.yaml#comms.antennas`, TN D-6723
+      Table I), 2 degrees is 2.5 dB down, just inside the half-power edge at 2.2 — so apollo's
+      warning marks where pointing starts to cost the link, and the crew has a margin to spend
+      rather than a formality.
 
   - channel: comm.link_margin_db
     from: link_margin_db
@@ -100,8 +101,8 @@ points:
     note: >-
       apollo's enum with its "unexpected switch" event, and the four members are the four
       `vehicle.yaml#comms.antennas` declares — the linter refuses the mismatch. The channel is
-      worth publishing because the members are 26.7 dB and 2 dB apart: an antenna change is a
-      25 dB step in the link budget, and a fleet that cannot see which antenna is selected cannot
+      worth publishing because the members are 25.7 dB and 0 dB apart: an antenna change is a
+      26 dB step in the link budget, and a fleet that cannot see which antenna is selected cannot
       attribute an outage that the selection itself caused.
 
   - channel: comm.tx_power_w

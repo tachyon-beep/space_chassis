@@ -2266,14 +2266,14 @@ edges:
     to: link
     kind: algebraic
     sensitivity:
-      value: -0.54
+      value: -2.48
       unit: "dB per deg"
       basis: derived
-      relation: "the standard quadratic pattern near boresight, G(theta) = G0 - 12*(theta/theta_3dB)^2 dB, whose slope is dG/dtheta = -24*theta/theta_3dB^2. At the 2 deg operating point with theta_3dB = 9.4 deg (vehicle.yaml#comms.antennas.high_gain, itself derived from the gain-beamwidth product) that is -0.54 dB per deg"
+      relation: "the standard quadratic pattern near boresight, G(theta) = G0 - 12*(theta/theta_3dB)^2 dB, whose slope is dG/dtheta = -24*theta/theta_3dB^2. At the 2 deg operating point with theta_3dB = 4.4 deg (vehicle.yaml#comms.antennas.high_gain, TN D-6723 Table I's narrow transmit beam) that is -2.48 dB per deg"
       # The two numbers in that relation, bound by name rather than inlined — which is the whole
       # difference between this and a `computation`. The beamwidth is a figure `vehicle.yaml` owns,
-      # and since the last round the linter ties it to the gain through the ideal-aperture product,
-      # so this edge is now two closures deep: gain to beamwidth to slope. The operating point was
+      # published beside the gain in TN D-6723 rather than derived from it (the array is not an
+      # ideal aperture), so this edge is one closure deep: beamwidth to slope. The operating point was
       # the last of the three living only inside a sentence, which is the shape `mu_moon` had in
       # `mission.yaml#comms_blackout` before it became a field.
       derivation:
@@ -2286,7 +2286,9 @@ edges:
         where the antenna's *shape* becomes a number, and it is quadratic rather than linear —
         which is what apollo_diode.md:163 means by "the gain is steep near the beam edge and flat
         at boresight". The consequence is worth stating because it is counter-intuitive: at 1 deg
-        the loss is 0.14 dB, at 2 deg it is 0.54, at 5 deg it is 3.4 and at 9.4 deg it is 12. A
+        the loss is 0.62 dB, at 2 deg it is 2.5, at 2.2 deg (the half-power edge) it is 3, and at
+        3 deg it is 5.6. apollo's 2-degree warning therefore sits just inside the beam's half-power
+        edge. A
         fleet watching the pointing error therefore sees almost nothing for a long time and then
         loses the link over the last few degrees, and a linear edge could not express that.
 
