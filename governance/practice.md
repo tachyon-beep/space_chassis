@@ -99,7 +99,8 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   when `required` is green and the verdict is not blocking (John, "Merge on clear"); John evaluates the PR and the report
   afterwards and can ask for a revert. Codex findings count once the reviewer confirms them: the Codex review
   bot ran out of credits, so from 20:50 the reviewer ran the Codex CLI, and since 21:21 Codex reviews run on nyx (John,
-  relayed); the reviewer folds them into the report, and they never delay a merge that is already clear and green.
+  relayed); the reviewer folds them into the report, and they never delay a merge that is already clear and green. The raw Codex outputs are kept under
+  `vehicle-status/reviews/codex/` in the shared folder.
 - **Shared decision records take one dated section per verb.** ADR 0004
   (`vehicle/docs/decisions/0004-interlock-evaluation.md`) is being amended by ECLSS (#46), structure
   (#51) and possibly propulsion (#50): each lane adds its own dated, verb-named section and rebases
