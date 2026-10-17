@@ -218,3 +218,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 21:09 ECLSS opens draft #64: the CM surge O2 store as a real 3.7 lb store, `set_o2_source` selects the feeding store, CRYO PRESS caution at 800/950 psia; draft until the full suite and CI are green; merge order unchanged.
 - 21:13 D58: thermal's LM RCS heater zone is `lm_rcs_clusters` (the four quads, 8 × 17.5 W each, calibrated to Apollo 13's 55–97 °F PTC range), not an ascent-stage exterior; power takes `lm_rcs_heaters` 60 → 560 W; fault injection retires `check_thermal_bay_source_scope`; the uncoupled DPS propellant is a confounder (the lump runs colder than LM-3 past about two days). Posted to John for override.
 - 21:25 Governance #63 merged as `f4d576a` (clear with follow-ups, folded in).
+- 21:30 D58's band confirmed as the quad caution limits (LM AOH Table 2.9-3, >241 °F or <130 °F, around the 140 ± 8 °F thermostat); Apollo 13's heaters-off 55–97 °F sits below it by design.
