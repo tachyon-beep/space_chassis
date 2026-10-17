@@ -20755,7 +20755,7 @@ def test_a_node_sourced_channel_is_published_in_the_unit_its_channel_declares():
     # **The supply-tank pressure used to be the omitted one, and round 32 gave it a producer.** Its
     # source is no longer a mass: `eclss.o2_supply_pressure_psi` reads `o2_supply_pressure_psi`, the
     # state the ECS study guide's working pressure sizes, and the frame carries it at 900 psig — inside
-    # the channel's own 750-950 band, which the note below holds.
+    # the channel's own 800-975 band, which the note below holds.
     assert values["eclss.o2_supply_pressure_psi"] == pytest.approx(900.0)
     low, high = channels["eclss.o2_supply_pressure_psi"]["range"]
     assert low <= values["eclss.o2_supply_pressure_psi"] <= high
@@ -20983,7 +20983,7 @@ def test_the_ledger_block_names_channels_that_nothing_publishes(tmp_path):
 def test_the_oxygen_supply_pressure_is_a_state_with_a_published_starting_value(tmp_path):
     """A watched channel had a mass for a producer; the ECS guide publishes what belongs there.
 
-    `eclss.o2_supply_pressure_psi` is apollo's 750-950 psi indication — a low-pressure event and a
+    `eclss.o2_supply_pressure_psi` is apollo's psi indication, banded at the AOH's 800-975 caution pair, — a low-pressure event and a
     >5 psi/min fall, four declared faults perturbing it, and the channel that corroborates a leak by
     falling while the cabin pressure is held. It read `o2_csm`, the shared oxygen *stock*, in
     kilograms: a pressure is not a function of a mass, so round 30 omitted it rather than publishing

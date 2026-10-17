@@ -293,7 +293,6 @@ thresholds:
     latched: true
     severity: CAUTION
     acts: crew
-    point_units: "psia"
     provenance:
       basis: historical
       source: >-
@@ -316,7 +315,6 @@ thresholds:
     latched: true
     severity: CAUTION
     acts: crew
-    point_units: "psia"
     provenance:
       basis: historical
       source: >-
