@@ -50,3 +50,6 @@ testpaths = [
 ]
 addopts = "-q"
 filterwarnings = ["error::DeprecationWarning"]
+markers = [
+    "quiet_coast_full: the 120,000-tick quiet-coast runs (QUIET_COAST_FULL=1); CI runs them in their own job",
+]

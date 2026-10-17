@@ -1,0 +1,19 @@
+# Policy D: poor (09 §5). Everything on, and the primary loop's only running pump stopped "to save
+# power" before playing. No flow: the radiator and the evaporator see no coolant, the loop keeps its
+# load, and the supply warms past 10 C. The physical chain is coolant_pump -> coolant_flow_kg_s ->
+# radiator_rejection_w / evaporator_duty_w -> coolant_loop_t (the supply).
+# (The pump's switch stays on: `set_load csm_coolant_pump_1 off` would take bus B to 325 W, under the
+# single cell's published current envelope, where the bus solve gives no value.)
+policy: d
+name: pump_off
+expected_class: physical_loss
+commands:
+  - {tick: 0, verb: set_comm_mode, arguments: {mode: sband_high}}
+  - {tick: 0, verb: select_antenna, arguments: {antenna: high_gain}}
+  - {tick: 0, verb: set_telemetry_profile, arguments: {profile: high}}
+  - {tick: 0, verb: set_power_amplifier, arguments: {state: "on"}}
+  - {tick: 0, verb: set_coolant_pump, arguments: {loop: loop_primary, pump: pump_1, state: "off"}}
+  - {tick: 0, verb: play_recorder, arguments: {state: "on"}}
+  - {tick: 90000, verb: play_recorder, arguments: {state: "off"}}
+  - {tick: 90000, verb: set_power_amplifier, arguments: {state: "off"}}
+  - {tick: 90000, verb: set_comm_mode, arguments: {mode: sband_low}}

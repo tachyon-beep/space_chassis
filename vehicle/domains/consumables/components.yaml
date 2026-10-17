@@ -329,32 +329,51 @@ consumers:
   - id: fuel_cell_o2
     stock: o2_csm
     edge: E-O2-DRAW
-    rate_kg_s: 0.000152690537
+    rate_kg_s: 0.000152691
     derivation:
-      expression: per_joule_kg * demand_w
+      expression: per_amp_kg * demand_w / budget_v
       inputs:
-        per_joule_kg: coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value
+        per_amp_kg: coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value
         demand_w: domains/power/components.yaml:load_budget.csm_total_demand_w
+        budget_v: vehicle.yaml:electrical.fuel_cells.output_v
     provenance:
       basis: derived
       relation: >-
-        the cell's oxygen draw at the CSM's declared 1,723 W demand: 8.8619e-8 kg/J x 1,723 W =
-        1.526905e-4 kg/s, which is 0.550 kg O2 per hour. **This entry said the kg-per-kWh figure was
+        the cell's oxygen draw at the CSM's declared 1,723 W demand, budgeted at the modules' rated
+        29 V: 2.56996e-6 kg/s per ampere x 1,723 W / 29 V = 1.526905e-4 kg/s, which is 0.550 kg O2
+        per hour. **A budget, not the tick**: the plant charges the stock per ampere of the solved
+        module current (`power.fuel_cell_current_a`, ADR 0003 item 3), which at the coast bus's
+        30.4 V is 4.6 % less than this 29 V figure. **This entry said the kg-per-kWh figure was
         "NOT published" and it was one division from three published numbers** — the reactant rate
         per ampere, the module's rated 29 V and the reaction's mass ratio — see
         `coupling.yaml#edge E-FC-DRAW-O2.sensitivity`. What changed the entry
         rather than only the claim is that `rate_kg_s` is an absolute rate and it needs a load:
         `load_budget.csm_total_demand_w` supplies it, so the draw is a product of two declarations
         instead of a fourth place for one number
+      cross_check: >-
+        **a second document gives the same per-ampere rates.** The J-mission EPS training document
+        (October 1971, https://www.ibiblio.org/apollo/Documents/J%20Mission%20Electrical%20Power%20System%20Oct%201971.pdf),
+        p. 2.6-21, "Reactant Consumption and Water Production": O2 = 2.04 x 10^-2 I lb/hr,
+        H2 = 2.57 x 10^-3 I lb/hr, H2O = 2.297 x 10^-2 I lb/hr (10.42 cc per ampere-hour), with a
+        table from 0.5 to 100 A. This vehicle's figures at the rated 29 V give 8.8619e-8 x 29 x 3600
+        = 9.2518e-3 kg = **0.020397 lb O2 per ampere-hour** (0.01 % from 0.0204), 1.1166e-8 x 29 x
+        3600 = **0.0025700 lb H2**, and 0.020397 x 1.126 = **0.022967 lb water** (0.01 % from
+        0.02297). Effectivity: the J document describes the Apollo 15-17 CSM, whose fuel-cell
+        powerplants are the same Block II design as the Apollo 11 CSM's; its tank capacities (three
+        O2 tanks of 320 lb usable, three H2 of 28 lb, pp. 2.6-6 and 2.6-14) are a J-mission
+        configuration and are not used here. The validation case a WP04/WP06 rule must pass: a
+        fuel cell held at 25 A for one hour draws 0.510 lb O2 and 0.0643 lb H2 and makes 0.574 lb
+        of water, independent of the bus voltage the rule computes
   - id: fuel_cell_h2
     stock: h2_csm
     edge: E-H2-DRAW
-    rate_kg_s: 1.9239018e-05
+    rate_kg_s: 1.92391e-05
     derivation:
-      expression: per_joule_kg * demand_w
+      expression: per_amp_kg * demand_w / budget_v
       inputs:
-        per_joule_kg: coupling.yaml:edges.E-FC-DRAW-H2.sensitivity.value
+        per_amp_kg: coupling.yaml:edges.E-FC-DRAW-H2.sensitivity.value
         demand_w: domains/power/components.yaml:load_budget.csm_total_demand_w
+        budget_v: vehicle.yaml:electrical.fuel_cells.output_v
     provenance:
       basis: derived
       relation: >-
@@ -364,12 +383,13 @@ consumers:
   - id: fuel_cell_product_water
     stock: water_potable
     edge: E-FC-WATER
-    rate_kg_s: 0.000171929544662
+    rate_kg_s: 0.00017193
     derivation:
-      expression: per_joule_kg * demand_w * kg_water_per_kg_o2
+      expression: per_amp_kg * demand_w / budget_v * kg_water_per_kg_o2
       inputs:
-        per_joule_kg: coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value
+        per_amp_kg: coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value
         demand_w: domains/power/components.yaml:load_budget.csm_total_demand_w
+        budget_v: vehicle.yaml:electrical.fuel_cells.output_v
         kg_water_per_kg_o2: coupling.yaml:edges.E-FC-WATER.sensitivity.value
     provenance:
       basis: derived

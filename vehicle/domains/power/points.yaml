@@ -63,10 +63,29 @@ points:
     derivation: "the tie's commanded and actual position, including a trip"
     note: "a service state, not a physical claim: it says what the switchgear did, not what the voltage is"
   - channel: power.load_margin_w
-    from: fuel_cell_power_w
+    from: bus_a_load_w
     layer: estimate
-    inputs: [power.dc_bus_a_v, power.bus_a_current_a]
-    derivation: "available generation minus present demand, published at 1 Hz"
+    # ADR 0004 operator item 1, decided by John 2026-10-16: the margin on main bus A is the rated
+    # output of the two fuel-cell modules that feed it (`components.fc_[1-2].normal_bus`, TN D-7609
+    # p. 5) less the bus's load. Each module's `rated_w` is the top of the AOH p. 2.6-2 normal
+    # envelope, 1,420 W (WP02 E-1). Until this, the point declared `inputs` with prose for
+    # arithmetic and `from: fuel_cell_power_w`, so the frame published the cells' *output* under the
+    # margin's name, and nothing could evaluate `power.load_margin_low`. Bus A only, because the
+    # interlock's inputs were bus A's; fuel cell 3's margin on bus B is not published.
+    derivation:
+      expression: fc_1_w + fc_2_w - load_w
+      inputs:
+        fc_1_w: domains/power/components.yaml:components.fc_1.rated_w
+        fc_2_w: domains/power/components.yaml:components.fc_2.rated_w
+        load_w: bus_a_load_w
+    derivation_provenance:
+      basis: chosen
+      reason: >-
+        the quantity is the operator's choice of what "available generation minus present demand"
+        means (ADR 0004 operator item 1); every number in it is sourced: `rated_w` (AOH p. 2.6-2,
+        JEPS p. 2.6-2, 400-1,420 W normal) and the bus A routing (TN D-7609 p. 5). What it omits: a
+        module's capacity above its normal envelope, a failed module (the routing is the normal
+        one, not a switch state), and bus B
     note: >-
       One of the three inferred quantities the spike exists to exercise (simulator-design.md
       §3.9). Its <100 W and negative events make it the channel an agent watches to decide

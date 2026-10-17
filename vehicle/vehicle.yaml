@@ -1205,7 +1205,23 @@ consumables:
         leak, 0.023 kg/h" as though it were the CSM's — which is 0.0507 lb/hr, the same seal's number
         to within rounding. So `csm_kg_per_h` is that borrowed figure, declared here rather than left
         implicit, and what closes it is a CSM cabin-leak measurement. Two cabins with one number
-        between them was the state of this field until round 67 and it read as though it had two
+        between them was the state of this field until round 67 and it read as though it had two.
+
+        **Searched in WP02 (2026-10-15); the value is unchanged and now bounded.** The CM's
+        specification is "0.2-lb/hr maximum external leakage" (NASA TN D-6718, March 1972, p. 4;
+        https://ntrs.nasa.gov/api/citations/19720012252/downloads/19720012252.pdf) and Program Apollo
+        Working Paper 1321 (1967) p. 3 gives the same 0.2 lb/hr at 5 psia, so the bound is
+        0 < csm_kg_per_h <= 0.0907 kg/h. The oxygen allowance was 4.8 lb/day for cabin leakage
+        (Brady et al., Biomedical Results of Apollo, NASA SP-368, ch. 5, p. 520;
+        https://ntrs.nasa.gov/api/citations/19760005606/downloads/19760005606.pdf), and p. 520
+        says flown use was below allocation "primarily because of lower cabin leakage". The one
+        per-item flight figure found is Table 2 of the same chapter (p. 522), Apollo 15 CM (CSM-112,
+        12.3 days): its OCR prints seven values for eight rows; read in source order with the
+        puncture row empty they sum to the table's 108.9 lb total and put cabin leakage at
+        2.68 kg (5.9 lb), 0.0091 kg/h. That reading is an inference from the layout rather than a
+        quotation, and a J-mission CM is not CSM-107, so it is context and a validation case rather
+        than this value. The same chapter (p. 537) gives LM leakage over Apollo 11-17 as 14-23 g/h
+        at 35 kN/m2, which brackets `lm_kg_per_h`'s 22.7 g/h at its upper end
   co2_removal:
     lm_primary_man_hours: 41
     lm_secondary_man_hours: 78
@@ -1731,8 +1747,9 @@ electrical:
     # **The operating point the reactant chain was missing.** `bus_v` is the rated band and these
     # three are the numbers a division needs: the nominal the band is centred on, the cell count
     # that makes it a per-cell voltage, and the reactant rate per ampere of stack current. Every
-    # consumer derives from them rather than restating them — `per_joule_kg` on `fc_o2_draw_kg_s`,
-    # both reactant edges and the waste-heat edge.
+    # consumer derives from them rather than restating them — both reactant edges (per ampere since
+    # ADR 0003 item 3, so `output_v` no longer enters them), the consumables budgets and the
+    # waste-heat edge.
     output_v: 29
     cells_per_module: 31
     h2_lb_per_h_per_a: 0.00257
@@ -1762,8 +1779,9 @@ electrical:
         denied was one division away from three published numbers.** The per-kWh figure is the
         per-joule figure times 3.6e6, and the per-joule figure is the hydrogen rate divided by the
         module's output voltage — so the reactant chain's last unknown was the *operating point*,
-        not an electrochemistry. 0.3216 kg O2 per kWh and 0.0402 kg H2 per kWh are now derived on
-        `domains/power/components.yaml#state fc_o2_draw_kg_s.per_joule_kg` rather than quoted here.
+        not an electrochemistry. 0.3216 kg O2 per kWh and 0.0402 kg H2 per kWh at 29 V were derived
+        rather than quoted here; since ADR 0003 item 3 the draw is charged per ampere
+        (`coupling.yaml#edges.E-FC-DRAW-O2`), so the per-kWh figure depends on the terminal voltage.
         The source's own oxygen-to-hydrogen ratio is 7.936 where the stoichiometry is exactly 8, and
         **the corpus carried this ratio as 0.125, the rounded 8:1, and its own relation computed
         0.1260 from the molar masses two lines away** — a live contradiction between a value and

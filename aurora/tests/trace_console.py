@@ -8,6 +8,18 @@ rewrite; a result's publication), it appends one JSON line: the monotonic clock,
 paths, and the inode then at the destination. Nothing in the console changes; the hook only
 observes. It exists to tell a batch erased between a claim's read and its rewrite from one that was
 claimed late, for `test_the_vehicle_passes_the_contract_probe`, without editing the vehicle.
+
+**The console now works through directory descriptors** (`open(..., dir_fd=)`, `os.replace(...,
+src_dir_fd=, dst_dir_fd=)`), so the paths it passes are relative to a window. A rename's audit event
+carries its descriptors, and its destination is resolved through `/proc/self/fd`. An open's event
+carries none, so a relative `console.json` is recorded as the console opened it, without an inode:
+the console opens no other file of that name.
+
+**And it claims by taking, not by rewriting (#39 option B).** A claim renames `console.json` aside
+(`console_take`, a rename whose *source* is the console) and puts the emptied console back with
+`os.link`, which never replaces a file (`console_link`); a result is published by a rename or a link
+into `output/`. A `console_replace` (a rename *onto* `console.json`) is what the claim did before
+option B, and is still recorded so a trace shows one if it ever comes back.
 """
 
 from __future__ import annotations
@@ -30,6 +42,14 @@ def main() -> None:
         except OSError:
             return None
 
+    def resolve(path: str, dir_fd) -> str:
+        if os.path.isabs(path) or not isinstance(dir_fd, int) or dir_fd < 0:
+            return path
+        try:
+            return os.path.join(os.readlink(f"/proc/self/fd/{dir_fd}"), path)
+        except OSError:
+            return path
+
     def record(event: str, **fields) -> None:
         nonlocal inside
         inside = True
@@ -47,13 +67,26 @@ def main() -> None:
             path = args[0]
             if isinstance(path, (str, bytes, os.PathLike)):
                 path = os.fsdecode(path)
-                if path.endswith("console.json") and os.path.realpath(path).startswith(root):
+                if os.path.basename(path) != "console.json":
+                    return
+                if not os.path.isabs(path):
+                    record("console_open", path=path, mode=str(args[1]), inode=None)
+                elif os.path.realpath(path).startswith(root):
                     record("console_open", path=path, mode=str(args[1]), inode=inode(path))
-        elif event == "os.rename":
-            source, destination = os.fsdecode(args[0]), os.fsdecode(args[1])
+        elif event in ("os.rename", "os.link"):
+            source = resolve(os.fsdecode(args[0]), args[2] if len(args) > 2 else None)
+            destination = resolve(os.fsdecode(args[1]), args[3] if len(args) > 3 else None)
             if not os.path.realpath(destination).startswith(root):
                 return
-            if destination.endswith("console.json"):
+            if event == "os.link":
+                if destination.endswith("console.json"):
+                    record("console_link", source=source, path=destination)
+                elif f"{os.sep}output{os.sep}" in destination:
+                    record("result_publish", path=destination)
+                return
+            if os.path.basename(source) == "console.json":
+                record("console_take", path=source, taken_as=destination)
+            elif destination.endswith("console.json"):
                 record(
                     "console_replace",
                     source=source,

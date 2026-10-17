@@ -1,0 +1,204 @@
+# The quiet-coast episode (`../docs/vehicle-completion/09-quiet-coast-episode.md` in the root `docs/`,
+# §1, §2, §5; ADR 0003 `docs/decisions/0003-quiet-coast-model-corrections.md`). The vehicle itself
+# starts in passive thermal control; this scenario starts it in the sun-on-radiator hot hold, which
+# applies only inside the episode (ADR 0003 item 9, John 2026-10-15: "Hold in episode only").
+#
+# One scenario, four scripted policies (`quiet_coast/policy_{a,b,c,d}.yaml`), one evaluator
+# (`tools/episode_eval.py`). The plant reads `scenario`, `initial` and `verbs` (`plant.load_scenario`);
+# a policy's commands become the scenario's `script`. Everything under `episode:` is the evaluator's:
+# the plant never reads it.
+#
+# FROZEN 2026-10-15, before any policy was judged, on the feasibility run recorded under
+# `episode.feasibility`. The thresholds are 09 §5's and the vehicle's own profiles', copied rather
+# than tuned; D1, D2 and W_min carry their basis beside them. A change to any number in this file
+# is a new episode, not a re-run of this one.
+
+scenario: quiet_coast
+
+initial:
+  # environment hold (owned by the integrator): 1,361 W/m2 x 0.2 x 9.1 m2, 09 §2
+  environment_heat_w: 2477.02
+  # The MET-0 equilibrium under the hold (ADR 0003 item 10, B5): the panel's fixed point at
+  # 2,477.02 W with the loop at its 280.35 K supply and the 1,651 W MET-0 collected load, and the
+  # evaporator carrying the rest, 1,651 - 505.8 W. Held by `tests/test_thermal_rules.py`.
+  zone_radiator_t: 295.65
+  evaporator_duty_w: 1145.2
+  # The task volume D1 + D2 on tape at MET 0 (ADR 0003 item 7; `episode.objective`).
+  recorder: 92160000
+
+# The episode's verb allow-list (09 §4): the eight verbs the policies use. Everything else, `start_burn`
+# and the RCS verbs among them, is refused by the plant's `Scenario.admit`.
+verbs:
+  - set_load
+  - set_power_amplifier
+  - play_recorder
+  - select_antenna
+  - set_comm_mode
+  - set_telemetry_profile
+  - set_coolant_pump
+  - set_evaporator_feed
+
+episode:
+  phase: translunar_coast
+  start_tick: 0
+  # 40 min at the mission's 50 Hz: 2,400 s = 120,000 ticks (09 §2).
+  duration_ticks: 120000
+  tick_hz: 50
+
+  objective:
+    # M: delivered_bits >= D1 by MET 40 min. S: delivered_bits >= D1 + D2 by MET 40 min (09 §5).
+    delivered_state: delivered_bits
+    recorder_state: recorder
+    deadline_tick: 120000
+    d1_bits: 46080000
+    d2_bits: 46080000
+    basis:
+      class: chosen
+      relation: >-
+        ADR 0003 item 7 (B2): the playback volume is a task declaration, not physics. Each block is
+        15 min of playback at the configured 51,200 bit/s (`comms` `playback_rate.play_rate_bps`),
+        900 s x 51,200 = 46,080,000 bits, equivalently 8 h of the 1,600 bit/s low-rate record
+        (`telemetry_rate` at MET 0). D1 + D2 = 92,160,000 bits = 1,800 s of the 2,400 s contact (75 %),
+        which leaves the 600 s that a policy may spend on set-up and on a cool-down between windows.
+      bound: >-
+        D1 + D2 below the recorder's capacity, which is UNCONFIGURED (`components[recorder].capacity_bit`,
+        B2): the bound is declared, not checked. (D1 + D2) / r_play = 1,800 s <= 2,400 s.
+      chosen_after: "the feasibility run below; D1 and D2 were fixed before any policy class was asserted"
+
+  # Margins, judged on per-tick truth (09 §5). `limit` is the margin; `loss` is the loss condition
+  # with its declared dwell from the vehicle's own threshold (`dwell_s`), where 09 §5 gives one.
+  thresholds:
+    bus_a_v:
+      state: bus_a_v
+      margin: {at_least: 27.0}
+      loss: {below: 26.5}
+      unit: V
+      source: "09 §5; `power` components `csm_bus_a.v_band` [27.0, 30.5] lower edge; 26.5 V the loss in 09 §5"
+    bus_b_v:
+      state: bus_b_v
+      margin: {at_least: 27.0}
+      loss: {below: 26.5}
+      unit: V
+      source: "as bus_a_v; `csm_bus_b.v_band` [27.0, 30.5]"
+    coldplate:
+      state: zone_csm_avionics_t
+      margin: {below_c: 50.0}
+      loss: {above_c: 50.0, dwell_s: 10.0}
+      unit: K
+      source: "`thermal` profiles `avionics_plate_high` (>50 C, dwell_assert_ms 10000), apollo_diode.md:105"
+    comm_amp:
+      state: comm_amp_t
+      margin: {below_c: 60.0}
+      loss: {above_c: 60.0, dwell_s: 5.0}
+      unit: K
+      source: "`thermal` profiles `comm_amp_high` (>60 C, dwell_assert_ms 5000), apollo_diode.md:106"
+    coolant_supply:
+      state: coolant_loop_t
+      margin: {below_c: 10.0}
+      loss: {above_c: 10.0, dwell_s: 10.0}
+      unit: K
+      source: "`thermal` profiles `coolant_supply_high` (>10 C, dwell_assert_ms 10000), apollo_diode.md:101; `coolant_loop_t` is the supply station"
+    cabin:
+      state: zone_csm_cabin_t
+      margin: {between_c: [10.0, 30.0]}
+      unit: K
+      source: "09 §5 (cabin within 10-30 C); a slow margin, no loss condition"
+
+  consumables:
+    o2_csm_kg:
+      at_end: {at_least: 55.8}
+      source: "`consumables` profiles `o2_reserve_20` (20 % of 279 kg)"
+    h2_csm_kg:
+      at_end: {at_least: 4.9}
+      source: "`consumables` profiles `h2_reserve_20` (20 % of 24.5 kg)"
+    water_cooling_kg:
+      # W_min.
+      at_end: {at_least: 2.6}
+      loss: {empty_with_demand: evaporator_feed}
+      source: "`consumables` profiles `cooling_water_reserve` (20 % of the 13 kg load)"
+      basis:
+        class: derived
+        relation: >-
+          W_min = the vehicle's own cooling-water reserve floor, 2.6 kg (20 % of 13 kg), the threshold
+          `set_evaporator_feed` is interlocked on. It is not tuned to the policies: the feasibility run
+          spends 0.6-1.2 kg of water over 40 min whatever the policy, so W_min does not bind in
+          this episode, which is 09 §5's B1 finding. Policies are separated by the deadline and
+          by the loop, not by water.
+
+  # A shed or a trip has no rule (09 §4), so a value on these is an apparatus failure.
+  unmodelled: [load_shed_class, lcl_tripped]
+  # Held by scope (09 §4): the tick reports a gap on them and their value may not move. A move is
+  # an apparatus failure ("a held state is written").
+  held: [battery_charge_j]
+
+  # The per-tick trace the evaluator reads: these states every tick, plus every stock's ledger.
+  trace_states:
+    - load_enabled
+    - transmitter_on
+    - recorder_play
+    - comm_mode
+    - antenna_selection
+    - telemetry_rate
+    - link_ok
+    - playback_rate
+    - amp_dissipation_w
+    - bus_a_load_w
+    - bus_b_load_w
+    - bus_a_v
+    - bus_b_v
+    - fuel_cell_current_a
+    - coolant_pump
+    - evaporator_feed
+    - coolant_flow_kg_s
+    - coolant_loop_t
+    - radiator_rejection_w
+    - evaporator_duty_w
+    - loop_primary_load_w
+    - avionics_bay_heat_w
+    - zone_csm_avionics_t
+    - comm_amp_t
+    - zone_csm_cabin_t
+    - environment_heat_w
+    - water_cooling_kg
+    - o2_csm_kg
+    - h2_csm_kg
+    - recorder
+    - delivered_bits
+    - battery_charge_j
+    - load_shed_class
+    - lcl_tripped
+
+  # The states upstream of each loss, in causal order, for the outcome record's chain (09 §6).
+  chains:
+    coolant_loop_t: [coolant_pump, load_enabled, evaporator_feed, coolant_flow_kg_s, evaporator_duty_w, radiator_rejection_w, loop_primary_load_w, coolant_loop_t]
+    zone_csm_avionics_t: [coolant_pump, coolant_flow_kg_s, coolant_loop_t, avionics_bay_heat_w, zone_csm_avionics_t]
+    comm_amp_t: [transmitter_on, amp_dissipation_w, zone_csm_avionics_t, comm_amp_t]
+    bus_a_v: [load_enabled, transmitter_on, bus_a_load_w, bus_a_v]
+    bus_b_v: [load_enabled, bus_b_load_w, bus_b_v]
+    water_cooling_kg: [evaporator_feed, evaporator_duty_w, water_cooling_kg]
+
+  # The feasibility run: the four policies at 120,000 ticks with `tools/episode_eval.py --run`,
+  # on the vehicle at 1d7fbae (the tranche-2 integrate merge) with these thresholds, before any
+  # class was asserted in a test. The policies then stopped playback one tick late (tick N+1), which
+  # C's surplus 1,024 bits exposed; the stops were corrected to N afterwards, and no number in this
+  # file moved. Wall time: 2,835 s per run with four runs at once on a loaded 4-CPU host (23.6 ms a
+  # tick); D alone, later, 4,478 s on the same host under other load. A second run of A-C with the
+  # stops at N, through the opt-in tests, gave the same classes with A and B delivering D1 + D2
+  # exactly (secondary at 90000 and 108000) and C exactly D1, in 2,870-2,907 s each; A stopped at
+  # 60000 and resumed in a fresh process gave the same 120,000 per-tick hashes.
+  feasibility:
+    vehicle_sha: 1d7fbaeb846483a37366e96fa954862bb0423ab6
+    runs:
+      a: "full_success; D1 at 45000, D1+D2 at 90000; water out 1.151 kg; comm_amp max 286.92 K"
+      b: "full_success; D1 at 45000, D1+D2 at 107999; water out 1.051 kg; bus energy 3.73 MJ (A 4.09)"
+      c: "partial; D1 at 45000, never D1+D2; water out 1.035 kg"
+      d: >-
+        physical_loss; coolant_supply above 10 C from tick 8186, held past its 10 s dwell to 8686
+        (chain coolant_flow_kg_s, evaporator_duty_w, radiator_rejection_w, coolant_loop_t); the
+        cabin leaves 10-30 C at 117052; data objective met regardless
+    margins: >-
+      No margin crossed in A, B or C. Tightest is coolant_supply's 2.8 K at MET 0 (the
+      equilibrium's), the same in all three; buses keep 3.4 V or more over 27 V. Water ends at
+      11.8-12.0 kg against W_min 2.6 kg. A and B separate by delivery tick, water and bus energy,
+      not by margin minima (09 §5 B1).
+    conservation: "o2, h2, cooling_water, data and every other stock pass in all four runs"

@@ -137,6 +137,14 @@ commands:
     gate: {kind: preference, variable: power_amplifier_<transmitter>_enable}
     interlocks: [power.bus_a_undervoltage, power.load_margin_low, thermal.comm_amp_high,
                  tx_power_high]
+    interlocks_when:
+      argument: state
+      values: ["on"]
+      why: >-
+        all four guard switching the amplifier *on* (ADR 0004 §Direction): a sagging bus, a thin
+        margin, a hot amplifier and a high draw are each made worse by the amplifier and ended by
+        switching it off. Declared for the whole verb, a tripped guard refused `state=off` — the one
+        command that ends the cycle the amplifier starts
     conflict_domain: comms.amplifier
     allowed_phases: [translunar_coast, lunar_orbit, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast]
@@ -145,9 +153,10 @@ commands:
     execution_class: declarative
     maximum_queue_age_s: 60
     help: >-
-      Switch the power amplifier on or off. It is a 36 W step on the bus and a 4x RF gain, and
-      the interlock list is the interesting part: two electrical guards, one thermal, and one on
-      the transmitter's own draw. `comm_amp_high` is a *thermal* threshold in an electrical verb's
+      Switch the power amplifier on or off. It is a 72 W step on the bus (the amplifier's DC input,
+      on top of the transceiver's 36 W) and a 4x RF gain, and the interlock list is the interesting
+      part: two electrical guards, one thermal, and one on the transmitter's own draw, all on
+      switching it on; switching it off is never refused by them. `comm_amp_high` is a *thermal* threshold in an electrical verb's
       list, and it is there because the amplifier is a member of the cycle it can start — a hot
       amplifier draws more current for the same output, and that current returns to the bus that
       is already sagging. A2 rather than A1 for the same reason `start_burn` is: this verb can
@@ -200,6 +209,36 @@ commands:
         reason: one publisher-level verb listed per-domain by every spec that mentions it is how
         one verb acquires six argument schemas (vocabulary V-06), so it lives in the domain whose
         resource it spends
+
+  - verb: play_recorder
+    argument_schema:
+      state: {type: enum, values: ["on", "off"]}
+    authority: A1
+    gate: {kind: preference, variable: play_recorder_enable}
+    interlocks: none
+    conflict_domain: comms.recorder
+    allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
+                     lunar_orbit_docked, transearth_coast, entry]
+    irreversible: false
+    idempotent: true
+    execution_class: declarative
+    maximum_queue_age_s: 60
+    help: >-
+      Play the on-board record to the ground, or stop. While playing, the recorder drains at the
+      high bit rate, 51.2 kbit/s, but only while the link can carry it: the high-gain antenna
+      selected, the S-band high-rate mode at the high telemetry profile, and the power amplifier
+      on. On any other link the recorder holds what it has, so playing over an omni loses
+      nothing and delivers nothing. Declarative and reversible: stopping keeps the rest of the
+      record for the next contact.
+    provenance:
+      basis: chosen
+      reason: >-
+        the quiet-coast task's verb (`09-quiet-coast-episode.md` §1). Apollo replayed stored data
+        over the high-gain antenna (`apollo_diode.md:903`) and had tape-recorder play controls on
+        the crew panel and by up-telemetry; the exact switch is not sourced (B2), so the verb is
+        the declared form. The playback rate is the published high bit rate, 51.2 kbit/s
+        (`apollo_diode.md:165`), because the DSE's own playback rate was not found (ADR 0003
+        item 7)
 
 # --------------------------------------------------------------------------------------
 # Deliberately absent.

@@ -53,7 +53,7 @@ domain: comms
 natural_rate_hz: 1
 
 reads: [bus_a, coldplate_t, vehicle_dynamics, command_executive]
-writes: [link, antenna_geometry]
+writes: [link, antenna_geometry, data_recorder, ground_received]
 
 # --------------------------------------------------------------------------------------
 # What the link is made of. All of it is already in `vehicle.yaml#comms`; these entries are
@@ -135,7 +135,7 @@ components:
       basis: historical
       source: "apollo_diode.md:157 (72 W input) and NR ch.18 (11.2 W RF)"
       note: >-
-        a 36 W electrical step and a 4x RF gain, and the one component on this vehicle whose
+        a 72 W electrical step and a 4x RF gain, and the one component on this vehicle whose
         *operation* is a hazard. `apollo_diode.md:1140` and `:1158` make it the trigger of the
         degraded chain and explicitly not its root cause: the amplifier does not fail, it
         *exposes* — a marginal pump, a weak contactor, a bus with less margin than anybody
@@ -174,7 +174,10 @@ components:
   - id: recorder
     kind: stock
     class: storage
-    capacity: UNCONFIGURED
+    # In bits, the unit `state recorder` counts. Owed, and the quiet-coast episode does not need it
+    # to advance: playback only drains, so the stock never meets its ceiling, and ADR 0003 item 7
+    # (B2) bounds the task volume D1 + D2 below this unknown capacity instead.
+    capacity_bit: UNCONFIGURED
     provenance:
       basis: apollo
       ref: "apollo_diode.md:903"
@@ -183,7 +186,12 @@ components:
         stored information", which is what makes a lunar occultation an operational condition
         rather than a data loss. Capacity is owed and matters: it is the bound on how long a
         blackout can last before the vehicle starts choosing what to forget, and nobody has
-        published a figure for either spacecraft's recorder in the sources reached
+        published a figure for either spacecraft's recorder in the sources reached. Searched for
+        the block II data storage equipment (DSE) in the quiet-coast pass: TN D-7598 p. 7 gives
+        only "14 tracks on 1-inch tape at 15 in/sec" for the development flight instrumentation
+        recorders, and TN D-7684 p. 2 says only that "the CSM could record data for later
+        transmission" (`09-quiet-coast-episode.md` §9). What would answer it is the CSM/LM
+        Systems Handbook telecom section or AOH Vol 1 §2.8
 
   - id: gimbal
     kind: discrete
@@ -212,11 +220,13 @@ components:
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [comm_mode, antenna_selection, carrier_lock, telemetry_rate, blackout, frame_loss, recorder]
+internal_order: [comm_mode, antenna_selection, carrier_lock, telemetry_rate, recorder_play, blackout, frame_loss]
 internal_order_note: >-
   the link chain: the mode selects the antenna, the antenna decides whether the carrier locks,
-  the lock decides the rate, and the blackout state, the frame-loss counter and the recorder
-  are what the chain costs — the two counters last because they count the states above them.
+  the lock decides the rate, and the playback switch follows the rate it plays at; the blackout
+  state and the frame-loss counter are what the chain costs, last because they count the states
+  above them. The recorder left the sentinel for `data_recorder` when playback made it a stock
+  with an edge, because no edge can reach the sentinel.
 
 state:
 
@@ -281,18 +291,31 @@ state:
           the draw is the selected transmitter's `dc_w`, and *which* transmitter is a second
           argument of the same verb — `vehicle.yaml#comms.transmitters` carries 36 W for
           `sband_transceiver` and 72 W for `sband_power_amplifier`, and the verb's own help calls it
-          "a 36 W step on the bus and a 4x RF gain". A table over two arguments is not a mapping
+          "a 72 W step on the bus" (it said 36 W until ADR 0004's review). A table over two arguments is not a mapping
           over one, which is why this is `computed` rather than `maps`
         why: >-
           `tx_power` is also where the flagship thermal cycle closes: a hot amplifier draws more
           current for the same output, and that returns to the bus as extra load
-        selects: UNCONFIGURED
+        selects: transmitter_on
         note: >-
-          which transmitter is on has no state. `vehicle.yaml#comms.transmitters` declares the two
-          articles with their `dc_w` and `rf_w`, and the domain's `tx_power` is the draw; what is
-          missing is the switch position itself — a state keyed by transmitter holding on or off,
-          which is the same shape as `antenna_selection` three lines up and which the link budget
-          and the flagship cycle both need
+          the switch position is `transmitter_on`, which this verb moves, and `tx_power`'s rule
+          (`domains/comms/rules.py`) reads it. The verb's optional `transmitter` argument is not
+          discriminated: the state is the CSM amplifier's, and the LM's transmitter has no switch
+          state on this vehicle yet
+    # The rule's parameters (`domains/comms/rules.py:tx_power`): the transmit chain's DC input is
+    # the transceiver's, always, plus the amplifier's while it is switched on.
+    transceiver_dc_w: 36
+    amplifier_dc_w: 72
+    parameter_provenance:
+      basis: historical
+      source: "vehicle.yaml#comms.transmitters (apollo_diode.md:157: 36 W input for the basic S-band transceiver, 72 W for the power amplifier); the same figures as `domains/power/components.yaml#loads.csm_sband_transceiver` and `.csm_sband_power_amplifier`, which are the loads' one home"
+      note: >-
+        this state is the *published measurement* of the chain's DC input (`comm.tx_power_w`),
+        not a load: power counts the two loads from its own inventory (ADR 0003 item 5), and
+        nothing adds this number to the bus. Whether the 72 W is the amplifier alone or the
+        chain with the amplifier (apollo_diode.md:157 reads "72 W input for the S-band power
+        amplifier"; the verb's help said a 36 W step until ADR 0004's review) is an open question the power
+        inventory carries; this rule follows the inventory, 36 + 72
     provenance:
       basis: apollo
       ref: "apollo_diode.md:168, :157"
@@ -304,6 +327,55 @@ state:
         amplifier draws more current for the same output, which returns to the bus as extra
         load" (`coupling.yaml#C-AMP-BUS-PUMP`). One channel carrying both is what makes that
         cycle visible as a single number going the wrong way in two dimensions
+
+  - id: transmitter_on
+    node: link
+    method: discrete
+    unit: "enum[on,off]"
+    initial: "off"
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        the quiet-coast episode's declared start (`09-quiet-coast-episode.md` §5: every policy
+        begins with `set_power_amplifier on`). The power amplifier's switch position after LM
+        extraction was not read out of the Apollo 17 launch checklist in this pass, so this is a
+        stated starting condition rather than the flown one, and a scenario may override it
+    moved_by:
+      - "command:set_power_amplifier"
+    dwell:
+      min_on_s: 10
+      min_off_s: 10
+    provenance:
+      basis: chosen
+      reason: >-
+        the switch position `tx_power`'s `command_value.selects` was owed: whether the S-band power
+        amplifier is energised. A plain on/off rather than a map keyed by transmitter because the
+        CSM has one amplifier and the LM's transmitter has no state yet. Power gates the
+        amplifier's 72 W load on it and thermal gates its heat, both through `link`, which they
+        already read. Ten seconds of dwell (chosen) for the reason `antenna_selection` gives: the
+        switch is a 72 W step and a ~6 dB link change, and one re-commanded every tick is one
+        whose transient a fleet cannot attribute
+
+  - id: amp_dissipation_w
+    node: link
+    method: algebraic
+    unit: W
+    moved_by:
+      - "logic:the power amplifier's DC input less its RF output, while it is switched on"
+    amplifier_dc_w: 72
+    amplifier_rf_w: 11.2
+    provenance:
+      basis: derived
+      relation: >-
+        heat = DC input - RF output = 72 - 11.2 = 60.8 W while `transmitter_on` is `on`, and 0
+        while it is off (`domains/comms/rules.py:amp_dissipation_w`). Efficiency 11.2 / 72 = 15.6 %.
+        The RF leaves the vehicle through the antenna; the rest is heat in the amplifier
+      source: "vehicle.yaml#comms.transmitters.sband_power_amplifier: 72 W input (apollo_diode.md:157) and 11.2 W RF (NR ch.18)"
+      note: >-
+        ADR 0003 item 5: `thermal.comm_amp_t` was sized for 250 W of dissipation against a 72 W
+        input. This is the dissipation that derives from the input and the efficiency, and
+        thermal reads it through `link` for the amplifier's heat. Private: no channel publishes
+        it, because `thermal.comm_amp_c` and `comm.tx_power_w` are the observations
 
   - id: antenna_pointing
     node: antenna_geometry
@@ -502,15 +574,22 @@ state:
         report the antenna's noise as the Moon's shadow
 
   - id: recorder
-    node: internal
+    node: data_recorder
     method: stock
-    unit: "%"
+    unit: bit
     initial: 0
     initial_provenance:
       basis: chosen
-      reason: "the accumulator starts empty and nothing in the mission pre-loads it. It is the *residue* of a fixed-point integration rather than an inventory, so its only honest starting value is zero — and saying so is what separates it from the tanks, whose initial amount is a fact about the pad"
-    quantum: 0.1
-    min_flow_per_s: 0.1
+      reason: >-
+        nothing on tape unless a scenario says so. The data on tape at MET 0 is the episode's task
+        volume D1 + D2 (ADR 0003 item 7, B2), which is a demand rather than a fact about the
+        vehicle, so it is a scenario `initial` override (`plant.load_scenario`) and never a figure
+        in this file
+    quantum: 1
+    min_flow_per_s: 51200
+    quantum_provenance:
+      basis: derived
+      relation: "data is counted in whole bits, and the only flow is playback at 51,200 bit/s (`playback_rate`), which moves 1,024 bits a 20 ms tick: an exact integer, so the drain has no residual"
     provenance:
       basis: apollo
       ref: "apollo_diode.md:903"
@@ -521,12 +600,104 @@ state:
         how long that works, and `vehicle.yaml#comms` does not have the figure — recorded as a
         debt rather than filled in, because the interesting failure is the one where the
         recorder fills and the vehicle must start choosing what to forget. That choice is the
-        same one `apollo_diode.md:901` demands of a degraded link, arriving from the other side
+        same one `apollo_diode.md:901` demands of a degraded link, arriving from the other side.
+        In bits since the quiet-coast task model (`09-quiet-coast-episode.md` §1): playback is a
+        transfer of whole bits to `delivered_bits`, which a percentage of an unknown capacity
+        could not count
+
+  - id: recorder_play
+    node: internal
+    method: discrete
+    unit: "enum[on,off]"
+    initial: "off"
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        playback is the episode's own act and every policy starts it by command
+        (`09-quiet-coast-episode.md` §5); a scenario may override it
+    moved_by:
+      - "command:play_recorder"
+    dwell:
+      min_on_s: 5
+      min_off_s: 5
+    provenance:
+      basis: chosen
+      reason: >-
+        the recorder's play control. Apollo had tape-recorder play and record controls on the
+        crew panel and by up-telemetry, and the exact switch is not sourced (B2), so this is the
+        declared form: on plays the record to the ground at the high bit rate while the link is
+        ok. Five seconds of dwell (chosen), the telemetry profile's own, because playback is spent
+        at that profile's rate
+
+  - id: link_ok
+    node: ground_received
+    method: algebraic
+    unit: bool
+    moved_by:
+      - "logic:the episode's link predicate over the commanded link configuration"
+    high_rate_bps: 51200
+    parameter_provenance:
+      basis: apollo
+      ref: "apollo_diode.md:165"
+      note: "the high telemetry profile's 51,200 bit/s, `vehicle.yaml#comms.rates.high`"
+    provenance:
+      basis: chosen
+      reason: >-
+        ADR 0003 item 8 (B3): the high-bit-rate link's availability is not computable, because
+        the link budget's constant terms are owed (`open_debts`), so the episode declares it as a
+        boundary. True exactly when `antenna_selection` is `high_gain`, `comm_mode` is
+        `sband_high`, `telemetry_rate` is the high profile's 51,200 bit/s and `transmitter_on` is
+        `on` (`domains/comms/rules.py:link_ok`). `blackout` is not read: translunar coast is
+        outside `mission.yaml#comms_blackout.phases_affected`, and its rule is owed. Private
+        truth, published nowhere
+
+  - id: playback_rate
+    node: ground_received
+    method: algebraic
+    unit: bit/s
+    moved_by:
+      - "logic:the playback rate while the recorder plays over an ok link"
+    play_rate_bps: 51200
+    parameter_provenance:
+      basis: chosen
+      reason: >-
+        ADR 0003 item 7 (B2a): the DSE's playback rate was not found, so playback runs at the
+        published high bit rate, 51.2 kbit/s (`apollo_diode.md:165`, "the high-rate/low-rate
+        telemetry distinction was 51.2 and 1.6 kbit/s"; `09-quiet-coast-episode.md` §1)
+    provenance:
+      basis: chosen
+      reason: >-
+        `play_rate_bps` while `recorder_play` is `on` and `link_ok`, and 0 otherwise
+        (`domains/comms/rules.py:playback_rate`). It drives `E-REC-GND`, so it is the drain the
+        recorder sees; the recorder advances first in the schedule, so the drain follows the
+        command by one tick
+
+  - id: delivered_bits
+    node: ground_received
+    method: stock
+    unit: bit
+    initial: 0
+    initial_provenance:
+      basis: chosen
+      reason: "nothing has been delivered at the episode's start; the stock counts what this episode's playback lands"
+    quantum: 1
+    min_flow_per_s: 51200
+    quantum_provenance:
+      basis: derived
+      relation: "the recorder's own quantum, which a transfer between two stocks must share (WP10): one bit, and 1,024 of them a tick at the playback rate"
+    provenance:
+      basis: chosen
+      reason: >-
+        the ground-received data, the quiet-coast episode's completion oracle
+        (`09-quiet-coast-episode.md` §1, §5: M is `delivered_bits >= D1`, S is `>= D1 + D2`).
+        Filled only by `E-REC-GND` from `recorder`, so `recorder + delivered_bits` is the task
+        volume exactly, every tick. **Private truth:** it is in `points.yaml#not_published`,
+        because a fleet that could read the oracle would be reading its own score
 
 # --------------------------------------------------------------------------------------
 open_debts:
 
-  - "Recorder capacity, in the units `comm.recorder_fill_pct` is a percentage of. Not published for either spacecraft in the sources reached, and it is the bound on how long a blackout can last before the vehicle chooses what to forget."
+  - "Recorder capacity in bits (`components[recorder].capacity_bit`), the figure `comm.recorder_fill_pct` is a percentage of. Not published for either spacecraft in the sources reached, and it is the bound on how long a blackout can last before the vehicle chooses what to forget."
   - "Gimbal range and slew rate. Both owed, and both needed to separate a pointing error the gimbal can still fix from one it cannot — which is the difference between `point_hga` being a control action and being a message nobody can act on."
   - "`E-BUS-COMM`'s dB per volt, and `E-PLATE-COMM`'s dB per kelvin. Both need the amplifier's gain-versus-supply and gain-versus-temperature curves, which are not published. They stay UNCONFIGURED and they are the two edges that make the flagship cycle quantitative rather than qualitative."
   - "The LM steerable S-band antenna's gain and beamwidth (`vehicle.yaml#comms.antennas.sband_steerable`). Owed rather than picked, because a gain invented there propagates into `E-GEOM-LINK` and from there into every SNR a fleet ever reads."

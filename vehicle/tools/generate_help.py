@@ -68,6 +68,20 @@ REFUSAL_VOCABULARY = [
     ("PHASE", "the verb is not available in the mission phase the vehicle is in"),
     ("GATE", "an agent-writable gate variable is closed; the variable is named in `state.json`"),
     ("INTERLOCK", "a service-owned condition blocks the verb; no console variable can move it"),
+    (
+        "INTERLOCK TRIPPED",
+        "a guard of this command's direction has read past its threshold for the threshold's dwell "
+        "(ADR 0004); the safing direction of the same verb is not refused by it",
+    ),
+    (
+        "INTERLOCK UNEVALUATED",
+        "a guard of this command's direction cannot be read — the refusal names the link that "
+        "fails — so the command is not accepted unguarded",
+    ),
+    (
+        "NOT IN THIS SCENARIO",
+        "the world was started from a scenario file whose verb list does not include this verb",
+    ),
     ("CONFLICT_SUPERSEDED", "a later command replaced this one before it took effect"),
     ("STALE_STATE", "the evidence the command depends on was older than its maximum decision age"),
     ("EXPIRED", "the command's queue age exceeded its `maximum_queue_age_s` before effect"),
@@ -123,7 +137,10 @@ def describe_argument(name: str, spec: dict[str, Any]) -> str:
     return f"`{name}`: {body}{unit}"
 
 
-def generate(root: Path) -> str:
+def generate(root: Path, verbs: frozenset[str] | set[str] | None = None) -> str:
+    """The command reference. `verbs`, when given, is a scenario's allow-list (`console.py
+    --scenario-file`): the reference then lists those verbs only, because a verb the run refuses
+    `NOT IN THIS SCENARIO` is not one the fleet may ask for, and the reference says so up top."""
     mission = load(root / "mission.yaml")
     # The phase's *window* travels with it. `mission.met_s` is published and the ladder is
     # declared, but the declaration is in the corpus and this file is where a fleet reads the
@@ -152,6 +169,12 @@ def generate(root: Path) -> str:
         "made to it here lasts about that long."
     )
     add("")
+    if verbs is not None:
+        add(
+            "**This run is a scenario** with its own verb list: the verbs below are the ones it "
+            "admits, and any other verb is refused `NOT IN THIS SCENARIO`."
+        )
+        add("")
     add("## How to read an entry")
     add("")
     add(
@@ -185,6 +208,8 @@ def generate(root: Path) -> str:
     for path in sorted(p for p in domains_dir.iterdir() if p.is_dir()):
         commands = load(path / "commands.yaml")
         items = commands.get("commands") or []
+        if verbs is not None:
+            items = [item for item in items if str(item.get("verb")) in verbs]
         if items:
             verbs_by_domain[path.name] = items
             domain_order.append(path.name)
@@ -258,15 +283,28 @@ def generate(root: Path) -> str:
                 # difference between a command being refused and being allowed, so it belongs
                 # where the fleet reads it rather than only in the linter's model. `arm_engine`
                 # is the case: three guards on `state: armed`, and none of them on `safe`.
-                condition = verb.get("interlocks_when")
-                if isinstance(condition, dict) and condition.get("values"):
-                    when = ", ".join(f"`{v}`" for v in condition["values"])
-                    add(
-                        f"Interlocks: {', '.join(f'`{i}`' for i in interlocks)} — only when "
-                        f"`{condition.get('argument')}` is {when}"
-                    )
-                else:
+                # ADR 0004: a list of conditions says which guard covers which direction (the
+                # evaporator's water reserve guards starting it, its supply temperature stopping it).
+                raw = verb.get("interlocks_when")
+                conditions = raw if isinstance(raw, list) else [raw] if isinstance(raw, dict) else []
+                conditions = [c for c in conditions if isinstance(c, dict) and c.get("values")]
+                if not conditions:
                     add("Interlocks: " + ", ".join(f"`{i}`" for i in interlocks))
+                else:
+                    covered = set()
+                    parts = []
+                    for condition in conditions:
+                        names = [str(n) for n in condition.get("interlocks") or interlocks]
+                        covered.update(names)
+                        when = ", ".join(f"`{v}`" for v in condition["values"])
+                        parts.append(
+                            f"{', '.join(f'`{n}`' for n in names)} — only when "
+                            f"`{condition.get('argument')}` is {when}"
+                        )
+                    rest = [str(i) for i in interlocks if str(i) not in covered]
+                    if rest:
+                        parts.append(f"{', '.join(f'`{n}`' for n in rest)} — always")
+                    add("Interlocks: " + "; ".join(parts))
                 add("")
             allowed = verb.get("allowed_phases") or []
             if allowed:

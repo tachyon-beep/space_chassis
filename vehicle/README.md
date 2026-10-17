@@ -28,11 +28,11 @@ interpreted afterwards. Nothing here reads across the boundary: the corpus is *c
 | `plant.md` | The core contract: what `step()` is, the seven integrator classes, determinism, the event queue, and what the plant may never do. |
 | `vehicle.yaml` | Globals: the frame registry and the four scalar conventions, environment, configurations and their mass closure, propulsion, consumable loads, thermal zones, antennas. |
 | `mission.yaml` | The profile: eight phases summing to 192.0 h, the ten-posture execution machine, the freshness manifest, the derived lunar occultation, MET epoch, crew, the Δv budget, objectives, the three scenario postures. |
-| `coupling.yaml` | apollo's coupling graph as data, with typed edges, crisis-point sensitivities, seven declared cycles and the fifteen failure chains. The linter derives the 59-node tick order from it. |
+| `coupling.yaml` | apollo's coupling graph as data, with typed edges, crisis-point sensitivities, seven declared cycles and the fifteen failure chains. The linter derives the 61-node tick order from it. |
 | `presentation.yaml` | The vehicle's side of the frozen window: the epistemic mapping, the six files, the frame envelope, the mirror and its bound, the ring's cadence classes, and which of `diode_probe.py`'s twelve checks the configuration satisfies. |
 | `channels.yaml` | The point dictionary: 148 canonical channels with units, precision, rate, priority, events **and an event class**, a derived maximum decision age and the crew perception bound, plus the registry's own `coverage` block. |
 | `domains/<name>/` | One landed subsystem: `components` · `points` · `profiles` · `commands` · `fault_policy`. |
-| `tools/check_vehicle.py` | The linter. `--order` prints the derived 59-node tick order with the states at each node; `--phases` prints the verb-by-phase view derived from the registries. |
+| `tools/check_vehicle.py` | The linter. `--order` prints the derived 61-node tick order with the states at each node; `--phases` prints the verb-by-phase view derived from the registries. |
 | `tools/generate_help.py` | Emits the vehicle's `HELP.md` from the command registries — §8's only place a verb name may appear, so it is generated rather than written. |
 | `tools/plant.py` | A **reference plant**: loads the world from the configuration, builds the tick order, emits a frame, and runs until it reaches something it cannot compute — where it names what is missing instead of guessing. `--readiness` prints the build order. |
 
@@ -87,7 +87,7 @@ flag.
 It needs `PyYAML`. It is deliberately *not* wired into the operator-side services, which are
 standard library only.
 
-Current state: **composes, with 270 declared debts.** A debt is reported and is fatal under
+Current state: **composes, with 265 declared debts.** A debt is reported and is fatal under
 `--strict`; a refusal is fatal always. The linter refuses a build, it does not warn:
 
 **The direction of travel, because the headline alone reads the wrong way.** The count went
@@ -219,10 +219,10 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 139 states over 59 scheduled nodes, 142
-thresholds, 58 verbs and 128 classified events across the eleven directories, with 270 declared debts
-and every one of them named. **108 of the 139 states are fully configured and 31 carry a debt**, and
-a real tick advances **53** of the 139 states, and the build order's **53** ready are that same set
+**All eleven domains have landed** — 148 channels, 152 states over 61 scheduled nodes, 142
+thresholds, 59 verbs and 128 classified events across the eleven directories, with 265 declared debts
+and every one of them named. **124 of the 152 states are fully configured and 28 carry a debt**, and
+a real tick advances **74** of the 152 states, and the build order's **74** ready are that same set
 — the second of those figures is the objective's own second completion criterion, and both
 are read out of `tools/plant.py`'s output by `test_the_readme_status_matches_the_tools`. Since round
 58 the first line of `--build-order` *is* a tick's own gap list rather than a second opinion about
@@ -235,10 +235,13 @@ recurring finding arriving at its own status section. That completes the design'
 asks for the dictionary and linter, then a spike on electrical, thermal and consumables) and goes
 well past it: what remains is not a domain but the **plant**, and the debts are its shopping list.
 
-Two counts, and the difference is deliberate. The **270** is every obligation the linter can name:
-**192** literal `UNCONFIGURED` scalars and **78** prose obligations in `open_debts` and edge records.
-The plant independently reports **192** literal unset scalars, matching that subtotal; the linter
-also names the **78** prose obligations. Graph sensitivities are reported against their owning
+Two counts, and the difference is deliberate. The **265** is every obligation the linter can name:
+**183** literal `UNCONFIGURED` scalars and **82** prose obligations in `open_debts` and edge records.
+The plant independently reports **182** literal unset scalars, matching that subtotal but for one:
+`tx_power_high` (ADR 0004 operator item 2) has its `assert` now and owes only its `clear`. The linter
+reported the unset pair as one missing limit and reports the lone `clear` as one, so its 265 did not
+move; the plant counts literal fields, so its figure fell by one. The linter also names the **82**
+prose obligations. Graph sensitivities are reported against their owning
 edges rather than added a second time. Until round 46 the scalar subtotal was
 itself incomplete: the domain files were walked for unset values by `check_domain` and the coupling
 graph by its edge walk, so every literal `UNCONFIGURED` was counted *except the eleven in the two
@@ -252,7 +255,7 @@ took them from being read by nobody to being refusals under `--strict`, which is
 is only displayed stops being a debt.
 
 `domains/power/` carries a 25-load inventory with inrush currents and shed classes, and it
-declares 13 states, 17 thresholds, 5 verbs, 12 faults. Two
+declares 16 states, 17 thresholds, 5 verbs, 12 faults. Two
 things in it are worth reading rather than skimming:
 
 - **The load-shed ladder is re-anchored.** `review-findings.md` recommends generalising
@@ -265,7 +268,7 @@ things in it are worth reading rather than skimming:
   observable, because such a fault cannot be diagnosed.
 
 `domains/thermal/` pays the debt `thermal_diode.md:965` created when it refused to infer a
-single TCS constant. It declares 24 states, 17 thresholds, 5 verbs, 11 faults — and the
+single TCS constant. It declares 28 states, 17 thresholds, 5 verbs, 11 faults — and the
 parameters are **derived** wherever a published geometry plus a standard material property
 determines them, with the relation stated so the linter can disagree:
 
@@ -1629,7 +1632,7 @@ The reference plant's `advance()` implements two of `plant.md` §3's seven integ
 this was written, and the split is worth stating plainly: **`algebraic`, `discrete` and `dynamics`
 are rules the configuration deliberately does not carry** — `delay` *is* carried, as a `delay_s` and
 a ring, and the vehicle's one delay state is in *ready now* — and counting them together with the
-states a tick cannot reach because a coupling is missing, so 44 of the 139 states need code.
+states a tick cannot reach because a coupling is missing, so 40 of the 152 states need code.
 (This said *before the plant can walk a whole tick*, which was true when it was written and is not
 now: a tick walks all 139 of them and records what it cannot advance. See *The tick stopped at its
 first debt* below.)
@@ -1821,20 +1824,20 @@ implementer should open first. That is round 58's change, and it replaced a seco
 worklist used to run its own sequence of tests over each state's spec and answer a different question
 from the one a tick answers, which left nine states filed *ready now* and refused by the first tick
 in round 57 and two more still after it. `test_the_build_order_is_the_ticks_own_gap_list` holds the
-two sets equal, and `--readiness` still counts what a *declaration* is missing: 33 states carry a
-debt and 29 of them are in this bucket — the four that differ are debts a tick walks past, which is
+two sets equal, and `--readiness` still counts what a *declaration* is missing: 28 states carry a
+debt and 24 of them are in this bucket — the four that differ are debts a tick walks past, which is
 the distinction between a value nobody has written down and a state nothing can reach.
 
 ```
-139 states, by what blocks them:
+152 states, by what blocks them:
 
-    53   38 %  ready now — the states a real tick advances
-    27   19 %  owes a value — the cheapest to close, and the debt count already tracks them
-    15   11 %  owes an edge — a coupling with no sensitivity, or a state nothing drives
-    44   32 %  owes a rule — `algebraic`, `discrete`, `dynamics` or `hazard`: domain code
+    74   49 %  ready now — the states a real tick advances
+    24   16 %  owes a value — the cheapest to close, and the debt count already tracks them
+    14    9 %  owes an edge — a coupling with no sensitivity, or a state nothing drives
+    40   26 %  owes a rule — `algebraic`, `discrete`, `dynamics` or `hazard`: domain code
 ```
 
-**Just under half the vehicle owes a rule, and that is by construction.** `plant.md` §3's four rule classes are
+**A quarter of the vehicle still owes a rule, and that is by construction.** `plant.md` §3's four rule classes are
 domain code the configuration deliberately does not carry, so the build order is mostly a list of
 missing *code* rather than missing numbers — which is the honest shape of the remaining work and was
 not visible anywhere before this view existed.
@@ -3602,8 +3605,8 @@ ability to observe**. `apollo_diode.md:901` is the sentence it is built around: 
 communications degrade, the simulator should actually have to choose which data arrives. Do not
 merely set `comm.degraded=true` while delivering every telemetry field normally." Every other
 domain models a quantity; this one models a constraint on observation, and it is the only place
-in the vehicle where the experiment's epistemology has a bandwidth. It declares 10 states, 9
-thresholds, 5 verbs, 11 faults, and four things worth reading:
+in the vehicle where the experiment's epistemology has a bandwidth. It declares 16 states, 9
+thresholds, 6 verbs, 11 faults, and four things worth reading:
 
 - **The blackout is derived, planned, and deliberately not alarmed.** The Moon occults the Earth
   whenever the vehicle is within `arcsin(R_moon / r_orbit)` of the anti-Earth direction: a
@@ -6189,7 +6192,7 @@ registered, gated, phased, interlocked, documented in `HELP.md`, reached by an e
 declarations that close it are not new numbers; each is the verb's own help read back:
 
 - `instrumentation_power` ← `set_instrumentation_mode`, which "changes the vehicle's power draw".
-- `tx_power` ← `set_power_amplifier`, "a 36 W step on the bus and a 4x RF gain".
+- `tx_power` ← `set_power_amplifier`, "a 72 W step on the bus … and a 4x RF gain".
 - `link_snr` ← `select_antenna` ("the members are 26.7 dB and 2 dB apart") and `point_hga`.
 - `nav_solution` ← `load_state_vector`, "this changes what the vehicle believes", and
   `select_nav_source`.

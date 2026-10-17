@@ -223,10 +223,10 @@ nodes:
     kind: flow
     unit: kg O2/s
     note: >-
-      oxygen into the cell, set by its electrical output. The per-joule figure is
-      `domains/power/components.yaml#state fc_o2_draw_kg_s.per_joule_kg`, and everything downstream is
-      the same division: the hydrogen draw over the reaction's 0.126 mass ratio, and the water by
-      stoichiometry. **The note here said the per-joule figure was "not published" and the node's
+      oxygen into the cell, set by the modules' current (ADR 0003 item 3). The per-ampere figure is
+      `E-FC-DRAW-O2`'s (it was a per-joule figure until the quiet-coast power rules), and everything
+      downstream is the same division: the hydrogen draw over the reaction's 0.126 mass ratio, and the
+      water by stoichiometry. **The note here said the per-joule figure was "not published" and the node's
       own reason for existing was that everything downstream becomes derivable once it lands** —
       which is what happened, from three published numbers rather than from a source for the
       per-joule figure itself
@@ -286,6 +286,12 @@ nodes:
     kind: flow
     unit: W
     apollo: "261-263"
+    # What the three modules deliver: the load on each main bus, their sum, and the module current
+    # those loads draw. Four states, so every edge leaving this node names the one it reads.
+    state_order: [bus_a_load_w, bus_b_load_w, fuel_cell_power_w, fuel_cell_current_a]
+    state_order_note: >-
+      the bus loads are the switches' sums, the generation is the two added, and the current is each
+      bus's solve at its own load, so each reads only the ones before it (`domains/power/rules.py`)
   # **The converter is a different article, and it was riding on the cell's node.**
   #
   # `source_converter_v` is a voltage and `fuel_cell` is declared in watts, so the two were never
@@ -312,7 +318,21 @@ nodes:
   bus_a:             {domain: power, kind: state,   unit: V,  apollo: "73-75"}
   bus_b:             {domain: power, kind: state,   unit: V,  apollo: "74"}
   bus_tie:           {domain: power, kind: discrete, unit: enum, apollo: "79"}
-  load_shed_state:   {domain: power, kind: discrete, unit: enum, apollo: "48"}
+  # `load_shed_state` carries two states: the ladder's class, and `load_enabled`, the switch position
+  # of every load (a map, so `key_space: by_state`). Together they are which loads the bus feeds. A
+  # node rather than the sentinel for the switches because thermal reads them too.
+  load_shed_state:
+    domain: power
+    kind: discrete
+    unit: enum
+    apollo: "48, :237"
+    key_space: by_state
+    state_order: independent
+    state_order_note: >-
+      the switch map is written by `set_load` and the ladder's class by the bus voltage
+      (`E-BUS-SHED`); neither reads the other within a tick, so there is no order to get wrong.
+      When the ladder is built and opens loads itself, it will write switch positions and this
+      becomes an order
 
   # --- thermal: lumped nodes plus the transport that an RC network loses ---------------
   coolant_flow:
@@ -347,7 +367,7 @@ nodes:
     # a function of. The frozen lexicographic tiebreak sorts `radiator_rejection_w` first and would
     # compute the rejection from last tick's temperature — a one-tick error in a quantity that enters
     # every thermal edge on the vehicle.
-    state_order: [zone_radiator_t, radiator_rejection_w]
+    state_order: [zone_radiator_t, radiator_rejection_w, evaporator_duty_w]
   service_bay_heat:
     domain: thermal
     kind: flow
@@ -384,7 +404,9 @@ nodes:
     unit: W
     note: >-
       the heat the environment puts *into* the radiator, which is the quantity `E-RAD-THERM` rejects
-      against and which had no node until round 71. `radiator_model.environment` declares it —
+      against and which had no node until round 71. It is a held boundary (`environment_heat_w`,
+      ADR 0003 item 9): the default vehicle's passive-thermal-control load, 1,086.9 W, or the
+      quiet-coast episode's sun-on-radiator hold. `radiator_model.environment` declares the hold —
       1361 W/m2 of solar flux, 0.2 absorptivity, 9.1 m2 presented at a bad attitude = 2,477 W,
       comparable to the radiator's own 2,588 W capacity — so attitude alone can cancel the vehicle's
       rejection, which is the whole reason `apollo_diode.md:341` lists "radiator isolation / poor
@@ -446,6 +468,38 @@ nodes:
   nav_state:         {domain: gnc,  kind: state, unit: "m, m/s", apollo: "119-122"}
   imu:               {domain: gnc,  kind: state, unit: "quat", apollo: "123"}
   antenna_geometry:  {domain: comms, kind: state, unit: "deg", apollo: "163"}
+  # The quiet-coast task model (`docs/vehicle-completion/09-quiet-coast-episode.md` §1, ADR 0003):
+  # the on-board record as a stock of bits, and what the ground has received of it as a second
+  # stock, so playback is one integer transfer between the two and `recorder + delivered` is
+  # conserved exactly (WP10).
+  data_recorder:
+    domain: comms
+    kind: stock
+    unit: bit
+    apollo: "903"
+    preloaded: >-
+      the data on tape at MET 0 is the episode's task volume (D1 + D2), a scenario initial rather
+      than a figure about the vehicle, and nothing aboard is modelled as recording into it during
+      the episode: playback is its only flow
+  ground_received:
+    domain: comms
+    kind: stock
+    unit: "bit, bit/s, bool"
+    apollo: "903"
+    accumulates: >-
+      a *delivery counter*, not a tank: `delivered_bits` counts what the ground has received of the
+      record, the quiet-coast episode's completion oracle. Nothing draws from it because nothing
+      aboard can — the data has left the vehicle — so it only rises, and the conservation it closes
+      is `recorder + delivered_bits` = the task volume
+    # The most the ground can receive is what the tape can hold, so the counter's rating is the
+    # recorder's capacity — owed (`domains/comms/components.yaml:components[recorder].capacity_bit`).
+    exhausted_at: UNCONFIGURED
+    state_order: [link_ok, playback_rate, delivered_bits]
+    state_order_note: >-
+      the predicate, then the rate it gates, then the stock the rate fills. The rate is read by
+      `E-REC-GND`'s drain at `data_recorder`, which the schedule advances before this node, so the
+      drain multiplies the rate of the tick before: playback starts and stops one tick (20 ms)
+      after the command, and the transfer is still one integer at both ends
   link:
     domain: comms
     kind: flow
@@ -456,14 +510,17 @@ nodes:
     # every thermal edge on the vehicle.
     unit: dB
     apollo: "164"
-    state_order: [tx_power, link_snr]
+    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_snr]
     state_order_note: >-
       **the case that made this check worth writing.** Transmit power is a term in the link
       budget, so the signal-to-noise ratio has to be computed from the power of this tick — and
       the lexicographic tiebreak sorts `link_snr` before `tx_power`, which would have made every
       SNR a function of one-tick-old transmit power. On a nominal link that is a 20 ms error;
       across `set_power_amplifier` it is a 6 dB step reported a tick late, which is exactly the
-      transient a fleet is watching for
+      transient a fleet is watching for. `transmitter_on` is first because the draw and the
+      amplifier's dissipation are both functions of the switch: it is on this node rather than the
+      sentinel so that `power` and `thermal`, which both declare `link` in `reads:`, can gate the
+      amplifier's load and heat on it
 
   # --- propulsion and RCS -------------------------------------------------------------
   engine_main:
@@ -625,6 +682,7 @@ edges:
         regulated output the bus sees. What would close it: a source-resistance figure for the
         1.2 kW converter, or a measured regulation transient against load
   - id: E-FC-BUSB
+    reads: bus_b_load_w   # what fuel cell 3 delivers is bus B's load; `bus_b_v`'s rule solves the voltage from it
     from: fuel_cell
     to: bus_b
     kind: algebraic
@@ -641,6 +699,7 @@ edges:
         and it cannot give the two sources separate failure modes while one `fuel_cell` node stands
         for all three modules
   - id: E-FC-BUS
+    reads: bus_a_load_w   # what fuel cells 1 and 2 deliver is bus A's load; `bus_a_v`'s rule solves the voltage from it
     from: fuel_cell
     to: bus_a
     kind: algebraic
@@ -770,6 +829,7 @@ edges:
         loss in the separator would be a second quantity on a separate edge, and none is
         declared, so none is assumed
   - id: E-FC-HEAT
+    reads: fuel_cell_power_w   # the node carries four states since the bus loads and current joined it
     from: fuel_cell
     to: coldplate_t
     kind: rate
@@ -1036,6 +1096,27 @@ edges:
     to: cabin_eq_csm
     kind: algebraic
     advances: cabin_eq_csm_k
+  - id: E-AMP-HEAT
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "W per W"
+      basis: derived
+      relation: >-
+        the power amplifier's dissipation is cabin heat one for one: it sits in the command module
+        (`heat_inputs.csm_cabin`), and what it does not radiate as RF it turns into heat there.
+        `cabin_heat_csm_w`'s rule reads comms' `amp_dissipation_w` (72 W of dc input less 11.2 W of
+        RF while the transmitter is on, ADR 0003 item 5) in place of the load's 72 W nameplate
+      at: "transmitter on"
+      note: >-
+        the same-tick dependency the rule has, declared so the schedule puts `link` before
+        `cabin_heat_csm`: without it the tiebreak sorts the cabin's heat first, and the cabin would
+        read the amplifier one tick late and not at all at t=0
+    from: link
+    to: cabin_heat_csm
+    kind: algebraic
+    reads: amp_dissipation_w
+    advances: cabin_heat_csm_w
   - id: E-CABIN-SUPPLY-CSM
     sensitivity:
       value: 1.0
@@ -1218,13 +1299,13 @@ edges:
     # stock, so its flux is driven by `radiator_reject` — which carries the radiator's rejection in
     # W and its surface temperature in K. The edge's unit is `kg/s per W`, so the quantity it
     # multiplies is the rejection.
-    reads: radiator_rejection_w
+    reads: evaporator_duty_w
     sensitivity:
       value: 4.0816e-07
       computation: "1 / 2.45e6"
       unit: "kg/s per W"
       basis: derived
-      relation: "the same figure as E-RAD-WATER and the same physics, applied in the direction the *stock* discharges: the water leaves the tank at 1/2.45e6 kg/s for every watt the radiator rejects. It said `kg per J` until round 61 — the forward relation's unit under the backward edge's name — which is why the plant filled `water_cooling` from the radiator instead of draining it"
+      relation: "the same figure as E-RAD-WATER and the same physics, applied in the direction the *stock* discharges: the water leaves the tank at 1/2.45e6 kg/s for every watt the **evaporator** rejects (`evaporator_duty_w`). It read `radiator_rejection_w` until ADR 0003 item 5, which charged 2.53 kg/h for heat the radiator rejects for free and double-counted the load; Apollo 14 evaporated 4.1 kg in the whole flight (A14 MR §7.10.4). It said `kg per J` until round 61 — the forward relation's unit under the backward edge's name — which is why the plant filled `water_cooling` from the radiator instead of draining it"
       at: "nominal"
       note: >-
         the backward half of the vehicle's only cycle with a water budget in it, and it is the
@@ -1235,7 +1316,7 @@ edges:
     from: water_cooling
     to: radiator_reject
     kind: rate
-    advances: zone_radiator_t
+    advances: evaporator_duty_w
   - id: E-PROP-ENG
     sensitivity:
       value: 0.00032423409
@@ -1570,31 +1651,32 @@ edges:
             rather than a reclose
 
   - id: E-FC-DRAW-O2
+    reads: fuel_cell_current_a   # per ampere of module current (ADR 0003 item 3), not per watt
     from: fuel_cell
     to: fc_o2_draw
     kind: rate
     advances: fc_o2_draw_kg_s
     sensitivity:
-      value: 8.8619e-08
-      unit: "kg/s per W"
+      value: 2.56996e-06
+      unit: "kg/s per A"
       basis: derived
       derivation:
-        expression: h2_lb_per_h_per_a * lb_to_kg / seconds_per_hour / output_v / h2_per_o2
+        expression: h2_lb_per_h_per_a * lb_to_kg / seconds_per_hour / h2_per_o2
         inputs:
           h2_lb_per_h_per_a: vehicle.yaml:electrical.fuel_cells.h2_lb_per_h_per_a
           lb_to_kg: 0.45359237
           seconds_per_hour: 3600
-          output_v: vehicle.yaml:electrical.fuel_cells.output_v
           h2_per_o2: coupling.yaml:edges.E-H2-FC.sensitivity.value
       at: nominal
       relation: >-
         the consume side of E-O2-FC: one kilogram of oxygen per kilogram of oxygen, at the rate the
-        cell's own operating point fixes. It carries the state's figure rather than restating it,
-        so the edge and the state cannot disagree about what a joule costs. Faraday's floor is
-        still exact and still the check on it — a cell moving four electrons per O2 draws
-        0.032 / (4 * 96485.33212 * V_cell) kg/J, which at the module's 29 V over 31 cells is
-        8.863e-08 kg/J, and the derived 8.8619e-08 sits 0.01 % away from it because the ratio step
-        divides by 0.126 where Faraday's own arithmetic divides by 0.1260
+        modules' current fixes. **Per ampere** (ADR 0003 item 3): the J-mission EPS handout
+        (1 Oct 1971) p. 2.6-21 publishes O2 = 2.04e-2 x I lb/h and H2 = 2.57e-3 x I lb/h per fuel
+        cell, and this is the hydrogen figure over the reaction's 0.126 mass ratio, 0.020397 lb/h per
+        ampere, 0.01 % from the table's 0.0204. It was 8.8619e-08 kg/s per W, the same figure divided
+        by a fixed 29 V, which undercounted by 7 % at a 27 V terminal. Faraday's floor is still the
+        check: four electrons per O2 is 0.032 / (4 * 96485.33212) = 8.2914e-8 kg/s per ampere per
+        cell, times 31 cells in series is 2.5703e-6 kg/s per module ampere, 0.01 % from this value
       note: >-
         **this edge was declared UNCONFIGURED and "staying that way", and it was one division
         away from three published numbers.** The claim was that the only missing scalar was "the
@@ -1608,26 +1690,27 @@ edges:
         which is why this one was left unset, and why the lesson is that "unpublished" needs the
         same reader as any other claim
   - id: E-FC-DRAW-H2
+    reads: fuel_cell_current_a   # per ampere of module current, as E-FC-DRAW-O2
     from: fuel_cell
     to: fc_h2_draw
     kind: rate
     advances: fc_h2_draw_kg_s
     sensitivity:
-      value: 1.1166e-08
-      unit: "kg/s per W"
+      value: 3.23815e-07
+      unit: "kg/s per A"
       basis: derived
       derivation:
-        expression: per_joule_kg * h2_per_o2
+        expression: per_amp_kg * h2_per_o2
         inputs:
-          per_joule_kg: coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value
+          per_amp_kg: coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value
           h2_per_o2: coupling.yaml:edges.E-H2-FC.sensitivity.value
       at: nominal
       relation: >-
-        the oxygen edge's figure times the reaction's 0.126 mass ratio, which is the same answer as
-        the published hydrogen rate divided by the same 29 V: 0.00257 lb/hr per ampere is
-        1.116602e-8 kg per joule, or 0.0402 kg H2 per kWh. Two routes to one number, and the edge
-        carries the one that keeps it joined to the oxygen edge, so a drift in either the operating
-        point or the stoichiometry moves both
+        the oxygen edge's figure times the reaction's 0.126 mass ratio, which is the published
+        hydrogen rate itself: 0.00257 lb/h per ampere (J-mission EPS handout p. 2.6-21; Mission E
+        consumables analysis) is 3.23815e-7 kg/s per ampere. Two routes to one number, and the edge
+        carries the one that keeps it joined to the oxygen edge, so a drift in the stoichiometry
+        moves both
       note: >-
         separate from the oxygen edge and deliberately not folded into it: the two gases are
         separate stocks, either can limit the cell, and a fleet that has run out of one has not
@@ -1649,7 +1732,7 @@ edges:
       unit: "J per kg"
       basis: derived
       at: "full evaporator rate"
-      relation: "the latent heat of vaporisation at about 280 K, 2.45e6 J/kg, so 1 W of evaporative rejection costs 1/2.45e6 = 4.082e-7 kg/s of water. The published figure is the evaporator's 2,345 W capacity, and the consumption rate no source gives is derived from it"
+      relation: "the latent heat of vaporisation at about 280 K, 2.45e6 J/kg, so 1 W of evaporative rejection costs 1/2.45e6 = 4.082e-7 kg/s of water. The published figure is the evaporator's 2,345 W capacity, and the consumption rate no source gives is derived from it. The clamp is applied to the evaporator, not the radiator (ADR 0003 item 5): `evaporator_duty_w` is zero while `water_cooling_kg` is empty"
       note: >-
         **a clamp, not a flux.** What a kilogram of water *buys* is 2.45e6 J of rejection, and this
         edge is the availability half of `C-WATER-BUDGET`: it says how much rejection the water
@@ -1668,9 +1751,28 @@ edges:
   - id: E-PUMP-COOL
     from: coolant_flow
     to: coolant_supply_t
-    kind: lag
-    sensitivity: {value: UNCONFIGURED, unit: "K per kg/s", basis: UNCONFIGURED, at: nominal,
-    note: "tau is UNSPECIFIED in thermal_diode.md:965 and must be supplied here. Use the exponential map, not forward Euler (review-findings.md #5)."}
+    kind: algebraic
+    reads: coolant_flow_kg_s
+    advances: coolant_loop_t
+    sensitivity:
+      value: 3626.1
+      derivation:
+        expression: "specific_heat_j_per_kg_k"
+        inputs:
+          specific_heat_j_per_kg_k: "vehicle.yaml:thermal.loops.loop_primary.specific_heat_j_per_kg_k"
+      unit: "W/K per kg/s"
+      basis: derived
+      relation: >-
+        the loop's heat-transport capacity per unit flow, `m_dot * c_p`: every kg/s of coolant
+        carries 3,626.1 W per kelvin between the loads, the radiator and the evaporator. It is the
+        coefficient the loop's balance (`coolant_loop_t`, `domains/thermal/rules.py`) uses to put
+        the radiator's and evaporator's inlet temperatures on the loop: the radiator inlet is
+        `supply + load / (m_dot * c_p)`, the evaporator's inlet is that less the panel's drop
+      at: nominal
+      note: >-
+        `lag` with an owed `K per kg/s` until ADR 0003: a lag relaxes toward one driver and the loop
+        has three heat terms, so `coolant_loop_t` is a heat balance and this edge carries the
+        capacity rather than a temperature
   - id: E-COOL-TRANSPORT
     from: coolant_supply_t
     to: loop_transport
@@ -1728,15 +1830,35 @@ edges:
     from: radiator_reject
     to: coolant_supply_t
     kind: algebraic
-    sensitivity: {value: UNCONFIGURED, unit: "K per W", basis: UNCONFIGURED, at: nominal,
-    note: "rejection is a function of coolant temperature, not a constant, and the edge is
-    declared here in that direction because what the plant needs is the temperature the
-    radiator settles at given what it is rejecting. The loop the sentence above describes
-    needs a second edge back from coolant_supply_t into radiator_reject, and there is none:
-    an earlier version of this note named `E-COOL-COOL` as its partner, and no edge of that
-    name has ever existed. So the two-way dependence is stated in prose and carried by one
-    edge, which is why `C-RAD-COOL` is gone rather than declared and why this edge's `value`
-    is the debt: what belongs here is the rejection law and not a slope."}
+    reads: radiator_rejection_w
+    advances: coolant_loop_t
+    sensitivity:
+      value: 1.0505843e-05
+      derivation:
+        expression: "1 / (coolant_mass_kg * specific_heat_j_per_kg_k)"
+        inputs:
+          coolant_mass_kg: "vehicle.yaml:thermal.loops.loop_primary.coolant_mass_kg"
+          specific_heat_j_per_kg_k: "vehicle.yaml:thermal.loops.loop_primary.specific_heat_j_per_kg_k"
+      unit: "K/s per W"
+      basis: derived
+      relation: >-
+        the loop's balance, `C dT/dt = Q_load - Q_rad - Q_evap`: every watt the radiator rejects
+        cools the loop at 1/C, with C = 26.25 kg x 3,626.1 J/kg-K = 95,185.125 J/K. The **rejection
+        law** this edge owed is the rule: `radiator_rejection_w = eps * sigma * A_eff *
+        zone_radiator_t^4 - environment_heat_w`, with the panel relaxing toward the glycol's mean
+        temperature in it (`radiator_eq_t`), so the rejection is evaluated at the loop's
+        temperature (ADR 0003; `domains/thermal/rules.py`). The evaporator's duty is read from the
+        same node and enters the same balance
+      at: nominal
+      note: >-
+        before ADR 0003 this value was the debt: "rejection is a function of coolant temperature, not a constant, and the edge is
+        declared here in that direction because what the plant needs is the temperature the
+        radiator settles at given what it is rejecting. The loop the sentence above describes
+        needs a second edge back from coolant_supply_t into radiator_reject, and there is none:
+        an earlier version of this note named `E-COOL-COOL` as its partner, and no edge of that
+        name has ever existed. So the two-way dependence is stated in prose and carried by one
+        edge, which is why `C-RAD-COOL` is gone rather than declared and why this edge's `value`
+        is the debt: what belongs here is the rejection law and not a slope."
   - id: E-AMP-LOAD
     # **The state this flux reads, on a node that carries two.** `link` holds the transmit power and
     # the signal-to-noise ratio, so the node publishes no key; the edge's own unit is `A per W` and
@@ -1761,11 +1883,18 @@ edges:
       at: "S-band amplifier on"
       note: >-
         closed by landing `domains/comms/`. The edge is the vehicle's one bidirectional coupling
-        that is not a fault at all: switching the power amplifier on is a 36 W step on the bus,
+        that is not a fault at all: switching the power amplifier on is a 72 W step on the bus,
         and apollo_diode.md:1140 and :1158 are explicit that this "is the trigger that exposes a
         latent problem, never the root fault". That is what makes `set_power_amplifier` the most
         consequential non-actuator verb on the vehicle — a command that can start a cascade with
         nothing wrong anywhere.
+        **Not a second home for the amplifier's watts** (ADR 0003 item 5). The amplifier's 72 W is
+        `domains/power/components.yaml#loads.csm_sband_power_amplifier`, counted by power's bus
+        rule while `comms.transmitter_on` is `on`; `tx_power` is the published measurement of the
+        transmit chain's DC input (`comm.tx_power_w`) and is not a load. So this edge is the
+        dependency that schedules `link` before `bus_a` and states the A-per-W conversion of that
+        measurement; a bus rule that added its flux to the inventory would count the amplifier
+        twice.
 
   # --- dynamics, guidance, and the geometry that comms depends on ---------------------
   - id: E-ENG-DYN
@@ -2021,6 +2150,7 @@ edges:
   - id: E-BUS-SHED
     from: bus_a
     to: load_shed_state
+    advances: load_shed_class
     kind: discrete
     sensitivity:
       unit: shed tier
@@ -2056,6 +2186,14 @@ edges:
   - id: E-CMD-TIE
     from: command_executive
     to: bus_tie
+    kind: discrete
+    sensitivity: {value: 1.0, unit: "-", basis: derived, relation: "the coupling is the signal itself; one unit in, one unit out", at: nominal}
+  # `set_load`'s path to the load switches, the same unity signal as the rest of the family. It
+  # advances the switch map only: the ladder's class beside it on the node is not commanded.
+  - id: E-CMD-LOAD
+    from: command_executive
+    to: load_shed_state
+    advances: load_enabled
     kind: discrete
     sensitivity: {value: 1.0, unit: "-", basis: derived, relation: "the coupling is the signal itself; one unit in, one unit out", at: nominal}
   - id: E-CMD-ATM
@@ -2244,6 +2382,18 @@ edges:
     kind: rate
     one_way: true
     sensitivity: {value: 1.0, unit: "-", basis: derived, relation: "published evidence is the instrument state restated at the publication rate; one unit in, one unit out", at: nominal}
+  - id: E-REC-GND
+    # The playback: bits leave the tape and arrive at the ground, one integer count of bits booked
+    # at both ends (WP10). The flux is driven by the consumer end, `ground_received`, whose
+    # `playback_rate` is the published high bit rate while playing over an ok link and zero
+    # otherwise — so the gate is a rule and this edge is a unity transfer.
+    reads: playback_rate
+    advances: delivered_bits
+    from: data_recorder
+    to: ground_received
+    kind: rate
+    sensitivity: {value: 1.0, unit: "bit/s per bit/s", basis: derived, relation: "a bit played off the tape is a bit received: the episode's `link_ok` boundary stands in for the link budget, so no frame loss is modelled on the playback and the transfer is the identity", at: "playing over the high-gain S-band link at 51.2 kbit/s",
+    note: "the quiet-coast task's completion path (09-quiet-coast-episode.md §1); the receiving stock is private truth and is published nowhere"}
   - id: E-LINK-TEL
     # The other role on the same node: what a link delivers is set by how good it is, and the
     # quantity that says so is the ratio — `tx_power` is the input the amplifier's load already reads.
@@ -2336,7 +2486,7 @@ cycles:
     delay_ticks: 1
     closing_mechanism: >-
       the amplifier's DC input is a bus load, and the bus voltage sets the transmitter's output:
-      switching the power amplifier on is a 36 W step on the bus, and a sagging bus is a weaker
+      switching the power amplifier on is a 72 W step on the bus, and a sagging bus is a weaker
       link
     note: >-
       **Found by deriving the schedule, not by reading the graph.** `E-AMP-LOAD` and `E-BUS-COMM`

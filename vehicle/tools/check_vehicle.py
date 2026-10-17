@@ -2124,6 +2124,22 @@ def states_by_node(root: Path) -> dict[str, list[str]]:
     return by_node
 
 
+def ruled_states(root: Path) -> set[str]:
+    """Every state an admissible `domains/<name>/rules.py` advances (`plant.registered_rule_states`).
+
+    Imported here and not at the top because `plant` imports this module. A domain file that does not
+    parse leaves no registry to read: it is refused where it is read (`load`), and the undriven-node
+    check then sees no rules rather than stopping the linter before that refusal is reported.
+    """
+    sys.modules.setdefault("check_vehicle", sys.modules[__name__])
+    import plant
+
+    try:
+        return plant.registered_rule_states(root)
+    except (yaml.YAMLError, plant.Unconfigured, OSError, ValueError, TypeError):
+        return set()
+
+
 def state_methods(root: Path) -> dict[str, str]:
     """Every state id and its integrator class, across the vehicle."""
     out: dict[str, str] = {}
@@ -2222,6 +2238,7 @@ def check_coupling(
     states_by_node_map: dict[str, list[str]] | None = None,
     state_methods: dict[str, str] | None = None,
     every_state_map: dict[str, list[str]] | None = None,
+    ruled_states: set[str] | None = None,
 ) -> None:
     nodes = doc.get("nodes") or {}
     edges = doc.get("edges") or []
@@ -2256,7 +2273,10 @@ def check_coupling(
         # `absorber_capacity` did for the life of the file, in the one place where the consequence
         # is a crew who cannot run out of LiOH, and the ratings that would have exposed it sat in
         # two other files read by nothing. Until round 42 nothing checked that the field was there.
-        if node.get("accumulates") and not isinstance(node.get("exhausted_at"), (int, float)):
+        if node.get("accumulates") and node.get("exhausted_at") == "UNCONFIGURED":
+            # A rating declared owed is a debt, not an absence: the field is there and says so.
+            report.debt(where, "declares `accumulates` and its `exhausted_at` rating is owed")
+        elif node.get("accumulates") and not isinstance(node.get("exhausted_at"), (int, float)):
             report.refuse(
                 where,
                 "declares `accumulates` and no numeric `exhausted_at`. A counter with no rating is "
@@ -2473,7 +2493,7 @@ def check_coupling(
     # An edge that drives a state has to say *which* state, whenever the node carries more than one
     # it could drive.
     #
-    # Ten of the vehicle's 59 nodes hold more than one state, and the plant resolves a state's
+    # Eleven of the vehicle's 61 nodes hold more than one state, and the plant resolves a state's
     # drivers by node — so on `cabin_atm`, which holds four gas masses, `csm_cabin_o2_kg`,
     # `csm_cabin_n2_kg`, `csm_cabin_co2_kg` and `csm_cabin_h2o_kg` were all handed the same three
     # edges: the oxygen supply, the crew's CO2 production and a pressure/temperature relation. Every
@@ -2799,10 +2819,14 @@ def check_coupling(
         # README already draws for the same reason.
         if node_of[name].get("preloaded"):
             continue
+        # A state a domain rule advances is driven by its rule, which reads what its domain
+        # declares — `advance()` asks it for no inbound edge, and neither does this. The held
+        # environment (`environment_heat_w`, ADR 0003 item 9) is the case: a boundary, not a lag.
         undriven = [
             sid
             for sid in (states_by_node_map or {}).get(name, [])
             if (state_methods or {}).get(sid) in driven_methods
+            and sid not in (ruled_states or set())
         ]
         if undriven:
             report.debt(
@@ -5238,16 +5262,93 @@ def check_domain(
         # required because a condition is a claim about the vehicle, the same discipline
         # `independent` gets for a node's state order.
         # --------------------------------------------------------------------------------------
-        condition = verb.get("interlocks_when")
-        if condition is not None:
-            cwhere2 = f"{vwhere}.interlocks_when"
+        # **One condition per direction** (ADR 0004 §Direction). A verb whose guards protect different
+        # directions — the evaporator's water reserve guards starting the feed and its supply
+        # temperature guards stopping it — writes `interlocks_when` as a list, each condition naming
+        # the `interlocks` it covers; a single mapping still covers every guard the verb declares.
+        # The shape problems — the list form's and a condition that is not a mapping — are gathered
+        # and refused in one place, so the conditions' own checks below read each one only once it is
+        # a mapping. (One call site: `docs/deep_research/integration/reconciliation/README.md`, which is
+        # frozen, states this tool's `report.refuse` call-site count.)
+        raw_condition = verb.get("interlocks_when")
+        listed_form = isinstance(raw_condition, list)
+        conditions = raw_condition if listed_form else ([] if raw_condition is None else [raw_condition])
+        shape: list[tuple[str, str]] = []
+        if listed_form and not raw_condition:
+            shape.append((f"{vwhere}.interlocks_when", "is an empty list; omit it, or name a condition"))
+        covered_by: dict[str, int] = {}
+        declared_guards = [str(i) for i in interlocks] if isinstance(interlocks, list) else []
+        for position, condition in enumerate(conditions):
+            cwhere2 = f"{vwhere}.interlocks_when[{position}]" if listed_form else f"{vwhere}.interlocks_when"
             if not isinstance(condition, dict) or not condition:
-                report.refuse(
-                    cwhere2,
-                    f"is {condition!r}, not a mapping. A condition is `argument`, `values` and "
-                    "`why`, because which values a guard applies to is not readable off the list",
+                shape.append(
+                    (
+                        cwhere2,
+                        f"is {condition!r}, not a mapping. A condition is `argument`, `values` and "
+                        "`why`, because which values a guard applies to is not readable off the list",
+                    )
                 )
-            elif not isinstance(interlocks, list) or not interlocks:
+            elif "interlocks" in condition:
+                listed = condition.get("interlocks")
+                if not isinstance(listed, list) or not listed:
+                    shape.append(
+                        (
+                            f"{cwhere2}.interlocks",
+                            f"is {listed!r}; name the guards this condition covers, or omit it to cover all",
+                        )
+                    )
+                for name in [str(n) for n in listed] if isinstance(listed, list) else []:
+                    if name not in declared_guards:
+                        shape.append(
+                            (f"{cwhere2}.interlocks", f"names {name!r}, which is not one of the verb's `interlocks`")
+                        )
+                    elif name in covered_by:
+                        shape.append(
+                            (
+                                f"{cwhere2}.interlocks",
+                                f"names {name!r}, which condition {covered_by[name]} already covers; "
+                                "one guard has one condition",
+                            )
+                        )
+                    else:
+                        covered_by[name] = position
+                # An unconditional entry: these guards have no safing direction this record can name,
+                # which is a claim about the vehicle, so it says why like any condition.
+                unconditional = listed_form and "argument" not in condition and "values" not in condition
+                if unconditional and not str(condition.get("why") or "").strip():
+                    shape.append(
+                        (
+                            f"{cwhere2}.why",
+                            "is empty. An unconditional entry says these guards refuse every "
+                            "command of the verb, in both directions, and that needs a reason",
+                        )
+                    )
+            elif listed_form:
+                shape.append(
+                    (f"{cwhere2}.interlocks", "is absent. In the list form each condition names the guards it covers")
+                )
+        if listed_form and raw_condition:
+            # A list names a direction per guard, so a guard it leaves out has silently become a
+            # whole-verb guard. Say so, or list it under an unconditional entry (`interlocks` and
+            # `why`, with no `argument`), which is the same guard declared on purpose.
+            for name in declared_guards:
+                if name not in covered_by:
+                    shape.append(
+                        (
+                            f"{vwhere}.interlocks_when",
+                            f"has no entry for {name!r}, one of the verb's `interlocks`. Name "
+                            "the direction it guards, or list it under an unconditional entry",
+                        )
+                    )
+        for where, why in shape:
+            report.refuse(where, why)
+        for position, condition in enumerate(conditions):
+            cwhere2 = f"{vwhere}.interlocks_when[{position}]" if listed_form else f"{vwhere}.interlocks_when"
+            if not isinstance(condition, dict) or not condition:
+                continue
+            if listed_form and "argument" not in condition and "values" not in condition:
+                continue
+            if not isinstance(interlocks, list) or not interlocks:
                 report.refuse(
                     cwhere2,
                     f"conditions guards the verb does not declare: `interlocks` is "
@@ -13805,8 +13906,8 @@ def check_channel_derivations(
     """The window's channels: how many are their source state, and how many are a sentence.
 
     Round 23 built the frame's `values` from the points registry and found, by refusing to publish a
-    channel whose unit is not its source state's, that **only 64 of the 135 channels read from a state
-    are the state itself**. The other 71 are *derived* — a partial pressure from a mass and a volume,
+    channel whose unit is not its source state's, that **only 63 of the 135 channels read from a state
+    are the state itself**. The other 72 are *derived* — a partial pressure from a mass and a volume,
     a flow in litres per minute from a mass flow and a density — and their `derivation` is prose,
     which nothing can evaluate. The frame omits them, the debt says so, and the two figures lived in
     a sentence: exactly the shape this folder spends its rounds removing.
@@ -13973,7 +14074,7 @@ def check_channel_derivations(
     # The debt's own sentence, which is the only place these figures live outside the registry.
     stated_same = re.search(r"only (\d+) have the state's own unit", stated, re.I)
     stated_derived = re.search(r"the other (\d+) are", stated, re.I)
-    stated_evaluable = re.search(r"(\d+) of the 71 now carry an evaluable", stated, re.I)
+    stated_evaluable = re.search(r"(\d+) of the \d+ now carry an evaluable", stated, re.I)
     stated_nodes = re.search(r"(\d+) more published channels read a coupling node", stated, re.I)
     stated_node_evaluable = re.search(r"(\d+) of those carry an evaluable", stated, re.I)
     stated_owed = re.search(r"(\d+) of the prose rows declare", stated, re.I)
@@ -18609,6 +18710,28 @@ def check_console_flags(root: Path, report: Report) -> None:
         )
 
 
+def check_domain_rules(root: Path, report: Report) -> None:
+    """D5: every `domains/<name>/rules.py`, refused by the plant's own loader (`plant.rule_refusals`).
+
+    A rule registered for a state no domain declares, for a state another domain owns, for a class
+    the plant integrates itself, beside a rule the configuration already supplies, or in a file that
+    imports anything that can read a clock, a random source or a file. The loader and the linter
+    call one function, so they cannot disagree about which rules are admissible. Imported here and
+    not at the top because `plant` imports this module.
+    """
+    sys.modules.setdefault("check_vehicle", sys.modules[__name__])
+    import plant
+
+    try:
+        refusals = plant.rule_refusals(root)
+    except yaml.YAMLError:
+        # A `components.yaml` that does not parse is refused where it is read (`load`, by file), and
+        # a rule cannot be judged against declarations that do not exist.
+        return
+    for where, why in refusals:
+        report.refuse(where, why)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check that the vehicle definition composes.")
     parser.add_argument("--dir", default=str(Path(__file__).resolve().parent.parent))
@@ -18694,6 +18817,7 @@ def main(argv: list[str] | None = None) -> int:
             states_by_node_map=states_by_node(root),
             state_methods=state_methods(root),
             every_state_map=every_state_on_each_node(root),
+            ruled_states=ruled_states(root),
         )
         schedule = derive_schedule(coupling, report)
     check_range_kinds(registry, report)
@@ -18783,6 +18907,7 @@ def main(argv: list[str] | None = None) -> int:
     check_provenance_derivations(root, documents, schedule, report)
     check_edge_derivations(coupling or {}, documents, report)
     check_domain_reads(documents, report)
+    check_domain_rules(root, report)
     check_perception_model(documents, report)
     check_component_identity(documents, report)
     # Needs the registry, which is empty when `channels.yaml` refused: without it every `measures`

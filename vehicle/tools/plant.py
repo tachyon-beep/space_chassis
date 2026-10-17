@@ -7,7 +7,7 @@ is implementable and a list of what is missing, in the order the missing things 
 
 The idea is `simulator-design.md:146-150`'s, applied to the plant instead of to the linter: you
 do not enumerate what a simulator needs up front, you build it, run it, and it tells you what you
-now owe. `check_vehicle.py` does that for the *definition* — it reports 270 declared debts by
+now owe. `check_vehicle.py` does that for the *definition* — it reports 265 declared debts by
 path, and `test_the_readme_status_matches_the_tools` holds that figure in this file as well as in
 the README, because it said 202 here for longer than anybody noticed. This tool does it for the *implementation*: it loads the whole world, builds the tick order,
 and then walks the tick in that order, stopping at the first thing it cannot compute and saying
@@ -19,7 +19,7 @@ Why that is worth writing rather than asserting
 "Ready to implement" is a claim, and a claim about a 34-file configuration is worth exactly as
 much as the evidence behind it. The evidence here is mechanical:
 
-  - **the schedule is derivable** — 59 nodes, from `coupling.yaml`'s edges minus its declared
+  - **the schedule is derivable** — 61 nodes, from `coupling.yaml`'s edges minus its declared
     back-edges, with `check_vehicle.derive_schedule` doing the derivation so the plant and the
     linter cannot disagree about the order;
   - **the states are instantiable** — each with a method, a unit and the parameters its method
@@ -53,15 +53,22 @@ tell you where.
 from __future__ import annotations
 
 import argparse
+import ast
+import functools
 import hashlib
+import importlib.util
+import inspect
 import json
 import math
 import os
 import re
 import sys
 import time
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import yaml
@@ -70,6 +77,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import trajectory  # noqa: E402  (a sibling tool, not a package)
 from check_vehicle import (  # noqa: E402  (a sibling tool, not a package)
     INTEGRATOR_METHODS,
+    PREFIX_DOMAIN,
     Report,
     command_only_movers,
     derivation_value,
@@ -194,6 +202,9 @@ class State:
     method: str
     unit: str
     spec: dict[str, Any]
+    # Whether another state shares this one's coupling node: set by `World` from its own states, so a
+    # state built outside a world (a referee's toy) reads as alone. `state_level` reads it.
+    shared: bool = field(default=False, compare=False, repr=False)
 
     @property
     def owed(self) -> list[str]:
@@ -292,6 +303,23 @@ class World:
     # arithmetic that turns the state into the channel. The frame's `values` is declared
     # `map[channel_id, ...]`, and this is the registry that says which channel id is what.
     points: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # **D5's seam: state id -> the domain rule that advances it**, loaded from
+    # `domains/<name>/rules.py` by `load_rules` and refused there rather than here if it registers a
+    # state its domain does not own. Empty for a world with no rule files, which is every toy world
+    # the referee builds and, until the first rule lands, the vehicle.
+    rules: dict[str, DomainRule] = field(default_factory=dict)
+    # domain -> every key a rule of that domain may read, mapped to the state it names (or `None`
+    # for a node key): the domain's own states and nodes, and what `reads:` and `writes:` declare.
+    rule_reads: dict[str, dict[str, State | None]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Which states share a coupling node, for `state_level`'s fallback: a node key on a shared node
+        # is never one state's value, so a state there is read by its own id only.
+        on_node: dict[str, int] = {}
+        for state in self.states:
+            on_node[state.node] = on_node.get(state.node, 0) + 1
+        for state in self.states:
+            state.shared = state.node != "internal" and on_node[state.node] > 1
 
     def states_on(self, node: str) -> list[State]:
         return [s for s in self.states if s.node == node]
@@ -401,6 +429,24 @@ def corpus_files(root: Path) -> list[Path]:
     return [path for path in files if _present(path)]
 
 
+def domain_rule_files(root: Path) -> list[Path]:
+    """Every `domains/<name>/rules.py` (D5), sorted as paths, by `corpus_files`' own discipline.
+
+    A rule is physics the configuration does not carry, so a checkpoint's engine identity hashes it
+    beside the corpus (`checkpoint.engine_identity`): a run must not resume across a rule change. The
+    listing is `corpus_files`' — `os.scandir`, an error raising with its path, only absence quiet —
+    so an unreadable `domains/` is never a shorter list of rules either.
+    """
+    found = [
+        Path(entry.path)
+        for domain in _listed(root / "domains")
+        if domain.is_dir()
+        for entry in _listed(Path(domain.path))
+        if entry.name == RULES_FILE
+    ]
+    return [path for path in sorted(found) if _present(path)]
+
+
 def _present(path: Path) -> bool:
     """Whether `path` exists, following links: `False` only for its absence; any other error raises, naming it (`corpus_files`)."""
     try:
@@ -419,6 +465,446 @@ def _listed(directory: Path) -> list[os.DirEntry[str]]:
         return []
 
 
+# ------------------------------------------------------------------------------------------------
+# **D5: the domain-rule seam** (`governance/decisions.md` D5, `plant.md` §2).
+#
+# A rule is the code a state's class needs and no configuration can carry — an `algebraic` state's
+# relation, a `discrete` state's transitions, a `dynamics` state's equations. It lives beside the
+# domain's YAML in `domains/<name>/rules.py`, so eleven domains of rule work do not all land in this
+# file, and this file keeps what is the plant's: the scheduler, the integrator classes, the stocks
+# and the step loop. A rule never runs on its own; `advance()` calls it when the frozen order reaches
+# its state, exactly where the class's refusal used to be.
+#
+# The contract, which `load_rules` holds and the linter reports through `rule_refusals`:
+#
+#   * `rules.py` is standard-library Python, and only the deterministic part of it: the imports are
+#     `RULE_IMPORTS` and nothing else, so no clock, no randomness, no files, no environment. `plant.md`
+#     §6 is the reason — a rule that reads the wall clock is a replay divergence with a physics name.
+#   * It defines `RULES`, a dict from state id to a function `rule(inputs, params, dt) -> value`.
+#     `inputs` is a read-only view of this tick's values restricted to what the domain owns or
+#     declares in `reads:`/`writes:`; `params` is the state's own declaration in `components.yaml`;
+#     `dt` is the horizon in seconds. The return value is the state's new value. `None` means "cannot
+#     compute this tick" and is recorded as a gap, not as a value.
+#   * A rule is registered only for a state the domain owns, of a class that needs one, and not
+#     already computed by its configuration (a `derivation`, the effect path, the trajectory or the
+#     scalar Δv integrator). Anything else is refused by name.
+#
+# A state whose class needs a rule and has none is still the debt it was: the seam adds a place to
+# put code and changes no count until code is put there.
+# ------------------------------------------------------------------------------------------------
+
+RULES_FILE = "rules.py"
+
+# The classes a domain rule may advance. `lag`, `stock` and `delay` are integrators the plant owns
+# (`plant.md` §3); `hazard` is the plant's because its draw is the RNG stream's, which a rule may not
+# touch.
+RULE_METHODS = ("algebraic", "discrete", "dynamics")
+
+# The only modules a rule may import: arithmetic and data structures, nothing that observes the
+# world outside the snapshot. `random`, `time`, `datetime`, `os`, `pathlib`, `io`, `sys` and every
+# third-party package are refused by not being here.
+RULE_IMPORTS = frozenset(
+    {
+        "__future__",
+        "bisect",
+        "cmath",
+        "collections",
+        "dataclasses",
+        "enum",
+        "fractions",
+        "functools",
+        "itertools",
+        "math",
+        "operator",
+        "typing",
+    }
+)
+
+# Builtins that reach outside the snapshot (`open`, `input`), run code the check never saw (`eval`,
+# `exec`, `compile`, `__import__`), or reach round the import rule by name (`getattr` and friends,
+# `globals`, `vars`).
+RULE_FORBIDDEN_NAMES = frozenset(
+    {
+        "__import__",
+        "breakpoint",
+        "compile",
+        "delattr",
+        "eval",
+        "exec",
+        "exit",
+        "getattr",
+        "globals",
+        "help",
+        "input",
+        "locals",
+        "open",
+        "quit",
+        "setattr",
+        "vars",
+    }
+)
+
+
+@dataclass(frozen=True)
+class DomainRule:
+    """One registered rule: the state it advances, the domain it belongs to, and where it lives."""
+
+    state: str
+    domain: str
+    function: Callable[[Mapping[str, Any], Mapping[str, Any], float], Any]
+    source: str
+
+
+def rule_source_refusals(path: Path, text: str) -> list[tuple[str, str]]:
+    """What in a `rules.py` could make a rule read something other than its snapshot.
+
+    Static, over the syntax tree, before the module is executed: an import outside `RULE_IMPORTS`, a
+    name in `RULE_FORBIDDEN_NAMES`, any dunder name or attribute (the way round an import rule is
+    `__builtins__` or `.__globals__`), and `global`/`nonlocal`, which is how a function keeps state
+    between calls that the snapshot does not hold.
+    """
+    where = path.as_posix()
+    try:
+        tree = ast.parse(text, filename=where)
+    except SyntaxError as exc:
+        return [(f"{where}:{exc.lineno}", f"does not parse: {exc.msg}")]
+    found: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        line = f"{where}:{getattr(node, 'lineno', 0)}"
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            if isinstance(node, ast.ImportFrom) and node.level:
+                found.append(
+                    (line, "is a relative import; a rule imports the standard library only")
+                )
+                continue
+            names = (
+                [alias.name for alias in node.names]
+                if isinstance(node, ast.Import)
+                else [str(node.module)]
+            )
+            for name in names:
+                if name.split(".")[0] not in RULE_IMPORTS:
+                    found.append(
+                        (
+                            line,
+                            f"imports {name!r}. A rule imports only {sorted(RULE_IMPORTS)}: no clock, "
+                            "no randomness, no files and nothing outside the standard library, "
+                            "because a rule that can observe the world outside its snapshot is a "
+                            "replay divergence (`plant.md` §6)",
+                        )
+                    )
+        elif isinstance(node, ast.Name) and (
+            node.id in RULE_FORBIDDEN_NAMES or node.id.startswith("__")
+        ):
+            found.append((line, f"uses {node.id!r}, which reaches outside the rule's snapshot"))
+        elif isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            found.append(
+                (line, f"reads the attribute {node.attr!r}, which reaches round the import rule")
+            )
+        elif isinstance(node, ast.Global | ast.Nonlocal):
+            found.append(
+                (
+                    line,
+                    "declares `global`/`nonlocal`: a rule is a pure function of its snapshot, and "
+                    "state kept between calls is state no checkpoint carries",
+                )
+            )
+    return found
+
+
+def _configured_rule(state: State) -> str | None:
+    """The rule the configuration already supplies for this state, if any — the same predicates
+    `advance()` branches on, so a domain rule can never shadow one."""
+    spec = state.spec
+    if state.method == "algebraic" and (spec.get("provenance") or {}).get("derivation") is not None:
+        return "its `provenance.derivation`"
+    if state.method == "discrete":
+        commanded = command_only_movers(spec)
+        elsewhere = [m for m in (spec.get("moved_by") or []) if not str(m).startswith("command:")]
+        owned = effect_owned_movers(spec)
+        if owned and not commanded:
+            commanded, elsewhere = owned, []
+        if commanded and not elsewhere:
+            return "the effect path (it is moved only by commands or one-way events)"
+    if state.method == "dynamics":
+        if spec.get("rule") == TRAJECTORY_RULE:
+            return f"the plant's `{TRAJECTORY_RULE}` integrator"
+        if spec.get("driven_by") is not None and isinstance(spec.get("mass_kg"), int | float):
+            return "the plant's scalar `dv/dt = F/m` integrator"
+    return None
+
+
+def load_rules(
+    root: Path, states: list[State]
+) -> tuple[dict[str, DomainRule], list[tuple[str, str]]]:
+    """Every `domains/<name>/rules.py`, loaded and checked: the registry, and what was refused.
+
+    The refusals are the linter's too (`rule_refusals`), so the loader and the linter cannot
+    disagree about which rules are admissible. A refused rule is not registered.
+    """
+    by_id = {state.id: state for state in states}
+    rules: dict[str, DomainRule] = {}
+    refusals: list[tuple[str, str]] = []
+    domains = root / "domains"
+    if not domains.is_dir():
+        return rules, refusals
+    for directory in sorted(p for p in domains.iterdir() if p.is_dir()):
+        path = directory / RULES_FILE
+        if not path.is_file():
+            continue
+        where = f"domains/{directory.name}/{RULES_FILE}"
+        components = (
+            load_yaml(directory / "components.yaml")
+            if (directory / "components.yaml").is_file()
+            else {}
+        )
+        domain = str(components.get("domain", directory.name))
+        source_refusals = rule_source_refusals(Path(where), path.read_text())
+        if source_refusals:
+            refusals.extend(source_refusals)
+            continue
+        spec = importlib.util.spec_from_file_location(f"vehicle_rules_{directory.name}", path)
+        if spec is None or spec.loader is None:
+            refusals.append((where, "cannot be loaded as a module"))
+            continue
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except Exception as exc:  # the refusal is the report; the module's own error is its text
+            refusals.append((where, f"raised {type(exc).__name__} while loading: {exc}"))
+            continue
+        registry = getattr(module, "RULES", None)
+        if not isinstance(registry, dict):
+            refusals.append(
+                (where, "defines no `RULES` dict, so nothing in it is registered to any state")
+            )
+            continue
+        for state_id, function in registry.items():
+            at = f"{where}:RULES[{state_id!r}]"
+            state = by_id.get(str(state_id))
+            if state is None:
+                refusals.append((at, "is registered for a state no domain declares"))
+                continue
+            if state.domain != domain:
+                refusals.append(
+                    (
+                        at,
+                        f"is a rule for {state.id!r}, which domain {state.domain!r} owns and "
+                        f"{domain!r} does not. Domains do not call each other (`plant.md` §2), so "
+                        "a rule lives with the state it advances",
+                    )
+                )
+                continue
+            if state.method not in RULE_METHODS:
+                refusals.append(
+                    (
+                        at,
+                        f"is a rule for a `{state.method}` state. A domain rule advances "
+                        f"{', '.join(RULE_METHODS)}; `lag`, `stock` and `delay` are integrators "
+                        "the plant owns, and `hazard` draws from the RNG stream a rule may not read",
+                    )
+                )
+                continue
+            configured = _configured_rule(state)
+            if configured is not None:
+                refusals.append(
+                    (
+                        at,
+                        f"would be a second rule for {state.id!r}, which {configured} already computes",
+                    )
+                )
+                continue
+            if not callable(function):
+                refusals.append((at, f"is {function!r}, which is not a function"))
+                continue
+            try:
+                inspect.signature(function).bind(None, None, None)
+            except (TypeError, ValueError):
+                refusals.append((at, "does not take `(inputs, params, dt)`"))
+                continue
+            rules[state.id] = DomainRule(
+                state=state.id, domain=domain, function=function, source=where
+            )
+    return rules, refusals
+
+
+def rule_refusals(root: Path) -> list[tuple[str, str]]:
+    """The loader's refusals over the domain rule files, for `check_vehicle.py` to report.
+
+    Reads only the domain declarations, not the whole world: a rule refusal is a statement about
+    `rules.py` and the states it names, and the linter has its own reports for everything else.
+    """
+    return _domain_rules(root)[1]
+
+
+def registered_rule_states(root: Path) -> set[str]:
+    """The states an admissible domain rule advances, for `check_vehicle.py`'s undriven-node check.
+
+    `advance()` does not ask a ruled state for an inbound edge — its rule reads what its domain
+    declares — so the linter's "nothing drives it" has to read the same registry, or the two disagree
+    about a held boundary such as `environment_heat_w`.
+    """
+    return set(_domain_rules(root)[0])
+
+
+def _domain_rules(root: Path) -> tuple[dict[str, DomainRule], list[tuple[str, str]]]:
+    states: list[State] = []
+    domains = root / "domains"
+    if domains.is_dir():
+        for directory in sorted(p for p in domains.iterdir() if p.is_dir()):
+            if not (directory / "components.yaml").is_file():
+                continue
+            components = load_yaml(directory / "components.yaml")
+            domain = str(components.get("domain", directory.name))
+            for spec in components.get("state") or []:
+                if isinstance(spec, dict) and spec.get("id"):
+                    states.append(
+                        State(
+                            id=str(spec["id"]),
+                            domain=domain,
+                            node=str(spec.get("node", "internal")),
+                            method=str(spec.get("method")),
+                            unit=str(spec.get("unit", "")),
+                            spec=spec,
+                        )
+                    )
+    return load_rules(root, states)
+
+
+def rule_readable(
+    world: World, declarations: dict[str, dict[str, Any]]
+) -> dict[str, dict[str, State | None]]:
+    """domain -> every key a rule of that domain may read: what it owns and what it declares.
+
+    A domain's own states and nodes, and the nodes its `reads:` and `writes:` name with every state on
+    them. A node key maps to `None`; a state id maps to its state, so a read goes through
+    `state_level` and finds a state on the sentinel or on a crowded node by its own id.
+    """
+    readable: dict[str, dict[str, State | None]] = {}
+    for domain in sorted({rule.domain for rule in world.rules.values()}):
+        keys: dict[str, State | None] = {}
+        nodes = {s.node for s in world.states if s.domain == domain and s.node != "internal"}
+        declared = declarations.get(domain) or {}
+        for name in ("reads", "writes"):
+            nodes.update(str(n) for n in (declared.get(name) or []))
+        for node in sorted(nodes):
+            keys[node] = None
+        for state in world.states:
+            if state.domain == domain or state.node in nodes:
+                keys[state.id] = state
+        readable[domain] = keys
+    return readable
+
+
+def _frozen(value: Any) -> Any:
+    """A read-only copy of a value handed to a rule: a rule cannot write the snapshot it reads."""
+    if isinstance(value, dict | MappingProxyType):
+        return MappingProxyType({k: _frozen(v) for k, v in value.items()})
+    if isinstance(value, list | tuple):
+        return tuple(_frozen(v) for v in value)
+    return value
+
+
+class RuleInputs(Mapping[str, Any]):
+    """The snapshot a rule reads: this tick's values, restricted to what its domain may read.
+
+    A key outside the domain's declaration is refused by name rather than returned, and a declared
+    key with no value this tick is a gap whose `needs` names it — the same two outcomes an edge's
+    driver has. `.get(key, default)` raises too, deliberately: a default here is a plausible number
+    standing in for an input nobody supplied.
+    """
+
+    __slots__ = ("_domain", "_readable", "_values", "_where")
+
+    def __init__(
+        self, values: dict[str, Any], readable: dict[str, State | None], domain: str, where: str
+    ) -> None:
+        self._values = values
+        self._readable = readable
+        self._domain = domain
+        self._where = where
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in self._readable:
+            raise Unconfigured(
+                self._where,
+                f"its rule reads {key!r}, which domain {self._domain!r} neither owns nor declares "
+                "in `reads:`. Domains do not call each other (`plant.md` §2): a read is declared, "
+                "and a same-tick read is an edge",
+            )
+        state = self._readable[key]
+        value = state_level(self._values, state) if state is not None else self._values.get(key)
+        if value is None:
+            raise Unconfigured(
+                self._where, f"its rule reads {key!r}, which has no value this tick", needs=key
+            )
+        return _frozen(value)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(sorted(self._readable))
+
+    def __len__(self) -> int:
+        return len(self._readable)
+
+
+class RuleParams(Mapping[str, Any]):
+    """The state's own declaration, read-only, with `UNCONFIGURED` refused rather than returned."""
+
+    __slots__ = ("_spec", "_where", "why_none")
+
+    def __init__(self, spec: dict[str, Any], where: str) -> None:
+        self._spec = spec
+        self._where = where
+        self.why_none: str | None = None
+
+    def no_value(self, why: str) -> None:
+        """A rule's honest `None`, with the reason the gap should carry: `return params.no_value(...)`.
+        A bare `None` is still a gap; this one says which declared limit the tick fell outside."""
+        self.why_none = str(why)
+        return None
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in self._spec:
+            raise Unconfigured(
+                f"{self._where}.{key}",
+                "is a parameter its rule reads and the state does not declare",
+            )
+        value = self._spec[key]
+        if unset_paths(value) or value == "UNCONFIGURED":
+            raise Unconfigured(f"{self._where}.{key}", "is UNCONFIGURED, and its rule needs it")
+        return _frozen(value)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._spec)
+
+    def __len__(self) -> int:
+        return len(self._spec)
+
+
+def call_rule(world: World, state: State, values: dict[str, Any], dt: float) -> Any:
+    """Run the registered rule for one state on its snapshot, or raise the gap it could not close."""
+    rule = world.rules[state.id]
+    where = f"domains/{state.domain}/components.yaml:state {state.id}"
+    readable = world.rule_reads.get(rule.domain)
+    if readable is None:
+        readable = rule_readable(world, {})[rule.domain]
+    inputs = RuleInputs(values, readable, rule.domain, where)
+    params = RuleParams(state.spec, where)
+    try:
+        value = rule.function(inputs, params, dt)
+    except Unconfigured:
+        raise
+    except Exception as exc:
+        # A rule that raises is a bug in the rule, not a debt in the configuration, so it is not a
+        # gap: it stops the tick, naming the file it came from.
+        raise RuntimeError(f"{rule.source}: the rule for {state.id!r} raised {exc!r}") from exc
+    if value is None:
+        if params.why_none:
+            raise Unconfigured(where, f"its rule ({rule.source}) has no value this tick: {params.why_none}")
+        raise Unconfigured(where, f"its rule ({rule.source}) returned no value this tick")
+    return value
+
+
 def load_world(root: Path) -> World:
     """Build the world, or refuse the configuration.
 
@@ -432,8 +918,13 @@ def load_world(root: Path) -> World:
 
     states: list[State] = []
     internal_order: dict[str, Any] = {}
+    declarations: dict[str, dict[str, Any]] = {}
     for directory in sorted(p for p in (root / "domains").iterdir() if p.is_dir()):
         components = load_yaml(directory / "components.yaml")
+        declarations[str(components.get("domain", directory.name))] = {
+            "reads": components.get("reads") or [],
+            "writes": components.get("writes") or [],
+        }
         # The sentinel states' within-domain order. The linter requires this declaration of every
         # domain with more than one state on the sentinel and validates it against the states; the
         # plant is the reader that makes it mean something, so it travels with the world.
@@ -549,7 +1040,7 @@ def load_world(root: Path) -> World:
         verbs=verbs,
         plant_published=[str(e.get("channel")) for e in presentation.get("plant_published") or []],
         # Counted here rather than taken from the linter, and deliberately a *different* number:
-        # the linter reports 270 declared debts, including prose obligations ("this needs a
+        # the linter reports 265 declared debts, including prose obligations ("this needs a
         # patched-conic design") recorded in `open_debts` lists. This counts only the values that
         # are literally `UNCONFIGURED`, because those are the ones that stop a plant. Two numbers
         # with one name would be worse than either.
@@ -633,6 +1124,14 @@ def load_world(root: Path) -> World:
     sentinel_block, _ = world.sentinel_states()
     world.states = scheduled_states + sentinel_block
     world.advance_order["internal"] = [s.id for s in sentinel_block]
+
+    # D5's rules, refused as a configuration is: a rule file the linter would refuse is a world this
+    # loader will not build, rather than one that runs with the offending rule quietly dropped.
+    rules, refused = load_rules(root, world.states)
+    if refused:
+        raise Unconfigured(refused[0][0], "; ".join(f"{w}: {why}" for w, why in refused))
+    world.rules = rules
+    world.rule_reads = rule_readable(world, declarations)
     return world
 
 
@@ -1018,6 +1517,259 @@ def crew_coverage(root: Path) -> list[dict[str, Any]]:
             }
         )
     return summary
+
+
+def point_reading(
+    world: World, channel: str, values: dict[str, Any], readings: dict[str, Any] | None = None
+) -> Any:
+    """One channel's reading this tick, by `emit_frame`'s three answers, or `None` where it omits it.
+
+    An evaluable `derivation` is evaluated at this tick's readings; otherwise a channel whose unit is its
+    source's is the source's value; otherwise there is no reading. `readings` is the numeric part of
+    `values`, which a caller reading many channels builds once; a single read builds what it needs.
+    """
+    point = world.points.get(channel)
+    if point is None or "[" in channel:
+        return None
+    source = point.get("from")
+    if not isinstance(source, str):
+        return None
+    state = next((s for s in world.states if s.id == source), None)
+    derivation = point.get("derivation")
+    if isinstance(derivation, dict) and derivation.get("expression"):
+        if readings is None:
+            readings = {
+                key: value
+                for key, value in values.items()
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+            }
+        value, _why = derivation_value(derivation, world.documents, readings)
+        if value is not None:
+            return value
+    row = world.channels.get(channel) or {}
+    source_unit = (
+        state.unit if state is not None else (world.nodes.get(source) or {}).get("unit") or ""
+    )
+    if str(row.get("unit") or "").strip().lower() != str(source_unit or "").strip().lower():
+        return None
+    return state_level(values, state) if state is not None else values.get(source)
+
+
+# ------------------------------------------------------------------------------------------------
+# **Interlocks** (ADR 0004, narrowing ADR 0001 choice C): a verb's declared interlock is evaluated
+# against its threshold's own band and dwell where the chain from the interlock to a reading can be
+# read, and refused as unevaluated where it cannot. The dwell is history, so it lives in the truth
+# under `INTERLOCK_DWELL`: per threshold, the consecutive ticks its reading has been past `assert`,
+# updated at the end of every tick (`step`), checkpointed and hashed with everything else, and so
+# carried by a restart and reproduced by a replay of the record with nothing added to either.
+# ------------------------------------------------------------------------------------------------
+
+INTERLOCK_DWELL = "__interlock_dwell"
+
+
+@dataclass(frozen=True)
+class Interlock:
+    """A declared interlock resolved to the threshold it names, with the reading it watches."""
+
+    name: str
+    threshold: str
+    point: str
+    comparator: str
+    assert_value: float
+    dwell_us: int
+    domain: str = ""
+
+    @property
+    def key(self) -> str:
+        """The dwell map's key: the domain-qualified threshold id, because a bare id is unique only
+        within its domain's `profiles.yaml`, and two domains' thresholds must never share a count."""
+        return f"{self.domain}.{self.threshold}" if self.domain else self.threshold
+
+
+def resolve_interlock(world: World, name: str) -> tuple[Interlock | None, str | None]:
+    """The interlock as a readable threshold, or the first link of its chain that cannot be read.
+
+    The chain is the registry's: the interlock names a threshold (`profiles.yaml`, by its id or its
+    domain-qualified id), the threshold watches a point with a comparator, a numeric `assert` and an
+    assert dwell, and the point is a reading of a state (`point_reading`). A point that declares
+    `inputs` with prose for arithmetic is an estimate nothing can compute, so it is not readable even
+    where `from` names a state of the same unit: the state is one of its inputs, not the estimate.
+    """
+    prefix, _, bare = name.rpartition(".")
+    found: list[tuple[str, dict[str, Any]]] = []
+    for document, content in sorted(world.documents.items()):
+        if not document.endswith("profiles.yaml") or not isinstance(content, dict):
+            continue
+        domain = Path(document).parent.name
+        # A domain-qualified name (`power.bus_a_undervoltage`, `res.cooling_water_reserve`) is looked
+        # up in that domain only, and a domain answers to its folder and its channel prefix alike (as
+        # the linter resolves it); a bare one in every domain, and it must be found in exactly one.
+        if prefix and domain != PREFIX_DOMAIN.get(prefix, prefix):
+            continue
+        for row in content.get("thresholds") or []:
+            if isinstance(row, dict) and str(row.get("id")) == bare:
+                found.append((domain, row))
+    if not found:
+        return None, f"`{name}` resolves to no threshold this executive can read"
+    if len(found) > 1:
+        return None, (
+            f"`{name}` names a threshold id that {len(found)} domains declare "
+            f"({', '.join(sorted(d for d, _ in found))}); qualify it with its domain"
+        )
+    domain, threshold = found[0]
+    tid = str(threshold.get("id"))
+    point = str(threshold.get("point") or "")
+    comparator = threshold.get("comparator")
+    level = threshold.get("assert")
+    if comparator not in ("above", "below"):
+        return None, f"`{name}` is threshold `{tid}`, whose comparator {comparator!r} is not above or below"
+    if not isinstance(level, (int, float)) or isinstance(level, bool):
+        return None, (
+            f"`{name}` is threshold `{tid}`, whose band is {level!r}: a threshold with no assert value "
+            "has nothing to compare a reading against"
+        )
+    dwell_ms = threshold.get("dwell_assert_ms", 0) or 0
+    if not isinstance(dwell_ms, (int, float)) or isinstance(dwell_ms, bool) or dwell_ms < 0:
+        return None, f"`{name}` is threshold `{tid}`, whose assert dwell {dwell_ms!r} is not a duration"
+    row = world.points.get(point)
+    if row is None or "[" in point:
+        return None, (
+            f"`{name}` watches `{point}`, which is not a channel the frame publishes — a template "
+            "family or an unregistered point — so there is no reading to compare"
+        )
+    source = row.get("from")
+    state = next((s for s in world.states if s.id == source), None)
+    if state is None:
+        return None, (
+            f"`{name}` watches `{point}`, read from `{source}`, which is not a state the plant advances"
+        )
+    # A threshold that is not a plain level on its channel says so, in the two fields the linter
+    # reads as that statement (`check_vehicle.py`, the band check). `gated_by` is a condition on when
+    # the threshold applies, which nothing declares as data, so it is not evaluated. `point_units`
+    # whose leading unit (before the first `,` or `:`) is not the channel's own names another quantity
+    # (a difference between buses, a rate, a draw above a configured one), which nothing computes;
+    # comparing the channel's level against that `assert` would guard the wrong quantity.
+    if threshold.get("gated_by"):
+        return None, (
+            f"`{name}` is threshold `{tid}`, gated by {str(threshold['gated_by'])!r}, a condition no "
+            "field declares, so this executive cannot tell when it applies"
+        )
+    units = threshold.get("point_units")
+    channel_unit = str((world.channels.get(point) or {}).get("unit") or "").strip()
+    if units is not None:
+        leading = re.split(r"[,:]", str(units), maxsplit=1)[0].strip()
+        if not channel_unit or leading.lower() != channel_unit.lower():
+            return None, (
+                f"`{name}` is threshold `{tid}` on `{point}` ({channel_unit or 'no unit'}), but its "
+                f"`point_units` say it compares {str(units)!r}, a quantity nothing computes"
+            )
+    derivation = row.get("derivation")
+    evaluable = isinstance(derivation, dict) and bool(derivation.get("expression"))
+    if row.get("inputs") and not evaluable:
+        return None, (
+            f"`{name}` watches `{point}`, an estimate over {list(row['inputs'])} whose arithmetic is "
+            "prose, so nothing can compute the reading it compares"
+        )
+    return (
+        Interlock(
+            name=name,
+            threshold=tid,
+            point=point,
+            comparator=str(comparator),
+            assert_value=float(level),
+            dwell_us=int(round(float(dwell_ms) * 1000)),
+            domain=domain,
+        ),
+        None,
+    )
+
+
+def interlock_conditions(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """A verb's `interlocks_when` as a list of conditions: one mapping (which covers every interlock
+    the verb declares) or a list of them, each naming the interlocks it covers in `interlocks`."""
+    raw = (spec or {}).get("interlocks_when")
+    if isinstance(raw, dict):
+        return [raw]
+    if isinstance(raw, list):
+        return [c for c in raw if isinstance(c, dict)]
+    return []
+
+
+def guarding_interlocks(spec: dict[str, Any], arguments: dict[str, Any]) -> list[str]:
+    """The declared interlocks that guard this command, given its arguments (ADR 0004 §Direction).
+
+    An interlock guards a direction of a verb, not the verb: an amplifier on a sagging bus must not
+    come on, and must always be allowed to go off. `interlocks_when` says which: a condition names an
+    enum argument and the values for which its interlocks apply, and for any other value they do not,
+    so the safing direction is admitted whatever the guard reads, tripped or unreadable. A condition
+    without `interlocks` covers every interlock the verb declares; one with it covers those. A list
+    entry with `interlocks` and no `argument` is unconditional: it says, explicitly, that those guards
+    have no safing direction this record can name, and they guard every command (the linter refuses a
+    list that leaves a guard covered by no entry). An interlock no condition covers — the single-mapping
+    form's absence, or a verb with no `interlocks_when` — guards every command of the verb."""
+    declared = spec.get("interlocks") if isinstance(spec, dict) else None
+    names = [str(i) for i in declared] if isinstance(declared, list) else []
+    covered: dict[str, list[dict[str, Any]]] = {}
+    for condition in interlock_conditions(spec):
+        listed = condition.get("interlocks")
+        for name in [str(i) for i in listed] if isinstance(listed, list) else names:
+            covered.setdefault(name, []).append(condition)
+    guarding = []
+    for name in names:
+        conditions = covered.get(name)
+        if not conditions or any(
+            "argument" not in c
+            or str(arguments.get(str(c.get("argument")))) in [str(v) for v in c.get("values") or []]
+            for c in conditions
+        ):
+            guarding.append(name)
+    return guarding
+
+
+def watched_interlocks(world: World) -> list[Interlock]:
+    """Every readable threshold some verb names as an interlock, once each, in threshold order."""
+    cached = world.__dict__.get("_watched_interlocks")
+    if cached is not None:
+        return cached
+    found: dict[str, Interlock] = {}
+    for spec in world.verbs.values():
+        named = (spec or {}).get("interlocks")
+        for name in named if isinstance(named, list) else []:
+            interlock, _problem = resolve_interlock(world, str(name))
+            if interlock is not None:
+                found.setdefault(interlock.key, interlock)
+    watched = [found[key] for key in sorted(found)]
+    world.__dict__["_watched_interlocks"] = watched
+    return watched
+
+
+def interlock_past(interlock: Interlock, reading: Any) -> bool | None:
+    """Whether a reading is past the threshold's assert value; None where there is no number."""
+    if not isinstance(reading, (int, float)) or isinstance(reading, bool):
+        return None
+    if interlock.comparator == "above":
+        return reading > interlock.assert_value
+    return reading < interlock.assert_value
+
+
+def _with_interlock_dwell(world: World, values: dict[str, Any]) -> dict[str, Any]:
+    """The tick's values with every watched threshold's consecutive past-assert count advanced."""
+    watched = watched_interlocks(world)
+    if not watched:
+        return values
+    previous = values.get(INTERLOCK_DWELL) or {}
+    counts: dict[str, int] = {}
+    for interlock in watched:
+        past = interlock_past(interlock, point_reading(world, interlock.point, values))
+        counts[interlock.key] = int(previous.get(interlock.key, 0)) + 1 if past else 0
+    return {**values, INTERLOCK_DWELL: counts}
+
+
+def interlock_tripped(world: World, interlock: Interlock, values: dict[str, Any]) -> bool:
+    """Tripped: the reading has been past its assert value for at least the assert dwell (at least one
+    tick when the dwell is zero), by the counts the last tick left in the truth."""
+    count = int((values.get(INTERLOCK_DWELL) or {}).get(interlock.key, 0))
+    return count >= 1 and count * _tick_us(tick_seconds(world)) >= interlock.dwell_us
 
 
 def emit_frame(
@@ -1419,7 +2171,422 @@ def stock_flux(
     return flux * (dt / SECONDS_PER_HOUR if per_hour else dt)
 
 
-def advance(world: World, state: State, values: dict[str, Any], dt: float) -> dict[str, Any]:
+# ------------------------------------------------------------------------------------------------
+# **WP10: the ledger** (`plant.md` §4 and §9 step 5).
+#
+# §4 asks three things of a stock and the plant had the first only in prose: a static exponent, so
+# a stock is an integer count of its quantum; **transfers that are one integer quantity, computed
+# once and applied to both ends**; and an assertion with *no tolerance*, because a non-zero residual
+# is a bug. So every tick books, for every stock it advances, a line — the count before, the count
+# after — and, for every edge that moves anything into or out of a stock, one `Transfer` with an
+# integer count of quanta. `assert_conservation` then holds each line to its transfers exactly.
+#
+# **What the ledger holds is bookkeeping, not physics, and the difference is §4's last bullet.**
+# A fuel cell turns oxygen and hydrogen into water and electricity at a float efficiency; that a
+# kilogram of reactant became 1.126 kg of water is the edge's sensitivity, and the ledger does not
+# assert it. What it asserts is that a stock moved by exactly the integers that were booked against
+# it, and that a transfer between two stocks was the same integer at both ends. Energy across a
+# conversion is a trend inside a declared band (`energy_trend`), never an assertion.
+#
+# **The pair.** A line also carries the level the tick *publishes*, and the assertion holds the
+# observation to the ledger: the published level is exactly the line's count times its quantum. A
+# ledger that balanced while the observation drifted would be two records of two different tanks.
+# ------------------------------------------------------------------------------------------------
+
+
+class ConservationError(AssertionError):
+    """A stock moved by an amount its transfers do not explain. Never a tolerance: a bug."""
+
+
+@dataclass(frozen=True)
+class Transfer:
+    """One edge's movement in one segment of one tick, as a signed count of quanta.
+
+    `source` and `target` are the stock *state ids* the edge leaves and enters, or `None` for an end
+    outside the stocks — a flow node, which is the conservation boundary (an external source or
+    sink). `quanta` is moved from `source` to `target`; `shortfall` is what the edge asked for and
+    the source did not have (§4: "zero-crossing records a shortfall").
+    """
+
+    edge: str
+    source: str | None
+    target: str | None
+    quanta: int
+    shortfall: int = 0
+    segment: int = 0
+
+
+@dataclass(frozen=True)
+class StockLine:
+    """One stock in one segment: its count before and after, in quanta of `numerator/denominator`."""
+
+    stock: str
+    unit: str
+    segment: int
+    numerator: int
+    denominator: int
+    entered: float
+    before: int
+    after: int
+
+    @property
+    def level(self) -> float:
+        """The published level this count is: correctly rounded, so `round(level / q)` is the count."""
+        return self.after * self.numerator / self.denominator
+
+    @property
+    def published(self) -> float:
+        """The level the tick publishes: the count's, or — where the count did not move — the level
+        it entered with, so a stock whose declared initial is finer than its quantum (four cabin gases
+        are) is not re-rounded by a tick that moved none of it. `_count` of either is `after`."""
+        return self.entered if self.after == self.before else self.level
+
+
+@dataclass
+class Ledger:
+    """A tick's transfers and stock lines, and — after the commit — the levels it published."""
+
+    transfers: list[Transfer] = field(default_factory=list)
+    lines: list[StockLine] = field(default_factory=list)
+    observed: dict[str, Any] = field(default_factory=dict)
+    segment: int = 0
+    # edge id -> the stock-to-stock transfer its source posted this segment, for its target to book.
+    posted: dict[str, Transfer] = field(default_factory=dict, repr=False)
+
+    def begin_segment(self) -> None:
+        self.segment += 1
+        self.posted = {}
+
+    def moved(self) -> int:
+        """How many transfers moved a non-zero count — zero is a vacuous ledger."""
+        return sum(1 for transfer in self.transfers if transfer.quanta)
+
+    def as_record(self) -> dict[str, Any]:
+        """The ledger as plain data, to be published beside the observation it accounts for."""
+        return {
+            "transfers": [
+                {
+                    "edge": t.edge,
+                    "source": t.source,
+                    "target": t.target,
+                    "quanta": t.quanta,
+                    "shortfall": t.shortfall,
+                    "segment": t.segment,
+                }
+                for t in self.transfers
+            ],
+            "stocks": [
+                {
+                    "stock": line.stock,
+                    "unit": line.unit,
+                    "segment": line.segment,
+                    "quantum": f"{line.numerator}/{line.denominator}",
+                    "before": line.before,
+                    "after": line.after,
+                }
+                for line in self.lines
+            ],
+            "observed": dict(self.observed),
+        }
+
+
+def stock_quantum(state: State, where: str) -> tuple[int, int]:
+    """A stock's quantum as an exact fraction, from its declared decimal — §4's static exponent."""
+    raw = state.spec.get("quantum")
+    quantum = _decimal_quantum(str(raw))
+    if quantum is None:
+        raise Unconfigured(
+            f"{where}.quantum", f"is {raw!r}; a quantum is a positive decimal amount"
+        )
+    return quantum
+
+
+@functools.lru_cache(maxsize=256)
+def _decimal_quantum(raw: str) -> tuple[int, int] | None:
+    try:
+        quantum = Fraction(raw)
+    except (ValueError, ZeroDivisionError):
+        return None
+    return (quantum.numerator, quantum.denominator) if quantum > 0 else None
+
+
+def _book_unadvanced(
+    world: World, state: State, values: dict[str, Any], ledger: Ledger
+) -> dict[str, Any]:
+    """A stock that could not advance this segment still receives what another stock sent it.
+
+    Its own flows are a gap and stand still, but a transfer its source already debited has to land
+    somewhere, or the gap would be a leak. Returns the staged entries, or nothing when no transfer
+    targets this stock.
+    """
+    arriving = [t for t in ledger.posted.values() if t.target == state.id]
+    current = state_level(values, state)
+    if not arriving or not isinstance(current, int | float):
+        return {}
+    where = f"domains/{state.domain}/components.yaml:state {state.id}"
+    numerator, denominator = stock_quantum(state, where)
+    before = _count(float(current), numerator, denominator, where)
+    line = StockLine(
+        stock=state.id,
+        unit=state.unit,
+        segment=ledger.segment,
+        numerator=numerator,
+        denominator=denominator,
+        entered=float(current),
+        before=before,
+        after=before + sum(t.quanta for t in arriving),
+    )
+    ledger.lines.append(line)
+    return state_values(world, state, line.level)
+
+
+def _count(level: float, numerator: int, denominator: int, where: str) -> int:
+    """A level as a whole count of quanta — exact for any level this file published itself."""
+    count = round(level * denominator / numerator)
+    if abs(count) >= 2**52:
+        raise Unconfigured(
+            f"{where}.quantum",
+            f"makes {level!r} a count of {count} quanta, beyond what a float level can carry exactly",
+        )
+    return count
+
+
+def _stock_target(world: World, edge: Edge) -> State | None:
+    """The stock state a stock-to-stock edge fills: its `advances`, or the one stock on the node."""
+    if (world.nodes.get(edge.target) or {}).get("kind") != "stock":
+        return None
+    stocks = [s for s in world.states_on(edge.target) if s.method == "stock"]
+    if edge.advances is not None:
+        stocks = [s for s in stocks if s.id == edge.advances]
+    return stocks[0] if len(stocks) == 1 else None
+
+
+def _integrate_stock(
+    world: World,
+    state: State,
+    values: dict[str, Any],
+    dt: float,
+    incoming: list[Edge],
+    current: float,
+    where: str,
+    ledger: Ledger,
+) -> dict[str, Any]:
+    """One stock's tick: every contributing edge as an integer transfer, booked to the ledger.
+
+    **One Bresenham accumulator per edge**, so each transfer is a whole count on its own — §4's
+    "computed once, applied to both ends" needs an integer per transfer, not per stock — and each is
+    still exact to the quantum over any horizon. The accumulators live under `<state>__residual`,
+    keyed by edge id. A drain is floored like a fill, so a tank is never debited ahead of its flow.
+
+    **A transfer between two stocks is computed by its source and booked by its target.** The source
+    posts it to the ledger; the target, later in the frozen order, books the same integer rather
+    than computing its own flux from its own driver, which is how two floats come to differ in the
+    last bit and the vehicle leaks in secret. A stock-to-stock edge on a back-edge would be booked in
+    two different ticks, so it is refused by name until something needs one.
+    """
+    numerator, denominator = stock_quantum(state, where)
+    quantum = numerator / denominator
+    before = _count(float(current), numerator, denominator, where)
+    carried = values.get(f"{state.id}__residual")
+    carried = carried if isinstance(carried, dict) else {}
+
+    # (edge, the stock state at the other end or None, +1 into this stock / -1 out of it, delta)
+    contributions: list[tuple[Edge, str | None, int, float]] = []
+    booked: list[Transfer] = []
+    for edge in canonical_contributors(incoming):
+        if (world.nodes.get(edge.source) or {}).get("kind") == "stock":
+            posted = ledger.posted.get(edge.id)
+            if posted is None:
+                raise Unconfigured(
+                    f"coupling.yaml:edge {edge.id}",
+                    f"moves stock into {state.id} from the stock on {edge.source!r}, and no transfer "
+                    "was posted by its source this tick. A transfer between two stocks is computed "
+                    "once, by the stock it leaves",
+                    needs=edge.source,
+                )
+            booked.append(posted)
+            continue
+        contributions.append((edge, None, +1, stock_flux(world, edge, values, dt)))
+    for edge in sorted(world.edges, key=lambda e: e.id):
+        if edge.source != state.node or edge.kind == "limit":
+            continue
+        if edge.drains is not None and edge.drains != state.id:
+            continue
+        other = _stock_target(world, edge)
+        if other is not None and edge.id in world.back_edges:
+            raise Unconfigured(
+                f"coupling.yaml:edge {edge.id}",
+                f"moves stock from {state.id} to {other.id} on a back-edge, so the two ends would "
+                "book one transfer in two different ticks. A transfer between stocks runs forward",
+            )
+        if other is not None and stock_quantum(other, where) != (numerator, denominator):
+            raise Unconfigured(
+                f"coupling.yaml:edge {edge.id}",
+                f"moves stock between {state.id} and {other.id}, whose quanta differ, so no one "
+                "integer can be booked at both ends",
+            )
+        delta = stock_flux(world, edge, values, dt, driver_node=edge.target)
+        contributions.append((edge, other.id if other is not None else None, -1, delta))
+
+    residuals: dict[str, float] = {}
+    counts: list[int] = []
+    for edge, _other, _sign, delta in contributions:
+        want = delta + float(carried.get(edge.id) or 0.0)
+        count = math.floor(want / quantum)
+        residuals[edge.id] = want - count * quantum
+        counts.append(count)
+    for (edge, other, _sign, _delta), count in zip(contributions, counts, strict=True):
+        if other is not None and count < 0:
+            raise Unconfigured(
+                f"coupling.yaml:edge {edge.id}",
+                f"would move stock backwards from {other} into {state.id}; a transfer between two "
+                "stocks moves from the edge's source to its target",
+            )
+
+    # "Zero-crossing raises an event and records a shortfall. Never clamp silently, never go
+    # negative." What a drain asked for and the stock did not have is taken off the drains, in edge
+    # order, and recorded on each — so every transfer booked is what actually moved.
+    signs = [sign for _e, _o, sign, _d in contributions]
+    after = before + sum(sign * count for sign, count in zip(signs, counts, strict=True))
+    short = [0] * len(contributions)
+    if after < 0:
+        deficit = -after
+        for index, (sign, count) in enumerate(zip(signs, counts, strict=True)):
+            effect = sign * count
+            if effect >= 0 or not deficit:
+                continue
+            cut = min(-effect, deficit)
+            short[index] = cut
+            counts[index] += sign * cut
+            deficit -= cut
+        after = before + sum(sign * count for sign, count in zip(signs, counts, strict=True))
+    for (edge, other, sign, _d), count, cut in zip(contributions, counts, short, strict=True):
+        transfer = Transfer(
+            edge=edge.id,
+            source=state.id if sign < 0 else None,
+            target=(other if sign < 0 else state.id),
+            quanta=count,
+            shortfall=cut,
+            segment=ledger.segment,
+        )
+        ledger.transfers.append(transfer)
+        if other is not None:
+            ledger.posted[edge.id] = transfer
+    after += sum(posted.quanta for posted in booked)
+    line = StockLine(
+        stock=state.id,
+        unit=state.unit,
+        segment=ledger.segment,
+        numerator=numerator,
+        denominator=denominator,
+        entered=float(current),
+        before=before,
+        after=after,
+    )
+    ledger.lines.append(line)
+    return {
+        **state_values(world, state, line.published),
+        f"{state.id}__residual": residuals,
+        f"{state.id}__shortfall": sum(short) * quantum,
+    }
+
+
+def assert_conservation(ledger: Ledger, *, nontrivial: bool = False) -> int:
+    """§9 step 5: every stock line explained by its transfers, exactly; returns transfers checked.
+
+    For each line, `after - before` equals the transfers booked into that stock minus those booked
+    out of it, in the same segment, with **no tolerance**. Every transfer between two stocks must be
+    booked at both ends; consecutive segments of one stock must join; the count may not be negative;
+    and the level the tick published must be exactly the last line's count times its quantum.
+
+    `nontrivial=True` refuses a ledger in which nothing moved, because an assertion that passes on
+    empty flows is vacuous (`docs/vehicle-completion/06-verification.md`) — an acceptance run passes
+    it; a single tick, which may legitimately move nothing, does not.
+    """
+    net: dict[tuple[int, str], int] = {}
+    for transfer in ledger.transfers:
+        if transfer.source is not None:
+            key = (transfer.segment, transfer.source)
+            net[key] = net.get(key, 0) - transfer.quanta
+        if transfer.target is not None:
+            key = (transfer.segment, transfer.target)
+            net[key] = net.get(key, 0) + transfer.quanta
+    lines = {(line.segment, line.stock): line for line in ledger.lines}
+    for key in net:
+        if key not in lines:
+            raise ConservationError(
+                f"{key[1]}: a transfer was booked against it in segment {key[0]} and the stock has "
+                "no line there — one end of a transfer moved and the other did not"
+            )
+    last: dict[str, StockLine] = {}
+    for line in sorted(ledger.lines, key=lambda row: row.segment):
+        residual = line.after - line.before - net.get((line.segment, line.stock), 0)
+        if residual:
+            raise ConservationError(
+                f"{line.stock}: moved {line.after - line.before} quanta in segment {line.segment} "
+                f"and its transfers explain {net.get((line.segment, line.stock), 0)}: residual "
+                f"{residual} of {line.numerator}/{line.denominator} {line.unit}"
+            )
+        if line.after < 0:
+            raise ConservationError(f"{line.stock}: holds {line.after} quanta, below zero")
+        previous = last.get(line.stock)
+        if previous is not None and previous.after != line.before:
+            raise ConservationError(
+                f"{line.stock}: segment {line.segment} starts at {line.before} quanta and the "
+                f"segment before it ended at {previous.after}"
+            )
+        last[line.stock] = line
+    for stock, level in ledger.observed.items():
+        line = last.get(stock)
+        if line is not None and level != line.published:
+            raise ConservationError(
+                f"{stock}: published {level!r} and the ledger holds {line.after} quanta, which is "
+                f"{line.published!r} — the observation and its ledger disagree"
+            )
+    if nontrivial and not ledger.moved():
+        raise ConservationError(
+            "the ledger moved nothing, so the assertion held vacuously; an acceptance check has to "
+            "run on transfers that move"
+        )
+    return len(ledger.transfers)
+
+
+def energy_trend(
+    ledgers: list[Ledger], band_j: tuple[float, float], unit: str = "J"
+) -> dict[str, dict[str, Any]]:
+    """Energy as a trend inside a declared band, never an assertion (`plant.md` §4).
+
+    For every stock in `unit` across consecutive tick ledgers: the net change over the window and
+    whether every per-tick change lay inside `band_j`. The band is the caller's declaration — a
+    tolerance nobody declared would be a plausible default — and the result is a report: a value
+    outside it is a finding for a reader, not an exception.
+    """
+    low, high = band_j
+    trend: dict[str, dict[str, Any]] = {}
+    for ledger in ledgers:
+        firsts: dict[str, StockLine] = {}
+        lasts: dict[str, StockLine] = {}
+        for line in sorted(ledger.lines, key=lambda row: row.segment):
+            if line.unit == unit:
+                firsts.setdefault(line.stock, line)
+                lasts[line.stock] = line
+        for stock, line in lasts.items():
+            change = (line.after - firsts[stock].before) * line.numerator / line.denominator
+            row = trend.setdefault(stock, {"ticks": 0, "net": 0.0, "outside_band": 0})
+            row["ticks"] += 1
+            row["net"] += change
+            if not low <= change <= high:
+                row["outside_band"] += 1
+    return trend
+
+
+def advance(
+    world: World,
+    state: State,
+    values: dict[str, Any],
+    dt: float,
+    ledger: Ledger | None = None,
+) -> dict[str, Any]:
     """One state's contribution to a tick, or a named refusal.
 
     The refusals are the point. Every one of them names the thing that would have to exist for
@@ -1457,11 +2624,15 @@ def advance(world: World, state: State, values: dict[str, Any], dt: float) -> di
     # scheduled state rather than a graph neighbour. The name is the same declaration a derivation
     # binds, and the linter holds it to the same rule: the producer must advance first.
     named_driver = state.method == "dynamics" and state.spec.get("driven_by") is not None
+    # A registered domain rule reads what its domain declares (`RuleInputs`), so "no edge reaches
+    # it" is not "nothing drives it" for a state that has one.
+    ruled = state.id in world.rules
     if (
         state.method in {"lag", "stock", "delay", "dynamics"}
         and not incoming
         and not preloaded
         and not named_driver
+        and not ruled
     ):
         raise Unconfigured(
             where, f"is a {state.method} with no incoming edge, so nothing drives it"
@@ -1483,6 +2654,12 @@ def advance(world: World, state: State, values: dict[str, Any], dt: float) -> di
                 f"coupling.yaml:edge {edge.id}",
                 f"drives {state.id} and carries no sensitivity value, so the plant cannot apply it",
             )
+
+    # **D5: the domain's rule, where it has registered one.** Only for a class the plant does not
+    # integrate itself and only where the configuration supplies no rule — `load_rules` refuses
+    # everything else — so this is reached exactly where the class's refusal would have been.
+    if ruled:
+        return state_values(world, state, call_rule(world, state, values, dt))
 
     if state.method == "lag":
         # **The rule this branch did not have.** The lag integrator relaxes the state toward the
@@ -1565,7 +2742,6 @@ def advance(world: World, state: State, values: dict[str, Any], dt: float) -> di
         return state_values(world, state, driver + (current - driver) * alpha)
 
     if state.method == "stock":
-        quantum = float(state.spec["quantum"])
         # --------------------------------------------------------------------------------------
         # **The level, which this branch never read.** `stock_flux` returns a *delta* —
         # `sensitivity x driver x dt`, in the node's own unit, which its docstring says outright —
@@ -1599,69 +2775,19 @@ def advance(world: World, state: State, values: dict[str, Any], dt: float) -> di
                 f"{where}.initial",
                 f"integrates `{state.node}` from {current!r}, which is not a number",
             )
-        # **Sorted by id before summing**, because float addition is non-associative: the sum a
-        # declaration order produces is a sum an edit can change without changing the model.
-        total = 0.0
-        for edge in canonical_contributors(incoming):
-            total += stock_flux(world, edge, values, dt)
-        # And the outbound half, which was missing entirely: **every tank in the vehicle only
-        # filled.** The README states the rule — "a back-edge *out* of a stock still drains it,
-        # because the stock's own integrator subtracts the flow the back-edge reads" — and no tool
-        # implemented any of it. Twelve edges leave stock nodes, and the classifier can establish a
-        # flow for exactly one of them (`E-CREW-WATER`, at `kg/h per crew`); the rest are refused by
-        # name, which is why the linter reports them as debts too.
-        for edge in world.edges:
-            # **Back-edges included**, which is the README's own rule: "a back-edge *out* of a stock
-            # still drains it, because the stock's own integrator subtracts the flow the back-edge
-            # reads". Excluding them would have left `water_cooling` and `h2_csm` — the two the README
-            # names as discharging *entirely* through back-edges — draining nothing.
-            if edge.source != state.node:
-                continue
-            # A declared clamp is a relation, not a flow: it constrains what the node's channel may
-            # do and moves no matter, so it neither fills nor drains. See `CLAMP_KIND` in the linter.
-            if edge.kind == "limit":
-                continue
-            if edge.drains is not None and edge.drains != state.id:
-                continue
-            total -= stock_flux(world, edge, values, dt, driver_node=edge.target)
-        # --------------------------------------------------------------------------------------
-        # `plant.md` §4's Bresenham residual accumulator, which the branch did not have either.
-        #
-        # **"Every stock uses a Bresenham residual accumulator**: `moved = (scaled + acc) // SCALE;
-        # acc = (scaled + acc) % SCALE` ... Exact to the quantum over any horizon, integer-only,
-        # horizon-independent." The worked example is this vehicle's own: the nominal leak is
-        # `0.0064 g/s` against a 1 mg quantum, so `0.128` quanta per tick, which rounds to zero
-        # every tick — *"the leak never happens"*. Without the accumulator the sub-quantum branch
-        # below returned `None`, which `step` committed, so the tank's value became `None` on the
-        # first slow tick and every tick after it raised against a `None` level.
-        #
-        # The residual is carried in the same value map as the level, under a key namespaced to the
-        # state. That is where it belongs while the stock is a float: §4's `acc` is part of the
-        # stock's *representation*, and the representation here is the map. When the fixed-point
-        # mantissa lands the residual moves inside it, and this key disappears.
-        # --------------------------------------------------------------------------------------
-        residual_key = f"{state.id}__residual"
-        carried = float(values.get(residual_key) or 0.0)
-        quanta = (total + carried) / quantum
-        moved = math.floor(quanta)
-        level = current + moved * quantum
-        # "**Zero-crossing raises an event and records a shortfall.** Never clamp silently, never go
-        # negative. The shortfall is the evidence." The queue exists as of round 78 — §5's
-        # integer-microsecond stamps, carried by `Effect` — but a zero crossing is an event the
-        # *plant* generates, and nothing here raises one: the queue's contents are the executive's
-        # stamped effects, and a self-scheduled crossing needs the rule that computes the crossing.
-        # So the shortfall is returned with the level and named here, which is the same open half the
-        # hysteresis family still owes rather than a second one.
-        shortfall = 0.0
-        if level < 0.0:
-            shortfall = -level
-            level = 0.0
-            moved = round((level - current) / quantum) if quantum else 0
-        return {
-            **state_values(world, state, level),
-            residual_key: (total + carried) - moved * quantum,
-            f"{state.id}__shortfall": shortfall,
-        }
+        # The flows, the residual accumulators, the zero crossing and the booking are
+        # `_integrate_stock`'s: WP10's ledger needs every transfer as its own integer, so the sum of
+        # floats this branch used to floor once is now a sum of integers booked once each.
+        return _integrate_stock(
+            world,
+            state,
+            values,
+            dt,
+            incoming,
+            current,
+            where,
+            ledger if ledger is not None else Ledger(),
+        )
 
     if state.method == "delay":
         # --------------------------------------------------------------------------------------
@@ -2064,7 +3190,7 @@ def driver_nodes(world: World, state: State) -> list[str]:
 def state_values(world: World, state: State, value: Any) -> dict[str, Any]:
     """The map entries one state's new value belongs under.
 
-    **The value space was keyed by node, and ten nodes carry more than one state.** `cabin_atm`
+    **The value space was keyed by node, and thirteen nodes carry more than one state.** `cabin_atm`
     carries four gas masses and a pressure, so `values["cabin_atm"]` held whichever the loader wrote
     last — and the first tick after the plant learned to evaluate derivations set `csm_cabin_o2_kg` to
     the *water vapour's* mass, and `lm_cabin_o2_kg` to the nitrogen's. Two plausible numbers of
@@ -2088,8 +3214,13 @@ def state_values(world: World, state: State, value: Any) -> dict[str, Any]:
 def state_level(values: dict[str, Any], state: State) -> Any:
     """A state's own current value, by its own key first and its node's second.
 
-    The order matters while the two key spaces coexist: a multi-state node has no node key at all, and
-    a single-state node's two keys are the same number by construction.
+    The order matters while the two key spaces coexist: a single-state node's two keys are the same
+    number by construction, and **a node several states share is never read by its node key.** Its
+    node key, when there is one, is a keyed state's container (`_stage_element` writes
+    `values[node][state.id]`), so the fallback handed a sibling's value to a state that had none of
+    its own: `load_shed_class`, which never advances, read `{"load_enabled": {...}}` once `set_load`
+    wrote it — a switch map where a shed class belongs. A shared state with no value of its own has
+    none (`state.shared`, set by `World`).
     """
     if state.id in values:
         return values[state.id]
@@ -2098,6 +3229,8 @@ def state_level(values: dict[str, Any], state: State) -> Any:
         # hand back the whole map — which is what the first channel-keyed frame did, publishing
         # `avionics.clock_offset_ms` as six accumulators at once.
         return (values.get("internal") or {}).get(state.id)
+    if state.shared:
+        return None
     return values.get(state.node)
 
 
@@ -2128,8 +3261,10 @@ def _refuse_shared_node(world: World, state: State, where: str) -> None:
     """Refuse a state whose node carries another state, because the value map cannot hold both.
 
     The map is keyed by node, so two states on one node overwrite each other and whichever advanced
-    first reads the other's number on the next tick. Ten nodes carry more than one state —
-    eleven until round 70 took the source regulator off the fuel cell's node;
+    first reads the other's number on the next tick. Thirteen nodes carry more than one state — ten
+    after round 70 took the source regulator off the fuel cell's node, then `load_enabled` joined
+    `load_shed_state`, the quiet-coast task model's `ground_received` joined, and the bus loads and
+    module current joined `fuel_cell`;
     `cabin_atm` and `lm_cabin_atm` carry five each. The fix is a key-space change and the reason this
     is a refusal rather than a repair: a value of the wrong quantity is indistinguishable from a
     right one on a panel.
@@ -2155,7 +3290,7 @@ def _refuse_shared_node(world: World, state: State, where: str) -> None:
 
 
 
-def initial_values(world: World) -> dict[str, Any]:
+def initial_values(world: World, scenario: Scenario | None = None) -> dict[str, Any]:
     """The value map at t=0, from the states' own declared initial conditions.
 
     Until this existed the plant had no answer to "what is the vehicle holding at the start", and
@@ -2188,7 +3323,7 @@ def initial_values(world: World) -> dict[str, Any]:
     A state the configuration has not given a value is left out rather than guessed, and the plant
     refuses by name when a tick reaches it — which is the behaviour the check beside this wants.
 
-    **`internal` is a key space rather than a key.** The sentinel is not a node, and fifty-nine
+    **`internal` is a key space rather than a key.** The sentinel is not a node, and fifty-eight
     states live on it — so `values["internal"]` as a single slot would let every one of them
     overwrite the next, which is why this function and `step()` both used to drop it. Dropping it
     was the workaround, and it cost the command surface a third of its effects: eight of the
@@ -2258,6 +3393,14 @@ def initial_values(world: World) -> dict[str, Any]:
     # empty rather than absent — the same distinction `state.json`'s gate map draws for a closed
     # gate and an unnamed one.
     values.setdefault("internal", {})
+    # A scenario's initial conditions replace the declared ones *before* the declared arithmetic is
+    # resolved, so a derivation over an overridden state reads the scenario's value at t=0.
+    for state_id, value in sorted((scenario.initial if scenario is not None else {}).items()):
+        state = next(s for s in world.states if s.id == state_id)
+        entries = state_values(world, state, value)
+        if state.node == "internal":
+            entries["internal"] = {**values["internal"], **entries["internal"]}
+        values.update(entries)
     resolve_declared_states(world, values)
     return values
 
@@ -2381,8 +3524,16 @@ def resolve_declared_states(world: World, values: dict[str, Any]) -> list[str]:
             continue
         derivation = (state.spec.get("provenance") or {}).get("derivation")
         if derivation is None:
-            continue
-        value, _ = derivation_value(derivation, world.documents, readings=values)
+            if state.id not in world.rules:
+                continue
+            # D5: an `algebraic` rule is memoryless for the same reason a derivation is, so it is
+            # resolved at t=0 in the same pass and left absent, as the tick would, where it cannot be.
+            try:
+                value = call_rule(world, state, values, tick_seconds(world))
+            except Unconfigured:
+                continue
+        else:
+            value, _ = derivation_value(derivation, world.documents, readings=values)
         if value is None:
             continue
         entries = state_values(world, state, value)
@@ -2409,6 +3560,7 @@ def step(
     dt: float,
     gaps: list[Gap] | None = None,
     effects: list[Effect] | None = None,
+    ledger: Ledger | None = None,
 ) -> dict[str, Any]:
     """`plant.md`'s seven-step tick, with the parts that need code named rather than faked.
 
@@ -2460,6 +3612,10 @@ def step(
     # cut — `seen` is what a three-segment tick used to report three times over. And a transport
     # delay is indexed by tick (§3), so `_walk` advances it only on the segment that closes the tick.
     seen: list[Gap] = []
+    # WP10: the tick's ledger, filled by every stock the walk advances and asserted in step 5. A
+    # caller that passes one gets it back filled — the ledger and the levels it accounts for, as a
+    # pair; a caller that passes none still has the tick asserted.
+    book = ledger if ledger is not None else Ledger()
     for offset_us, effect in queue:
         # A zero-length segment is not walked at all: an effect stamped at the tick's start, or two
         # stamped at one microsecond, have no interval between them to integrate, and walking one
@@ -2467,7 +3623,7 @@ def step(
         if offset_us > elapsed_us:
             committed = _walk(
                 world, committed, (offset_us - elapsed_us) / 1_000_000, seen, tick_dt=dt,
-                closes_tick=False,
+                closes_tick=False, ledger=book,
             )
         # The effect lands on what the walk just committed, so a state it moves is visible to the
         # next segment's walk — which is the whole difference between a queue and a list of commands
@@ -2485,7 +3641,7 @@ def step(
     # floats puts back the ambiguity §5 took out.
     committed = _walk(
         world, committed, (_tick_us(dt) - elapsed_us) / 1_000_000, seen, tick_dt=dt,
-        closes_tick=True,
+        closes_tick=True, ledger=book,
     )
     if gaps is not None:
         reported: set[tuple[str, str, str]] = set()
@@ -2495,8 +3651,14 @@ def step(
                 reported.add(key)
                 gaps.append(gap)
 
-    # 5. Commit, then assert what can be asserted exactly. `assert_conservation` needs the
-    #    accumulator of every `conserve` edge, which exists once the stocks do.
+    # 5. Commit, then assert what can be asserted exactly: every stock line against its integer
+    #    transfers, with no tolerance, and the published levels against the ledger (WP10).
+    for stock in {line.stock for line in book.lines}:
+        book.observed[stock] = committed.get(stock)
+    assert_conservation(book)
+    # The interlocks' dwell history (ADR 0004): per watched threshold, the consecutive ticks its
+    # reading has been past its assert value, carried in the truth so a checkpoint and a replay hold it.
+    committed = _with_interlock_dwell(world, committed)
     # 6. Instruments: T -> A. One-way, and the quality function cannot see the faults.
     # 7. Compare-point: `state_hash(committed)` is a hash over canonically-encoded state, and the
     #    caller takes it every tick — `--determinism` is the caller that does, and
@@ -2506,6 +3668,137 @@ def step(
     #    one per boundary: the queue splits the *integration*, and §6's compare-point is a per-tick
     #    statement about where the vehicle ended up.
     return committed
+
+
+# ------------------------------------------------------------------------------------------------
+# **The scenario overlay** (`docs/vehicle-completion/09-quiet-coast-episode.md` §7, step 1).
+#
+# An episode starts the declared vehicle from somewhere else and lets it be commanded by fewer verbs.
+# Neither is a change to the vehicle, so neither is written into it: a scenario file names the states
+# whose MET-0 value it replaces, the verbs the episode admits, and — for batch mode — the effects a
+# scripted policy applies at given ticks. The file is data and the plant refuses it by name where it
+# names a state, a verb or a stamp the vehicle does not have.
+#
+#     scenario: quiet_coast
+#     initial:                          # state id -> its value at MET 0 in this scenario
+#       recorder: 1.6e8
+#       load_enabled: {csm_lighting: "on"}
+#     verbs: [set_comm_mode, play_recorder]   # the allow-list; absent means every registered verb
+#     script:                           # batch mode: effects applied at a tick, in stamp order
+#       - {tick: 0, offset_us: 0, verb: set_comm_mode, arguments: {mode: sband_high}}
+# ------------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Scenario:
+    """An episode's overlay on the declared vehicle: initial conditions, admitted verbs, a script."""
+
+    name: str
+    initial: dict[str, Any] = field(default_factory=dict)
+    # `None` admits every registered verb; a set admits those and refuses the rest.
+    verbs: frozenset[str] | None = None
+    # tick -> the effects a scripted policy applies in that tick, already validated.
+    script: dict[int, list[Effect]] = field(default_factory=dict)
+
+    def admit(self, verb: str) -> None:
+        """Refuse a verb the episode does not admit — the check the executive makes at effect time."""
+        if self.verbs is not None and verb not in self.verbs:
+            raise EffectRefused(
+                f"scenario {self.name}: {verb!r} is not one of the episode's verbs "
+                f"({', '.join(sorted(self.verbs))}), so it is refused rather than applied"
+            )
+
+    def effects_at(self, tick: int) -> list[Effect]:
+        return list(self.script.get(tick, []))
+
+
+def load_scenario(world: World, path: Path) -> Scenario:
+    """Read a scenario file against the world, or refuse it by name — never by dropping a line."""
+    doc = load_yaml(path)
+    where = path.name
+    by_id = {state.id: state for state in world.states}
+    name = str(doc.get("scenario") or path.stem)
+
+    initial: dict[str, Any] = {}
+    for state_id, value in (doc.get("initial") or {}).items():
+        state = by_id.get(str(state_id))
+        if state is None:
+            raise Unconfigured(f"{where}:initial.{state_id}", "names a state no domain declares")
+        if value is None or unset_paths(value) or value == "UNCONFIGURED":
+            raise Unconfigured(
+                f"{where}:initial.{state_id}",
+                "is unset; a scenario replaces a starting value with a value, never with a debt",
+            )
+        if state.method == "stock" and not (
+            isinstance(value, int | float) and not isinstance(value, bool) and value >= 0
+        ):
+            raise Unconfigured(
+                f"{where}:initial.{state_id}",
+                f"is {value!r}; a stock starts at a non-negative amount",
+            )
+        initial[state.id] = (
+            float(value) if isinstance(value, int) and state.method == "stock" else value
+        )
+
+    verbs: frozenset[str] | None = None
+    if doc.get("verbs") is not None:
+        verbs = frozenset(str(v) for v in doc["verbs"])
+        unknown = sorted(verbs - set(world.verbs))
+        if unknown:
+            raise Unconfigured(f"{where}:verbs", f"names {unknown}, which no domain registers")
+
+    dt = tick_seconds(world)
+    script: dict[int, list[Effect]] = {}
+    for index, row in enumerate(doc.get("script") or []):
+        at = f"{where}:script[{index}]"
+        tick = row.get("tick") if isinstance(row, dict) else None
+        if not isinstance(tick, int) or isinstance(tick, bool) or tick < 0:
+            raise Unconfigured(at, f"has tick {tick!r}; a script is keyed by a non-negative tick")
+        effect = Effect(
+            offset_us=row.get("offset_us", 0),
+            verb=str(row.get("verb")),
+            arguments=dict(row.get("arguments") or {}),
+        )
+        if verbs is not None and effect.verb not in verbs:
+            raise Unconfigured(
+                at, f"applies {effect.verb!r}, which the scenario's own `verbs` refuses"
+            )
+        try:
+            _stamped(world, dt, [effect])
+        except EffectRefused as exc:
+            raise Unconfigured(at, str(exc)) from None
+        script.setdefault(tick, []).append(effect)
+    return Scenario(name=name, initial=initial, verbs=verbs, script=script)
+
+
+def run_scenario(
+    world: World,
+    scenario: Scenario,
+    ticks: int,
+    *,
+    values: dict[str, Any] | None = None,
+    start_tick: int = 0,
+    on_tick: Callable[[int, dict[str, Any], Ledger, list[Gap]], None] | None = None,
+) -> dict[str, Any]:
+    """Batch mode: `ticks` ticks from `start_tick`, applying the script's effects at their ticks.
+
+    Starts from the scenario's initial values unless `values` is given (a restored checkpoint), so
+    a run stopped at tick N and resumed with the values it had reaches the same state as one that
+    never stopped. `on_tick(tick, values, ledger, gaps)` is called after every tick — the per-tick
+    truth trace an evaluator reads.
+    """
+    dt = tick_seconds(world)
+    current = values if values is not None else initial_values(world, scenario)
+    for tick in range(start_tick, start_tick + ticks):
+        effects = scenario.effects_at(tick)
+        for effect in effects:
+            scenario.admit(effect.verb)
+        ledger = Ledger()
+        gaps: list[Gap] = []
+        current = step(world, current, dt, gaps, effects or None, ledger=ledger)
+        if on_tick is not None:
+            on_tick(tick, current, ledger, gaps)
+    return current
 
 
 def _tick_us(dt: float) -> int:
@@ -2609,6 +3902,7 @@ def _walk(
     *,
     tick_dt: float,
     closes_tick: bool = True,
+    ledger: Ledger | None = None,
 ) -> dict[str, Any]:
     """§9's step 4 over one horizon: every node in the frozen order, then the sentinel.
 
@@ -2625,12 +3919,14 @@ def _walk(
     once, on the segment that closes the tick, with the tick's own `dt`; on the others it holds.
     """
     staged: dict[str, Any] = {}
+    book = ledger if ledger is not None else Ledger()
+    book.begin_segment()
 
     def produce(state: State) -> None:
         if state.method != "delay":
-            _advance_into(world, state, values, staged, horizon, gaps)
+            _advance_into(world, state, values, staged, horizon, gaps, book)
         elif closes_tick:
-            _advance_into(world, state, values, staged, tick_dt, gaps)
+            _advance_into(world, state, values, staged, tick_dt, gaps, book)
 
     for node in world.schedule:
         for state in world.states_on(node):
@@ -2652,6 +3948,7 @@ def _advance_into(
     staged: dict[str, Any],
     horizon: float,
     gaps: list[Gap] | None,
+    ledger: Ledger | None = None,
 ) -> None:
     """One producer's contribution, staged, or the reason it has none.
 
@@ -2660,8 +3957,10 @@ def _advance_into(
     came to read unstaged values and stop early without either problem being visible.
     """
     try:
-        staged.update(advance(world, state, {**values, **staged}, horizon))
+        staged.update(advance(world, state, {**values, **staged}, horizon, ledger))
     except Unconfigured as exc:
+        if ledger is not None and state.method == "stock":
+            staged.update(_book_unadvanced(world, state, {**values, **staged}, ledger))
         if gaps is not None:
             # `.where` and `.what`, not `args`: `Unconfigured.__init__` hands `Exception` the
             # formatted message as *one* argument, so `args[1]` is an IndexError and the tick dies
@@ -2866,7 +4165,14 @@ def _stage_element(
     """
     key = "internal" if state.node == "internal" else state.node
     outer = dict(staged.get(key) or values.get(key) or {})
-    elements = dict(outer.get(state.id) or {})
+    # **The elements start from the state's own key, which is the one every node writes.** A node
+    # carrying more than one state has no node key at all (`state_values`), so reading the elements
+    # only from `values[node]` started a keyed state on a shared node from an empty map, and one
+    # `set_load` wrote a map with one load in it: every other switch vanished. `load_enabled` on
+    # `load_shed_state` is the first keyed state on a shared node, and it is what showed it.
+    elements = dict(
+        staged.get(state.id) or outer.get(state.id) or values.get(state.id) or {}
+    )
     elements[element] = value
     outer[state.id] = elements
     staged[key] = outer
@@ -3107,6 +4413,10 @@ def _classify(world: World, state: State) -> str:
         derivation = (state.spec.get("provenance") or {}).get("derivation")
         if derivation is not None:
             return "ready"
+    if state.id in world.rules:
+        # D5: the rule is in `domains/<name>/rules.py`, so nothing is left to write for this state;
+        # what stops it, if anything, is an input, and `build_order` reads that from the tick.
+        return "ready"
     if state.method == "delay" and isinstance(state.spec.get("delay_s"), (int, float)):
         # **The seventh class joined the ones the plant can advance, and this classifier did
         # not hear about it.** `loop_transport_t` declares its `initial`, its `delay_s` and

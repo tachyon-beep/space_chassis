@@ -38,68 +38,42 @@ writes: [fuel_cell, source_converter, bus_a, bus_b, battery_energy, bus_tie, loa
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [lcl_tripped, bus_a_load_w, battery_thermal_state]
+internal_order: [lcl_tripped, battery_thermal_state]
 internal_order_note: >-
-  the trip state is a latch, the load is what the latch leaves connected, and the battery's
-  temperature is what the surviving load does to the pack — the same chain the power
-  inventory's relationships describe, in the order they act.
+  the trip state is a latch, and the battery's temperature is what the surviving load does to the
+  pack — the same chain the power inventory's relationships describe, in the order they act. The
+  load between them, `bus_a_load_w`, left the sentinel for the `fuel_cell` node, where the bus solve
+  can read it in the same tick.
 
 state:
   - id: fuel_cell_power_w
     method: algebraic
     node: fuel_cell
     unit: W
-    # The field the arithmetic produces, named by the state's own id — the fourth state to use that
-    # spelling. What the cell generates *is* what the bus draws, so the state is its own subject.
+    # The field the arithmetic produces, named by the state's own id. 1,723 W is the reference
+    # operating point the linter re-derives against: every CSM load on and the transmitter on, which
+    # is `load_budget.csm_total_demand_w` split across the two buses.
     fuel_cell_power_w: 1723
     note: >-
-      The cell's output is a function of reactant availability and load, solved to
-      consistency each tick rather than integrated. The reactant draw is exact
-      stoichiometry charged to the O2 and H2 stocks, so the electricity is not free. **At steady
-      state the output is the load**: the cells generate what the bus draws, and the margin a crew
-      watches is the *capacity* headroom — three 1,420 W modules against this figure — which is what
-      `power.load_margin_w` means by margin. The modules are activated before launch and the
-      converter regulates around what they are already making, so at MET 0 there is no charge or
-      discharge term to add
+      What the three modules deliver to the two main buses this tick: the two bus loads, summed. At
+      steady state the output is the load, so a load `set_load` turns off leaves this state in the
+      same tick. The margin a crew watches is the capacity headroom, three 1,420 W modules against
+      this figure, which is what `power.load_margin_w` means. The reactant draw is charged per
+      ampere of module current (`fuel_cell_current_a`), not per watt of this figure (ADR 0003 item 3)
     provenance:
       basis: derived
       computes: fuel_cell_power_w
       derivation:
-        # **The relation was the note above, and its own words are the finding**: "a function of
-        # reactant availability and *load*". `bus_a_load_w`, which round 50 landed, is the load — so
-        # the sum is named here rather than the field, because a state whose rule is "the other
-        # state's value" is still a sum of fourteen declarations with a name in front of it, and
-        # naming them keeps the inventory as the one home.
-        expression: >-
-          csm_sband_transceiver + csm_sband_power_amplifier + csm_suit_fan + csm_cabin_fan +
-          csm_co2_scrubber + csm_imu + csm_guidance_computer + csm_instrumentation +
-          csm_coolant_pump_1 + csm_coolant_pump_2 + csm_heaters + csm_rcs_heaters +
-          csm_comm_heaters + csm_lighting
+        expression: bus_a_load + bus_b_load
         inputs:
-          csm_sband_transceiver: domains/power/components.yaml:loads.csm_sband_transceiver.demand_w
-          csm_sband_power_amplifier: domains/power/components.yaml:loads.csm_sband_power_amplifier.demand_w
-          csm_suit_fan: domains/power/components.yaml:loads.csm_suit_fan.demand_w
-          csm_cabin_fan: domains/power/components.yaml:loads.csm_cabin_fan.demand_w
-          csm_co2_scrubber: domains/power/components.yaml:loads.csm_co2_scrubber.demand_w
-          csm_imu: domains/power/components.yaml:loads.csm_imu.demand_w
-          csm_guidance_computer: domains/power/components.yaml:loads.csm_guidance_computer.demand_w
-          csm_instrumentation: domains/power/components.yaml:loads.csm_instrumentation.demand_w
-          csm_coolant_pump_1: domains/power/components.yaml:loads.csm_coolant_pump_1.demand_w
-          csm_coolant_pump_2: domains/power/components.yaml:loads.csm_coolant_pump_2.demand_w
-          csm_heaters: domains/power/components.yaml:loads.csm_heaters.demand_w
-          csm_rcs_heaters: domains/power/components.yaml:loads.csm_rcs_heaters.demand_w
-          csm_comm_heaters: domains/power/components.yaml:loads.csm_comm_heaters.demand_w
-          csm_lighting: domains/power/components.yaml:loads.csm_lighting.demand_w
+          bus_a_load: bus_a_load_w
+          bus_b_load: bus_b_load_w
       relation: >-
-        the cell generates what the bus draws, so this state and `bus_a_load_w` are **one quantity
-        read in two directions** — the second time this corpus says that about a pair, after round
-        44's `radiator_rejection_w` and `loop_primary_load_w`. The direction is what a reader should
-        notice: a *load* is what is connected and a *generation* is what has to come from somewhere,
-        and a fleet that reads the second as available headroom has misread it — the headroom is
-        `components.fc_[n].rated_w` three times over against this figure. The reactant chain is
-        charged against this number (`fc_o2_draw_kg_s` is 8.8619e-8 kg O2 per joule of it), so the
-        electricity is not free, and the stoichiometry is what makes the sum above a *power* rather
-        than a placement
+        the cells generate what the buses draw, so this is the two bus loads read as one generation.
+        Until the quiet-coast power rules it summed the fourteen `demand_w` declarations directly, a
+        constant: now each bus sums the loads its switches leave connected (`domains/power/rules.py`)
+        and this state adds the two, so the electricity follows the switches. The node's
+        `state_order` puts both bus loads before it
 
   - id: source_converter_v
     method: lag
@@ -114,11 +88,27 @@ state:
         activated before launch and rated at 29 +- 2 V each, so the bus is up before the mission
         clock starts and the converter regulates around what they are already making
     tau_s: UNCONFIGURED
+    evidence_question: >-
+      WP02 E-5 (docs/evidence/wp02-electrical.md). **The Apollo CSM has no source converter to
+      take a time constant from**: the fuel cells connect to the main buses through motor switches
+      and their terminal voltage falls with load (AOH SM2A-03-Block II-(1) pp. 2.6-2, 2.6-25,
+      2.6-38). The only figure in reach is electrical_diode.md:248's reference-design target,
+      "regulation transient <10 ms", which is a settling bound for hardware the vehicle does not
+      carry and is under one 20 ms tick. Owed to the operator as a model decision, not a value:
+      (a) replace this lag with the algebraic terminal relation V = E0 - R I on `fc_[n]` (E0
+      32.30 V, R 0.1008 ohm, both derived), or (b) keep a converter and take its tau from a
+      source for a converter. The slow effect Apollo does describe -- voltage recovering as the
+      stack's skin temperature follows the load (p. 2.6-25) -- has no published time constant
     note: >-
       Converter regulation lags its setpoint. electrical_diode.md:248 gives a 1.2 kW
       converter with a >=94 % efficiency but no time constant — and its 24-32 V envelope is
       re-anchored to apollo's 27.0-30.5 V band (C-01), so the parameter is owed rather than
-      inherited.
+      inherited. **Off the episode path** (ADR 0003 item 1, option (a) above): `bus_a_v` and
+      `bus_b_v` solve the modules' terminal relation directly, and no edge from `source_converter`
+      reaches a bus or anything else, so the owed `tau_s` blocks nothing the quiet-coast episode
+      needs. The state stays declared, and stays owed, rather than being deleted or given a tau:
+      `tests/test_power_rules.py` holds that nothing reads it, so a reader added later has to
+      answer this question first.
     provenance:
       basis: chosen
       reason: "a regulated converter is a first-order lag by construction; electrical_diode.md:248 gives its rating and efficiency but no time constant, so the class is chosen and the parameter is owed"
@@ -127,12 +117,38 @@ state:
     method: algebraic
     node: bus_a
     unit: V
+    # The rule's parameters (`domains/power/rules.py`, `bus_a_v`). Main bus A is fed by fuel cells
+    # 1 and 2 in parallel; the per-module terminal relation is `components.fc_[n]`'s, copied here
+    # because a rule reads only its own state's declaration, and held to those components by
+    # `tests/test_power_rules.py`.
+    cells_in_parallel: 2
+    cell_open_circuit_v: 32.30
+    cell_resistance_ohm: 0.1008
+    cell_current_envelope_a: [12.903, 52.593]
+    solve_provenance:
+      basis: derived
+      relation: >-
+        no source converter (ADR 0003 item 1; AOH SM2A-03-Block II-(1) pp. 2.6-2, 2.6-25): the bus is
+        the terminals of the modules feeding it. Per module V = E0 - R i with E0 32.30 V and R
+        0.1008 ohm, `components.fc_1.open_circuit_intercept_v` and `source_resistance_ohm` (derived,
+        WP02 E-2, the secant of the AOH p. 2.6-2 envelope). Two modules in parallel share the bus
+        current, so V = E0 - (R/2) I, and the rule solves P = V I for I at the bus load: the smaller
+        root of (R/2) I^2 - E0 I + P = 0. The envelope is that secant's own range, 400 W / 31 V =
+        12.903 A to 1,420 W / 27 V = 52.593 A per module; outside it the relation is an
+        extrapolation and the rule returns no value, as it does for a load beyond E0^2 / (4 R/2)
+      routing: >-
+        fuel cells 1 and 2 on main bus A: `components.fc_[1-2].normal_bus` (TN D-7609 p. 5; Apollo 15
+        Mission Report 6.2)
     note: >-
-      The nodal solve. Bus voltage is a function of source EMF, source internal resistance,
-      tie state and total load; there is no bus capacitance to integrate, and that choice is
-      load-bearing — review-findings.md #5 makes the whole 50 Hz verdict conditional on the
-      electrical network being algebraic. If this becomes an ODE with real capacitance the
-      verdict inverts and the requirement becomes 1-10 kHz.
+      The nodal solve. Bus voltage is a function of source EMF, source internal resistance and total
+      load; there is no bus capacitance to integrate, and that choice is load-bearing:
+      review-findings.md #5 makes the whole 50 Hz verdict conditional on the electrical network being
+      algebraic. If this becomes an ODE with real capacitance the verdict inverts and the requirement
+      becomes 1-10 kHz. **What the solve does not include**: the bus tie (normally open in coast,
+      `bus_tie_closed` initial `open`), the batteries (off the main buses in coast, TN D-7609; A10C)
+      and the feeder and motor-switch drop between the terminals and the bus, which WP02 E-2 bounds
+      at 0-1.0 V against flown bus voltages. A tie closure or a battery on the bus is not modelled by
+      this rule
     provenance:
       basis: chosen
       reason: "review-findings.md #5 makes the entire 50 Hz verdict conditional on the electrical network being algebraic rather than an ODE with bus capacitance; recording that here means a later change to this line has to argue with the review"
@@ -141,17 +157,39 @@ state:
     method: algebraic
     node: bus_b
     unit: V
-    note: second bus, cross-supported through the tie
+    cells_in_parallel: 1
+    cell_open_circuit_v: 32.30
+    cell_resistance_ohm: 0.1008
+    cell_current_envelope_a: [12.903, 52.593]
+    solve_provenance:
+      basis: derived
+      relation: "as `bus_a_v`, with one module: fuel cell 3 alone, so V = E0 - R I"
+      routing: >-
+        fuel cell 3 on main bus B: `components.fc_3.normal_bus` (TN D-7609 p. 5; Apollo 15 Mission
+        Report 6.2)
+    note: >-
+      second bus, the same nodal solve over its own source and load set. Its source set was the part
+      the graph did not have (`E-FC-BUSB` closed that); its load set is `bus_b_load_w`. The battery
+      half the corpus describes (`BAT_B <-> BAT_CONV_B <-> BUS_B`) is still not modelled, and in
+      translunar coast the batteries are off the main buses, so the solve does not need it
     provenance:
       basis: chosen
       reason: "as bus_a_v: the second bus is the same nodal solve over a different source and load set"
-      note: "**and the source set is the part the graph does not have.** `bus_b` has no inbound edge anywhere in `coupling.yaml`: every electrical edge terminates on `bus_a`, and the tie runs `bus_b -> bus_tie -> bus_a`, so bus B is declared as a *source* for bus A while the note above calls it cross-supported. Seven loads sit on `csm_bus_b` — `csm_suit_fan`, both coolant pumps, the heaters and the lighting among them — the channel is published, three faults perturb it, and it is on a crew panel, so the bus is real in every file except the one that says what feeds it. `check_power_inventory` bounds its own check per *vehicle* for exactly this reason: \"which bus a source feeds is a routing decision the tie makes and the file does not state\". `E-FC-BUSB` now gives bus B its generation channel, which is `electrical_diode.md:207`'s `MPPTB --> BUS_B`. **The battery half is still owed**: the diagram has `BAT_B <-> BAT_CONV_B <-> BUS_B` beside `BAT_A <-> BAT_CONV_A <-> BUS_A`, and the model has one `battery_energy` node with `E-BAT-BUS` running to `bus_a` only. A second edge from that one node would model a *shared* battery presenting to two buses rather than the two independent strings the spec describes, so it is named here rather than added"
 
   - id: battery_usable_j_j
     node: battery_usable_j
     method: algebraic
     unit: J
     derate_curve: UNCONFIGURED
+    evidence_question: >-
+      WP02 E-6. What fraction of the CSM entry batteries' 40 Ah is deliverable as a function of
+      pack temperature? Searched: AOH section 2.6, the J-mission EPS handout, TN D-6976 (battery
+      experience report; its entry-battery curves, figs. 4-6, are graphical and not about
+      temperature) and the Apollo 10 consumables analysis. What is published is a rated
+      *minimum* of 40 Ah over a 50-110 F qualified ambient, planned as 40 Ah in flight and 45 Ah
+      postlanding -- a flat floor inside the qualification, and nothing outside it, which is the
+      region the crisis value of E-PLATE-BAT is about. Next source: the CSM/LM Operational Data
+      Book volume I EPS battery pages (not text-extractable from here)
     provenance:
       basis: UNCONFIGURED
       note: >-
@@ -168,58 +206,54 @@ state:
     node: fc_o2_draw
     method: algebraic
     unit: kg O2/s
-    draw_kg_s: 0.000152690537
+    # At the reference operating point (every CSM load on, transmitter on): 56.686 A of module
+    # current, `fuel_cell_current_a`'s own field, times 2.56996e-6 kg/s per ampere.
+    draw_kg_s: 0.000145681
     provenance:
       basis: derived
       computes: draw_kg_s
       derivation:
-        expression: fuel_cell_power_w * per_joule_kg
+        expression: current_a * per_amp_kg_s
         inputs:
-          fuel_cell_power_w: fuel_cell_power_w
-          per_joule_kg: coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value
+          current_a: fuel_cell_current_a
+          per_amp_kg_s: coupling.yaml:edges.E-FC-DRAW-O2.sensitivity.value
       relation: >-
-        the cell's oxygen draw is what a joule of output costs times the power the cell is making, and
-        the cost is `E-FC-DRAW-O2`'s own figure rather than a second copy of it: one home for
-        8.8619e-8 kg O2 per joule, which is that edge's `kg/s per W` written the other way round. The
-        power is a *reading* of the cell's state, which the schedule reaches first (node `fuel_cell` is
-        fifth, this node nineteenth), so the draw is this tick's operating point rather than last
-        tick's. At the declared 1,723 W demand it is 1.526905e-4 kg/s, which is what
-        `domains/consumables/components.yaml#consumers.fuel_cell_o2` states for the budget
+        the cells' oxygen draw is what an ampere of module current costs times the current the three
+        modules are carrying, and the cost is `E-FC-DRAW-O2`'s own figure: one home for 2.56996e-6
+        kg O2/s per ampere, which is the J-mission EPS handout's table (p. 2.6-21, 2.04e-2 lb/h per
+        ampere per fuel cell) reached through the hydrogen rate and the reaction's mass ratio. **Per
+        ampere, not per watt** (ADR 0003 item 3): the table is per ampere, and charging per watt at a
+        fixed 29 V undercounts by 7 % at a 27 V terminal and overcounts by 5 % at the 30.4 V the
+        coast bus solves to. The current is a reading of `fuel_cell_current_a`, which the schedule
+        reaches first (node `fuel_cell`), so the draw is this tick's operating point
       note: >-
-        **the field this state computed was a coefficient wearing a rate's unit.** The unit has said
-        `kg O2/s` since the state was written and the arithmetic produced kilograms per *joule*;
-        nothing compared the two, because a unit and a field name were the only places the quantity was
-        written down and no reader looked at either. The difference is the whole operating point --
-        8.8619e-8 is what a joule costs, 1.526905e-4 kg/s is what the cell draws at 1,723 W -- and it
-        is not academic: the tank's discharge edge (`E-O2-DRAW`, `kg O2 per kg O2`) reads this node as
-        the rate it drains at, so the coefficient was a plausible number one multiplication away from
-        being used as a flow
+        **the field this state computed was a coefficient wearing a rate's unit** until round 69: the
+        unit said `kg O2/s` and the arithmetic produced kilograms per joule. The tank's discharge edge
+        (`E-O2-DRAW`, `kg O2 per kg O2`) reads this node as the rate it drains at, so a coefficient
+        here is a plausible number one multiplication away from being used as a flow
   - id: fc_h2_draw_kg_s
     node: fc_h2_draw
     method: algebraic
     unit: kg H2/s
-    draw_kg_s: 1.9239018000000003e-05
+    draw_kg_s: 1.83558e-05
     provenance:
       basis: derived
       computes: draw_kg_s
       derivation:
-        expression: fuel_cell_power_w * per_joule_kg
+        expression: current_a * per_amp_kg_s
         inputs:
-          fuel_cell_power_w: fuel_cell_power_w
-          per_joule_kg: coupling.yaml:edges.E-FC-DRAW-H2.sensitivity.value
+          current_a: fuel_cell_current_a
+          per_amp_kg_s: coupling.yaml:edges.E-FC-DRAW-H2.sensitivity.value
       relation: >-
-        as the oxygen draw: the power the cell is making times what a joule of hydrogen costs, and that
-        cost is `E-FC-DRAW-H2`'s own figure -- the oxygen edge's cost through the reaction's 0.126 mass
-        ratio -- so the hydrogen draw is the oxygen draw over 7.9365 *by construction* rather than by a
-        second arithmetic that could drift from it. At the declared demand it is 1.923902e-5 kg/s,
-        0.069 kg H2 per hour
+        as the oxygen draw: the module current times what an ampere costs in hydrogen, and that cost
+        is `E-FC-DRAW-H2`'s own figure -- the published 2.57e-3 lb/h per ampere (J-mission EPS
+        handout p. 2.6-21; Mission E consumables analysis) -- so the hydrogen draw is the oxygen draw
+        times 0.126 *by construction* rather than by a second arithmetic that could drift from it
       note: >-
-        **and this one computed a mass ratio**, 0.126 kg H2 per kg O2, under a unit of `kg H2/s`. The
-        number was right and the quantity was wrong, which is the harder of the two to see: the tank's
-        discharge edge would have drained 0.126 kg/s of hydrogen -- six thousand times the true draw,
-        from the 24.5 kg the vehicle loads and the 13.2 kg the mission spends -- and every figure in
-        that sentence is declared somewhere. The two reactant states were one defect in two spellings,
-        which is why the fix is one relation in two places rather than two
+        **and this one computed a mass ratio**, 0.126 kg H2 per kg O2, under a unit of `kg H2/s`,
+        until round 69. The two reactant states were one defect in two spellings, which is why the
+        fix is one relation in two places rather than two
+
   - id: battery_charge_j
     method: stock
     node: battery_energy
@@ -269,6 +303,13 @@ state:
     method: lag
     unit: degC
     initial: UNCONFIGURED
+    evidence_question: >-
+      WP02 E-7. The CSM entry batteries are passively cooled in the CM ("active thermal control
+      was not required because of the mild thermal environment of the CM cabin", TN D-6976
+      p. 5) and qualified for 50-110 F ambient (AOH p. 2.6-17), which bounds the initial at
+      10-43.3 C and gives no value: no CSM battery temperature telemetry or pack thermal mass was
+      found. Both the initial and tau_s need the pack's mass, specific heat and mounting
+      conductance, which is WP02's thermal-aggregation question, not an electrical one
     initial_note: >-
       the pack's temperature at MET 0, owed with its time constant and for the same reason:
       `thermal_diode.md:965` declares every thermal constant unspecified, this state's `tau_s`
@@ -309,6 +350,15 @@ state:
         argument: state
         maps:
           auto: UNCONFIGURED
+        evidence_question: >-
+          WP02 E-8. Apollo's MAIN BUS TIE switches (BAT A/C, BAT B/C) tie the *batteries* to the
+          main buses through motor switches S1 and S2 (AOH p. 2.6-3/4, Fig. 2.6-1 note; J-mission
+          handout p. 2.6-3); section 2.6 describes no direct main-bus-A-to-B tie at all. So this
+          A-B tie and its `auto` have no Apollo article to take a mapping from, and the AUTO
+          position the real switch has is not described in any text reached. A model decision for
+          the operator: keep the A-B tie as the corpus's reference-design `TIE_AB`
+          (electrical_diode.md:252) and say what `auto` means, or re-model the tie as Apollo's
+          battery-to-main-bus tie
         why: >-
           `open` and `closed` are the identity. `auto` is not a position at all: it hands the
           decision to the service, "which closes only when the two buses are within 1 V and no
@@ -375,6 +425,13 @@ state:
     hysteresis: {assert: 26.5, clear: 27.2, dwell_ms: 500}
     band_on: power.dc_bus_a_v
     band_value: UNCONFIGURED
+    evidence_question: >-
+      WP02 E-9. Not a value a source can give: Apollo shed load by crew procedure, not by an
+      automatic ladder. What the sources do give is the envelope the ladder sits in: the DC
+      undervoltage caution at 26.25 V (AOH p. 2.6-5; TN D-7609 p. 8), sustained operation
+      26.5-30.0 V and limits 26.5-31.0 V (J-mission handout p. 2.6-26), and "use batts only when
+      main bus volts < 24.5" in the emergency power-down (Apollo 15 CSM Systems Checklist
+      EMER/1-7). The rung-to-class map remains the decision coupling.yaml#open_debts names
     note: >-
       The ladder's position, and the one band of the four in profiles.yaml that the position
       itself latches on: the top tier, `bus_a_undervoltage` — assert 26.5 V, clear 27.2 V. The
@@ -396,57 +453,158 @@ state:
       basis: chosen
       reason: "the ladder position is a mode, not a measurement, so it is latched; its band is the top tier's own band on power.dc_bus_a_v, which `band_on` names so the linter holds the two to the same volts"
 
+  # The two bus loads and the cells' current. On the `fuel_cell` node, in the order its
+  # `state_order` declares, because the cells deliver what the buses draw and everything downstream
+  # of the cells (the bus solves, the reactant draws, the waste heat) needs them this tick. They were
+  # one constant sum on the sentinel, which advances last.
   - id: bus_a_load_w
     method: algebraic
-    node: internal
+    node: fuel_cell
     unit: W
-    # The field the arithmetic produces, named by the state's own id — the third state in the corpus
-    # to use that spelling, and the sum is what the state *is*.
-    bus_a_load_w: 1723
+    # The reference operating point, the reading the linter re-derives `fuel_cell_power_w` against:
+    # every load below on and the transmitter on. The tick computes it from the switches.
+    bus_a_load_w: 1148
+    # The rule's parameters (`domains/power/rules.py`): the loads `loads[].bus` puts on main bus A,
+    # with their `demand_w`, copied because a rule reads only its own state's declaration and held to
+    # the inventory by `tests/test_power_rules.py`.
+    loads_w:
+      csm_sband_transceiver: 36
+      csm_sband_power_amplifier: 72
+      csm_imu: 90
+      csm_guidance_computer: 150
+      csm_instrumentation: 120
+      csm_coolant_pump_2: 250
+      csm_heaters: 300
+      csm_rcs_heaters: 80
+      csm_comm_heaters: 50
+    transmitter_gated: [csm_sband_power_amplifier]
     note: >-
-      sum of the enabled loads, recomputed every tick rather than tracked. **The 1,723 W is the CSM's
-      whole connected load, both buses, and that is a decision the graph had already made**: every
-      electrical edge terminates on `bus_a`, and the tie runs `bus_b -> bus_tie -> bus_a`, so the two
-      buses are one electrical system and the current the cells supply is the vehicle's total draw.
-      It is not the 598 W of loads that name `csm_bus_a`: a bus-A-only sum would leave the pumps, the
-      heaters and the lighting fed from nowhere, and `power.bus_a_current_a` — the channel this state
-      feeds — would read 21 A where apollo publishes 10-120 A at a 40 A continuous rating
-      (`apollo_diode.md:75`, `electrical_diode.md:251`)
+      the watts main bus A carries this tick: the loads on it that `load_enabled` leaves on, with the
+      power amplifier counted only while `comms.transmitter_on` is `on` as well. **The amplifier's
+      watts have one home**, the 72 W inventory row (ADR 0003 item 5): `E-AMP-LOAD` orders comms
+      before the bus and adds nothing, and `comms.tx_power` is a published measurement, never a load.
+      Until the quiet-coast power rules this state was the CSM's whole connected load on both buses,
+      1,723 W, because every electrical edge ended on `bus_a`; now each bus carries its own share
+    provenance:
+      basis: chosen
+      reason: >-
+        the sum is arithmetic; the *assignment* of loads to buses is chosen (ADR 0003 item 2):
+        Apollo flew with fuel cells 1 and 2 on main bus A and fuel cell 3 on main bus B (TN D-7609
+        p. 5), and with roughly two thirds of the load on the two-cell bus. No per-load bus
+        assignment was found, so `loads[].bus` puts 1,148 W of the 1,723 W (66.6 %) on bus A by
+        moving the second coolant pump and the heater bank there, which also puts the two redundant
+        pumps on different buses. The earlier split (598 W A, 1,125 W B) ran bus A's two modules at
+        9.5 A each, below the 12.9 A normal minimum, at 31.3 V, above the 31 V envelope (WP02 E-2)
+  - id: bus_b_load_w
+    method: algebraic
+    node: fuel_cell
+    unit: W
+    bus_b_load_w: 575
+    loads_w:
+      csm_suit_fan: 85
+      csm_cabin_fan: 60
+      csm_co2_scrubber: 80
+      csm_coolant_pump_1: 250
+      csm_lighting: 100
+    transmitter_gated: []
+    note: "as `bus_a_load_w`, for main bus B: the loads `loads[].bus` puts there that `load_enabled` leaves on"
+    provenance:
+      basis: chosen
+      reason: "as `bus_a_load_w`: the sum is arithmetic and the load-to-bus assignment is chosen, bounded by the flown two-thirds share on bus A (ADR 0003 item 2)"
+  - id: fuel_cell_current_a
+    method: algebraic
+    node: fuel_cell
+    unit: A
+    # The reference operating point: bus A's 1,148 W on two modules solves to 37.767 A at 30.397 V,
+    # bus B's 575 W on one to 18.919 A at 30.393 V. 56.686 A in all, 18.9 A per module, inside the
+    # 12.9-52.6 A envelope.
+    fuel_cell_current_a: 56.686
+    buses:
+      - {bus: csm_bus_a, load: bus_a_load_w, cells_in_parallel: 2}
+      - {bus: csm_bus_b, load: bus_b_load_w, cells_in_parallel: 1}
+    cell_open_circuit_v: 32.30
+    cell_resistance_ohm: 0.1008
+    cell_current_envelope_a: [12.903, 52.593]
+    note: >-
+      the three modules' summed current, which is what the reactants are charged by (ADR 0003 item 3):
+      the J-mission EPS handout p. 2.6-21 publishes consumption per ampere per fuel cell, so the
+      vehicle's draw is the per-ampere rate times the sum of the module currents. Each bus is solved
+      at its own load with the same relation as `bus_a_v` and `bus_b_v` (`rules.solve_bus`), so this
+      current and those voltages are one operating point. No value when either bus has none
     provenance:
       basis: derived
-      computes: bus_a_load_w
-      derivation:
-        # **The relation was a sentence in the note above and every ingredient was declared.** The
-        # fourteen `demand_w` fields are the power domain's own inventory, and their sum is
-        # `load_budget.csm_total_demand_w`, which `check_power_inventory` has held against them since
-        # the round that wrote it. So this is not a new number: it is the *state* the electrical solve
-        # reads, where before the sum existed only as a check on the inventory.
-        expression: >-
-          csm_sband_transceiver + csm_sband_power_amplifier + csm_suit_fan + csm_cabin_fan +
-          csm_co2_scrubber + csm_imu + csm_guidance_computer + csm_instrumentation +
-          csm_coolant_pump_1 + csm_coolant_pump_2 + csm_heaters + csm_rcs_heaters +
-          csm_comm_heaters + csm_lighting
-        inputs:
-          csm_sband_transceiver: domains/power/components.yaml:loads.csm_sband_transceiver.demand_w
-          csm_sband_power_amplifier: domains/power/components.yaml:loads.csm_sband_power_amplifier.demand_w
-          csm_suit_fan: domains/power/components.yaml:loads.csm_suit_fan.demand_w
-          csm_cabin_fan: domains/power/components.yaml:loads.csm_cabin_fan.demand_w
-          csm_co2_scrubber: domains/power/components.yaml:loads.csm_co2_scrubber.demand_w
-          csm_imu: domains/power/components.yaml:loads.csm_imu.demand_w
-          csm_guidance_computer: domains/power/components.yaml:loads.csm_guidance_computer.demand_w
-          csm_instrumentation: domains/power/components.yaml:loads.csm_instrumentation.demand_w
-          csm_coolant_pump_1: domains/power/components.yaml:loads.csm_coolant_pump_1.demand_w
-          csm_coolant_pump_2: domains/power/components.yaml:loads.csm_coolant_pump_2.demand_w
-          csm_heaters: domains/power/components.yaml:loads.csm_heaters.demand_w
-          csm_rcs_heaters: domains/power/components.yaml:loads.csm_rcs_heaters.demand_w
-          csm_comm_heaters: domains/power/components.yaml:loads.csm_comm_heaters.demand_w
-          csm_lighting: domains/power/components.yaml:loads.csm_lighting.demand_w
       relation: >-
-        the sum of every CSM load's declared `demand_w`, which is the same fourteen fields
-        `load_budget.csm_total_demand_w` states a total for and `check_power_inventory` sums. A load
-        that a fault disables, or that the shed ladder opens, leaves the state on the next tick
-        because the state is recomputed rather than tracked — which is what its own reason says the
-        class exists for
+        I = I_A + I_B, each the smaller root of (R/n) I^2 - E0 I + P = 0 for its bus's load P and its
+        n modules in parallel (`buses`). E0, R and the envelope are `components.fc_[n]`'s, copied as
+        `bus_a_v` copies them and held to them by `tests/test_power_rules.py`
+
+  # The switch position of every load in the inventory below, and the state `set_load` moves. It is
+  # on a coupling node, `load_shed_state` beside the ladder's class, rather than the sentinel, because
+  # two domains read it: power sums the enabled loads onto each bus, and thermal sums the same loads'
+  # heat. A state on the sentinel is readable by its own domain only (`plant.md` §2, D5).
+  - id: load_enabled
+    node: load_shed_state
+    method: discrete
+    unit: "map[load_id,enum[on,off]]"
+    initial:
+      csm_sband_transceiver: "on"
+      csm_sband_power_amplifier: "on"
+      csm_suit_fan: "on"
+      csm_cabin_fan: "on"
+      csm_co2_scrubber: "on"
+      csm_imu: "on"
+      csm_guidance_computer: "on"
+      csm_instrumentation: "on"
+      csm_coolant_pump_1: "on"
+      csm_coolant_pump_2: "on"
+      csm_heaters: "on"
+      csm_rcs_heaters: "on"
+      csm_comm_heaters: "on"
+      csm_lighting: "on"
+      lm_sband_transmitter: "off"
+      lm_sband_high_power: "off"
+      lm_cabin_fan: "off"
+      lm_suit_fan: "off"
+      lm_co2_scrubber: "off"
+      lm_guidance_computer: "off"
+      lm_landing_radar: "off"
+      lm_instrumentation: "off"
+      lm_heaters: "off"
+      lm_rcs_heaters: "off"
+      lm_lighting: "off"
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        all inventory loads on at MET 0, matching the configured 1,723 W total, which TN D-7609 p.2
+        bounds to the flown 60–80 A coast band. The CSM loads are the fourteen whose `demand_w` sums to
+        `load_budget.csm_total_demand_w`, and 1,723 W at 28 V is 61.5 A, inside the 60-80 A that TN
+        D-7609 p. 2 gives "between SPS burns". The LM loads are off because the LM is unpowered cargo
+        in translunar coast (`docs/vehicle-completion/09-quiet-coast-episode.md` §4, in the
+        repository root); its own bus is not a CSM bus and none of them reaches `bus_a` or `bus_b`
+      note: >-
+        not a checklist position. The inventory's loads are model aggregates (`csm_heaters`,
+        `csm_lighting`) rather than Apollo circuit breakers, so a per-breaker MET-0 map from the
+        Apollo 17 launch checklist (pp. 33-59, which `mission.yaml#launch_state` cites) would first
+        need the load-to-breaker mapping `breaker_panel`'s own initial owes. What would replace this
+        choice: that mapping, and the post-extraction breaker positions read through it
+    moved_by: ["command:set_load"]
+    command_value:
+      - verb: set_load
+        argument: state
+        key: load
+        why: >-
+          identity: the verb's `state` argument is `on` or `off` and so is the element it writes, keyed
+          by the verb's `load` argument. `priority` is not a position and writes nothing here
+    note: >-
+      one position per load, keyed by `loads[].id`. The switch is the load's *connection*; whether a
+      connected load draws is the bus rules' business (`domains/power/rules.py`), which is where the
+      power amplifier's draw is gated on `comms.transmitter_on` as well. A load the command turns off
+      leaves both bus sums, the generation and the reactant draw in the same tick, because the command
+      is applied before the tick walks the schedule (`plant.md` §9 step 1)
+    provenance:
+      basis: apollo
+      ref: "apollo_diode.md:237"
+      note: "apollo's `set_load` energises or de-energises a load; this is the position the verb writes, which until this state existed it wrote nowhere (`--apply`: 0 values changed)"
 # --------------------------------------------------------------------------------------
 # Components. `kind` follows coupling.yaml's node kinds; the electrical network's members are
 # sources, storage, distribution and protection.
@@ -463,6 +621,52 @@ components:
     provenance:
       basis: historical
       source: "TN D-7142: three modules of 563-1,420 W each at 27-31 V dc"
+    # WP02 electrical evidence (docs/evidence/wp02-electrical.md, E-1 to E-3). The cell is
+    # wired straight to the main buses through motor switches: Apollo had no source regulator, and
+    # "the application and removal of fuel cell loads causes the terminal voltage to decrease and
+    # increase, respectively" (AOH SM2A-03-Block II-(1) p. 2.6-25). These three fields are the
+    # published envelope that sentence describes and the source impedance it implies.
+    normal_power_w: [400, 1420]
+    terminal_v_at_normal_power: [31, 27]
+    normal_envelope_provenance:
+      basis: historical
+      source: >-
+        Apollo Operations Handbook SM2A-03-Block II-(1), section 2.6 (CSM 106 and subs; basic
+        15 Apr 1969, changed 15 Oct 1969) p. 2.6-2: each power plant "normally supplies 400 to 1420
+        watts at 31 to 27 vdc (at fuel cell terminals)" -
+        https://www.ibiblio.org/apollo/ApolloProjectOnline/Documents/SMA2A-03-BLOCK%20II%20Volume%201%2019691015/aoh-v1-2-06-eps.pdf
+        - and the same 400-1420 W in the J-mission EPS handout (North American Rockwell, 1 Oct
+        1971, CSM 112-114) p. 2.6-2
+      note: >-
+        the voltage range is written high-to-low against a power range written low-to-high, which
+        pairs the ends: 31 V at 400 W and 27 V at 1,420 W. That pairing is the one reading the
+        derived impedance below rests on. The 563 W lower figure in `provenance.source` is TN
+        D-7142's and SP-5115's (p. 29); the AOH and the J-mission handout both say 400 W
+    source_resistance_ohm: 0.1008
+    open_circuit_intercept_v: 32.30
+    source_resistance_provenance:
+      basis: derived
+      relation: >-
+        the secant of the cell's terminal characteristic across its published normal envelope:
+        I_low = 400 W / 31 V = 12.903 A, I_high = 1420 W / 27 V = 52.593 A, so
+        R = (31 - 27) / (52.593 - 12.903) = 0.10078 ohm, and the open-circuit intercept of that
+        line is E0 = 31 + 0.10078 x 12.903 = 32.30 V. Linear in current between the envelope ends;
+        outside them it is an extrapolation and a rule must not use it there
+      note: >-
+        **what this is not**: a polarization curve. No text-extractable primary source reached gives
+        terminal volts at a stated current (the Apollo 14 CSM Systems Data Book lists a "FUEL CELL
+        PERFORMANCE - VACUUM" chart whose data is graphical only). The secant is the impedance a
+        bus solve needs; the curvature it omits is owed with that chart. Per bus: fuel cells 1 and 2
+        in parallel on main bus A present 0.0504 ohm, fuel cell 3 alone on main bus B 0.1008 ohm
+    normal_bus: csm_bus_a
+    normal_bus_provenance:
+      basis: historical
+      source: >-
+        TN D-7609 (Apollo Experience Report: CSM Electrical Power Distribution Subsystem, Mar 1974)
+        p. 5: "the normal configurations were with fuel cells 1 and 2 on main bus A and with fuel
+        cell 3 on main bus B"; Apollo 15 Mission Report section 6.2: "fuel cells 1 and 2 were placed
+        on main bus A and fuel cell 3 on main bus B". The AOH (p. 2.6-2) gives the switchable set:
+        fuel cell 1 to bus A, fuel cell 2 to A and B, fuel cell 3 to B
   - id: fc_2
     kind: flow
     class: source
@@ -472,6 +676,14 @@ components:
     provenance:
       basis: historical
       source: "as fc_1"
+    normal_power_w: [400, 1420]
+    terminal_v_at_normal_power: [31, 27]
+    normal_envelope_provenance: {basis: historical, source: "as fc_1"}
+    source_resistance_ohm: 0.1008
+    open_circuit_intercept_v: 32.30
+    source_resistance_provenance: {basis: derived, relation: "as fc_1: the secant of the AOH p. 2.6-2 normal envelope"}
+    normal_bus: csm_bus_a
+    normal_bus_provenance: {basis: historical, source: "as fc_1 (TN D-7609 p. 5; Apollo 15 Mission Report 6.2); the AOH allows it on either bus (p. 2.6-2), and the flown normal was bus A"}
   - id: fc_3
     kind: flow
     class: source
@@ -481,6 +693,14 @@ components:
     provenance:
       basis: historical
       source: "as fc_1"
+    normal_power_w: [400, 1420]
+    terminal_v_at_normal_power: [31, 27]
+    normal_envelope_provenance: {basis: historical, source: "as fc_1"}
+    source_resistance_ohm: 0.1008
+    open_circuit_intercept_v: 32.30
+    source_resistance_provenance: {basis: derived, relation: "as fc_1: the secant of the AOH p. 2.6-2 normal envelope"}
+    normal_bus: csm_bus_b
+    normal_bus_provenance: {basis: historical, source: "as fc_1 (TN D-7609 p. 5; Apollo 15 Mission Report 6.2)"}
   - id: battery_csm_1
     kind: stock
     class: storage
@@ -491,6 +711,31 @@ components:
     provenance:
       basis: historical
       source: "NR and PSR: 3 x 40 Ah entry batteries, 20 cells, 37.2 V open circuit, 27 V minimum loaded"
+    # WP02 electrical evidence (docs/evidence/wp02-electrical.md, E-4). The published electrical
+    # points, kept as the two handbooks print them because they disagree on the loaded point.
+    cells: 20
+    open_circuit_v: 37.2
+    loaded_points:
+      - {source: "AOH SM2A-03-Block II-(1) p. 2.6-17 (CSM 106 and subs)", v: 29, a: 35, v_min: 27}
+      - {source: "J-mission EPS handout, 1 Oct 1971, p. 2.6-19 (CSM 112-114)", v: 28, a: 25, v_min: 27, open_circuit_v: 37.1}
+    qualified_ambient_f: [50, 110]
+    capacity_planning_ah: {in_flight: 40, postlanding: 45}
+    electrical_provenance:
+      basis: historical
+      source: >-
+        AOH SM2A-03-Block II-(1) pp. 2.6-16/17: "rated at 40-ampere hours (AH) minimum", open circuit
+        37.2 V, 29 V at 35 A, 27 V minimum, ambient 50-110 F, 45 AH after a full recharge for
+        postlanding; J-mission EPS handout (https://www.ibiblio.org/apollo/Documents/J%20Mission%20Electrical%20Power%20System%20Oct%201971.pdf)
+        pp. 2.6-18/19: 20 silver oxide-zinc cells, 40 Ah minimum (25 A for 60 min), 37.1 V open
+        circuit, 28 V nominal / 27 V minimum at 25 A, 50-110 F; Apollo 10 consumables analysis
+        (MSC, 9 May 1969) Table 8-I p. 40: 40 Ah each until splashdown, then 45 Ah
+      note: >-
+        TN D-6976 (Apollo Experience Report: Battery Subsystem, Sep 1972) Table I lists the entry
+        battery at **29 V nominal** and p. 3 states "40 A-h (1160 W-h each)"; this component's
+        `v_nominal` is 28, so `load_budget.csm_battery_energy_wh` (3 x 40 x 28 = 3,360 Wh) is 3.4 %
+        below the 3,480 Wh the experience report's own figure gives. Recorded, not changed: the
+        28 is the J-mission handout's loaded figure and the choice between them is the energy
+        basis WP04 owes with the derate curve
   - id: battery_csm_2
     kind: stock
     class: storage
@@ -715,7 +960,8 @@ loads:
       reason: "THE load of the flagship chain. Its inrush is 1.68x its demand because that ratio is what makes a sagging bus drop the pump and start the thermal cascade; the absolute figure is chosen to sit where a 27 V bus with a 0.05 ohm source impedance crosses the contactor-hold threshold under a 72 W step"
   - id: csm_coolant_pump_2
     vehicle: csm
-    bus: csm_bus_b
+    bus: csm_bus_a
+    bus_provenance: {basis: chosen, reason: "moved from csm_bus_b so main bus A carries 1,148 W of 1,723 W, the flown two-thirds share on the two-cell bus (ADR 0003 item 2; TN D-7609 p. 5); no per-load bus assignment was found"}
     demand_w: 250
     inrush_w: 420
     class: P2
@@ -724,7 +970,8 @@ loads:
       reason: "the redundant pump, deliberately one class lower so that shedding the second pump is a decision with a thermal consequence rather than a free choice"
   - id: csm_heaters
     vehicle: csm
-    bus: csm_bus_b
+    bus: csm_bus_a
+    bus_provenance: {basis: chosen, reason: "moved from csm_bus_b so main bus A carries 1,148 W of 1,723 W, the flown two-thirds share on the two-cell bus (ADR 0003 item 2; TN D-7609 p. 5); no per-load bus assignment was found"}
     demand_w: 300
     inrush_w: 300
     class: P2

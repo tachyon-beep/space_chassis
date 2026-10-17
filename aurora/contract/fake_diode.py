@@ -11,9 +11,11 @@ It implements the contract in `docs/diode-contract.md` and nothing more:
 
 * per-agent directories under DIODE_DIR, each with its own console, output,
   state and telemetry;
-* destructive atomic intake -- read the console, then rewrite it with
-  `commands` emptied and `variables` preserved, via a temporary and a rename;
-* one result file per command, refusals included, named by stamp and command;
+* destructive intake -- read the console and, when it holds something to
+  claim, rewrite it with `commands` emptied and `variables` preserved, via a
+  temporary and a rename; a console with nothing to claim is left as it is
+  (the vehicle's quiet rule, #39 tier 1);
+* one result per command, refusals included, named by stamp and command;
 * a closed vocabulary with gates, published every pass so a caller can discover
   what is open;
 * deferral re-dispatched through the gate at delivery rather than captured at
@@ -184,6 +186,11 @@ class AgentSide:
         self.pending_path = self.root / "pending.json"
         self.requests: list[float] = []
         self.pending: list[dict] = []
+        # The preserved map, and whether there is one. Nothing here survives a restart, so a
+        # console found on start is read the way the vehicle reads one after a resume: no map is
+        # held until a console carries one (the seed below carries `{}`).
+        self.held: dict = {}
+        self.variables_known = False
         self.slot = 0
         self.notes: list[str] = []
         self.root.mkdir(parents=True, exist_ok=True)
@@ -195,33 +202,73 @@ class AgentSide:
             )
 
     # -- intake -------------------------------------------------------------
-    def consume(self) -> tuple[list[str], dict]:
-        """Read the console, then clear the batch. Clear first, run after.
+    def consume(self) -> tuple[list, dict]:
+        """Read the console and, if it holds something to claim, clear the batch. Clear first, run after.
 
         That ordering is what makes a command at-most-once: a crash in the
         middle of a batch loses the rest of it rather than replaying what was
-        already run. The rewrite is atomic, so a caller writing at the same
-        moment either sees its batch taken whole or finds it untouched.
+        already run. The rewrite is a rename, so it is never read half-written.
+
+        **A console with nothing to claim is not rewritten (#39 tier 1).** The
+        read and the rename are two steps, and no rename can check that the file
+        it replaces is the file that was read: a batch put in place between them
+        is renamed over, unread. So the test the vehicle uses
+        (`vehicle/tools/console.py`, `Window.claim`'s `quiet`) is used here,
+        identically: an object whose `commands` is exactly `[]` and that already
+        shows the map -- its own `variables` object, which is adopted, or no
+        `variables` key while no map is held -- is left as it is. It is decided
+        from types alone, before the map is adopted, so no JSON value can make
+        it raise. Everything else is rewritten to show the held map, so the file
+        always shows it ("the vehicle never clears it").
+
+        **The fixture still rewrites; the vehicle takes (#39 option B).** The
+        vehicle renames a console with something to claim aside and puts an
+        emptied one back with a link that never replaces a file, so it erases
+        nothing and the console can be briefly absent. Option B's contract
+        package leaves that mechanism to the vehicle and lets the fixture keep
+        tier 1's rule (`governance/vehicle/records/2026-10-14-lane-archive/
+        39-option-b/gate/CONTRACT-PACKAGE-B.md`). So this fixture keeps the
+        residual the vehicle closed: a rewrite can still erase a file put in
+        place between its read and its rename. It serves stub runs, where one
+        scripted writer waits for the cleared console, as the brief asks.
         """
         raw = read_bounded(self.console)
-        commands: list[str] = []
-        variables: dict = {}
+        payload = None
         if raw:
             try:
                 loaded = json.loads(raw)
-            except json.JSONDecodeError:
+            except Exception:  # noqa: BLE001 -- any decoder failure is "not JSON"
                 loaded = None
             if isinstance(loaded, dict):
-                candidates = loaded.get("commands")
-                if isinstance(candidates, list):
-                    commands = candidates
-                if isinstance(loaded.get("variables"), dict):
-                    variables = loaded["variables"]
-        write_atomic(
-            self.console,
-            json.dumps({"commands": [], "variables": variables}, indent=2) + "\n",
-        )
-        return commands, variables
+                payload = loaded
+        commands: list = []
+        if payload is not None:
+            candidates = payload.get("commands")
+            variables = payload.get("variables")
+            quiet = (
+                isinstance(candidates, list)
+                and not candidates
+                and (
+                    isinstance(variables, dict)
+                    or ("variables" not in payload and not self.variables_known)
+                )
+            )
+            # Replace, not merge: the object the agent wrote *is* the preserved map.
+            if isinstance(variables, dict):
+                self.held = variables
+                self.variables_known = True
+            if quiet:
+                return [], self.held
+            if isinstance(candidates, list):
+                commands = candidates
+        write_atomic(self.console, json.dumps(self.claimed_console(), indent=2) + "\n")
+        return commands, self.held
+
+    def claimed_console(self) -> dict:
+        """What a claim rewrites the console to: the held map when there is one, else no key."""
+        if not self.variables_known:
+            return {"commands": []}
+        return {"commands": [], "variables": self.held}
 
     def variables(self) -> dict:
         raw = read_bounded(self.console)

@@ -38,9 +38,12 @@ What this slice substitutes, and says so (ADR 0001 "not established"):
 
   - **Identity instrument.** `plant.emit_frame` publishes the declared channels straight from the
     stepped truth — no noise, lag, quantisation or quality model. Instruments are WP09's.
-  - **Unevaluated interlocks are refused.** Threshold evaluation is WP05's, so a verb that declares
-    any interlock is refused `INTERLOCK UNEVALUATED` naming each one and why it cannot be read
-    (choice C). `set_bus_tie`, `start_burn`, `arm_event` and `execute_event` are all in that set.
+  - **Interlocks, evaluated where they read** (ADR 0004, narrowing choice C). An interlock guarding
+    the command's direction (`interlocks_when`) whose threshold, band, dwell and reading resolve is
+    evaluated, with its dwell count in the truth, and a tripped one is refused `INTERLOCK TRIPPED`;
+    one that does not resolve is refused `INTERLOCK UNEVALUATED`, naming the link that fails.
+    `set_bus_tie`, `start_burn`, `arm_event` and `execute_event` are still in that set. Clear values,
+    latching and the protection ladder are WP05's.
   - **The mission clock, without shedding** (ADR 0002 A, B2, J; WP08 child 5, #23). Three run inputs,
     required with no default on a fresh serving start and inherited by a restart: `--multiplier`
     (`m`, mission seconds per wall second, an exact fraction), `--cycle-ticks` (`k`, ticks per cycle,
@@ -214,6 +217,7 @@ import shutil
 import signal
 import stat
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -254,6 +258,8 @@ from generate_help import generate as generate_help  # noqa: E402
 from generate_readme import generate as generate_readme  # noqa: E402
 from plant import (  # noqa: E402
     Effect,
+    EffectRefused,
+    Scenario,
     UncomparableState,
     Unconfigured,
     World,
@@ -264,8 +270,13 @@ from plant import (  # noqa: E402
     command_targets,
     emit_frame,
     gate_instantiations,
+    guarding_interlocks,
     initial_values,
+    interlock_tripped,
+    load_scenario,
     load_world,
+    point_reading,
+    resolve_interlock,
     state_hash,
     state_level,
     step,
@@ -3231,6 +3242,7 @@ class Executive:
         multiplier: Fraction | int | str = 1,
         cycle_ticks: int = 1,
         pacer: Pacer | None = None,
+        scenario_file: ScenarioFile | None = None,
     ) -> None:
         if int(max_batch) < 1:
             raise ValueError(f"max_batch must be at least 1, not {max_batch!r}")
@@ -3256,6 +3268,7 @@ class Executive:
                 world, diode_dir, phase=phase, tripped_interlocks=tripped_interlocks, scenario=scenario, seed=seed,
                 max_batch=max_batch, journal=journal, record_slugs=record_slugs, state_dir=state_dir, boot_id=boot_id,
                 state_fd=state_fd, journal_dir_fd=journal_dir_fd, cadence=cadence, diode_fd=diode_fd,
+                scenario_file=scenario_file,
             )
             self.tick_hz, self.max_rate, self.pacer = tick_hz, rate, pacer
             self.set_clock(m, cycle_ticks, cadence)
@@ -3282,8 +3295,15 @@ class Executive:
         journal_dir_fd: int | None,
         cadence: int,
         diode_fd: int | None,
+        scenario_file: ScenarioFile | None = None,
     ) -> None:
         self.world = world
+        # The episode's overlay (`--scenario-file`): its allow-list is held at every validation, and its
+        # name and hash are the world's identity (`identity.scenario_file`). A resume sets both again:
+        # the identity from the checkpoint (`restore_state`), the overlay once `main` has held the named
+        # file to it (`scenario_refusal`).
+        self.scenario_overlay: Scenario | None = scenario_file.scenario if scenario_file is not None else None
+        self.scenario_identity: dict[str, str] | None = scenario_file.identity if scenario_file is not None else None
         self.diode_dir = Path(diode_dir)
         # An explicit `--journal` every boot appends to, rather than one segment file per boot in the
         # state directory: a resume reads it by name through its held directory.
@@ -3347,7 +3367,8 @@ class Executive:
         self._compat: Compatibility | None = None
         self.dt = tick_seconds(world)
         self.tick_us = int(round(self.dt * 1_000_000))
-        self.truth: dict[str, Any] = initial_values(world)
+        # MET 0: the declared vehicle, or the scenario's overlay on it for a new world started from one.
+        self.truth: dict[str, Any] = initial_values(world, self.scenario_overlay)
         self.tick = 0
         self.world_id = uuid.uuid4().hex
         self.receipt = 0
@@ -3402,7 +3423,7 @@ class Executive:
                 self.journal, self.journal_dir_fd = canonical, opened
         # Generated once, because the configuration does not change while an executive runs.
         self.readme_text = generate_readme(world.root)
-        self.help_text = generate_help(world.root)
+        self._help_cache: dict[frozenset[str] | None, str] = {}
         # The diode directory, as a handle that follows no link: every window is opened relative to
         # it, and the directory's own record is written through it. `main` has canonicalised and opened
         # it once and passes the handle, of which this keeps a duplicate — nothing resolves the operator's
@@ -3420,6 +3441,22 @@ class Executive:
             for row in capability_snapshot(world, phase=phase)
             for name in row["gate_variables"]
         }
+
+    @property
+    def admitted_verbs(self) -> frozenset[str] | None:
+        """The scenario's verb list (`--scenario-file`), or None for the whole registry."""
+        overlay = self.scenario_overlay
+        return frozenset(overlay.verbs) if overlay is not None and overlay.verbs is not None else None
+
+    @property
+    def help_text(self) -> str:
+        """HELP.md: the whole registry, or under a scenario only the verbs it admits — a verb the run
+        refuses NOT IN THIS SCENARIO is not one to advertise. Generated once per verb list, because
+        the configuration does not change while an executive runs (a resume sets the overlay late)."""
+        key = self.admitted_verbs
+        if key not in self._help_cache:
+            self._help_cache[key] = generate_help(self.world.root, key)
+        return self._help_cache[key]
 
     # -- windows ------------------------------------------------------------------------------
     def attach(self, slug: str, *, ring_slots: int = DEFAULT_RING_SLOTS, prepare: bool = True) -> Window:
@@ -4539,44 +4576,30 @@ class Executive:
     def interlock_reason(self, name: str) -> str:
         """Why one declared interlock cannot be evaluated this tick, from the configuration.
 
-        The chain is the registry's own: the interlock names a threshold (`profiles.yaml`), the
-        threshold watches a point, the point is a reading of a state, and the state either has a
-        value this tick or does not. Threshold evaluation against the comparator is WP05's in every
-        case; the sentence says which link is missing *first*, because that is what an implementer
-        reads. `tie_dv_limit` → `power.dc_bus_a_v` → `bus_a_v`, an `algebraic` state with no rule, is
-        the case the ADR names. **The sentence never carries the value**: a refusal is a result file
+        The chain is the registry's own: the interlock names a threshold (`profiles.yaml`) with a
+        comparator, a band and a dwell, the threshold watches a point, the point is a reading of a
+        state, and the state either has a value this tick or does not. Where the whole chain reads,
+        `validate` evaluates it (ADR 0004); this sentence is for the rest, and says which link is
+        missing *first*, because that is what an implementer reads. **The sentence never carries the value**: a refusal is a result file
         an agent reads, and a live reading in it is truth published outside the instrument
         (`plant.md` §7) — the point *has* a reading or has none, and that is all a refusal may say.
         """
-        threshold = None
-        bare = name.split(".", 1)[1] if "." in name else name
-        for document, content in sorted(self.world.documents.items()):
-            if not document.endswith("profiles.yaml") or not isinstance(content, dict):
-                continue
-            for row in content.get("thresholds") or []:
-                if isinstance(row, dict) and str(row.get("id")) in (name, bare):
-                    threshold = row
-                    break
-            if threshold is not None:
-                break
-        if threshold is None:
-            return f"`{name}` resolves to no threshold this executive can read"
-        point = str(threshold.get("point") or "")
-        row = self.world.points.get(point)
-        if row is None:
-            return (
-                f"`{name}` watches `{point}`, which is not a channel the frame publishes — a "
-                "template family or an unregistered point — so there is no reading to compare"
-            )
-        source = str(row.get("from") or "")
+        # ADR 0004: the chain is `plant.resolve_interlock`'s, which `validate` evaluates where it reads;
+        # this is the sentence for an interlock where it does not.
+        interlock, problem = resolve_interlock(self.world, name)
+        if interlock is None:
+            return problem or f"`{name}` resolves to no threshold this executive can read"
+        point = interlock.point
+        source = str((self.world.points.get(point) or {}).get("from") or "")
         state = next((s for s in self.world.states if s.id == source), None)
-        if state is None:
-            return (
-                f"`{name}` watches `{point}`, read from `{source}`, which is not a state the plant "
-                "advances"
-            )
+        assert state is not None  # resolve_interlock refuses a point read from no state
         if state_level(self.truth, state) is None:
-            if state.method == "algebraic":
+            if state.id in self.world.rules:
+                # A domain rule that returned its honest `None` (`params.no_value`): the rule exists
+                # and this tick is outside what it can answer. The rule's own reason carries the
+                # live load and current, so it stays in the plant's gap, not in a refusal.
+                why = "its rule has no value this tick (the plant's gap for the state says which limit)"
+            elif state.method == "algebraic":
                 why = "its algebraic rule is UNCONFIGURED"
             elif state.owed:
                 why = f"it owes {', '.join(state.owed)}"
@@ -4587,9 +4610,8 @@ class Executive:
                 f"value this tick: {why}"
             )
         return (
-            f"`{name}` watches `{point}`, read from `{source}`, which has a reading this tick, but "
-            "comparing it against the threshold's band and dwell is not implemented in this slice "
-            "(WP05)"
+            f"`{name}` watches `{point}`, read from `{source}`, whose state has a value this tick and whose "
+            "channel arithmetic gives no reading from it"
         )
 
     def validate(self, window: Window, command: str, settling: dict[str, Any] | None = None) -> Verdict:
@@ -4626,6 +4648,16 @@ class Executive:
                 f"published in HELP.md and in state.json's `available_commands`; {verb!r} is not "
                 "in it. No effect, no spend, no state change.\n"
             )
+        # The episode's allow-list (`--scenario-file`'s `verbs`), held here, so at acceptance and again
+        # at settlement: a deferral accepted under it is revalidated against it when it comes due.
+        if self.scenario_overlay is not None:
+            try:
+                self.scenario_overlay.admit(verb)
+            except EffectRefused as exc:
+                return refused(
+                    f"refused: NOT IN THIS SCENARIO. {exc}. The world was started from that scenario "
+                    "and its verb list is part of the run; no effect, no spend, no state change.\n"
+                )
         row = next((r for r in window.capability(closed=False) if r["verb"] == verb), None)
         if row is None:
             return refused(f"refused: {verb!r} is registered and could not be resolved.\n")
@@ -4667,17 +4699,43 @@ class Executive:
                     "to fire this one. Nothing has been fired.\n"
                 )
 
-        interlocks = spec.get("interlocks")
-        declared = [str(i) for i in interlocks] if isinstance(interlocks, list) else []
+        # ADR 0004 (narrowing ADR 0001 choice C): an interlock whose chain reads is evaluated against
+        # its threshold's band and dwell, with the dwell history the truth carries; one whose chain
+        # does not read is refused as unevaluated, as before. Only the interlocks that guard *this*
+        # command's direction are asked (`interlocks_when`): the safing direction — an amplifier off,
+        # a pump or an evaporator on under a hot loop — needs no guard and is taken however the guard
+        # reads. Never the value: a refusal is a result file an agent reads, and a live reading in it
+        # is truth outside the instruments.
+        declared = guarding_interlocks(spec, arguments)
+        unreadable = []
+        tripped = []
+        for name in declared:
+            interlock, _problem = resolve_interlock(self.world, name)
+            if interlock is None or point_reading(self.world, interlock.point, self.truth) is None:
+                unreadable.append(name)
+            elif interlock_tripped(self.world, interlock, self.truth):
+                tripped.append(interlock)
+        if tripped and not unreadable:
+            named = ", ".join(
+                f"`{interlock.name}` (threshold `{interlock.threshold}` on `{interlock.point}`)" for interlock in tripped
+            )
+            return refused(
+                f"refused: INTERLOCK TRIPPED. {verb!r} is interlocked by {named}: the reading has been past its "
+                "threshold for at least the threshold's declared dwell, so the command is not accepted "
+                "(ADR 0004). Nothing has been staged"
+                + (" and no arm token has been consumed" if verb == "execute_event" else "")
+                + ".\n"
+            )
+        declared = unreadable
         if declared:
             reasons = "\n".join(f"  - {self.interlock_reason(name)}" for name in declared)
             return refused(
                 f"refused: INTERLOCK UNEVALUATED. {verb!r} declares {len(declared)} interlock(s) "
-                "and this executive cannot evaluate them, so it must not accept the command "
+                "this executive cannot evaluate, so it must not accept the command "
                 "(ADR 0001 choice C: a command it cannot guard is a command it must not accept — "
                 f"the same rule an owed dwell is refused by):\n{reasons}\n"
-                "Threshold evaluation is WP05's; a point with no value is owed by the model that "
-                "produces it. Nothing has been staged"
+                "The executive evaluates an interlock whose threshold, band, dwell and reading all "
+                "resolve (ADR 0004); each line above names the link that does not. Nothing has been staged"
                 + (" and no arm token has been consumed" if verb == "execute_event" else "")
                 + ".\n"
             )
@@ -4812,9 +4870,21 @@ class Executive:
             )
         else:
             window.accepted += 1
+            declared = spec.get("interlocks")
+            declared = [str(g) for g in declared] if isinstance(declared, list) else []
+            guards = guarding_interlocks(spec, arguments)
+            if guards:
+                checked = f"interlock(s) {', '.join(guards)} evaluated and none tripped (ADR 0004). "
+            elif declared:
+                checked = (
+                    f"interlock(s) {', '.join(declared)} guard the other direction of this verb, not "
+                    "this one (ADR 0004). "
+                )
+            else:
+                checked = "no interlocks declared. "
             verdict.body = (
                 f"accepted: {verb!r}. Authority {spec.get('authority')}, phase {self.phase}, gate "
-                f"{gate_variable!r} open, no interlocks declared. "
+                f"{gate_variable!r} open, " + checked
             )
         if staged is None:
             verdict.body += (
@@ -5496,12 +5566,16 @@ class Window:
         With `closed=False` the window's gates are left out, for the per-command gate check: the
         snapshot closes a *verb* when any instantiation is closed, and a command is gated by its own.
         """
-        return capability_snapshot(
+        rows = capability_snapshot(
             self.executive.world,
             phase=self.executive.phase,
             closed_gates=self.closed_gates() if closed else set(),
             tripped_interlocks=self.executive.tripped,
         )
+        # Under a scenario, its verb list is the command surface: `available_commands` and the gate
+        # variables name only what the run admits, as HELP.md does.
+        admitted = self.executive.admitted_verbs
+        return rows if admitted is None else [row for row in rows if row["verb"] in admitted]
 
     # -- results ----------------------------------------------------------------------------
     def write_result(self, command: str, body: str) -> Path:
@@ -5768,6 +5842,91 @@ Console = Window
 
 
 # -- resume (ADR 0002, WP08 child 3 — #21) ------------------------------------------------------------
+@dataclass(frozen=True)
+class ScenarioFile:
+    """An episode's overlay on the declared vehicle (`plant.Scenario`), as a window run names it.
+
+    `--scenario-file` (not `--scenario`, which names the fault posture): the file's initial conditions
+    seed a **new** world's MET 0 (`plant.initial_values(world, scenario)`), its `verbs` are the
+    allow-list `validate` holds every command to at acceptance and again at settlement, and its name
+    and the SHA-256 of its bytes are the world's identity (`identity.scenario_file` in every
+    checkpoint), so a resume names the same file or is refused.
+    """
+
+    path: Path
+    scenario: Scenario
+    sha256: str
+
+    @property
+    def identity(self) -> dict[str, str]:
+        return {"name": self.scenario.name, "sha256": self.sha256}
+
+
+def load_scenario_file(world: World, path: Path) -> ScenarioFile:
+    """The scenario file, read once and hashed from the bytes read; a `ValueError` naming why not.
+
+    A scenario's `script` is batch mode's (`plant.run_scenario`): a window run takes its commands
+    through the window, so a file that carries one is refused rather than half-applied.
+    """
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as exc:
+        raise ValueError(f"--scenario-file {path} cannot be read ({errno.errorcode.get(exc.errno or 0, type(exc).__name__)}: {exc.strerror})") from None
+    if len(raw) > MAX_READ_BYTES:
+        raise ValueError(f"--scenario-file {path} is {len(raw)} bytes, past the {MAX_READ_BYTES} a scenario may be")
+    digest = hashlib.sha256(raw).hexdigest()
+    # `plant.load_scenario` reads a path; it is handed a private copy of the bytes hashed, so the file
+    # the world starts from is the file its identity names even if the original is replaced meanwhile.
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = Path(tmp) / Path(path).name
+        copy.write_bytes(raw)
+        try:
+            scenario = load_scenario(world, copy)
+        except Unconfigured as exc:
+            raise ValueError(f"--scenario-file {path} is not a scenario this vehicle runs: {exc}") from None
+        except Exception as exc:  # noqa: BLE001 - a file that is not YAML, or not a mapping, is refused by name
+            raise ValueError(f"--scenario-file {path} cannot be read as a scenario ({type(exc).__name__}: {exc})") from None
+    if scenario.script:
+        raise ValueError(
+            f"--scenario-file {path} carries a `script`, which is batch mode's: a window run takes its commands "
+            "through the window, so the file is refused rather than half-applied"
+        )
+    return ScenarioFile(Path(path), scenario, digest)
+
+
+def scenario_refusal(named: ScenarioFile | None, body: dict[str, Any], path: Path) -> str | None:
+    """The sentence a restart is refused with when its scenario file is not the world's, or `None`.
+
+    The checkpoint's `identity.scenario_file` is the overlay the world started from (absent: the declared
+    vehicle). A resume names the same file, by its bytes, or is refused: a different file, or none, would
+    resume a world under initial conditions and an allow-list it did not start with.
+    """
+    saved = body["identity"].get("scenario_file")
+    world_id = body["identity"]["world_id"]
+    if saved is None and named is None:
+        return None
+    if saved is None:
+        assert named is not None
+        return (
+            f"--scenario-file names {named.path} (scenario {named.scenario.name!r}, sha256 {named.sha256}) and the checkpoint "
+            f"{path} records world {world_id} started from the declared vehicle with no scenario: a scenario seeds a new "
+            "world's MET 0 and is never laid over a running one"
+        )
+    if named is None:
+        return (
+            f"the checkpoint {path} records world {world_id} started from scenario {saved['name']!r} (sha256 "
+            f"{saved['sha256']}) and this start names no --scenario-file: a resume names the scenario its world started "
+            "from, so that its verb allow-list still holds"
+        )
+    if named.sha256 != saved["sha256"]:
+        return (
+            f"--scenario-file names {named.path} (scenario {named.scenario.name!r}, sha256 {named.sha256}) and the checkpoint "
+            f"{path} records world {world_id} started from scenario {saved['name']!r} (sha256 {saved['sha256']}): a "
+            "different file is a different world, never a changed flag"
+        )
+    return None
+
+
 def identity_refusal(args: argparse.Namespace, body: dict[str, Any], path: Path) -> str | None:
     """The one sentence a restart naming another world's identity is refused with, or `None` (commitment 2).
 
@@ -6423,6 +6582,14 @@ def main(argv: list[str] | None = None, *, pacer: Pacer | None = None) -> int:
         "a prepared directory keeps the one it recorded unless this names another",
     )
     parser.add_argument(
+        "--scenario-file",
+        default=None,
+        metavar="PATH",
+        help="an episode's overlay on the declared vehicle (`scenarios/<name>.yaml`; not --scenario's posture): its "
+        "`initial` values seed a new world's MET 0 and its `verbs` are the only verbs the world accepts. Its name and "
+        "SHA-256 are the world's identity, so a restart names the same file, and naming another or none refuses",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=None,
@@ -6477,6 +6644,16 @@ def main(argv: list[str] | None = None, *, pacer: Pacer | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - a refusal is the answer here too
         sys.stderr.write(f"the scenario postures cannot be loaded: {exc}\n")
         return 3
+
+    # **The episode's overlay** (`--scenario-file`), read and hashed once, before anything is opened: a
+    # file that is not a scenario this vehicle runs is refused by name with nothing written.
+    scenario_file: ScenarioFile | None = None
+    if args.scenario_file is not None:
+        try:
+            scenario_file = load_scenario_file(world, Path(args.scenario_file))
+        except ValueError as exc:
+            sys.stderr.write(f"{exc}\n")
+            return 3
 
     def start(starting: _StartPath) -> int | Callable[[], int]:
         """The start path: everything up to the first cycle, inside `main`'s one `OSError` boundary (round 3, H2).
@@ -6759,7 +6936,9 @@ def main(argv: list[str] | None = None, *, pacer: Pacer | None = None) -> int:
             body = checkpoint_found.body
             # **A restart names the world it resumes, or names nothing** (commitment 2): a named scenario, seed,
             # phase, ring bound or slug set the checkpoint does not record is refused by one sentence.
-            named_other = identity_refusal(args, body, checkpoint_found.path)
+            named_other = identity_refusal(args, body, checkpoint_found.path) or scenario_refusal(
+                scenario_file, body, checkpoint_found.path
+            )
             if named_other is not None:
                 return refuse(named_other)
             if args.init:
@@ -6814,6 +6993,8 @@ def main(argv: list[str] | None = None, *, pacer: Pacer | None = None) -> int:
                 except ResumeRefused as exc:
                     return refuse(f"{exc}. The executive does not start a fresh world over a saved one (ADR 0002 K)")
                 starting.closing(executive.close, state_path or diode_canonical.path)
+                # The named file was held to the checkpoint's identity above; its allow-list holds again.
+                executive.scenario_overlay = scenario_file.scenario if scenario_file is not None else None
                 # Addendum B3: a checkpoint at the recovered tick before anything is claimed — it makes the
                 # named run inputs durable and bounds the next resume's replay and re-publication.
                 try:
@@ -6835,7 +7016,8 @@ def main(argv: list[str] | None = None, *, pacer: Pacer | None = None) -> int:
                     + f", replayed {resumption.replayed}, republished {sum(1 for r in resumption.republished if r.get('result') == 'written')}) "
                     f"slugs={','.join(sorted(executive.windows))} phase={executive.phase} scenario={executive.scenario} "
                     f"seed={executive.seed} ring={','.join(map(str, rings))} m={executive.clock['m']} k={executive.cycle_ticks} "
-                    f"N={executive.checkpoint_every} cycles={args.cycles or 'until stopped'} state-dir={state_dir}",
+                    f"N={executive.checkpoint_every} cycles={args.cycles or 'until stopped'} state-dir={state_dir}"
+                    + (f" scenario-file={scenario_file.scenario.name}:{scenario_file.sha256[:12]}" if scenario_file is not None else ""),
                 )
             # `--plan` answers from the checkpoint's identity and writes nothing in the diode directory
             # (the state directory and its lock were made above, as for any start).
@@ -7041,6 +7223,7 @@ def main(argv: list[str] | None = None, *, pacer: Pacer | None = None) -> int:
                 cycle_ticks=args.cycle_ticks if args.cycle_ticks is not None else 1,
                 checkpoint_every=args.checkpoint_ticks,
                 pacer=pacer,
+                scenario_file=scenario_file,
             )
         except ValueError as exc:
             return refuse(str(exc))
@@ -7099,7 +7282,8 @@ def main(argv: list[str] | None = None, *, pacer: Pacer | None = None) -> int:
             f"scenario={executive.scenario} seed={executive.seed} ring={ring} "
             f"m={executive.clock['m']} k={executive.cycle_ticks} N={executive.checkpoint_every} "
             f"cycles={args.cycles or 'until stopped'} world={executive.world_id}"
-            + (f" state-dir={state_dir}" if state_dir is not None else ""),
+            + (f" state-dir={state_dir}" if state_dir is not None else "")
+            + (f" scenario-file={scenario_file.scenario.name}:{scenario_file.sha256[:12]}" if scenario_file is not None else ""),
         )
 
 
