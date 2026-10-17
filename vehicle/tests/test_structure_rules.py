@@ -295,3 +295,110 @@ def test_the_talkbacks_read_the_switched_latches_only(world, tmp_path):
     assert sorted(switched["system_a"] + switched["system_b"]) == [
         f"latch_{n:02d}" for n in (1, 3, 5, 7, 9, 11)
     ]
+
+
+# --- the arm token's lifecycle --------------------------------------------------------------------
+
+
+def test_an_armed_token_expires_at_the_window_and_a_re_arm_starts_it_again(world, tmp_path):
+    """Arming writes `armed` and an age of zero; the age advances by the tick while armed; at
+    `ttl_s` the rule makes the token `expired`. Re-arming before then starts the window over, which
+    is how a fleet that has changed its mind says so (`arm_event`'s help)."""
+    dt = plant.tick_seconds(world)
+    window = int(round(state(world, "arm_state").spec["ttl_s"] / dt))
+    script = [
+        (1, "arm_event", {"event": "lm_undocking"}),
+        (1 + window // 2, "arm_event", {"event": "lm_undocking"}),
+    ]
+    ticks = 1 + window // 2 + window + 3
+    trace = run(world, tmp_path, script, ticks, ["arm_state", "arm_age_s"])
+    assert trace[0]["arm_state"]["lm_undocking"] == "none"
+    positions = [row["arm_state"]["lm_undocking"] for row in trace]
+    first_expired = positions.index("expired")
+    # The re-arm at the half window means the token lives a full window from *it*, not from the first.
+    assert first_expired > window
+    assert set(positions[1:first_expired]) == {"armed"}
+    assert trace[first_expired]["arm_age_s"]["lm_undocking"] >= state(world, "arm_state").spec["ttl_s"]
+    assert all(row["arm_state"]["descent_stage_separation"] == "none" for row in trace)
+    assert not any(g.startswith("arm") for row in trace for g in row["gaps"])
+
+
+def test_executing_an_armed_event_consumes_its_token_and_it_never_expires(world, tmp_path):
+    dt = plant.tick_seconds(world)
+    window = int(round(state(world, "arm_state").spec["ttl_s"] / dt))
+    script = [
+        (1, "arm_event", {"event": "descent_stage_separation"}),
+        (5, "execute_event", {"event": "descent_stage_separation", "arm_token": "x"}),
+    ]
+    trace = run(world, tmp_path, script, window + 10, ["arm_state"])
+    assert trace[3]["arm_state"]["descent_stage_separation"] == "armed"
+    assert trace[-1]["arm_state"]["descent_stage_separation"] == "consumed"
+
+
+# --- the hatches: the guard is the differential behind the hatch being opened --------------------
+
+
+def test_each_hatch_s_guard_applies_only_to_opening_that_hatch(world):
+    spec = world.verbs["set_hatch_valve"]
+    for hatch, guard in (
+        ("hatch_crew_csm", "hatch_csm_open_with_pressure"),
+        ("hatch_crew_lm", "hatch_lm_open_with_pressure"),
+    ):
+        assert plant.guarding_interlocks(spec, {"hatch": hatch, "state": "open"}) == [guard]
+        for safe in ("closed", "latched"):
+            assert plant.guarding_interlocks(spec, {"hatch": hatch, "state": safe}) == []
+    # The tunnel hatches face the tunnel, whose pressure the vehicle does not carry yet: unguarded.
+    for hatch in ("hatch_tunnel_csm", "hatch_tunnel_lm"):
+        assert plant.guarding_interlocks(spec, {"hatch": hatch, "state": "open"}) == []
+
+
+def test_engaging_the_ring_is_never_guarded_and_releasing_it_is(world):
+    spec = world.verbs["set_docking_latch"]
+    assert plant.guarding_interlocks(spec, {"latch": "all", "state": "engage"}) == []
+    assert set(plant.guarding_interlocks(spec, {"latch": "all", "state": "release"})) == {
+        "cabin_dp_low",
+        "hatch_open_with_pressure",
+    }
+
+
+def test_both_hatch_guards_read(world):
+    for name, point in (
+        ("hatch_csm_open_with_pressure", "structure.cabin_dp_psi"),
+        ("hatch_lm_open_with_pressure", "eclss.lm_cabin_pressure_psia"),
+    ):
+        interlock, problem = plant.resolve_interlock(world, name)
+        assert interlock is not None, problem
+        assert interlock.point == point and interlock.assert_value == 0.5
+
+
+@pytest.mark.parametrize(
+    ("guard", "opening", "safing"),
+    [
+        (
+            "hatch_csm_open_with_pressure",
+            "set_hatch_valve vehicle=csm hatch=hatch_crew_csm state=open",
+            "set_hatch_valve vehicle=csm hatch=hatch_crew_csm state=latched",
+        ),
+        (
+            "hatch_lm_open_with_pressure",
+            "set_hatch_valve vehicle=lm hatch=hatch_crew_lm state=open",
+            "set_hatch_valve vehicle=lm hatch=hatch_crew_lm state=latched",
+        ),
+    ],
+)
+def test_a_hatch_will_not_open_against_its_cabin_and_always_latches(world, tmp_path, guard, opening, safing):
+    import console  # noqa: PLC0415
+    from test_interlocks import run as command
+    from test_interlocks import trip
+
+    built = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
+    built.attach("alpha")
+    try:
+        trip(world, built, {}, guard)
+        refused = command(built, tmp_path, opening)
+        trip(world, built, {}, guard)
+        taken = command(built, tmp_path, safing)
+    finally:
+        built.close()
+    assert "refused: INTERLOCK TRIPPED" in refused and guard in refused, refused
+    assert "state=accepted" in taken and "INTERLOCK TRIPPED" not in taken, taken
