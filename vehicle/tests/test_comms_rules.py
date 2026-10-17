@@ -376,3 +376,124 @@ def test_the_light_time_is_published_and_the_unread_constant_is_gone(world):
     assert world.points["comm.light_time_s"]["from"] == "light_time_s"
     vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
     assert "earth_moon_light_time_s" not in {row["id"] for row in vehicle["environment"]}
+
+
+# ------------------------------------------------------------------------------------------------
+# The link budget (`state link_snr`, `comm.snr_db`): Bellcomm's lunar-range prediction, moved by
+# range, the power amplifier and the high-gain antenna's pointing loss.
+# ------------------------------------------------------------------------------------------------
+
+
+def _snr(
+    world,
+    *,
+    antenna="high_gain",
+    amplifier="on",
+    rate=51_200,
+    mode=None,
+    range_m=None,
+    pointing_deg=0.0,
+    behind=False,
+):
+    """`link_snr` called directly on a hand-built snapshot, with the state's own declaration."""
+    spec = _state(world, "link_snr").spec
+    distance = float(spec["reference_range_m"]) if range_m is None else range_m
+    moon = [384_400e3, 0.0, 0.0]
+    if behind:
+        position = [moon[0] + _moon_radius_m(world) + 100e3, 0.0, 0.0]
+    else:
+        position = [-distance, 0.0, 0.0]  # the Moon on the far side of the Earth: never occulted
+    inputs = {
+        "comm_mode": mode or ("sband_high" if rate == 51_200 else "sband_low"),
+        "orbital_state": {"position_m": position, "moon_position_m": moon},
+        "antenna_selection": antenna,
+        "transmitter_on": amplifier,
+        "antenna_pointing": pointing_deg,
+        "telemetry_rate": rate,
+    }
+    params = plant.RuleParams(spec, "domains/comms/components.yaml:state link_snr")
+    return _comms_rules().link_snr(inputs, params, DT), params
+
+
+def test_at_lunar_range_the_budget_reproduces_bellcomm_s_margins(world):
+    """CR-125670 Table II, 85-ft station: on the high-gain antenna high-rate telemetry closes with
+    the amplifier on and fails with it off; on an omni only the low rate closes. The SNR is the
+    12.5 dB a 1e-6 bit-error rate needs plus Bellcomm's margin."""
+    cases = [
+        ({"antenna": "high_gain", "amplifier": "on", "rate": 51_200}, 24.4),
+        ({"antenna": "high_gain", "amplifier": "off", "rate": 51_200}, 4.4),
+        ({"antenna": "omni_a", "amplifier": "on", "rate": 51_200}, 2.0),
+        ({"antenna": "omni_b", "amplifier": "on", "rate": 1_600}, 13.0),
+    ]
+    for kwargs, expected in cases:
+        snr, _ = _snr(world, **kwargs)
+        assert snr == pytest.approx(expected, abs=1e-9), kwargs
+    # And against apollo's two thresholds: healthy, degraded (below 8), lost (below 3).
+    assert _snr(world, amplifier="off")[0] < 8 and _snr(world, antenna="omni_a")[0] < 3
+
+
+def test_half_the_range_is_six_db_more(world):
+    spec = _state(world, "link_snr").spec
+    far, _ = _snr(world)
+    near, _ = _snr(world, range_m=float(spec["reference_range_m"]) / 2)
+    assert near - far == pytest.approx(20 * math.log10(2), abs=1e-9)
+
+
+def test_the_pointing_loss_has_the_slope_e_geom_link_declares(world):
+    """The rule's quadratic pattern and the edge's sensitivity are one relation: at the 2 deg
+    operating point the derivative of the loss is the edge's dB per deg."""
+    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    edge = next(e for e in coupling["edges"] if e["id"] == "E-GEOM-LINK")
+    h = 1e-4
+    slope = (_snr(world, pointing_deg=2 + h)[0] - _snr(world, pointing_deg=2 - h)[0]) / (2 * h)
+    assert slope == pytest.approx(float(edge["sensitivity"]["value"]), abs=0.005)
+    # On an omni the high-gain antenna's pointing does not enter.
+    assert _snr(world, antenna="omni_a", pointing_deg=5)[0] == _snr(world, antenna="omni_a")[0]
+
+
+def test_no_carrier_is_a_named_gap_rather_than_a_low_snr(world):
+    """Behind the Moon, in VHF or with the S-band off, there is no carrier to measure: a value
+    there would be an SNR alarm every revolution, which the domain's first rule forbids."""
+    for kwargs, words in (
+        ({"behind": True}, "behind the Moon"),
+        ({"mode": "vhf"}, "`vhf`"),
+        ({"mode": "none"}, "`none`"),
+        ({"antenna": "sband_steerable"}, "sband_steerable"),
+    ):
+        snr, params = _snr(world, **kwargs)
+        assert snr is None, kwargs
+        assert words in params.why_none, params.why_none
+
+
+def test_the_link_budget_s_copies_agree_with_their_sources(world):
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    hga = next(a for a in vehicle["comms"]["antennas"] if a["id"] == "high_gain")
+    narrow = next(b for b in hga["beams"] if b["id"] == "narrow")
+    spec = _state(world, "link_snr").spec
+    assert float(spec["hga_beamwidth_deg"]) == float(narrow["beamwidth_deg"])
+    assert float(spec["moon_radius_m"]) == _moon_radius_m(world)
+    assert float(spec["reference_range_m"]) == 215_000 * 1_852
+
+
+def test_through_the_step_loop_the_omni_budget_closes_and_the_hga_waits_on_pointing(
+    world, tmp_path
+):
+    """On an omni the budget needs nothing the vehicle lacks; on the high-gain antenna it needs the
+    pointing error, which no rule computes yet, and the gap names it."""
+
+    def first_tick(initial):
+        seen = []
+        scen = scenario(world, tmp_path, [], initial=initial)
+        plant.run_scenario(
+            world, scen, 1, on_tick=lambda tick, values, ledger, gaps: seen.append((values, gaps))
+        )
+        return seen[0]
+
+    values, gaps = first_tick({"antenna_selection": "omni_a"})
+    assert not [g for g in gaps if g.state.id == "link_snr"]
+    # MET 0, 6,563 km, amplifier off, low rate: 28.7 dB.
+    assert values["link_snr"] == pytest.approx(28.7, abs=0.1)
+
+    values, gaps = first_tick({})
+    snr_gaps = [g for g in gaps if g.state.id == "link_snr"]
+    assert snr_gaps and "antenna_pointing" in snr_gaps[0].owed

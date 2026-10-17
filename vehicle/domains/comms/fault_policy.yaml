@@ -143,7 +143,7 @@ faults:
         carrying `high` produces frame loss. The pair of channels is the diagnosis, and either one
         alone is ambiguous — which is why `comm.telemetry_rate_bps` and
         `comm.rx_frame_loss_pct` are separate points rather than one "link quality"
-      latency: "one second to the SNR, and the frame-loss threshold's five-second window to know whether it matters"
+      latency: "one second to the SNR, and the frame-loss threshold's five-second window to know whether it matters; the link thins at a rate in dB per hour, so the fleet has hours between the first degraded reading and a loss"
       false_positive_risk: >-
         a commanded fallback to an omni is a 25 dB loss that is not a fault. The antenna channel
         is the separation, and it is published for exactly this reason
@@ -209,7 +209,7 @@ faults:
         problem, and frame loss with a poor SNR is a link problem. Neither channel alone can say
         which, which is why the domain publishes both and refuses to publish a single "link
         quality"
-      latency: "the threshold's own five-second window, which is a quarter of a million bits at the high rate — enough for 2 % to be a rate rather than an accident"
+      latency: "the threshold's own five-second window, which is a quarter of a million bits at the high rate — enough for 2 % to be a rate rather than an accident. The harm is the history lost while the loss goes on, which accrues over minutes to hours until the profile is lowered"
       false_positive_risk: >-
         low, because the threshold's dwell is long and the quantity is a ratio of counts. The risk
         is the other kind: a fleet that reads a 2 % loss as trivial. `apollo_diode.md:901` is

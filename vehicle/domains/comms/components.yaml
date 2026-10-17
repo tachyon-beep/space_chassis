@@ -238,6 +238,31 @@ state:
     moved_by:
       - "command:select_antenna"
       - "command:point_hga"
+    # The rule's parameters (`domains/comms/rules.py:link_snr`).
+    received_carrier_dbm:
+      high_gain: -97.1
+      omni: -119.5
+    reference_range_m: 398180000
+    power_amplifier_off_db: -20.0
+    required_carrier_dbm:
+      1600: -120.0
+      51200: -109.0
+    required_snr_db: 12.5
+    hga_beamwidth_deg: 9.4
+    pattern_loss_db_at_beamwidth: 12
+    moon_radius_m: 1737400
+    parameter_provenance:
+      basis: historical
+      source: "NASA CR-125670 (Bellcomm TM-71-2034-3, Schroeder, 30 Dec 1971), Table II PDF p. 51: received carrier power Pr at R = 215,000 n mi, CSM PM mode, 85-ft station, -127.1 dBW HGA(N) and -149.5 dBW omni (0 dB) with the PA on, both 20.0 dB lower with it off; Pmin -139.0 dBW for 51.2 kbit/s telemetry with voice and -150.0 dBW for 1.6 kbit/s. NASA TN D-6723 PDF p. 22 (printed p. 14): a 1e-6 bit-error rate needs 12.5 dB SNR in the bit-rate bandwidth"
+      note: >-
+        dBW is converted to dBm (+30). 215,000 n mi is 398,180,000 m (1,852 m per n mi). The 210-ft
+        stations receive 8.0 dB more in every row of the same table; the vehicle evaluates the
+        85-ft case because no state says which station is tracking. `hga_beamwidth_deg` is the
+        narrow beam of `vehicle.yaml#comms.antennas.high_gain`, the beam Bellcomm's HGA(N) row is,
+        and `pattern_loss_db_at_beamwidth` is the 12 dB of the quadratic pattern
+        `E-GEOM-LINK` states, so the rule and the edge give the same slope. `moon_radius_m` is
+        `blackout`'s own parameter, for the same occultation (`rules.py:occulted`).
+        `tests/test_comms_rules.py` holds the copies equal
     command_value:
       - verb: select_antenna
         argument: antenna
@@ -277,7 +302,28 @@ state:
         known at the same instant, and a lag on a quantity with no memory would invent a
         transient the physics does not have. Three edges land on `link` — E-BUS-COMM (a sagging
         bus), E-PLATE-COMM (a hot amplifier) and E-GEOM-LINK (pointing loss) — and this state is
-        where they meet, which is why it is one number rather than three
+        where they meet, which is why it is one number rather than three.
+
+        **The budget is a calibrated prediction scaled by range, not a sum of terms.** No CSM
+        design-control table or circuit-loss table was reachable (the North American circuit-
+        margin ICDs MH01-13001-414 and MH01-13021-414 are not on NTRS), so the rule starts from
+        Bellcomm's Apollo 14 prediction, which was built on them, and moves it by the three
+        things the vehicle changes: range (20 log of the range ratio), the power amplifier
+        (20.0 dB) and the high-gain antenna's pointing loss. The result checks against flight:
+        JPL TM 33-452 Vol. II Table 20 logs the Apollo 11 CSM on the high-gain antenna at -87 to
+        -95 dBm at the Goldstone 210-ft, against -89.1 dBm predicted. At lunar range it gives
+        24.4 dB for high-rate telemetry on the high-gain antenna with the amplifier on, 4.4 dB
+        (degraded) with it off, and on an omni 2.0 dB (loss) at the high rate and 13.0 dB at the
+        low rate — Bellcomm's finding that only 1.6 kbit/s closes on an omni at the Moon.
+
+        What it does not carry, and each is a confounder the sources support: the ground
+        receiver's noise rising with carrier power above -125 dBm (TN D-6723 Fig. 15) and the
+        station's nonlinearity above -70 dBm (TN D-6852 p. 8), so near the Earth the figure runs
+        far above the 30 dB band top; the Moon in the ground beam (about 0.3-0.7 dB, SP-87 p. 52);
+        an omni's gain varying with look angle (about +/-10 dB in the Apollo 11 logs); and E-PLATE-COMM,
+        whose dB per K no source gives. The gaps are deliberate: no S-band carrier in `vhf` or
+        `none`, and none behind the Moon, so the state is absent rather than low and a planned
+        blackout raises no SNR alarm
 
   - id: tx_power
     node: link

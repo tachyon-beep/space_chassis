@@ -92,11 +92,61 @@ def light_time_s(inputs, params, dt):
     return math.sqrt(sum(x * x for x in position)) / float(params["speed_of_light_m_s"])
 
 
+def link_snr(inputs, params, dt):
+    """The downlink's signal-to-noise ratio in the telemetry bit-rate bandwidth at an 85-ft MSFN
+    station (`comm.snr_db`): the received carrier power, scaled from Bellcomm's lunar-range
+    prediction by range, less the high-gain antenna's pointing loss, against the carrier power the
+    commanded telemetry rate needs.
+
+    SNR = required SNR + (received - required carrier power): the circuit margin is the SNR the
+    link has over the SNR the mode needs (TN D-6723), so a zero margin is 12.5 dB. There is no
+    S-band carrier to measure in `vhf` or `none`, or with the Earth behind the Moon, and the state
+    is then a gap rather than a low number, so a planned blackout raises no SNR alarm.
+    """
+    mode = inputs["comm_mode"]
+    if mode not in ("sband_high", "sband_low"):
+        return params.no_value(f"the vehicle radiates no S-band carrier in `{mode}` mode")
+    orbit = inputs["orbital_state"]
+    hidden = occulted(orbit["position_m"], orbit["moon_position_m"], float(params["moon_radius_m"]))
+    if hidden is None:
+        return params.no_value(
+            "the vehicle is inside the Moon's mean radius, where the trajectory has no meaning"
+        )
+    if hidden:
+        return params.no_value("the Earth is behind the Moon, so no carrier reaches the ground")
+    antenna = inputs["antenna_selection"]
+    family = (
+        "high_gain"
+        if antenna == "high_gain"
+        else "omni"
+        if antenna in ("omni_a", "omni_b")
+        else None
+    )
+    if family is None:
+        return params.no_value(f"no received-power prediction covers the `{antenna}` antenna")
+    received = float(params["received_carrier_dbm"][family])
+    if inputs["transmitter_on"] != "on":
+        received += float(params["power_amplifier_off_db"])
+    position = orbit["position_m"]
+    range_m = math.sqrt(sum(x * x for x in position))
+    received += 20.0 * math.log10(float(params["reference_range_m"]) / range_m)
+    if family == "high_gain":
+        error = float(inputs["antenna_pointing"])
+        ratio = error / float(params["hga_beamwidth_deg"])
+        received -= float(params["pattern_loss_db_at_beamwidth"]) * ratio * ratio
+    required = params["required_carrier_dbm"]
+    rate = inputs["telemetry_rate"]
+    if rate not in required:
+        return params.no_value(f"no required carrier power is declared for {rate} bit/s")
+    return float(params["required_snr_db"]) + received - float(required[rate])
+
+
 RULES = {
     "tx_power": tx_power,
     "amp_dissipation_w": amp_dissipation_w,
     "link_ok": link_ok,
     "blackout": blackout,
     "light_time_s": light_time_s,
+    "link_snr": link_snr,
     "playback_rate": playback_rate,
 }
