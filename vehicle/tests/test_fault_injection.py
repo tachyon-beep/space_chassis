@@ -213,6 +213,23 @@ def test_a_fault_the_plant_cannot_fire_is_refused_by_name(world, tmp_path):
         plant.step(world, values, dt, faults=[TRIP])
 
 
+def test_a_fault_happens_once_so_a_scale_cannot_compound(world, tmp_path):
+    """A second onset of a `scale` fault would multiply again: 1.5 x 1.5, a fault nobody declared."""
+    with pytest.raises(plant.Unconfigured, match="a fault happens once"):
+        scenario(world, tmp_path, f"  - {{tick: 1, fault: {HEAT}}}\n  - {{tick: 4, fault: {HEAT}}}\n")
+    dt = plant.tick_seconds(world)
+    values = plant.initial_values(world)
+    onset = plant.FaultOnset(offset_us=0, fault=HEAT)
+    with pytest.raises(plant.EffectRefused, match="a fault happens once"):
+        plant.step(world, values, dt, faults=[onset, onset])
+    once = plant.step(world, values, dt, faults=[onset])
+    with pytest.raises(plant.EffectRefused, match="a fault happens once"):
+        plant.step(world, once, dt, faults=[onset])
+    with pytest.raises(plant.EffectRefused, match="a fault happens once"):
+        plant.apply_fault(world, once, HEAT)
+    assert once["environment_heat_w"] == pytest.approx(values["environment_heat_w"] * 1.5)
+
+
 def test_the_schedule_lands_on_the_tick_and_microsecond_its_decimal_names(world):
     tick_us = plant._tick_us(plant.tick_seconds(world))
     events = [

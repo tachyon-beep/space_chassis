@@ -3710,6 +3710,12 @@ def step(
     if faults:
         # Faults ahead of effects before a stable sort by stamp: equal stamps put the fault first.
         queue = sorted([*_stamped_faults(world, dt, faults), *queue], key=lambda row: row[0])
+        # Refused before anything is applied, so a repeat never leaves the tick half-advanced.
+        seen = set(values.get(FAULT_ONSETS) or {})
+        for onset in faults:
+            if onset.fault in seen:
+                raise repeated_onset(onset.fault)
+            seen.add(onset.fault)
 
     # 3. Advance to the next event boundary, one sub-interval at a time: §9's `horizon` for each
     #    segment is `min(remaining, time to next event)`, and the walk in between is the same walk.
@@ -3899,6 +3905,8 @@ def load_scenario(world: World, path: Path) -> Scenario:
             _stamped_faults(world, dt, [onset])
         except EffectRefused as exc:
             raise Unconfigured(at, str(exc)) from None
+        if any(o.fault == onset.fault for queued in faults.values() for o in queued):
+            raise Unconfigured(at, str(repeated_onset(onset.fault)))
         faults.setdefault(tick, []).append(onset)
     return Scenario(name=name, initial=initial, verbs=verbs, script=script, faults=faults)
 
@@ -4059,6 +4067,20 @@ def _stamped_faults(
 FAULT_ONSETS = "__fault_onsets"
 
 
+def repeated_onset(fault: str) -> EffectRefused:
+    """The refusal for a fault whose onset has already happened in this run.
+
+    **A fault happens once.** A `scale` row multiplies the value it finds, so a second onset of
+    PWR-02 would make the cell's resistance 2.25 times nominal rather than 1.5, a fault nobody
+    declared; and a `becomes` row repeated is no event at all. Clearing a fault is a repair, which
+    nothing models yet, and when something does it clears the onset record with it.
+    """
+    return EffectRefused(
+        f"plant.py:fault {fault}: its onset has already happened this run, and a second onset would "
+        "compound a `scale` it already applied; a fault happens once"
+    )
+
+
 def apply_fault(world: World, values: dict[str, Any], fault: str) -> dict[str, Any]:
     """A fault's onset, applied to the value map: what every declaring state becomes (WP09).
 
@@ -4073,6 +4095,8 @@ def apply_fault(world: World, values: dict[str, Any], fault: str) -> dict[str, A
         raise EffectRefused(
             f"plant.py:fault {fault}: no state declares what its onset does (`fault_value`)"
         )
+    if fault in (values.get(FAULT_ONSETS) or {}):
+        raise repeated_onset(fault)
     staged: dict[str, Any] = {}
     for state, row in world.fault_effects[fault]:
         where = f"domains/{state.domain}/components.yaml:state {state.id}.fault_value"
