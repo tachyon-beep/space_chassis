@@ -100,7 +100,7 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   afterwards and can ask for a revert. Codex findings count once the reviewer confirms them: the Codex review
   bot ran out of credits; John moved Codex to the CLI at 20:50, but the cloud CLI had no credentials, so no run happened
   until Codex reviews moved to nyx at 21:21 (John, relayed); the reviewer folds them into the report, and they never delay a merge that is already clear and green.
-  A possibly blocking Codex finding on a PR not yet merged holds its merge until the reviewer re-issues the verdict;
+  A possibly blocking Codex finding on a PR not yet mergeable (CI not green or its verdict not yet issued) holds its merge until the reviewer re-issues the verdict;
   the hold lifts when the re-issued verdict is non-blocking (as on #48, #49 and #51, all three non-blocking, #49 with a
   debt-note condition). The raw Codex outputs are kept under
   `vehicle-status/reviews/codex/` in the shared folder.
