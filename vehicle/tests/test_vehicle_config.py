@@ -12681,7 +12681,9 @@ def test_every_stock_declares_where_it_starts():
     # `zone_csm_avionics_t` seed under their ids, `load_enabled` (the switch map `set_load`
     # writes) under its own, and `environment_heat_w` — a held boundary since item 9 — under its
     # id and its single-state node's alias, `environment_heat`.
-    assert len(on_nodes) == 89, f"{len(on_nodes)} node keys carry a value"
+    # 89 -> 91 with ECLSS: `suit_fan` (the switch `set_suit_fan` moves) under its id, and
+    # `o2_tank_heaters`, a ruled discrete whose id and single-state node share one name.
+    assert len(on_nodes) == 91, f"{len(on_nodes)} node keys carry a value"
     # And the map a tick actually starts from is that seed plus the declared arithmetic, so the
     # resolved states are a strict superset and every one of them is `algebraic`.
     assert seeded_integrators.keys() < seeded.keys(), "the resolution added nothing to the seed"
@@ -12695,12 +12697,13 @@ def test_every_stock_declares_where_it_starts():
     # position now, so they join this sub-map as well as the ids beside it.
     # 18 -> 22 with ADR 0003's thermal rules: the amplifier's temperature and the three loop
     # switch maps (`coolant_pump`, `evaporator_feed`, `radiator_bypass`) are sentinel states.
-    assert len(seeded_integrators["internal"]) == 22, sorted(seeded_integrators["internal"])
+    # 22 -> 23 with ECLSS's `suit_fan`, the compressor switch, also on the sentinel.
+    assert len(seeded_integrators["internal"]) == 23, sorted(seeded_integrators["internal"])
     # Five of the sentinel's `algebraic` states resolve at t=0 as well — the bay heat, the cabin
     # pressure differential and three more — so the sentinel's sub-map is the same map the tick
     # commits, merged rather than replaced. (Six until ADR 0003's power rules moved the bus load to
-    # the cells' node.)
-    assert len(seeded["internal"]) == 27, sorted(seeded["internal"])
+    # the cells' node.) 28 with ECLSS's `suit_fan`.
+    assert len(seeded["internal"]) == 28, sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
     # six of the twenty-four declared values are the last of their key rather than a key of their
@@ -12753,6 +12756,7 @@ def test_every_stock_declares_where_it_starts():
         "impulse_total",
         "gyro_bias",
         "o2_supply_pressure_psi",
+        "suit_fan",
         "suit_loop_flow_cfm",
         "dps_throttle_pct",
         "chamber_pressure_pct",
@@ -12797,9 +12801,11 @@ def test_every_stock_declares_where_it_starts():
     # Zero everywhere except the supply tank's pressure, which is the one seeded sentinel value that
     # is not an accumulator's origin — and, from round 67, `auto`, which is not a number at all and
     # is the reason the value assertions below name their states rather than ranging over the map.
-    # The three switch maps are maps, which a set cannot hold, so they are asserted by name below.
+    # The four switch maps are maps, which a set cannot hold, so they are asserted by name below.
     switch_maps = {k for k, v in seeded_integrators["internal"].items() if isinstance(v, dict)}
-    assert switch_maps == {"coolant_pump", "evaporator_feed", "radiator_bypass"}, switch_maps
+    assert switch_maps == {"coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan"}, (
+        switch_maps
+    )
     assert {v for k, v in seeded_integrators["internal"].items() if k not in switch_maps} == {
         0.0,
         35.0,
@@ -20040,7 +20046,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
-    assert len(values["internal"]) == 27, sorted(values["internal"])
+    # 27 -> 28 with ECLSS's `suit_fan`.
+    assert len(values["internal"]) == 28, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
