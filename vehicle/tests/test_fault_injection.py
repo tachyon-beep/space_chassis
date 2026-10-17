@@ -261,13 +261,44 @@ def test_the_scheduled_onsets_join_the_scripted_ones_and_fire(world, tmp_path):
     assert lighting(last) == "off"
 
 
-def test_the_window_run_refuses_a_scenario_that_carries_faults(world, faulted, tmp_path):
+def test_a_window_run_breaks_the_vehicle_on_the_step_batch_mode_does_and_replays_it(tmp_path):
+    """A scenario's `faults` reach the window: live, and in the record's replay."""
+    import checkpoint
     import console
 
+    # A checkpoint hashes the engine tools with the corpus, so this copy carries them too.
+    copy = faulted_copy(tmp_path / "vehicle")
+    shutil.copy(VEHICLE / "tools" / "plant.py", copy / "tools" / "plant.py")
+    world = plant.load_world(copy)
     path = tmp_path / "faulted_coast.yaml"
     path.write_text(f"scenario: faulted_coast\nfaults:\n  - {{tick: 3, fault: {TRIP}}}\n")
-    with pytest.raises(ValueError, match="carries `faults`"):
-        console.load_scenario_file(world, path)
+    named = console.load_scenario_file(world, path)
+    batch: dict[int, str] = {}
+    plant.run_scenario(
+        world, named.scenario, 6, on_tick=lambda t, v, _l, _g: batch.__setitem__(t, plant.state_hash(v))
+    )
+    state = tmp_path / "state"
+    executive = console.Executive(
+        world, tmp_path / "diode", phase="translunar_coast", state_dir=state, scenario_file=named
+    )
+    try:
+        executive.attach("alpha")
+        snapshot = checkpoint.capture_state(executive, checkpoint.Compatibility.current(world))
+        live: dict[int, str] = {}
+        for _ in range(6):
+            executive.cycle()
+            live[executive.tick] = plant.state_hash(executive.truth)
+        assert lighting(executive.truth) == "off"
+        assert executive.truth[plant.FAULT_ONSETS] == {TRIP: 1}
+    finally:
+        executive.close()
+    # Record tick `t` is batch row `t - 1`: the same step breaks the vehicle in both.
+    assert live == {t: batch[t - 1] for t in range(1, 7)}
+    replayed = console.replay_record(world, snapshot, console.read_record(state), scenario=named.scenario)
+    assert [(t, h) for t, h, _link in replayed.points] == sorted(live.items())
+    # A replay that does not carry the file's faults is not this world's history.
+    with pytest.raises(console.RecordRefused, match="compare-point"):
+        console.replay_record(world, snapshot, console.read_record(state))
 
 
 def run_linter(directory: Path) -> subprocess.CompletedProcess[str]:
