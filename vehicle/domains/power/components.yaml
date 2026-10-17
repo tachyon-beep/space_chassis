@@ -25,7 +25,7 @@ natural_rate_hz: 50
 # usable capacity by; `link`, which `E-AMP-LOAD` puts on `bus_a` at 1/28 A per W; and
 # `command_executive`, which `E-CMD-LOAD` moves the load switches with. All three are *inputs*,
 # which is why they belong here rather than in `writes` — the nodes they land on are power's.
-reads: [o2_csm, h2_csm, coldplate_t, link, command_executive]
+reads: [o2_csm, h2_csm, coldplate_t, link, command_executive, o2_tank_heaters]
 writes: [fuel_cell, bus_a, bus_b, battery_energy, bus_tie, load_shed_state,
          fc_o2_draw, fc_h2_draw, battery_usable_j]
 

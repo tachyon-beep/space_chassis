@@ -267,6 +267,33 @@ nodes:
     kind: flow
     unit: kg CO2/s
     note: "the LM cartridge's, a separate absorber in a separate compartment"
+  # The cabin leak, one node per compartment. A leak is bulk flow through a seal, so it takes each
+  # gas in proportion to its share of the cabin's mass; the node carries one outflow per gas, and
+  # each drain edge below names its own with `reads:`.
+  cabin_leak_csm:
+    domain: eclss
+    kind: flow
+    unit: kg/s
+    state_order: independent
+    state_order_note: >-
+      three outflows of one leak, each a share of the same total computed from the same four stocks;
+      none reads another, so there is no order to get wrong
+    note: "the CSM cabin's leak to space, by gas"
+  # The S/M oxygen tanks' heater relay, a node rather than the sentinel because power reads it: each
+  # tank's heaters and fans are a bus load while the switch is closed (E-O2-HTR-BUSA, -BUSB).
+  o2_tank_heaters:
+    domain: eclss
+    kind: discrete
+    unit: enum
+    apollo: "312"
+    note: "the cryogenic oxygen tanks' pressure switch, energising both tanks' heaters and fans or neither (AOH p. 2.6-12)"
+  cabin_leak_lm:
+    domain: eclss
+    kind: flow
+    unit: kg/s
+    state_order: independent
+    state_order_note: "as `cabin_leak_csm`: three shares of one leak, none reading another"
+    note: "the LM cabin's leak to space, by gas"
   # The battery's *usable* energy, as against its stored charge. A cold pack gives up less than it
   # holds, so the derating is a property of the capacity rather than a flux into the charge — and
   # `E-PLATE-BAT` carried `0.0 J per K` into `battery_energy`, which is a capacity relation landing
@@ -710,6 +737,143 @@ edges:
     to: co2_removal_lm
     kind: rate
     drains: lm_cabin_co2_kg
+  # The cabin leak (ECLSS lane, 2026-10-17): the gas the leak takes leaves the cabin whole, one for
+  # one, and each edge reads its own gas's share of the leak on the leak's node. Water vapour has no
+  # drain yet: its source is the crew, and a vapour stock with only removals would dry the cabin.
+  # Tank 1's heaters on main bus A: the relay closes both tanks' circuits at once, so the load
+  # arrives on both buses together. The tank's fan motors are on A-C bus 1, which power carries in its
+  # AC distribution. Power owns the loads; this edge is the coupling the scheduler orders by, asked
+  # for on #46 because #46 merges first.
+  - id: E-O2-HTR-BUSA
+    from: o2_tank_heaters
+    to: fuel_cell
+    kind: discrete
+    advances: bus_a_load_w
+    sensitivity:
+      unit: "on or off"
+      basis: historical
+      at: nominal
+      source: >-
+        AOH SM2A-03-BLOCK II-(1) Vol. 1, p. 2.6-13: "113.88 watt heaters supply 389.67 Btu, 52.8
+        watt fan motors supply 180.2 Btu" per O2 tank, net of line loss. AOH Fig 2.6-2 wires CRYOGENIC
+        O2 HTR-1 to CM MAIN DC BUS A and tank 1's CRYOGENIC FAN MOTORS, three-phase, to A-C BUS NO. 1
+      regimes:
+        - when: "on"
+          response: >-
+            tank 1's heaters draw 113.88 W on main bus A for as long as the switch stays closed, a
+            stroke of minutes repeating every half hour or so at a full tank; its 52.8 W fan motors
+            are on A-C bus 1, not this edge
+        - when: otherwise
+          response: "no heater load on main bus A from tank 1"
+  # Tank 2's heaters on main bus B: the relay closes both tanks' circuits at once, so the load
+  # arrives on both buses together. The tank's fan motors are on A-C bus 2, which power carries in its
+  # AC distribution. Power owns the loads; this edge is the coupling the scheduler orders by, asked
+  # for on #46 because #46 merges first.
+  - id: E-O2-HTR-BUSB
+    from: o2_tank_heaters
+    to: fuel_cell
+    kind: discrete
+    advances: bus_b_load_w
+    sensitivity:
+      unit: "on or off"
+      basis: historical
+      at: nominal
+      source: >-
+        AOH SM2A-03-BLOCK II-(1) Vol. 1, p. 2.6-13: "113.88 watt heaters supply 389.67 Btu, 52.8
+        watt fan motors supply 180.2 Btu" per O2 tank, net of line loss. AOH Fig 2.6-2 wires CRYOGENIC
+        O2 HTR-2 to CM MAIN DC BUS B and tank 2's CRYOGENIC FAN MOTORS, three-phase, to A-C BUS NO. 2
+      regimes:
+        - when: "on"
+          response: >-
+            tank 2's heaters draw 113.88 W on main bus B for as long as the switch stays closed, a
+            stroke of minutes repeating every half hour or so at a full tank; its 52.8 W fan motors
+            are on A-C bus 2, not this edge
+        - when: otherwise
+          response: "no heater load on main bus B from tank 2"
+  - id: E-ATM-LEAK-O2
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "kg per kg"
+      basis: derived
+      relation: "the oxygen the leak takes leaves the cabin: one unit out of the cabin per unit through the seal"
+      at: "cabin leak"
+    from: cabin_atm
+    to: cabin_leak_csm
+    kind: rate
+    drains: csm_cabin_o2_kg
+    reads: csm_leak_o2_kg_s
+    advances: csm_leak_o2_kg_s
+  - id: E-ATM-LEAK-N2
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "kg per kg"
+      basis: derived
+      relation: "as E-ATM-LEAK-O2, for the diluent"
+      at: "cabin leak"
+    from: cabin_atm
+    to: cabin_leak_csm
+    kind: rate
+    drains: csm_cabin_n2_kg
+    reads: csm_leak_n2_kg_s
+    advances: csm_leak_n2_kg_s
+  - id: E-ATM-LEAK-CO2
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "kg per kg"
+      basis: derived
+      relation: "as E-ATM-LEAK-O2, for the carbon dioxide"
+      at: "cabin leak"
+    from: cabin_atm
+    to: cabin_leak_csm
+    kind: rate
+    drains: csm_cabin_co2_kg
+    reads: csm_leak_co2_kg_s
+    advances: csm_leak_co2_kg_s
+  - id: E-LM-ATM-LEAK-O2
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "kg per kg"
+      basis: derived
+      relation: "as E-ATM-LEAK-O2, through the LM's seals"
+      at: "cabin leak"
+    from: lm_cabin_atm
+    to: cabin_leak_lm
+    kind: rate
+    drains: lm_cabin_o2_kg
+    reads: lm_leak_o2_kg_s
+    advances: lm_leak_o2_kg_s
+  - id: E-LM-ATM-LEAK-N2
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "kg per kg"
+      basis: derived
+      relation: "as E-ATM-LEAK-N2, through the LM's seals"
+      at: "cabin leak"
+    from: lm_cabin_atm
+    to: cabin_leak_lm
+    kind: rate
+    drains: lm_cabin_n2_kg
+    reads: lm_leak_n2_kg_s
+    advances: lm_leak_n2_kg_s
+  - id: E-LM-ATM-LEAK-CO2
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "kg per kg"
+      basis: derived
+      relation: "as E-ATM-LEAK-CO2, through the LM's seals"
+      at: "cabin leak"
+    from: lm_cabin_atm
+    to: cabin_leak_lm
+    kind: rate
+    drains: lm_cabin_co2_kg
+    reads: lm_leak_co2_kg_s
+    advances: lm_leak_co2_kg_s
   - id: E-O2-SUPPLY-CSM
     sensitivity:
       value: 1.0

@@ -24,6 +24,7 @@ faults:
     component: csm_cabin_volume
     mechanism: "a seal fails: gas leaves the cabin faster than the regulator replaces it, and the rate grows as the seal opens"
     kind: continuous_degradation
+    fleet_class: onboard
     seeding:
       hazard: 2.0e-5
       unit: per_h
@@ -62,6 +63,7 @@ faults:
     component: o2_regulator
     mechanism: "the regulator jams open: oxygen enters the cabin at the high band regardless of pressure"
     kind: latent_then_acute
+    fleet_class: onboard
     seeding:
       on_demand_p: 5.0e-4
       trigger: "any regulator mode transition"
@@ -86,6 +88,7 @@ faults:
     component: o2_regulator
     mechanism: "the regulator does not open: the cabin is sealed to its supply and the crew's consumption drains it"
     kind: discrete
+    fleet_class: onboard
     seeding:
       on_demand_p: 2.0e-4
       trigger: "any regulator transition after a long cold soak"
@@ -114,6 +117,7 @@ faults:
     component: csm_lioh_element
     mechanism: "the element's blower stops: air no longer passes through the lithium hydroxide and CO2 accumulates with the capacity untouched"
     kind: discrete
+    fleet_class: precursor
     seeding:
       hazard: 2.0e-4
       unit: per_h
@@ -144,6 +148,7 @@ faults:
     component: cabin_pressure_sensor_1
     mechanism: "one of the two pressure transducers develops a walking bias: it reads a little high, then a little higher"
     kind: instrument
+    fleet_class: onboard
     seeding:
       hazard: 2.0e-4
       unit: per_h
@@ -176,6 +181,7 @@ faults:
     component: cabin_pressure_sensor_1
     mechanism: "a transducer freezes at its last value: the cabin changes and the channel does not"
     kind: instrument
+    fleet_class: precursor
     seeding:
       on_demand_p: 5.0e-4
       trigger: "any rapid pressure change"
@@ -203,6 +209,8 @@ faults:
     component: ventilation_fan
     mechanism: "the suit-circuit fan stops: the loop's flow collapses and the crew's suits lose cooling and CO2 removal"
     kind: discrete
+    fleet_class: onboard
+    fleet_class_note: "the suit circuit's flow collapses in seconds and the crew switch to the standby compressor by checklist before any fleet loop closes; the fleet is held to attributing it"
     seeding:
       hazard: 2.0e-4
       unit: per_h
@@ -226,6 +234,7 @@ faults:
     component: o2_regulator
     mechanism: "the vent valve does not reseat: the cabin bleeds to vacuum through a path the regulator cannot outrun"
     kind: latent_then_acute
+    fleet_class: onboard
     seeding:
       on_demand_p: 2.0e-4
       trigger: "any vent or repressurisation cycle"
@@ -254,6 +263,7 @@ faults:
     component: o2_regulator
     mechanism: "the emergency regulator fails open: the cabin climbs toward the supply pressure"
     kind: latent_then_acute
+    fleet_class: onboard
     seeding:
       on_demand_p: 2.0e-4
       trigger: "any emergency regulator activation"
@@ -278,6 +288,7 @@ faults:
     component: csm_cabin_n2_kg
     mechanism: "the wrong gas is added during a repressurisation: the total pressure recovers and the oxygen fraction falls"
     kind: discrete
+    fleet_class: precursor
     seeding:
       on_demand_p: 1.0e-4
       trigger: "any repressurisation from the diluent supply"
@@ -304,6 +315,8 @@ faults:
     component: condensing_heat_exchanger
     mechanism: "the exchanger's water removal falls away: cabin humidity climbs and the crew feel it before any channel moves"
     kind: continuous_degradation
+    fleet_class: precursor
+    fleet_class_note: "the crew's own reports are the first evidence and the consequence takes hours, so the fleet can be held to catching it from what the crew say"
     seeding:
       hazard: 2.0e-4
       unit: per_h
@@ -397,6 +410,7 @@ faults:
     component: lm_cabin_volume
     mechanism: 'a seal in the LM''s cabin fails: gas leaves faster than the regulator replaces it, and the rate grows as the seal opens'
     kind: continuous_degradation
+    fleet_class: onboard
     seeding:
       hazard: 2.0e-05
       unit: per_h
@@ -438,6 +452,7 @@ faults:
     component: lm_o2_regulator
     mechanism: 'the LM cabin regulator sticks open: oxygen flows continuously and the cabin climbs above its setpoint'
     kind: latent_then_acute
+    fleet_class: onboard
     seeding:
       hazard: 5.0e-05
       unit: per_h
@@ -469,6 +484,7 @@ faults:
     component: lm_o2_regulator
     mechanism: 'the LM cabin regulator fails closed: the supply stops reaching the cabin and pressure falls with the tank still full'
     kind: discrete
+    fleet_class: onboard
     seeding:
       hazard: 5.0e-05
       unit: per_h
@@ -500,6 +516,7 @@ faults:
     component: lm_lioh_cartridge_primary
     mechanism: 'the LM cartridge''s blower stops: air no longer passes through the lithium hydroxide and CO2 accumulates with the cartridge untouched'
     kind: discrete
+    fleet_class: precursor
     seeding:
       hazard: 2.0e-04
       unit: per_h
@@ -537,6 +554,7 @@ faults:
     component: lm_cabin_pressure_sensor
     mechanism: 'the LM cabin pressure transducer reads a constant offset: the cabin is fine and the number is not'
     kind: instrument
+    fleet_class: precursor
     seeding:
       hazard: 1.0e-04
       unit: per_h
@@ -567,6 +585,7 @@ faults:
     component: lm_cabin_pressure_sensor
     mechanism: 'the LM cabin pressure transducer freezes at its last value: a perfectly stable number that is no longer a measurement'
     kind: instrument
+    fleet_class: precursor
     seeding:
       hazard: 1.0e-04
       unit: per_h
@@ -595,6 +614,7 @@ faults:
     component: lm_o2_regulator
     mechanism: 'the LM vent valve does not reseat: the cabin bleeds to vacuum through a path the regulator cannot outrun'
     kind: latent_then_acute
+    fleet_class: onboard
     seeding:
       on_demand_p: 2.0e-04
       trigger: any LM vent, depressurisation or repressurisation cycle
@@ -624,6 +644,7 @@ faults:
     component: lm_o2_regulator
     mechanism: 'the LM emergency regulator does not shut off at its setpoint: the backup path overpressurises the cabin'
     kind: latent_then_acute
+    fleet_class: onboard
     seeding:
       on_demand_p: 1.0e-04
       trigger: a command to the LM emergency regulator
@@ -653,6 +674,7 @@ faults:
     component: lm_cabin_n2_kg
     mechanism: 'nitrogen enters the LM cabin from a leaking descent-stage pressurant line: total pressure holds while ppO2 falls'
     kind: discrete
+    fleet_class: precursor
     seeding:
       hazard: 5.0e-05
       unit: per_h
@@ -685,6 +707,7 @@ faults:
     component: lm_water_separator
     mechanism: 'the LM exchanger''s water removal falls away: cabin humidity climbs and the crew feel it before any channel moves'
     kind: continuous_degradation
+    fleet_class: precursor
     seeding:
       hazard: 2.0e-04
       unit: per_h
