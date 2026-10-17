@@ -1937,7 +1937,8 @@ def test_the_linter_holds_the_conventions_the_corpus_declares_once(tmp_path):
     linter.check_conventions(documents["vehicle.yaml"], registry, documents, report)
     assert report.refusals == [], report.refusals
     exceptions = documents["vehicle.yaml"]["conventions"]["units_exceptions"]
-    assert len(exceptions) == 11, sorted(exceptions)
+    # 11 -> 10 on 2026-10-17: `rpm` went with the pump's speed channel, now a fraction of rated.
+    assert len(exceptions) == 10, sorted(exceptions)
     # Every channel unit is SI, dimensionless, discrete, or one of the declared exceptions.
     for row in registry.values():
         unit = str(row.get("unit") or "")
@@ -12690,7 +12691,10 @@ def test_every_stock_declares_where_it_starts():
     # id and its single-state node's alias, `environment_heat`.
     # 89 -> 91 with ECLSS: `suit_fan` (the switch `set_suit_fan` moves) under its id, and
     # `o2_tank_heaters`, a ruled discrete whose id and single-state node share one name.
-    assert len(on_nodes) == 91, f"{len(on_nodes)} node keys carry a value"
+    # 91 -> 96 with the bays' and the pump's rules: `zone_csm_service_t` and `zone_lm_descent_t`
+    # seed under their ids and their single-state nodes' aliases, and `pump_1_speed_frac` under its
+    # id alone, beside `coolant_flow_kg_s` on `coolant_flow`.
+    assert len(on_nodes) == 96, f"{len(on_nodes)} node keys carry a value"
     # And the map a tick actually starts from is that seed plus the declared arithmetic, so the
     # resolved states are a strict superset and every one of them is `algebraic`.
     assert seeded_integrators.keys() < seeded.keys(), "the resolution added nothing to the seed"
@@ -15283,7 +15287,9 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
         "the integrator multiplies by a value and a table is not one; if this ever becomes True the "
         "stock integrator will start applying a mode selection as a gain"
     )
-    assert by_id["E-CMD-PUMP"].usable is False, "the pump edge owes its rated speed"
+    # The pump edge owed its rated speed until 2026-10-17, when the speed became a fraction of rated
+    # (ADR 0003 item 4) and its sensitivity 1.0 per command.
+    assert by_id["E-CMD-PUMP"].usable is True
     assert by_id["E-GEOM-LINK"].usable is True
 
     # And the headline is the count of *declared* edges, which is the two forms together.
@@ -18146,10 +18152,11 @@ def test_the_linter_refuses_a_registry_census_that_has_drifted_from_the_registry
     text = path.read_text()
     # 44/14 -> 43/15 in round 33, when `prop.dps_throttle_pct`'s operating band became a scale: the
     # census follows the registry, and the fixture below moves it by one channel rather than by a
-    # kind, which is the smallest change the reader has to catch.
-    old = "58 channels carry the field — 43 `band`, 15 `scale`"
+    # kind, which is the smallest change the reader has to catch. 43/15 -> 42/16 on 2026-10-17, when
+    # `thermal.pump_[n]_speed` became a fraction of rated speed, a scale.
+    old = "58 channels carry the field — 42 `band`, 16 `scale`"
     assert old in text, "the fixture no longer matches the range_kind census"
-    path.write_text(text.replace(old, "57 channels carry the field — 43 `band`, 14 `scale`", 1))
+    path.write_text(text.replace(old, "57 channels carry the field — 42 `band`, 15 `scale`", 1))
     result = run_linter(definition)
     assert result.returncode == 1
     assert "states the `range_kind` census as 57 channels" in result.stdout, result.stdout[-900:]
@@ -18888,6 +18895,7 @@ def test_an_edge_that_names_where_its_value_comes_from_is_not_a_second_debt(tmp_
             + "        expression: lumped_mass_kg / lumped_mass_kg\n        inputs:\n"
             + inputs
             + '      relation: "a fixture: one owed input, divided by itself"\n'
+            + '      at: "descent bay, lumped"\n'
             + text[end:]
         )
         return definition
@@ -20497,17 +20505,16 @@ def test_every_integrator_declares_where_its_value_starts(tmp_path):
     # where the decision and what would close it are written.
     unannotated = copy_definition(fixture_dir(tmp_path, "lag-note"))
     path = unannotated / "domains" / "thermal" / "components.yaml"
-    # `comm_amp_t` was the state until ADR 0003 item 10 derived its start; the CSM service bay's
-    # temperature is still owed, with the note that says why.
-    start = components.index("  - id: zone_csm_service_t")
-    end = components.index("  - id: zone_lm_cabin_t")
-    block = components[start:end]
-    assert "    initial_note: >-\n" in block
-    # The note *only* comes out — the state's provenance stays, so this fixture isolates one refusal
-    # rather than three, and the pattern takes the key line and its block scalar's own continuation.
-    stripped = re.sub(r"(?m)^    initial_note: >-\n(?:^      .*\n)+", "", block)
-    assert "initial_note" not in stripped and "initial: UNCONFIGURED" in stripped
-    path.write_text(components[:start] + stripped + components[end:])
+    # `comm_amp_t` was the state until ADR 0003 item 10 derived its start, and the CSM service bay
+    # until 2026-10-17, when it got a chosen one (and it is `dynamics` now, which this rule does not
+    # read). No integrator owes its start now, so the fixture makes the LM cabin's lag owe it: the
+    # value becomes `UNCONFIGURED` and its source comes out, leaving an owed start with no note.
+    lag = (
+        "    initial: 295\n"
+        "    initial_source: vehicle.yaml:thermal.zones.lm_cabin.nominal_temperature_k\n"
+    )
+    assert lag in components, "the fixture no longer matches the LM cabin's start"
+    path.write_text(components.replace(lag, "    initial: UNCONFIGURED\n", 1))
     result = run_linter(unannotated)
     assert result.returncode == 1
     assert "is UNCONFIGURED with no `initial_note`" in result.stdout, result.stdout[-900:]
@@ -21152,7 +21159,8 @@ def test_no_published_frame_value_sits_outside_its_channel_s_band():
                 if isinstance(precision, (int, float)) and precision > 0:
                     decimals = max(0, int(round(-math.log10(precision))))
                 bands[str(row["id"])] = (float(rng[0]), float(rng[1]), decimals)
-    assert len(bands) == 43, len(bands)
+    # 43 -> 42 on 2026-10-17: the pump's speed channel is a scale now, a fraction of rated.
+    assert len(bands) == 42, len(bands)
 
     world = plant.load_world(VEHICLE)
     started = plant.initial_values(world)
