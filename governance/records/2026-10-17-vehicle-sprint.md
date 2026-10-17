@@ -156,3 +156,53 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
   volume is published (11.6 ft³, ODB Vol I Fig 4.2-8.1). Docked burns need 9 of 12 latches: routed
   to propulsion as an interlock edge.
 - 14:08 ECLSS models O2 supply pressure on the heater relay (865/935 psia) on #46; 21 of 25 ready.
+- 14:12 Draft #54 (crew). It merges after #47 with the rest. ECLSS writes its CO2 edges against it.
+- 14:06–14:13 Power removes the shed ladder (cautions only). Ascent interrupters deferred to the LM
+  power slice. ECLSS resolves O2 supply pressure on #46 (`57c5db3`) and routes the cryo heaters to
+  power as a periodic load. Crew's #54 takes the census to 156 states. `fleet_class` vocabulary owed
+  by lane 9. `sources/rcs.md` shows the CM jet differs from the SM's; the CM-jet answer is reopened
+  with the RCS lane.
+- 14:14 ECLSS holds its crew-count CO2 edges until #54 is on `main`; CO2 removal becomes a rule after CRYO PRESS.
+- 14:15 Lane 9 publishes the `fleet_class` vocabulary; every fault-owning lane adds the field now.
+- 14:16 Thermal adds `fleet_class` and `acts` on #49 (`efdb857`; only `pump_no_flow` and `heater_stuck_on` act automatically) and records Fraction and Chosen in ADR 0003 (`b60c310`).
+- 14:17 Propulsion models SPS helium pressurization on #50 (`26532d3`; branch ready 74 → 80, debts 265 → 256). The coordinator answers its scope questions under D33 (D41).
+- 14:19 Power ties batteries A and B to the main buses on #43 (`a9c27d5`) and adds `acts` and `fleet_class`; the A–B tie's replacement follows #43.
+- 14:20 ECLSS classes all 21 faults on #46. The O2 tank heaters move onto a coupling node so power can load them.
+- 14:21 #43's aurora job is red: policy D no longer overheats inside the window at 1,401 W. The coordinator lets #43 carry the matching `aurora/tests` assertion if thermal's re-derivation does not fix it (D42), posted to John to override.
+- 14:22 The CM jet is split (D43) on #44 (`b4c3c44`), which also carries the full CM jet table.
+- 14:22 #47 (`4a531df`) adds `refused_bands` and enforces `minimum`/`maximum` everywhere. Lane 9's order after #47 now starts with `gated_by` on state conditions.
+- 14:27 The coordinator chooses the crew-day values under D33 (D44). The potable-water heater's sleep switch-off goes to power as a PWR-02 confounder. #47's interlock test fixed at `fdbedf9`.
+- 14:28 ECLSS puts the O2 tank heaters on their own node (#46 commit 0007). Metabolic figures in `vehicle.yaml` differ from the AOH; recorded as unowned debt in `status.md`.
+- 14:29 Thermal's MET-0 re-derivation is on #43 (`efd60cf`). Policy D's non-loss is the corrected physics, so #43 carries the `aurora/tests` expectation change (D42).
+- 14:31 Governance PR #53 merged (`e90d9f1`).
+- 14:32 Structure publishes the docking-latch count on #51 (`3dd1e64`) for propulsion's docked-burn guard.
+- 14:34 Crew reports #54's fidelity (`ed840ef`). The `perceive()` caller goes to lane 9 after #47.
+- 14:35 Lane 9's order after #47 adds the `ask_crew` `perceive()` caller after the instrument layer.
+- 14:36 Docking-latch talkback wiring sourced (TN D-6854 Fig A-7(b)); the research thread's earlier reading is struck through in `structure.md`.
+- 14:39 John confirms the delegated decisions and adds a closing phase: a light-touch fidelity calibration pass per station after the lanes merge (D45).
+- 14:41 Comms reports #48's fidelity: `link_snr` from Bellcomm CR-125670. Open across lanes: the CSM transmit chain uses LM figures, and the PA is an AC load whose inverter path is power's call.
+- 14:41–14:43 Draft #56 (GNC and RCS, `claude/vehicle-gnc-rcs-03b5j4`): pointing modes, ADR 0005; rebases after #44 and #47. GNC scope answers under D33 (D46); three engine asks to lane 9.
+- 14:44 Research lane finished: eight source files under `sources/` in the project's shared folder. `thermal.md` finds the SM bays are not glycol-cooled; thermal decides the fix on #49.
+- 14:46 Power's AC distribution and comms' ground end decided under D33 (D47). GNC's dynamics seeding is on #47 (`4761970`).
+- 14:46 #45 (unpin) merged as `e990b25`, `required` green including both episode jobs. Every lane rebases; #46 next, then #47. From now on a closing PR does not touch the pinned figures, the README status paragraph or `plant.py`.
+- 14:47 John: "we want to be able to model apollo 13" (D48). Station handovers come into the episode; MET 0 moves to Apollo 13's TLI.
+- 14:48 John confirms the epoch shift (D49). 14:49 He notes a future direction, a Kerbal-style ad-hoc mission system, that must not change current work (`status.md`, "Future direction").
+- 14:51 Structure #51 (`aa3231c`) and thermal #49 (`0427cac`, rebased onto `e990b25`) report. Scope answers under D33 (D50): tunnel pressure as a follow-up; the SM service bay off the glycol loop. Research infers the inverter configuration from the Apollo 11 checklist.
+- 14:53 #47 carries `cooled_by: space` with a required `cooled_by_note` (`d221c8a`).
+- 15:01 GNC + RCS #56 rebased on `e990b25` as `d50194c` (268 debts, 0 refusals): `gnc.sun_direction_body` from a fixed Apollo 13 TLI sun line, and `set_ptc_roll` (0.3 deg/s, as flown at three revolutions per hour). The PTC roll goes in the ledger as a decision.
+- 15:02 Research delivers the Apollo 13 MSFN network as flown (`sources/comms.md`); no as-flown rise/set table. D51: Vanguard and ARIA positions from the pre-flight press kit, labelled planned. Comms models handovers in its own PR after #48.
+- 15:03 Governance #55 merged as `7ad188f` (D41–D44, lane events to 14:30); the next batch carries D45–D51.
+- 15:23 D52: GNC navigation (`select_nav_source`) as a reduced Apollo-shaped covariance model, not the corpus's 15×15 EKF; recorded as a dated deviation in ADR 0005 on #56. ECLSS owes a vent state; GNC owns the edge into navigation.
+- 15:26 Merge order becomes #46 → #58 → #47 → the rest. Lane 0's draft #58 (`11c8a95`) unpins the census figures #45 kept on purpose, judging that keeping them pinned was the wrong call for a parallel sprint.
+- 15:26 ECLSS sources LiOH CO2 removal (`sources/eclss-co2.md`) and finds two repo ratings wrong (LM secondary cartridge, CSM element count); D53 gives ECLSS the removal stock, absorber counters, vent state and `set_overboard_dump`.
+- 15:31 GNC + RCS (lane's call, coordinator agrees): the CM RCS becomes a separate stock isolated in coast, as flown; the slew law allocates SM quads only, which removes the ~2 % CM pricing error in E-RCSP-RCS. Lands on #56 after #44.
+- 16:10 Governance #57 merged as `6814102` (D45–D51) on a green `required`, seconds before D54 reached this thread; its review follows the merge.
+- 16:10 D54: every PR that leaves draft gets an independent Fable review report for John (`vehicle-status/reviews/pr-<N>.md`); merges need green plus a non-blocking verdict.
+- 16:11 John confirms D54 on the card: "Merge on clear".
+- 16:12 Comms builds the Apollo 13 epoch as its own PR after #48: `met_epoch_utc` at TLI, re-derived elements, periselene-targeted trajectory. Two source conflicts recorded, unresolved (415.8 vs 86.8 n mi; 73.0 h vs 75.24 h arrival). #48 is fixing census pins after its rebase.
+- 16:12 The engine lane allows prose-only edits in `check_vehicle.py` and `plant.py` on a lane's own PR when its data change makes the prose stale; logic still goes through the engine lane.
+- 16:15 Crew #54 at `e26945e` with #47's branch merged in. D55: a workload driver (`crew_workload_index`) and CRW-01 split per person.
+- 16:18 D54 verdicts: #57 clear after its merge (one wording fix: the post-#45 figure convention holds fully only after #58, fixed on #59); #59 clear (#46's draft state fixed); #46 clear with follow-ups. The review finds the cryo O2 fans are AC loads and the heaters 113.88 W DC per tank, so power splits its 166.7 W figure.
+- 17:07 GNC + RCS #56 at `312c89c` (24 census-pin fixes): `select_nav_source` now acts, with a divergence alarm whose timing depends on when the ground was last used.
+- 17:11 D56: John puts the quiet-coast window `D_TICKS` change on #43 ("On #43"). Power raises the main bus band ceiling to 31.0 V and records the O2 tank split (113.88 W DC heater, 52.8 W AC fans); #43 goes green after #58.
+- 16:55 The D54 review of #46 turns blocking on one stale test assertion (`test_vehicle_config.py:3313`) until ECLSS pushes a one-line fix.
