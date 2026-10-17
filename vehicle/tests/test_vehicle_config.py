@@ -23336,8 +23336,8 @@ def test_a_resume_recovers_the_map_from_the_ended_boot_s_take_and_never_from_an_
         resume_from(console, checkpoint, world, diode, state)
     monkeypatch.undo()
     marker = json.loads((state / ".boot.json").read_text())
-    assert marker["boot_id"] != boot1 and marker["pending"] == [boot1], "boot 2 named itself, and boot 1 as pending, before reading any window"
-    assert not take.exists(), "the take the console supersedes is retired before the marker names its boot as pending"
+    assert marker["boot_id"] != boot1 and "pending" not in marker, "boot 2 named itself before reading any window, and boot 1 has no take left"
+    assert not take.exists(), "the take the console supersedes is retired before the marker moves"
     (alpha / "console.json").write_text(json.dumps({"commands": ["zzz_no_map"]}), encoding="utf-8")
     resumed, _ = resume_from(console, checkpoint, world, diode, state)
     window = resumed.windows["alpha"]
@@ -23599,10 +23599,44 @@ def test_a_resume_killed_before_a_window_recovers_leaves_the_ended_boot_s_take_t
     assert window.variables_known and window.variables == {"map": "A"}, window.variables
     assert json.loads((alpha / "console.json").read_text()) == {"commands": [], "variables": {"map": "A"}}
     assert not take.exists() and window.held is None
-    assert json.loads((state / ".boot.json").read_text())["pending"] == [boot2, boot1]
+    assert json.loads((state / ".boot.json").read_text())["pending"] == [boot1], "boot 2 left no take, so only boot 1 stays pending"
     resumed.cycle()
     assert json.loads((state / ".boot.json").read_text()) == {"boot_id": resumed.boot_id}, "every window recovered: no boot is pending"
     resumed.close()
+
+
+def test_a_resume_that_cannot_retire_a_superseded_take_refuses_before_it_advances_the_marker(tmp_path, monkeypatch):
+    """Issue #39 (Codex P1 on #41): a superseded take that stays is a refusal, not a pending boot's evidence.
+
+    Boot 1 is killed holding a take with map A; the agent then writes a console with map B. A resume
+    retires the take before it advances the marker; when the take can be neither removed nor moved
+    aside, advancing would leave A where a later resume, after the agent writes a console without a
+    map, would adopt it. The resume refuses, naming the take, and the marker still names boot 1.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = _boot(console, world, diode, state)
+    alpha = diode / "alpha"
+    recorded_run(executive, diode, {}, 2, snapshot_at=2)
+    submit(alpha, ["zzz_lost"], {"map": "A"})
+
+    def killed(self, *args, **kwargs):
+        raise _Killed
+
+    monkeypatch.setattr(console.Window, "_republish", killed)
+    with pytest.raises(_Killed):
+        executive.cycle()
+    monkeypatch.undo()
+    with contextlib.suppress(Exception):
+        executive.close()
+    take = alpha / f"{console.TAKE_PREFIX}{executive.boot_id}.1"
+    submit(alpha, [], {"map": "B"})
+    monkeypatch.setattr(console.Window, "_retire_entry", lambda self, root, name, dead, *, blocking: False)
+    with pytest.raises(console.ResumeRefused) as refused:
+        resume_from(console, checkpoint, world, diode, state)
+    monkeypatch.undo()
+    assert take.name in str(refused.value) and "not advanced" in str(refused.value), refused.value
+    assert json.loads((state / ".boot.json").read_text()) == {"boot_id": executive.boot_id} and take.exists()
 
 
 def test_a_take_whose_map_the_republish_could_not_put_back_is_held_until_the_console_carries_one(tmp_path, monkeypatch):

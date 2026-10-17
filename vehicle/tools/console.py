@@ -2783,11 +2783,6 @@ def results_on_disk(output_fd: int, slug: str, entries: list[dict[str, Any]]) ->
     return scan
 
 
-# How many earlier boots a marker carries as still unrecovered: a resume that dies before every window
-# has recovered passes its own boot and these on, so a run of crashed resumes stops growing it here.
-MAX_PENDING_BOOTS = 8
-
-
 def read_boot_marker(state_fd: int | None) -> str | None:
     """The boot id the state directory's marker names, or `None` (no state directory, no marker, or not one)."""
     return read_boot_lineage(state_fd)[0]
@@ -2815,7 +2810,7 @@ def write_boot_marker(state_fd: int | None, boot_id: str, pending: list[str] | N
     if state_fd is not None:
         marker: dict[str, Any] = {"boot_id": boot_id}
         if pending:
-            marker["pending"] = pending[:MAX_PENDING_BOOTS]
+            marker["pending"] = pending
         write_json_atomic(BOOT_FILE, marker, dir_fd=state_fd, durable=True)
 
 
@@ -4966,6 +4961,10 @@ class Executive:
         )
 
 
+class TakeUnretirable(RuntimeError):
+    """A take a resume must retire before it advances the boot marker could not be (issue #39)."""
+
+
 class WindowAbsent(RuntimeError):
     """A window's directory or subdirectory is gone (`ENOENT`) — distinct from a link or a wrong type.
 
@@ -5402,18 +5401,27 @@ class Window:
             with contextlib.suppress(OSError):
                 os.fsync(root)
 
-    def retire_superseded_takes(self, root: int, boots: list[str]) -> None:
-        """Before a resume advances the marker: when the console carries a map, retire the earlier boots' takes, durably."""
-        if not boots or not self._console_has_map(root):
-            return
-        prefixes = tuple(f"{TAKE_PREFIX}{boot}." for boot in boots)
-        retired = False
-        for entry in os.listdir(root):
-            if entry.startswith(prefixes):
-                self._retire_entry(root, entry, DEAD_PREFIX + entry[len(TAKE_PREFIX):], blocking=False)
-                retired = True
-        if retired and self.executive.journal is not None:
-            os.fsync(root)
+    def retire_superseded_takes(self, root: int, boots: list[str]) -> set[str]:
+        """Before a resume advances the marker: when the console carries a map, retire the earlier boots' takes, durably.
+
+        Returns the boots that still have a take here. Raises `TakeUnretirable` when a superseded take
+        can be neither removed nor moved aside, or its retirement cannot be made durable.
+        """
+        if not boots:
+            return set()
+        prefixes = {f"{TAKE_PREFIX}{boot}.": boot for boot in boots}
+        found = [(entry, boot) for entry in os.listdir(root) for prefix, boot in prefixes.items() if entry.startswith(prefix)]
+        if not found or not self._console_has_map(root):
+            return {boot for _entry, boot in found}
+        for entry, _boot in found:
+            if not self._retire_entry(root, entry, DEAD_PREFIX + entry[len(TAKE_PREFIX):], blocking=False):
+                raise TakeUnretirable(f"{self.slug}/{entry}, which {self.slug}/{self.console} supersedes, cannot be removed or moved aside")
+        if self.executive.journal is not None:
+            try:
+                os.fsync(root)
+            except OSError as exc:
+                raise TakeUnretirable(f"the retirement of {self.slug}'s superseded takes cannot be made durable ({self._errno(exc)})") from exc
+        return set()
 
     def _settle_held(self, root: int, durable: bool) -> None:
         """Retire the held take once the console carries a map again (issue #39)."""
@@ -6459,7 +6467,7 @@ def _resume(
     # written with its first cycle. Once written it is never rolled back, whatever later refuses.
     prev_boot, earlier = read_boot_lineage(executive.state_fd)
     # Newest first: the ended boot, then any boots its own resume had not finished recovering (issue #39).
-    recover_boots = list(dict.fromkeys(b for b in [prev_boot, *earlier] if b))[:MAX_PENDING_BOOTS]
+    recover_boots = list(dict.fromkeys(b for b in [prev_boot, *earlier] if b))
     # **The consecutive-backstop count** (#23, design §5), read back from the segment the ended boot closed
     # with: its manifest, if it ended by the backstop; any other end — a clean one, a crash — resets it.
     if prev_boot is not None and executive.journal is not None and executive.journal_dir_fd is not None:
@@ -6470,14 +6478,24 @@ def _resume(
     # **Superseded takes first** (issue #39): a window whose console carries its own map has no use for an
     # earlier boot's take, and once the marker names those boots as still pending a take left here could
     # outlive that map (the agent then writing a console without one) and be adopted, stale. So they are
-    # retired, durably, while the marker still names only the ended boot, as the old order did.
+    # retired, durably, while the marker still names only the ended boot, as the old order did; one that
+    # cannot be is a refusal, before the marker moves. The same listing says which boots still have a take
+    # anywhere: only those stay pending, so the marker is bounded by the takes, never truncated.
+    remaining: set[str] | None = set()
     for window in executive.windows.values():
         try:
-            window.retire_superseded_takes(window.open_handles().root, recover_boots)
+            left = window.retire_superseded_takes(window.open_handles().root, recover_boots)
+        except WindowAbsent:
+            left = set()  # no directory, no takes
+        except TakeUnretirable as exc:
+            raise ResumeRefused(f"{exc}; the boot marker is not advanced past a take that could resurrect an older map") from exc
         except Exception:  # noqa: BLE001 - the window's recovery below meets it again and records it
-            pass
+            left = None
         finally:
             window.close_handles()
+        remaining = None if remaining is None or left is None else remaining | left
+    if remaining is not None:
+        recover_boots = [boot for boot in recover_boots if boot in remaining]
     try:
         write_boot_marker(executive.state_fd, executive.boot_id, recover_boots)
         executive.marker_pending = recover_boots
