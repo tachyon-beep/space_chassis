@@ -133,16 +133,14 @@ plainly the recovery. As declared:
 | set_source | `bus_a_undervoltage`, `load_margin_negative` | `state=off` | `state=on` |
 | set_battery_contactor | `load_margin_negative` | `state=off` | `state=on` |
 | select_sensor | `redundancy_degraded` | `source=primary`, `secondary` | `source=auto` |
-| select_nav_source | `estimator_divergence` | `source=imu_only`, `star_sighting`, `radar`, `blended` | `source=ground_uplink` |
 
 Guarded whole, because no argument value is plainly the recovery: `request_translation`
 (`rcs_propellant_reserve`; every translation spends propellant), `start_burn` (`feed_pressure_low`;
-the safing verb is `stop_burn`), and `set_o2_source` (`cabin_pressure_caution` and `o2_reserve_10`; the hazardous direction depends
+the safing verb is `stop_burn`), `select_nav_source` (`estimator_divergence`; the help refuses
+choosing any source while the estimator diverges, and whether `blended` is a recovery is not said),
+and `set_o2_source` (`cabin_pressure_caution` and `o2_reserve_10`; the hazardous direction depends
 on two arguments, `source` and `flow`, together, which one condition cannot name). The unconditional
 entries above are the same judgement for one guard of a verb whose other guard has a direction.
-`select_nav_source` was guarded whole until ADR 0005's navigation sources (2026-10-17) gave
-`ground_uplink` a meaning: it takes the ground's vector and its sigma, so it is the recovery, and
-the four onboard choices, which coast on the vector held, are the direction the guard refuses.
 
 The same rule applies to UNEVALUATED: a safing command needs no guard, so an unreadable interlock
 that guards only the other direction does not refuse it. The accepted result says which it was
@@ -228,3 +226,15 @@ their batch classes through the window (`aurora/tests/test_quiet_coast_window.py
   (WP05)" sentence (`set_bus_tie`'s `tie_dv_limit`, `set_relief_valve`'s `cabin_dp_low`) now assert
   the link this decision names: a difference between buses, and `psid` against `psi`. The arm and
   fire refusals list only the unreadable interlocks, which for both verbs is all of them.
+
+## Amendment: `select_nav_source` gains a direction (2026-10-17)
+
+ADR 0005's navigation sources give `ground_uplink` a meaning: it takes the ground's vector and the
+ground's sigma, so it recovers from `estimator_divergence` rather than feeding it. The four onboard
+choices coast on the vector held and are what grow the sigma. So `select_nav_source` leaves the
+guarded-whole list above. It now declares `interlocks_when` on `source`:
+
+- refused while tripped: `imu_only`, `star_sighting`, `radar`, `blended`
+- the safing direction: `ground_uplink`
+
+Three verbs stay guarded whole: `request_translation`, `start_burn` and `set_o2_source`.
