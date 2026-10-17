@@ -21364,14 +21364,15 @@ def test_the_mechanical_conversions_land_on_the_declarations_that_sized_them():
 
     # The nine, by the registry's own count of evaluable derivations.
     lint = run_linter(VEHICLE)
+    # 72 -> 70 with ADR 0005: the two navigation sigmas read their own states.
     assert lint.returncode == 0, lint.stdout[-900:]
-    assert "15 of the 72 now carry an evaluable `derivation`" in lint.stdout
+    assert "15 of the 70 now carry an evaluable `derivation`" in lint.stdout
     entry = next(
         d
         for d in yaml.safe_load((VEHICLE / "presentation.yaml").read_text())["open_debts"]
         if "frame publishes channel ids now" in d
     )
-    assert "15 of the 72 now carry an evaluable `derivation`" in entry
+    assert "15 of the 70 now carry an evaluable `derivation`" in entry
     assert "0 of the prose rows declare in their own `owed` field" in entry
 
 
