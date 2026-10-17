@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:47 UTC**, `tachyon-beep/space_chassis` `main` @ `e90d9f1`. Kept by the
+As of **2026-10-17 14:48 UTC**, `tachyon-beep/space_chassis` `main` @ `e990b25`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -19,18 +19,20 @@ the sprint's rules and history are in
 
 ## Vehicle sprint: who holds what
 
-Merge order: **#45 → #46 → #47 → the rest** (rebase onto `main`, merge when `required` is green).
+Merge order: ~~#45~~ (merged 14:46, `e990b25`) **→ #46 → #47 → the rest** (rebase onto `main`, merge when `required` is green).
 After the lanes merge: a light-touch fidelity calibration pass per station (D45).
-Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
+#45 is on `main`; every lane rebases. A PR that closes a state no longer touches the pinned figures,
+the README status paragraph or `plant.py`; README count-line conflicts resolve to `main`'s side plus
+a test re-run.
 
 | # | lane | PR | state | waits on |
 |---|---|---|---|---|
-| 0 | Unpin vehicle test figures | [#45](https://github.com/tachyon-beep/space_chassis/pull/45) | ready for review | its `required` check; merges first |
+| 0 | Unpin vehicle test figures | [#45](https://github.com/tachyon-beep/space_chassis/pull/45) | **merged** 14:46 as `e990b25`, `required` green with both episode jobs | — |
 | 6 | ECLSS states | [#46](https://github.com/tachyon-beep/space_chassis/pull/46) | draft (engine helper: two-argument interlock condition); 21 of 25 ready; `fleet_class` on all 21 faults (12 onboard, 9 precursor), 261 debts on its branch; CO2 and humidity wait on crew | #45 |
 | 9 | Fault injection into the step loop | [#47](https://github.com/tachyon-beep/space_chassis/pull/47) | draft; carries the engine work for other lanes (list below); per-tick hashes differ from `main` (nothing pins them) | #45, #46 |
 | 1 | Burn down power subsystem | [#43](https://github.com/tachyon-beep/space_chassis/pull/43) | draft; per-cell fuel cells, PWR-02, battery tie; standby pump *off* with thermal's MET-0 re-derivation (`efd60cf`: environment heat 1,285.5 W, radiator start 288.02 K, hot-hold 293.40 K, evaporator hold 984.8 W; ADR 0003 item 9); policy D's non-loss is the corrected physics, so #43 carries the `aurora/tests` expectation change (D42) | #45; #47 before the PWR-02 `fault:` row |
 | — | Source RCS thruster geometry | [#44](https://github.com/tachyon-beep/space_chassis/pull/44) | draft at `b4c3c44`; SM and LM jets sourced; full CM jet table, SM radii, LM jet 4 note corrected; CM engine split (D43); minimum impulse bit owed | #45; primary sources (now reachable, D32) |
-| 5 | Comms remainder | [#48](https://github.com/tachyon-beep/space_chassis/pull/48) | draft; occultation from the orbit; `carrier_lock` waits on #47's seeding | #45 (one red test until #45 unpins the 265-debt docstring), #47 |
+| 5 | Comms remainder | [#48](https://github.com/tachyon-beep/space_chassis/pull/48) | draft; occultation from the orbit; `carrier_lock` waits on #47's seeding | rebase onto `main` (the 265-debt docstring test should clear), #47 |
 | 2 | Finish thermal | [#49](https://github.com/tachyon-beep/space_chassis/pull/49) | draft; bays and pump speed advance; `fleet_class` and `acts` added (`efdb857`); ADR 0003 records Fraction and Chosen (`b60c310`); the service-bay 380 W figures follow #43 onto `main`; `heater_bank_duty` held (will declare 0–100, no refused bands) | #45; the numeric-argument engine change (lane 9) |
 | 3 | Propulsion and propellant | [#50](https://github.com/tachyon-beep/space_chassis/pull/50) | draft, head `26532d3`; on its branch ready 74 → 80, debts 265 → 256; scope answers D41 | #45; primary sources (now reachable, D32) |
 | 4 | Structure states | [#51](https://github.com/tachyon-beep/space_chassis/pull/51) | draft at `3dd1e64`; hatch starts *Latched*; `structure.latches_engaged` and point `structure.docking_latches` (burn threshold 9, ODB Vol I §3.8.2.5) for propulsion's docked-burn guard; talkback indication after #47, wiring now sourced (TN D-6854 Fig A-7(b) p. 27: latches 1/5/9 on system A, MN A, CB76; 3/7/11 on system B, MN B, CB77; even latches unindicated); `hatch_open_with_pressure` stays unreadable; `arm_state` waits on #47's seeding; configuration states move to device firing after #47; the interrupter edge goes to power if the states are power's | #45, #47 |

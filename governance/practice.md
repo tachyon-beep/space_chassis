@@ -88,8 +88,9 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   fault-injection lane.** Other lanes route engine needs through the coordinator, or land them as a
   small PR merged before the domain PR that uses them.
 - **Merge order**: #45 (unpin), then #46 (ECLSS engine helper), then #47 (fault injection), then the
-  rest rebase and merge when `required` is green. Figures are rewritten from the tools on rebase,
-  never hand-merged.
+  rest rebase and merge when `required` is green. Since #45 (14:46), a PR that closes a state does not
+  touch the pinned figures, the README status paragraph or `plant.py`; a README count-line conflict
+  resolves to `main`'s side plus a test re-run.
 - **Shared decision records take one dated section per verb.** ADR 0004
   (`vehicle/docs/decisions/0004-interlock-evaluation.md`) is being amended by ECLSS (#46), structure
   (#51) and possibly propulsion (#50): each lane adds its own dated, verb-named section and rebases
