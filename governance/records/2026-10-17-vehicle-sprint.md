@@ -145,3 +145,6 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
   default. Lanes 7 (GNC and RCS) and 8 (Crew) start at 13:59. The instrument layer has no owner yet.
 - 13:59–14:00 John: what fidelity is worth (D40); the ledger classes each option as signal,
   confounder, event/noise or none. 14:00 John picks *per console* for D-07 (D39).
+- 14:04 The instrument layer goes to the fault-injection lane after #47 (it owns `plant.py` and
+  `console.py`); then the delay at the window, the fair-chance stamps, and the `fleet_class` and
+  `acts` lints last. The comms `measured` antenna pattern landed on #47 at `2e9f79e`.

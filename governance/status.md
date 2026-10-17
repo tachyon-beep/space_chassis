@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:03 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 14:05 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -36,7 +36,7 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | 7 | GNC and RCS lane | — | started 13:59; attitude as pointing modes, a rate-limited slew law behind `set_attitude_target` (D38) | the geometry lane (#44) |
 | 8 | Crew lane | — | started 13:59 on D-06 revision 1 (D38); crew dialogue per console (D39) | — |
 | 10 | Avionics FDIR | — | not started | last; needs lane 9's faults |
-| — | Instrument layer | — | **no owner yet** (D38 item 6); needed before the coordination test (item 8) | the coordinator assigning it |
+| 9 | Instrument layer (after #47) | — | owned by the fault-injection lane (it lives in `plant.py`/`console.py`); its order after #47: instrument layer, then the delay at the window, then the fair-chance stamps, then the `fleet_class` and `acts` lints | #47 |
 
 Engine work on #47 for other lanes: the fault hook (`becomes`, `scale`, `becomes_from: magnitude`);
 ruled-discrete seeding (structure, comms); the `arm_event` effect; numeric carried arguments,
@@ -45,8 +45,8 @@ machine with command and logic movers (propulsion); node-read interlocks (propul
 `resolve_interlock` from a coupling node); the ECLSS sentinel fix (`_walk` overwrote
 `values["internal"]`). Held: `gated_by`, waiting on the in-burn-guard answer's application (D35).
 Burn sequencing and node-read interlocks change truth bytes; side effect, ECLSS
-`co2_absorber_low` becomes evaluable. Still queued for lane 9: a `measured` antenna pattern in the
-linter (comms). #46 also carries a state-level `preloaded:` in `advance()`/`_classify()`.
+`co2_absorber_low` becomes evaluable. The comms `measured` antenna pattern is on #47 at `2e9f79e`
+(bound G ≤ 41253/θ², `historical` provenance required). #46 also carries a state-level `preloaded:` in `advance()`/`_classify()`.
 
 Cross-lane follow-ups: ECLSS takes the structural-leak drain edge into `cabin_leak_csm`/`lm` after
 #51 lands. Lane-map correction: cabin water vapour waits on crew, like CO2.
