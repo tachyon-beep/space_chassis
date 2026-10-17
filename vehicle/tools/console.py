@@ -1325,7 +1325,13 @@ def _value_text(value: Any) -> str:
 
 
 def dwell_after_effect(
-    world: World, dwell: dict[str, Any], verb: str, now_us: int, before: dict[str, Any], after: dict[str, Any]
+    world: World,
+    dwell: dict[str, Any],
+    verb: str,
+    now_us: int,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    arguments: dict[str, Any] | None = None,
 ) -> list[str]:
     """Restart the dwell clock of every state a verb moved, and say what moved: the live cycle's and replay's.
 
@@ -1334,13 +1340,13 @@ def dwell_after_effect(
     Returns `node=level` (or `internal:id=level`) for each moved target, for the result's sentence.
     """
     changed: list[str] = []
-    for state in command_targets(world, verb):
+    for state in command_targets(world, verb, arguments):
         if value_of(before, state) == value_of(after, state):
             continue
         level = state_level(after, state)
         changed.append(f"internal:{state.id}={level}" if state.node == "internal" else f"{state.node}={level}")
     if changed:
-        for state, _, _ in command_dwell(world, verb):
+        for state, _, _ in command_dwell(world, verb, arguments):
             left = value_of(before, state)
             dwell[state.id] = {
                 "changed_at_us": now_us,
@@ -2575,7 +2581,9 @@ def replay_record(world: World, body: dict[str, Any], record: Record, *, through
             if link != row["lineage"]:
                 raise RecordRefused("lineage", "the replayed lineage link is not the recorded one", tick=tick, segment=segment.boot_id)
             for effect in effects:
-                dwell_after_effect(world, dwell, effect.verb, (tick - 1) * tick_us + effect.offset_us, before, truth)
+                dwell_after_effect(
+                    world, dwell, effect.verb, (tick - 1) * tick_us + effect.offset_us, before, truth, effect.arguments
+                )
             if row["receipt"] < receipt:
                 raise RecordRefused("row", f"the receipt counter goes back from {receipt} to {row['receipt']}", tick=tick, segment=segment.boot_id)
             receipt = row["receipt"]
@@ -4574,7 +4582,9 @@ class Executive:
         """The current value(s) of a state, as text, wherever the map keeps them (`value_of`)."""
         return value_of(values, state)
 
-    def dwell_refusal(self, verb: str, staged: dict[str, Any] | None) -> str | None:
+    def dwell_refusal(
+        self, verb: str, staged: dict[str, Any] | None, arguments: dict[str, Any] | None = None
+    ) -> str | None:
         """The minimum-dwell guard, in simulated seconds, evaluated at the moment of effect.
 
         `min_on_s` is how long the state must hold a value before it may change; `min_off_s` is
@@ -4584,7 +4594,7 @@ class Executive:
         floor, because the vehicle starts with its machine where the configuration put it.
         """
         now_us = self.tick * self.tick_us
-        for state, min_on_s, min_off_s in command_dwell(self.world, verb):
+        for state, min_on_s, min_off_s in command_dwell(self.world, verb, arguments):
             last = self.dwell.get(state.id)
             if last is None:
                 continue
@@ -4802,7 +4812,7 @@ class Executive:
                 staged = apply_command(self.world, probe, verb, arguments)
             except Unconfigured as exc:
                 unconfigured = exc
-        guard = self.dwell_refusal(verb, staged)
+        guard = self.dwell_refusal(verb, staged, arguments)
         if guard is not None:
             return refused(guard)
         if unconfigured is not None:
@@ -4966,7 +4976,9 @@ class Executive:
         """
         verb = str(verdict.verb)
         now_us = verdict.tick * self.tick_us + verdict.effect.offset_us
-        changed = dwell_after_effect(self.world, self.dwell, verb, now_us, before, after)
+        changed = dwell_after_effect(
+            self.world, self.dwell, verb, now_us, before, after, verdict.effect.arguments
+        )
         if changed:
             return (
                 f"succeeded: {verb!r} applied at tick {verdict.tick}, offset 0 µs. "

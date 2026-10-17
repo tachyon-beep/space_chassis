@@ -374,3 +374,37 @@ def test_a_numeric_argument_is_carried_as_its_number_and_refused_outside_its_ran
                 "set_heater",
                 {"bank": "heater_bank_csm", "zone": "csm_cabin", "duty": bad},
             )
+
+
+def test_a_command_value_with_when_moves_only_the_state_its_call_names(tmp_path):
+    """The propulsion lane's bug, beside the fault path: `arm_engine engine=sps` armed all three."""
+    copy = faulted_copy(tmp_path / "vehicle")
+    components = copy / "domains" / "propulsion" / "components.yaml"
+    text = components.read_text()
+    entry = "      - verb: arm_engine\n        argument: state\n"
+    assert text.count(entry) == 3
+    parts = text.split(entry)
+    text = parts[0] + "".join(
+        entry + f"        when: {{engine: {engine}}}\n" + rest
+        for engine, rest in zip(("sps", "dps", "aps"), parts[1:], strict=True)
+    )
+    components.write_text(text)
+    out = run_linter(copy).stdout
+    assert ".when" not in out, out[-3000:]
+    routed = plant.load_world(copy)
+    values = plant.initial_values(routed)
+    arguments = {"engine": "sps", "state": "armed"}
+    staged = plant.apply_command(routed, values, "arm_engine", arguments)
+    assert staged["sps_state"] == "armed"
+    assert "dps_state" not in staged and "aps_state" not in staged
+    assert {s.id for s in plant.command_targets(routed, "arm_engine", arguments)} >= {"sps_state"}
+    assert not {"dps_state", "aps_state"} & {
+        s.id for s in plant.command_targets(routed, "arm_engine", arguments)
+    }
+    # Without arguments the answer is every state the verb can move, as before.
+    assert {"sps_state", "dps_state", "aps_state"} <= {
+        s.id for s in plant.command_targets(routed, "arm_engine")
+    }
+    # A route on a value the argument cannot take is refused by name.
+    components.write_text(text.replace("when: {engine: aps}", "when: {engine: lmde}", 1))
+    assert "is 'lmde', which 'engine' cannot take" in run_linter(copy).stdout

@@ -7038,6 +7038,40 @@ def check_domain(
                         "from an argument's values, and an argument with no vocabulary has no "
                         "values to map from, unless it is an `integer` or `number` with a `range`",
                     )
+                # `when`: the entry applies only at these values of the verb's other arguments, so
+                # one verb can move one of several sibling states (`arm_engine engine=sps`). Each
+                # name is an enum argument of the verb, each value one it takes, and the carried
+                # argument cannot route itself.
+                when = entry.get("when")
+                if when is not None:
+                    schema2 = spec2.get("argument_schema") or {}
+                    if not isinstance(when, dict) or not when:
+                        report.refuse(
+                            f"{cwhere2}.when",
+                            f"is {when!r}; `when` maps an argument of {verb_name!r} to the value "
+                            "the entry applies at",
+                        )
+                    else:
+                        for name, value in when.items():
+                            routed = schema2.get(str(name))
+                            if str(name) == argument:
+                                report.refuse(
+                                    f"{cwhere2}.when.{name}",
+                                    f"routes on {argument!r}, the argument the entry carries; a "
+                                    "value that selects itself is a `maps` entry",
+                                )
+                            elif not isinstance(routed, dict) or routed.get("type") != "enum":
+                                report.refuse(
+                                    f"{cwhere2}.when.{name}",
+                                    f"names {name!r}, which is not an enum argument of "
+                                    f"{verb_name!r} (it has {sorted(schema2)})",
+                                )
+                            elif str(value) not in {str(v) for v in routed.get("values") or []}:
+                                report.refuse(
+                                    f"{cwhere2}.when.{name}",
+                                    f"is {value!r}, which {name!r} cannot take; it takes "
+                                    f"{[str(v) for v in routed.get('values') or []]}",
+                                )
                 if not str(entry.get("why") or "").strip():
                     report.refuse(
                         f"{cwhere2}.why",

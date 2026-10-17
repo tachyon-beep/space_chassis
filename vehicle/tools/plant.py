@@ -4159,23 +4159,52 @@ def prune(value: Any, width: int = 40) -> str:
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
-def command_targets(world: World, verb: str) -> list[State]:
-    """Every state that declares this verb as a `command:` mover.
+def command_targets(
+    world: World, verb: str, arguments: dict[str, Any] | None = None
+) -> list[State]:
+    """Every state that declares this verb as a `command:` mover — of this call, given its arguments.
 
     The declaration is the state's, not the verb's: `moved_by: command:<verb>` is the half that
     says a command writes this state, and the corpus was joined to the graph for exactly this
     reason in rounds 23, 27 and 28. What was missing until round 30 was the other half — which
     argument carries the value and what each of its values becomes — and round 31 found that the
     rule enforcing it had never run on a state that is not a mode.
+
+    **With `arguments`, only the states this call moves.** A `command_value` entry may carry `when`,
+    a map of another argument to the one value it applies at: `arm_engine engine=sps` moves
+    `sps_state`, and the DPS and APS states declare the same verb under `when: {engine: dps}` and
+    `{engine: aps}`. Without `when` every state the verb names moved on every call, so arming one
+    engine armed three. Without `arguments` the answer is every state the verb can move.
     """
     return [
         state
         for state in world.states
         if f"command:{verb}" in [str(m) for m in (state.spec.get("moved_by") or [])]
+        and (arguments is None or command_routed(state, verb, arguments))
     ]
 
 
-def command_dwell(world: World, verb: str) -> list[tuple[State, float | None, float | None]]:
+def command_routed(state: State, verb: str, arguments: dict[str, Any]) -> bool:
+    """Whether this call reaches this state: its `command_value` entry's `when` holds, or has none."""
+    entry = next(
+        (
+            e
+            for e in (state.spec.get("command_value") or [])
+            if isinstance(e, dict) and str(e.get("verb")) == verb
+        ),
+        None,
+    )
+    when = (entry or {}).get("when")
+    if not isinstance(when, dict):
+        return True
+    return all(
+        name in arguments and str(arguments[name]) == str(value) for name, value in when.items()
+    )
+
+
+def command_dwell(
+    world: World, verb: str, arguments: dict[str, Any] | None = None
+) -> list[tuple[State, float | None, float | None]]:
     """The minimum-dwell guard on every state a command moves: `(state, min_on_s, min_off_s)`.
 
     A commanded state declares a `dwell` and not a hysteresis band, because "a band answers 'has
@@ -4200,7 +4229,7 @@ def command_dwell(world: World, verb: str) -> list[tuple[State, float | None, fl
     the field exists to prevent.
     """
     rows: list[tuple[State, float | None, float | None]] = []
-    for state in command_targets(world, verb):
+    for state in command_targets(world, verb, arguments):
         dwell = state.spec.get("dwell") or {}
         if not dwell:
             continue
@@ -4416,7 +4445,7 @@ def apply_command(
     if verb not in world.verbs:
         raise Unconfigured(f"plant.py:verb {verb}", "is not registered by any domain")
     staged: dict[str, Any] = {}
-    for state in command_targets(world, verb):
+    for state in command_targets(world, verb, arguments):
         try:
             value = command_effect(world, state, verb, arguments)
         except SkipComputed:
