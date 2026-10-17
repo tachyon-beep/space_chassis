@@ -55,7 +55,7 @@ def bodies(window: Path) -> list[str]:
         # Not readable: a threshold that says it compares another quantity than its channel's level
         # (here the difference between the buses), or that is gated by a condition no field declares.
         ("tie_dv_limit", None, "'V of difference between the two buses, not a level on either'"),
-        ("hatch_open_with_pressure", None, "gated by 'any hatch in the `open` or `latched` position'"),
+        ("hatch_open_with_pressure", None, "gated by 'any hatch not in the `latched` position'"),
     ],
 )
 def test_each_episode_interlock_resolves_or_names_the_link_that_does_not_read(

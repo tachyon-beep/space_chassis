@@ -214,13 +214,13 @@ most of it. The linter's SPS figure is 4 % above the flight-measured 15,727 kg (
 SPS firing), which is the expected error from not modelling thrust build-up and tailoff; the
 direction of that error is stated in `check_propulsion` rather than tuned away.
 
-20 of the registry's 148 channels are perturbed by no fault at all, and the layer split on both sides
+20 of the registry's 149 channels are perturbed by no fault at all, and the layer split on both sides
 of that line is `channels.yaml#coverage` — where the linter holds it against all eleven fault policies,
 because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 160 states over 64 scheduled nodes, 142
+**All eleven domains have landed** — 149 channels, 165 states over 64 scheduled nodes, 144
 thresholds, 59 verbs and 128 classified events across the eleven directories, with every debt
 named. Those are the corpus's declarations, and the linter holds each of them against the files
 (`check_readme_figures`); they move when a domain adds a channel, a state or a verb, not when one
@@ -291,7 +291,7 @@ determines them, with the relation stated so the linter can disagree:
 `events_diode.md` is labelled "Structural, Pressure, and Sequential Events" and contains **no**
 staging, pyro, hatch, docking, jettison, latch or separation event — the words occur zero times —
 while describing modal and spectral health monitoring that `apollo_diode.md:753` explicitly rules
-out. So the taxonomy is authored rather than extracted. It declares 10 states, 9 thresholds, 6
+out. So the taxonomy is authored rather than extracted. It declares 15 states, 11 thresholds, 6
 verbs, 11 faults, and a five-entry **one-way event taxonomy** that records each irreversible
 action with its predecessor configuration, its consequence in terms of what the vehicle *becomes*,
 and the channels that would reveal the change.

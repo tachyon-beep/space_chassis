@@ -28,13 +28,22 @@ points:
       *consequence* lives in another domain. The hatch domain publishes the position; ECLSS
       publishes what it costs.
   - channel: structure.docking_latches
-    from: docking_latch_state
+    from: latches_engaged
     layer: service
-    derivation: "each latch's position, with count-and-disagreement collapsed into one published value"
+    derivation: "the number of ring latches drawn down and locked, of twelve"
     note: >-
       apollo's channel is a count with a "latch disagreement" event. The count is what is
       published and the individual positions are hidden truth, because a count is what a crew
       can act on: the decision available is "re-seat the interface", not "drive latch seven".
+  - channel: structure.docking_talkbacks
+    from: docking_talkback
+    layer: measurement
+    derivation: "each docking system's talkback, gray once all three of its switched latches have been actuated"
+    note: >-
+      the panel's indication beside the count it is not. Two talkbacks over six switched latches:
+      a gray pair is consistent with an unswitched latch hanging off the ring, and a barber pole is
+      consistent with an engaged latch whose switch stuck. A fleet that takes either at face value
+      will be wrong in one of the two directions the missions found.
   - channel: structure.leak_estimate_g_s
     from: structural_leak_g_s
     layer: estimate

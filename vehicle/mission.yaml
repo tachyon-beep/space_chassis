@@ -150,6 +150,15 @@ launch_state:
     # the computer in charge of attitude. `auto` is the vehicle's interpretation of that setup,
     # derived from the switches through the command vocabulary, not a quoted Apollo mode name.
     mode: auto
+    # All four hatches latched: the CSM side hatch from the checklist's p. 20, the tunnel hatches
+    # from its post-docking p. 58 and the News Reference, the LM forward hatch a decision under
+    # John's delegation of 2026-10-17 13:48Z (the state's `initial_provenance`). Not in `sourced`,
+    # because one key of the position is not read out of a document.
+    hatch_state:
+      hatch_crew_csm: latched
+      hatch_crew_lm: latched
+      hatch_tunnel_csm: latched
+      hatch_tunnel_lm: latched
   # **The positions still owed by the launch question.** A map rather
   # than a list because the order is not a decision and a sentence is: each key is a state of some
   # domain, each value is the one-line form of what that state's own `initial_note` argues at
@@ -167,13 +176,6 @@ launch_state:
       the `breaker_id` key space and the positions reached after extraction. The checklist gives
       pad panel positions on p. 11 and later changes breakers during orbit, TLI and docking; the
       pad list cannot be copied to MET 0. `set_breaker`'s `lcl` argument awaits the same LCL ids
-    hatch_state: >-
-      each modeled crew hatch's position after extraction. The CSM side hatch is locked in the
-      launch checklist (p. 20), but the post-docking tunnel hatch is removed and reinstalled
-      (p. 58), and it is a different hatch id. The modeled LM crew hatch is the forward surface
-      EVA hatch, not the overhead docking hatch. It needs a forward-hatch stowage or acceptance
-      source, or an explicit post-extraction initial-position decision; the overhead hatch's
-      later flight configuration would not answer this event
 
 total_ticks: 34560000
 total_ticks_provenance:

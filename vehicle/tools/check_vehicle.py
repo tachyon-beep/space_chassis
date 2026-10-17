@@ -6813,6 +6813,15 @@ def check_domain(
             # the vocabulary test for real: `load_burn`'s arguments are trajectory names against a
             # lifecycle enum, and `set_docking_latch` offers `engage` while the latch reports
             # `engaged`.
+            # A `constant` effect sets its value whatever the arguments are (`start_burn engine=sps`
+            # opens `ignition`), so the value it names is what the verb expresses for this state.
+            offered.update(
+                str(row.get("constant"))
+                for row in state.get("command_value") or []
+                if isinstance(row, dict)
+                and str(row.get("verb")) == name
+                and row.get("constant") is not None
+            )
             if kind == "command" and values and not (values & offered):
                 report.refuse(
                     f"{mwhere}",
@@ -7049,6 +7058,14 @@ def check_domain(
                         f"{cwhere2}.constant",
                         "declares a constant with no `argument`, so nothing says which element of a "
                         "keyed state the command sets",
+                    )
+                vocabulary = unit_vocabulary(state.get("unit"))
+                if constant is not None and vocabulary is not None and str(constant) not in vocabulary:
+                    report.refuse(
+                        f"{cwhere2}.constant",
+                        f"is {constant!r}, which {sid}'s `unit` ({state.get('unit')!r}) cannot hold — "
+                        f"the vocabulary is {sorted(vocabulary)}. A command that writes a value its "
+                        "state cannot report is a transition the vehicle cannot describe afterwards",
                     )
                 if not isinstance(becomes, dict):
                     continue
@@ -13979,8 +13996,8 @@ def check_channel_derivations(
     """The window's channels: how many are their source state, and how many are a sentence.
 
     Round 23 built the frame's `values` from the points registry and found, by refusing to publish a
-    channel whose unit is not its source state's, that **only 63 of the 135 channels read from a state
-    are the state itself**. The other 72 are *derived* — a partial pressure from a mass and a volume,
+    channel whose unit is not its source state's, that **only 65 of the 136 channels read from a state
+    are the state itself**. The other 71 are *derived* — a partial pressure from a mass and a volume,
     a flow in litres per minute from a mass flow and a density — and their `derivation` is prose,
     which nothing can evaluate. The frame omits them, the debt says so, and the two figures lived in
     a sentence: exactly the shape this folder spends its rounds removing.

@@ -104,9 +104,9 @@ commands:
         # `crew_lm` and `tunnel`, and **the first two name nothing anywhere in the corpus** —
         # no component, no state, no node, no vehicle entry — so a fleet could command a hatch
         # the vehicle does not have while `hatch_crew_csm` and `hatch_crew_lm` were commanded
-        # by nothing. The tunnel is the volume *between* the two hatches rather than a third
-        # one, which is why it is not here.
-        values: [hatch_crew_csm, hatch_crew_lm]
+        # by nothing. The tunnel is the volume *between* the two tunnel hatches rather than a
+        # hatch of its own, which is why it is not here; the two tunnel hatches are.
+        values: [hatch_crew_csm, hatch_crew_lm, hatch_tunnel_csm, hatch_tunnel_lm]
       state:
         type: enum
         values: [closed, latched, open]
@@ -114,7 +114,26 @@ commands:
     gate:
       kind: preference
       variable: hatch_<hatch>_enable
-    interlocks: [hatch_open_with_pressure, cabin_dp_low]
+    # One guard per hatch, on the direction that opens it against pressure. This named the
+    # vehicle-wide `hatch_open_with_pressure`, which is gated on hatch positions no field declares
+    # and so was never read, and `cabin_dp_low`, which refused every hatch command once the CSM
+    # cabin fell below 3.5 psid — including the open that an EVA, with its cabin dumped to zero,
+    # exists to make, and the close that is the remedy for a cabin losing gas through a hatch.
+    interlocks: [hatch_csm_open_with_pressure, hatch_lm_open_with_pressure]
+    interlocks_when:
+      - interlocks: [hatch_csm_open_with_pressure]
+        argument: [hatch, state]
+        values: [[hatch_crew_csm, open]]
+        why: >-
+          opening the CSM side hatch with the cabin behind it is the hazard (apollo_diode.md:207);
+          closing or latching it is the remedy for a cabin losing gas through it, and a command to
+          the LM's hatch does not touch this compartment
+      - interlocks: [hatch_lm_open_with_pressure]
+        argument: [hatch, state]
+        values: [[hatch_crew_lm, open]]
+        why: >-
+          as the CSM's, on the LM cabin and its forward hatch: an EVA opens it after the cabin is
+          dumped, and the guard is what makes the dump come first
     conflict_domain: structure.<hatch>
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -149,6 +168,13 @@ commands:
       kind: preference
       variable: latch_<interface>_enable
     interlocks: [cabin_dp_low, hatch_open_with_pressure]
+    interlocks_when:
+      argument: state
+      values: [release]
+      why: >-
+        releasing the ring is what can open the tunnel to space; engaging it re-seats the
+        interface, which is the remedy for a latch disagreement and a leaking tunnel alike, so it is
+        never refused by either guard
     conflict_domain: structure.<interface>.latch
     allowed_phases: [translunar_coast, lunar_orbit, ascent_rendezvous, lunar_orbit_docked]
     irreversible: false

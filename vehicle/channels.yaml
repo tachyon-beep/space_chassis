@@ -2200,6 +2200,20 @@ structure:
     provenance:
       basis: apollo
       ref: "apollo_diode.md:208"
+  - id: structure.docking_talkbacks
+    # The two probe EXTD/RETR talkbacks, per docking system. Gray is "docking latches activated" for
+    # that system's three switched latches; it says nothing of the six latches with no switch.
+    unit: "map[talkback_id,enum[gray,barber_pole]]"
+    layer: measurement
+    precision: exact
+    rate_hz: 1
+    on_event: true
+    priority: P3
+    events: ["barber pole while docked"]
+    event_class: notification
+    provenance:
+      basis: historical
+      source: "NASA TN D-6854, Fig. A-7(b), printed p. 27, note (6): RETRACT \"GRAY … Docking latches activated\""
   - id: structure.leak_estimate_g_s
     unit: g/s
     layer: estimate
