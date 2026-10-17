@@ -65,5 +65,11 @@ taken.
 - The controller reads truth, not the navigation estimate, until `gnc.nav_solution` exists; LVLH
   targets are recorded and not flown; only the docked stack's inertia is carried; the deadband's
   wander is not simulated. Each is an `open_debts` entry in `domains/rcs/components.yaml`.
+- `set_ptc_roll` spins up to 0.3 deg/s about +X (about 0.095 kg) and holds +X on target; in
+  `free_drift` the spin costs nothing and cones; ending the roll holds where the vehicle is
+  (about 0.12 kg). `gnc.sun_direction_body` turns about +X at the roll rate with its +X component
+  near zero, from a fixed sun line at Apollo 13's TLI.
 - Two engine needs remain for the fault-injection lane: carrying an array argument as its value
-  (the quaternion), and seeding a ruled `dynamics` state's declared vector or record at t=0.
+  (the quaternion; until then `set_attitude_target` assigns the frame and the rate and the target
+  is declared but uncarried), and seeding a ruled `dynamics` state's declared vector or record at
+  t=0 (taken on #47).

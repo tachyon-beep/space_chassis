@@ -255,11 +255,23 @@ state:
       - "command:abort_rcs_activity"
     command_value:
       - verb: set_attitude_target
-        argument: quaternion
-        why: >-
+        # `frame`, the enum half of the request, because an entry names an argument with a
+        # vocabulary; the quaternion is the half this state holds once it can be carried.
+        argument: frame
+        computed: >-
           the target is the quaternion, carried as the text the window sent. `held_target` reads it
           once, when it changes, and refuses a text that is not four numbers within 1 % of unit
           length by keeping the target it had (`status: unreadable`)
+        why: >-
+          declared and not yet carried: an array argument has no vocabulary to map and the engine
+          carries only numbers so far. The fault-injection lane carries arrays after #47
+          (`quaternion=0.7071,0,-0.7071,0`), and this entry becomes the carried argument then.
+          Until it does, a target reaches this state only through a scenario's initial value
+        selects: target_frame
+        note: >-
+          what the verb assigns today is the frame (`target_frame`) and the rate
+          (`slew_rate_limit`); the quaternion lands here once the window's array is carried, and
+          the entry then names `quaternion` and drops `computed` and `selects`
       - verb: set_ptc_roll
         argument: rate_deg_s
         constant: "current"

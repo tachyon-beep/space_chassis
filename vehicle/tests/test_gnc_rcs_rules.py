@@ -6,7 +6,8 @@ torque-free spin keeps its energy and momentum, the hold's limit cycle costs ten
 0.5 deg as at 5 deg, a malformed quaternion is refused). And through the real step loop, for the
 one claim that only the loop can make: a commanded slew reaches its target and the tank pays for
 it. The vectors are seeded through a scenario overlay because the plant seeds only scalar
-`dynamics` initials today.
+`dynamics` initials until #47 lands, and the commanded quaternion is written as its effect will
+write it until the engine carries array arguments.
 """
 
 from __future__ import annotations
@@ -46,6 +47,10 @@ def world() -> plant.World:
 
 def _spec(world, state_id):
     return next(s for s in world.states if s.id == state_id).spec
+
+
+def _state(world, state_id):
+    return next(s for s in world.states if s.id == state_id)
 
 
 def _level(world, values, state_id):
@@ -136,6 +141,10 @@ def test_a_commanded_slew_reaches_its_target_and_the_tank_pays_for_it(world):
             },
         ),
     )
+    # The window cannot carry the quaternion into the state yet (an array argument, owed to the
+    # engine after #47), so the test writes what the effect will write.
+    target_text = "[" + ",".join(repr(c) for c in target) + "]"
+    _apply(values, plant.state_values(world, _state(world, "attitude_target"), target_text))
     tank = _level(world, values, "prop_rcs_kg")
     peak = 0.0
     for _ in range(int(30 / DT)):
