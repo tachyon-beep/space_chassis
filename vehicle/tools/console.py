@@ -2783,19 +2783,40 @@ def results_on_disk(output_fd: int, slug: str, entries: list[dict[str, Any]]) ->
     return scan
 
 
+# How many earlier boots a marker carries as still unrecovered: a resume that dies before every window
+# has recovered passes its own boot and these on, so a run of crashed resumes stops growing it here.
+MAX_PENDING_BOOTS = 8
+
+
 def read_boot_marker(state_fd: int | None) -> str | None:
     """The boot id the state directory's marker names, or `None` (no state directory, no marker, or not one)."""
+    return read_boot_lineage(state_fd)[0]
+
+
+def read_boot_lineage(state_fd: int | None) -> tuple[str | None, list[str]]:
+    """The marker's boot, and the earlier boots whose takes may still hold a window's only map (issue #39).
+
+    `pending` is written by a resume before it reads any window and dropped once every window has
+    recovered: a resume killed in between leaves it, so the next one still reads those boots' takes
+    instead of sweeping them unread. A marker without it (a fresh start's, or a finished resume's)
+    names no earlier boot.
+    """
     if state_fd is None:
-        return None
+        return None, []
     marker = read_json_bounded(BOOT_FILE, dir_fd=state_fd)
     boot = marker.get("boot_id") if marker else None
-    return boot if isinstance(boot, str) and boot else None
+    pending = marker.get("pending") if marker else None
+    earlier = [b for b in pending if isinstance(b, str) and b] if isinstance(pending, list) else []
+    return (boot if isinstance(boot, str) and boot else None), earlier
 
 
-def write_boot_marker(state_fd: int | None, boot_id: str) -> None:
-    """Name this boot in the state directory's marker, durably (file and directory `fsync`ed)."""
+def write_boot_marker(state_fd: int | None, boot_id: str, pending: list[str] | None = None) -> None:
+    """Name this boot in the state directory's marker, durably (file and directory `fsync`ed), with the boots still unrecovered."""
     if state_fd is not None:
-        write_json_atomic(BOOT_FILE, {"boot_id": boot_id}, dir_fd=state_fd, durable=True)
+        marker: dict[str, Any] = {"boot_id": boot_id}
+        if pending:
+            marker["pending"] = pending[:MAX_PENDING_BOOTS]
+        write_json_atomic(BOOT_FILE, marker, dir_fd=state_fd, durable=True)
 
 
 def read_serves_record(dir_fd: int) -> tuple[str | None, str | None]:
@@ -3360,6 +3381,9 @@ class Executive:
         self._carried: tuple[int, int] = (0, 0)
         self.stats = CycleStats()
         self.backstops_before = 0
+        # The earlier boots a resume's marker names as unrecovered (issue #39): dropped from the marker by
+        # `settle_marker` once no window still needs one of their takes.
+        self.marker_pending: list[str] = []
         self._refresh_next = False
         self.in_cycle = False
         self.checkpoint_failures = 0
@@ -3694,6 +3718,25 @@ class Executive:
         if self.journal is not None and self.journal_dir_fd is not None and self._segment is None:
             self._append_record([], first_tick=self.tick)
 
+    def settle_marker(self) -> None:
+        """Drop the earlier boots from the marker once every window is done with their takes (issue #39).
+
+        Until then a resume killed now must still read those boots' takes: a window not yet recovered, or
+        one whose map is held only in an earlier boot's take, would otherwise have it swept unread. A
+        failed write is retried next cycle; meanwhile the marker only names more takes than it needs.
+        """
+        if not self.marker_pending or self.state_fd is None:
+            return
+        current = f"{TAKE_PREFIX}{self.boot_id}."
+        for window in self.windows.values():
+            if window.recover_owed or window.recovering is not None:
+                return
+            if window.held is not None and not window.held.startswith(current):
+                return
+        with contextlib.suppress(Exception):  # retried next cycle; the marker it leaves is only wider
+            write_boot_marker(self.state_fd, self.boot_id)
+            self.marker_pending = []
+
     def journal_event(self, event: dict[str, Any]) -> None:
         """Append one unchained event to the journal, where one is named; advisory, unless the record cannot be restored (J2)."""
         if self.journal is None or self.journal_dir_fd is None:
@@ -3820,6 +3863,7 @@ class Executive:
                     self._ingest(window, verdicts[window.slug])
                 except Exception as exc:  # noqa: BLE001 - the window's, not the tick's
                     self._record_failure(window, "claim", exc, tick)
+            self.settle_marker()
             for window in healthy:
                 for verdict in verdicts.get(window.slug, []):
                     if verdict.effect is not None:
@@ -5032,7 +5076,14 @@ class Window:
         # (an `output/` an agent replaced, a listing that failed): the ended boot, kept so the claim starts
         # the recovery before any sweep, which would otherwise retire that boot's take unread.
         self.recover_owed = False
-        self.recover_from: str | None = None
+        self.recover_from: list[str] = []
+        # A take kept because it holds the window's map and nothing else on disk does (issue #39): the
+        # republish after it lost to an agent's console without `variables`, or failed, or a resume adopted
+        # the map from it while the console carries none. Never swept; retired by `_settle_held` once
+        # the console carries a map again, or when a newer take takes over holding it.
+        self.held: str | None = None
+        # Whether the take being carried brought a `variables` object, so it is the map's newest copy.
+        self.take_map = False
         # **The slow cadence** (#23, design §1 and §7): whether this window's next publication rewrites
         # its generated `HELP.md` and `README.md` and reconciles its ring with a scan of `telemetry/` —
         # on a segment's first cycle (a new `Window` is one), after a repair, and on the cycle after the
@@ -5229,6 +5280,7 @@ class Window:
             outcome = self._carry_take(root, durable)
             if outcome is not None or self.take is not None:
                 return [] if outcome is None else outcome
+        self._settle_held(root, durable)
         payload, problem = read_ingress(self.console, dir_fd=root)
         if payload is None:
             try:
@@ -5313,6 +5365,14 @@ class Window:
                 )
             self.take[1] = phase = "retire"
         if phase == "retire":
+            if self.take_map and self.variables_known and not self._console_has_map(root):
+                # Issue #39: this take is the map's only copy on disk (the republish lost to an agent's
+                # console without `variables`, or failed). Kept, not retired, until the console carries one.
+                previous, self.held = self.held, name
+                self.take, self.take_map = None, False
+                if previous is not None and previous != name:
+                    self._retire_held(root, durable, previous)
+                return outcome
             if not self._remove_take(root, name):
                 return outcome
             self.take[1] = phase = "barrier"
@@ -5327,8 +5387,39 @@ class Window:
                     )
                 )
                 return outcome
-        self.take = None
+        self.take, self.take_map = None, False
         return outcome
+
+    def _console_has_map(self, root: int) -> bool:
+        """Whether the console on disk carries a `variables` object: the map's durable copy, ours or the agent's newer one."""
+        payload, _problem = read_ingress(self.console, dir_fd=root)
+        return payload is not None and isinstance(payload.get("variables"), dict)
+
+    def _retire_held(self, root: int, durable: bool, name: str) -> None:
+        """Retire a held take whose map has another copy; a removal not yet durable leaves only an older map that nothing prefers."""
+        self._retire_entry(root, name, DEAD_PREFIX + name[len(TAKE_PREFIX):], blocking=False)
+        if durable:
+            with contextlib.suppress(OSError):
+                os.fsync(root)
+
+    def retire_superseded_takes(self, root: int, boots: list[str]) -> None:
+        """Before a resume advances the marker: when the console carries a map, retire the earlier boots' takes, durably."""
+        if not boots or not self._console_has_map(root):
+            return
+        prefixes = tuple(f"{TAKE_PREFIX}{boot}." for boot in boots)
+        retired = False
+        for entry in os.listdir(root):
+            if entry.startswith(prefixes):
+                self._retire_entry(root, entry, DEAD_PREFIX + entry[len(TAKE_PREFIX):], blocking=False)
+                retired = True
+        if retired and self.executive.journal is not None:
+            os.fsync(root)
+
+    def _settle_held(self, root: int, durable: bool) -> None:
+        """Retire the held take once the console carries a map again (issue #39)."""
+        if self.held is not None and self._console_has_map(root):
+            name, self.held = self.held, None
+            self._retire_held(root, durable, name)
 
     def _read_take(self, root: int, name: str) -> list[Any] | str:
         """What was taken is the claim: its commands, or the reason it is not a console; its map, adopted."""
@@ -5339,6 +5430,7 @@ class Window:
         variables = payload.get("variables")
         if isinstance(variables, dict):
             self._adopt(variables)
+            self.take_map = True
         if commands is None:
             return []
         if not isinstance(commands, list):
@@ -5423,6 +5515,8 @@ class Window:
         pending = {self.take[0]} if self.take is not None else set()
         if keep is not None:
             pending.add(keep)
+        if self.held is not None:
+            pending.add(self.held)
         try:
             names = os.listdir(root)
         except OSError as exc:
@@ -5462,27 +5556,36 @@ class Window:
         self.swept = True
         return True
 
-    def recover_map(self, root: int, prev_boot: str | None) -> None:
-        """A resume's map (#39, option B): the console's own, else the take of the boot that ended, else unknown.
+    def recover_map(self, root: int, boots: list[str]) -> None:
+        """A resume's map (#39, option B): the console's own, else the newest take carrying one, else unknown.
 
-        A take speaks for the map only to the resume right after the boot that made it (`prev_boot`,
-        from the state directory's boot marker): one take per window means it is that boot's last, so
-        its map is the newest claimed unless the console carries its own, which is newer. An absent
-        console is put back with the map chosen; a console the agent made meanwhile is read once more.
-        The take is then retired before the first claim, like any take.
+        A take speaks for the map only to the resumes after the boot that made it, while the boot marker
+        names that boot (`boots`, newest first: the boot that ended, then any whose own resume did not
+        finish recovering, issue #39). Its newest take carrying a `variables` object holds the newest map
+        claimed — a newer take without one kept that map — unless the console carries its own, which is
+        newer. An absent console is put back with the map chosen; a console the agent made meanwhile is
+        read once more. The take is then retired before the first claim, like any take, unless it is
+        the map's only copy on disk, when it is held.
         """
         durable = self.executive.journal is not None
         evidence = None
-        if prev_boot:
-            prefix = f"{TAKE_PREFIX}{prev_boot}."
-            numbered = []
-            for entry in os.listdir(root):
-                if entry.startswith(prefix) and entry[len(prefix):].isdigit():
-                    numbered.append((int(entry[len(prefix):]), entry))
-            if numbered:
-                evidence = max(numbered)[1]
+        if boots:
+            entries = os.listdir(root)
+            for boot in boots:
+                prefix = f"{TAKE_PREFIX}{boot}."
+                numbered = sorted(
+                    ((int(entry[len(prefix):]), entry) for entry in entries if entry.startswith(prefix) and entry[len(prefix):].isdigit()),
+                    reverse=True,
+                )
+                for _n, entry in numbered:
+                    taken, _problem = read_ingress(entry, dir_fd=root, label=self.console)
+                    if taken is not None and isinstance(taken.get("variables"), dict):
+                        evidence = entry
+                        break
+                if evidence is not None:
+                    break
         self.recovering = [evidence]
-        self.recover_owed, self.recover_from = False, None
+        self.recover_owed, self.recover_from = False, []
         self._finish_recovery(root, durable)
 
     def _finish_recovery(self, root: int, durable: bool) -> bool:
@@ -5497,12 +5600,14 @@ class Window:
             return False
         self.recovering = None
         payload, _problem = read_ingress(self.console, dir_fd=root)
+        from_take = False
         if payload is not None and isinstance(payload.get("variables"), dict):
             self._adopt(payload["variables"])
         elif evidence is not None:
             taken, _problem = read_ingress(evidence, dir_fd=root, label=self.console)
             if taken is not None and isinstance(taken.get("variables"), dict):
                 self._adopt(taken["variables"])
+                from_take = True
         if payload is None:
             try:
                 os.lstat(self.console, dir_fd=root)
@@ -5512,7 +5617,8 @@ class Window:
                     if again is not None and isinstance(again.get("variables"), dict):
                         self._adopt(again["variables"])
         if evidence is not None:
-            self.take = [evidence, "retire"]
+            # Held rather than retired when the console still carries no map (issue #39): see `_carry_take`.
+            self.take, self.take_map = [evidence, "retire"], from_take
             self._carry_take(root, durable)
         return True
 
@@ -6351,7 +6457,9 @@ def _resume(
     # and this boot is written over it, durably, so a take speaks for a window's map only to the resume
     # right after the boot that made it; the record cannot say this, because a boot's segment header is
     # written with its first cycle. Once written it is never rolled back, whatever later refuses.
-    prev_boot = read_boot_marker(executive.state_fd)
+    prev_boot, earlier = read_boot_lineage(executive.state_fd)
+    # Newest first: the ended boot, then any boots its own resume had not finished recovering (issue #39).
+    recover_boots = list(dict.fromkeys(b for b in [prev_boot, *earlier] if b))[:MAX_PENDING_BOOTS]
     # **The consecutive-backstop count** (#23, design §5), read back from the segment the ended boot closed
     # with: its manifest, if it ended by the backstop; any other end — a clean one, a crash — resets it.
     if prev_boot is not None and executive.journal is not None and executive.journal_dir_fd is not None:
@@ -6359,8 +6467,20 @@ def _resume(
         manifest = previous_manifest(executive.journal_dir_fd, segment_file, prev_boot)
         if manifest is not None and manifest.get("ended") == "lag_backstop" and _count(manifest.get("consecutive_backstops"), 1):
             executive.backstops_before = manifest["consecutive_backstops"]
+    # **Superseded takes first** (issue #39): a window whose console carries its own map has no use for an
+    # earlier boot's take, and once the marker names those boots as still pending a take left here could
+    # outlive that map (the agent then writing a console without one) and be adopted, stale. So they are
+    # retired, durably, while the marker still names only the ended boot, as the old order did.
+    for window in executive.windows.values():
+        try:
+            window.retire_superseded_takes(window.open_handles().root, recover_boots)
+        except Exception:  # noqa: BLE001 - the window's recovery below meets it again and records it
+            pass
+        finally:
+            window.close_handles()
     try:
-        write_boot_marker(executive.state_fd, executive.boot_id)
+        write_boot_marker(executive.state_fd, executive.boot_id, recover_boots)
+        executive.marker_pending = recover_boots
     except Exception as exc:  # noqa: BLE001 - the refusal names it
         raise ResumeRefused(
             f"the boot marker {executive.state_dir / BOOT_FILE if executive.state_dir else BOOT_FILE} cannot be written "
@@ -6371,7 +6491,7 @@ def _resume(
     for window in executive.windows.values():
         window.variables_known = False
         # Owed until `recover_map` has read the window's takes: a failure before that leaves it for the claim.
-        window.recover_owed, window.recover_from = True, prev_boot
+        window.recover_owed, window.recover_from = True, recover_boots
         try:
             try:
                 handles = window.open_handles()
@@ -6379,7 +6499,7 @@ def _resume(
                 window.repair(console=False)
                 handles = window.open_handles()
             # The console's map, else the ended boot's take's, else unknown (ADR 0002 (xxxv)).
-            window.recover_map(handles.root, prev_boot)
+            window.recover_map(handles.root, recover_boots)
             republished.extend(executive.publish_obligations(window))
         except Exception as exc:  # noqa: BLE001 - the window's, recorded; the world resumes
             executive._record_failure(window, "resume", exc, tick)

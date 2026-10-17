@@ -23281,9 +23281,11 @@ def test_a_resume_recovers_the_map_from_the_ended_boot_s_take_and_never_from_an_
     and is killed before it puts the console back. The resume finds the console absent and B's map
     only in the take: it adopts B, puts the console back showing it and retires the take, and B's
     commands are lost (claimed when taken). Then the ordering that would resurrect an old map: boot 1
-    is killed holding a take with map A; boot 2 adopts the console's newer map B and is killed before
-    retiring that take; the agent then writes a console with no map. Boot 3 must not adopt A from the
-    take (it is not the ended boot's): it retires it, and the map comes back unknown, never stale.
+    is killed holding a take with map A; boot 2 finds the console's newer map B and is killed during
+    its recovery; the agent then writes a console with no map. Boot 3 must not adopt A from the take:
+    since issue #39 the marker names boot 1 as pending until every window has recovered, so boot 2
+    retires a take its console supersedes, durably, *before* it advances the marker, and the map
+    comes back unknown, never stale.
     """
     checkpoint, console, _plant, world = checkpoint_tools()
 
@@ -23322,26 +23324,24 @@ def test_a_resume_recovers_the_map_from_the_ended_boot_s_take_and_never_from_an_
     (tmp_path / "three").mkdir()
     alpha = diode / "alpha"
     boot1 = killed_after_the_take(diode, state, {"map": "A"})
+    take = alpha / f"{console.TAKE_PREFIX}{boot1}.1"
+    assert take.exists() and json.loads(take.read_text())["variables"] == {"map": "A"}
     submit(alpha, [], {"map": "B"})
-    real_carry = console.Window._carry_take
 
-    def killed_while_retiring(self, root, durable):
-        if self.take is not None and self.take[1] == "retire":
-            raise _Killed
-        return real_carry(self, root, durable)
+    def killed_recovering(self, root, boots):
+        raise _Killed
 
-    monkeypatch.setattr(console.Window, "_carry_take", killed_while_retiring)
+    monkeypatch.setattr(console.Window, "recover_map", killed_recovering)
     with pytest.raises(_Killed):
         resume_from(console, checkpoint, world, diode, state)
     monkeypatch.undo()
-    take = alpha / f"{console.TAKE_PREFIX}{boot1}.1"
-    assert take.exists() and json.loads(take.read_text())["variables"] == {"map": "A"}
-    assert json.loads((state / ".boot.json").read_text())["boot_id"] != boot1, "boot 2 named itself before reading any window"
+    marker = json.loads((state / ".boot.json").read_text())
+    assert marker["boot_id"] != boot1 and marker["pending"] == [boot1], "boot 2 named itself, and boot 1 as pending, before reading any window"
+    assert not take.exists(), "the take the console supersedes is retired before the marker names its boot as pending"
     (alpha / "console.json").write_text(json.dumps({"commands": ["zzz_no_map"]}), encoding="utf-8")
     resumed, _ = resume_from(console, checkpoint, world, diode, state)
     window = resumed.windows["alpha"]
     assert not window.variables_known and window.variables == {}, window.variables
-    assert not take.exists(), "a take that is not the ended boot's is retired before the first claim, unread"
     resumed.close()
 
 
@@ -23552,6 +23552,112 @@ def test_a_resume_that_fails_before_reading_a_windows_takes_recovers_the_map_at_
     assert json.loads((alpha / "console.json").read_text()) == {"commands": [], "variables": {"map": "A"}}
     assert not (alpha / takes[0]).exists() and results_of(alpha) == []
     resumed.close()
+
+
+def test_a_resume_killed_before_a_window_recovers_leaves_the_ended_boot_s_take_to_the_next_resume(tmp_path, monkeypatch):
+    """Issue #39 (Codex P1 on #9): a second process death during the resume does not lose a window's map.
+
+    Boot 1 is killed holding a take with map A, the console absent. Boot 2 writes its marker and is
+    killed before it recovers the window. The marker named only boot 2, so boot 3 looked for boot 2's
+    takes alone, swept boot 1's unread and came back with no map. The marker now carries boot 1 as
+    pending until every window has recovered: boot 3 adopts A from boot 1's take, puts the console
+    back showing it and retires the take, and its first cycle drops the pending boots from the marker.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+    diode, state = tmp_path / "diode", tmp_path / "state"
+    executive = _boot(console, world, diode, state)
+    alpha = diode / "alpha"
+    recorded_run(executive, diode, {}, 2, snapshot_at=2)
+    submit(alpha, ["zzz_lost"], {"map": "A"})
+
+    def killed(self, *args, **kwargs):
+        raise _Killed
+
+    monkeypatch.setattr(console.Window, "_republish", killed)
+    with pytest.raises(_Killed):
+        executive.cycle()
+    monkeypatch.undo()
+    with contextlib.suppress(Exception):
+        executive.close()
+    boot1 = executive.boot_id
+    take = alpha / f"{console.TAKE_PREFIX}{boot1}.1"
+    assert take.exists() and not (alpha / "console.json").exists()
+    monkeypatch.setattr(console.Window, "recover_map", killed)
+    with pytest.raises(_Killed):
+        resume_from(console, checkpoint, world, diode, state)
+    monkeypatch.undo()
+    marker = json.loads((state / ".boot.json").read_text())
+    boot2 = marker["boot_id"]
+    assert boot2 != boot1 and marker["pending"] == [boot1] and take.exists()
+    resumed, _ = resume_from(console, checkpoint, world, diode, state)
+    window = resumed.windows["alpha"]
+    assert window.variables_known and window.variables == {"map": "A"}, window.variables
+    assert json.loads((alpha / "console.json").read_text()) == {"commands": [], "variables": {"map": "A"}}
+    assert not take.exists() and window.held is None
+    assert json.loads((state / ".boot.json").read_text())["pending"] == [boot2, boot1]
+    resumed.cycle()
+    assert json.loads((state / ".boot.json").read_text()) == {"boot_id": resumed.boot_id}, "every window recovered: no boot is pending"
+    resumed.close()
+
+
+def test_a_take_whose_map_the_republish_could_not_put_back_is_held_until_the_console_carries_one(tmp_path, monkeypatch):
+    """Issue #39 (Codex P1 on #9): a take is not retired while it is the map's only copy on disk.
+
+    The claim takes a batch carrying map A; before it puts the emptied console back, the agent writes
+    a console with no `variables`, so the republish loses. The take was retired anyway, leaving A only
+    in memory: a kill before the next claim lost it. It is now held. A resume then adopts A from it;
+    run on instead, the next claim takes the agent's console and puts the console back showing A, and
+    the claim after that, finding the console carries a map, retires the held take.
+    """
+    checkpoint, console, _plant, world = checkpoint_tools()
+
+    def raced(diode: Path, state: Path):
+        executive = _boot(console, world, diode, state)
+        recorded_run(executive, diode, {}, 2, snapshot_at=2)
+        alpha = diode / "alpha"
+        submit(alpha, ["zzz_first"], {"map": "A"})
+        real_republish = console.Window._republish
+
+        def agent_writes_first(self, root, durable, **kwargs):
+            (alpha / "console.json").write_text(json.dumps({"commands": ["zzz_second"]}), encoding="utf-8")
+            return real_republish(self, root, durable, **kwargs)
+
+        monkeypatch.setattr(console.Window, "_republish", agent_writes_first)
+        executive.cycle()
+        monkeypatch.undo()
+        window = executive.windows["alpha"]
+        takes = [p.name for p in alpha.iterdir() if p.name.startswith(console.TAKE_PREFIX)]
+        assert takes == [window.held] and json.loads((alpha / window.held).read_text())["variables"] == {"map": "A"}, takes
+        return executive, alpha
+
+    diode, state = tmp_path / "killed" / "diode", tmp_path / "killed" / "state"
+    (tmp_path / "killed").mkdir()
+    executive, alpha = raced(diode, state)
+    with contextlib.suppress(Exception):
+        executive.close()
+    resumed, _ = resume_from(console, checkpoint, world, diode, state)
+    window = resumed.windows["alpha"]
+    assert window.variables_known and window.variables == {"map": "A"}, window.variables
+    held = window.held
+    assert held is not None and (alpha / held).exists(), "the console still carries no map, so the take stays held"
+    resumed.cycle()
+    assert json.loads((alpha / "console.json").read_text()) == {"commands": [], "variables": {"map": "A"}}
+    resumed.cycle()
+    assert window.held is None and not (alpha / held).exists()
+    resumed.close()
+
+    diode, state = tmp_path / "ran" / "diode", tmp_path / "ran" / "state"
+    (tmp_path / "ran").mkdir()
+    executive, alpha = raced(diode, state)
+    window = executive.windows["alpha"]
+    held = window.held
+    executive.cycle()
+    assert json.loads((alpha / "console.json").read_text()) == {"commands": [], "variables": {"map": "A"}}
+    assert (alpha / held).exists()
+    executive.cycle()
+    assert window.held is None and not (alpha / held).exists()
+    assert not [p for p in alpha.iterdir() if p.name.startswith(console.TAKE_PREFIX)]
+    executive.close()
 
 
 def test_the_boot_marker_is_written_by_a_serving_start_and_its_name_cannot_be_a_journal(tmp_path, capsys):
