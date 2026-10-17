@@ -327,7 +327,13 @@ state:
         nut-and-bolt is fired by both ED systems, A on the bolt and B on the nut (p. 93), so a
         single system's fail-to-fire is masked — a device here fails only when both do, which is
         the case that hangs a stage. The cutter's two blades are likewise redundant ("operating
-        either blade cuts the interstage umbilical", printed p. 99, PDF p. 108)
+        either blade cuts the interstage umbilical", printed p. 99, PDF p. 108). What firing the
+        two circuit interrupters *does* is power's: they open the descent-to-ascent feeders, and
+        `domains/power/` will declare that as `lm_ascent_interrupter`, a discrete
+        `map[interrupter_id,enum[open,closed]]` keyed `ascent_ci_1` and `ascent_ci_2` and moved by
+        `event:staging`, with the LM power slice. The edge from this device record to that state is
+        power's to write then, because the state it lands on is power's; this file records only
+        that the devices fired
     fires_lm_ascent_jettison: [docking_ring_charge]
     fires_lm_ascent_jettison_provenance:
       basis: historical
