@@ -54,10 +54,11 @@ writes: [crew_state, alert_state]
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [switch_panel, breaker_panel]
+internal_order: [crew_destination, switch_panel, breaker_panel]
 internal_order_note: >-
-  the two panels a crew position can throw: switches before breakers, because a breaker is
-  opened in response to what a switch did.
+  where each person has been sent first, because it is a command's record and the panels do not
+  read it; then the two panels a crew position can throw: switches before breakers, because a
+  breaker is opened in response to what a switch did.
 
 state:
   - id: switch_panel
@@ -123,13 +124,123 @@ state:
         different channels for the same breakers. Five seconds of dwell because a breaker is a
         deliberate act and a tripped one is a fault rather than a setting
 
+  - id: crew_destination
+    node: internal
+    method: discrete
+    unit: "map[crew_id,enum[csm_commander,csm_navigator,csm_lower_equipment_bay,lm_commander,lm_pilot,tunnel,surface_eva]]"
+    # Each person's own seat: nobody has been sent anywhere at MET 0, so the last station a person
+    # was asked at is the one they started in. A destination the configuration takes out of reach
+    # (a CSM seat once the LM is away) returns them to their seat in the vehicle they are in.
+    initial:
+      commander: csm_commander
+      lm_pilot: csm_lower_equipment_bay
+      csm_pilot: csm_navigator
+    initial_provenance:
+      basis: derived
+      relation: "nobody can have been sent anywhere before MET 0, because `ask_crew` is the only thing that sends a person and the mission's first command lands after the epoch; so each destination is the person's starting station, `crew_location.initial`"
+      source: mission.yaml:crew.positions
+    moved_by:
+      - "command:ask_crew"
+    command_value:
+      - verb: ask_crew
+        argument: position
+        key: crew_id
+        # The identity, declared because `lm_pilot` is both a person (`crew_id`) and a station
+        # (`position`), so which argument carries the value cannot be read off the vocabulary.
+        maps:
+          csm_commander: csm_commander
+          csm_navigator: csm_navigator
+          csm_lower_equipment_bay: csm_lower_equipment_bay
+          lm_commander: lm_commander
+          lm_pilot: lm_pilot
+          tunnel: tunnel
+          surface_eva: surface_eva
+        why: >-
+          a question is asked of a person *somewhere* (`ask_crew.help`: "is the aft bay frosted?" is
+          answerable only by somebody who goes and looks, "which costs mission time and relocates
+          the sensor"). So the station the question names is where the person goes, and they stay
+          there until asked somewhere else: sending the LM pilot to the tunnel to listen for a leak
+          takes them off the lower equipment bay's breakers until somebody asks them back. Whether
+          they can get there is `crew_location`'s rule, which reads this
+    dwell:
+      min_on_s: 0
+      min_off_s: 0
+    provenance:
+      basis: derived
+      relation: >-
+        the request half of `crew_location`, kept apart from it because a command writes its value
+        before the tick and the rule decides whether the station is reachable: a station written
+        straight into `crew_location` would put the CM pilot in the LM's left seat while the LM is
+        on the surface, and the rule could not tell where she had been. Private truth, published
+        nowhere: what a fleet sees is where the person is, `crew.location_[id]`
   - id: crew_location
     node: crew_state
     method: discrete
     unit: "map[crew_id,enum[csm_commander,csm_navigator,csm_lower_equipment_bay,lm_commander,lm_pilot,tunnel,surface_eva]]"
-    moved_by: UNCONFIGURED
-    moved_by_note: >-
-      no verb writes it and no event moves it, which is the debt `domains/crew/components.yaml` records
+    # Each person's own seat in the vehicle the configuration puts them in, which is the only
+    # placement the corpus declares for MET 0: `mission.yaml#crew.positions[].stations.csm` for the
+    # three of them, because `translunar_coast` opens docked and `csm_lm_docked` carries its crew in
+    # the CSM (`vehicle.yaml#configurations`).
+    initial:
+      commander: csm_commander
+      lm_pilot: csm_lower_equipment_bay
+      csm_pilot: csm_navigator
+    initial_provenance:
+      basis: derived
+      relation: >-
+        `vehicle.yaml#configurations.csm_lm_docked.crew_in` is `csm`, and each person's CSM
+        station is `mission.yaml#crew.positions[].stations.csm`; `plant.py --crew` prints the
+        same three for `translunar_coast`
+      source: mission.yaml:crew.positions
+    moved_by:
+      - "logic:the station a person was sent to while it is reachable in the current configuration, else their own seat in the vehicle the configuration puts them in"
+    # The person's seat in each vehicle, which is `mission.yaml#crew.positions[].stations` and is
+    # held to it by the test file. A person with no station in a vehicle (the CM pilot in the LM) is
+    # one the configuration never puts there.
+    stations:
+      commander: {csm: csm_commander, lm: lm_commander}
+      lm_pilot: {csm: csm_lower_equipment_bay, lm: lm_pilot}
+      csm_pilot: {csm: csm_navigator}
+    stations_provenance:
+      basis: derived
+      relation: "mission.yaml#crew.positions[].stations, verbatim"
+      source: mission.yaml:crew.positions
+    # Which vehicle each person is in, per value of `structure.configuration`. `docked` is the
+    # stack, crewed from the CSM; `undocked` and `separated` are the LM away with the surface
+    # party in it and the CM pilot alone in the CSM; `abandoned` is the ascent stage jettisoned
+    # with all three back in the CSM.
+    vehicle_by_configuration:
+      docked: {commander: csm, lm_pilot: csm, csm_pilot: csm}
+      undocked: {commander: lm, lm_pilot: lm, csm_pilot: csm}
+      separated: {commander: lm, lm_pilot: lm, csm_pilot: csm}
+      abandoned: {commander: csm, lm_pilot: csm, csm_pilot: csm}
+    vehicle_by_configuration_provenance:
+      basis: derived
+      relation: >-
+        `vehicle.yaml#configurations[].crew_in` for the configuration each value names
+        (`csm_lm_docked` csm; `lm_alone_descent` and `lm_ascent_stage` lm, with `csm_alone_lunar`
+        holding the one person whose `goes_to_surface` is false; `csm_alone` csm), split by
+        `mission.yaml#crew.positions[].goes_to_surface`
+      source: vehicle.yaml:configurations
+    # The stations a person may be sent to, per configuration. Docked, the tunnel joins the two
+    # cabins and every station in both is in reach of everyone aboard; apart, a person can reach
+    # only the stations of the vehicle they are in, and the surface from the LM.
+    reachable_by_configuration:
+      docked: [csm_commander, csm_navigator, csm_lower_equipment_bay, tunnel, lm_commander, lm_pilot]
+      undocked: {csm: [csm_commander, csm_navigator, csm_lower_equipment_bay], lm: [lm_commander, lm_pilot, surface_eva]}
+      separated: {csm: [csm_commander, csm_navigator, csm_lower_equipment_bay], lm: [lm_commander, lm_pilot]}
+      abandoned: [csm_commander, csm_navigator, csm_lower_equipment_bay]
+    reachable_provenance:
+      basis: chosen
+      reason: >-
+        the geometry the display contract already declares: the tunnel is "a transit position" and
+        exists only while the vehicles are joined, and `surface_eva` is reachable only from the LM
+        and only before the ascent stage leaves the descent stage. **Two gates the open debt names
+        are not here**: the hatch being open and the suit loop running are states on the structure
+        and ECLSS sentinels, which no other domain's rule can read, and whether the LM is on the
+        surface or in orbit is a phase, which no rule can read either — `undocked` covers both. So
+        a fleet can send a person out of an LM in orbit, and what stops it is the hatch rule
+        structure owns; see `open_debts`
     dwell:
       min_on_s: 30
       min_off_s: 0
@@ -143,7 +254,61 @@ state:
         enum is the `channels.yaml#crew_positions` list verbatim, and the linter refuses a state
         whose stations differ from the bound's: a station the crew can occupy but the bound does
         not describe is a question answered from nowhere, and a station the bound describes but
-        nobody can occupy is a panel that is never read.
+        nobody can occupy is a panel that is never read. **The rule is
+        `domains/crew/rules.py:crew_location`**: a person sent somewhere by `ask_crew`'s `position`
+        (`crew_destination`) is there while it is reachable, and in their own seat otherwise, so a
+        separation that strands a destination returns the person to the vehicle they are in rather
+        than leaving them in a tunnel that no longer exists.
+  - id: csm_crew_count
+    node: crew_state
+    method: algebraic
+    unit: crew
+    moved_by:
+      - "logic:the number of people whose station is in the CSM's cabin, the tunnel included"
+    cabin_stations: [csm_commander, csm_navigator, csm_lower_equipment_bay, tunnel]
+    provenance:
+      basis: derived
+      relation: >-
+        the count of `crew_location` entries whose station is a `csm_*` station or `tunnel`
+        (`domains/crew/rules.py:csm_crew_count`). The tunnel is counted with the CSM because it
+        opens into the command module once the forward hatch and the probe and drogue are out,
+        and it is the CSM's cabin that the tunnel's air is part of. The repair `open_debts` named:
+        the crew count as a state of its own, so an edge reading `crew_state` can name it with
+        `reads:` — `E-CREW-ATM` (ECLSS's edge, ECLSS's to point here) and `E-CREW-WATER`
+      note: >-
+        a quantity rather than a mode on a node of modes, which is the change that repair makes to
+        what the vehicle models. It is the people breathing this cabin's air, and the number moves
+        when somebody goes through the tunnel, which is the first-order effect a cabin CO2 trend
+        carries and a fleet watching one should be able to explain
+  - id: lm_crew_count
+    node: crew_state
+    method: algebraic
+    unit: crew
+    moved_by:
+      - "logic:the number of people whose station is in the LM's cabin"
+    cabin_stations: [lm_commander, lm_pilot]
+    provenance:
+      basis: derived
+      relation: >-
+        the count of `crew_location` entries whose station is an `lm_*` station
+        (`domains/crew/rules.py:lm_crew_count`). `surface_eva` is not counted: a person on the
+        surface breathes the suit's loop, not the cabin's, so an EVA takes its crew out of the LM
+        cabin's CO2 and oxygen budget for as long as it lasts — which is `E-LM-CREW-ATM`'s driver
+        (ECLSS's edge, ECLSS's to point here with `reads: lm_crew_count`)
+  - id: csm_water_draw_crew
+    node: crew_state
+    method: algebraic
+    unit: crew
+    moved_by:
+      - "logic:the number of people drawing on the CSM's potable water, each at the planning rate"
+    provenance:
+      basis: derived
+      relation: >-
+        `csm_crew_count`, because the potable tank is the command module's and a person in the LM
+        drinks the LM's water (`domains/crew/rules.py:csm_water_draw_crew`). It is `E-CREW-WATER`'s
+        driver, and it is its own state rather than the count because the draw is a *crew-day*
+        rate today and a draw at meal times is the refinement it exists to carry: the rate per
+        person is constant, and *when* a person drinks is not
   - id: crew_availability
     node: crew_state
     method: discrete
@@ -469,7 +634,7 @@ alert_overlays:
 
 open_debts:
   - "**The breaker the command names is a class, not an element.** `set_breaker`'s `breaker` argument offers `csm_tie_ab` and `lcl`, and `breaker_panel` is keyed by `breaker_id`. So `key: breaker` says which *argument* selects the element and not which element it is: `lcl` is every current-limiting load switch on the vehicle, and the command is declared against the key as though it named one. What is owed is the LCL set — the ids behind `lcl` — which is the same list `power.lcl_[n]_state` is templated over and which nothing joins to this verb."
-  - "**The crew count is a rate input three couplings need and none can read.** `E-CREW-ATM`, `E-LM-CREW-ATM` and `E-CREW-WATER` all declare `kg/h per crew`, and the first two say in their own notes that *the count comes from the configuration*. It does: `mission.yaml#crew.size` is 3 and `vehicle.yaml#configurations[].crew_aboard` splits it per vehicle. But a coupling edge reads a **value**, and every state on `crew_state` is a map of stations, a map of availabilities, or a workload index — so the driver the flux multiplies by is `None` on every tick, and the two cabin CO2 stocks and the potable-water tank are blocked on it. Round 65 named this for every edge in the vehicle in the same position (eleven of them, counted in `--debts`): a node carrying more than one state publishes no value under its own name, so an edge whose *source* is such a node has no driver at all. **What is owed is a decision between two repairs that are not equivalent.** Give the count a state of its own — which changes what the vehicle models, since `crew_state` would then have a member that is a quantity rather than a mode — or give the graph a field naming which state on a crowded source an edge reads, which changes what an edge may say. The first is a domain edit here; the second is a contract edit in `coupling.yaml` and `plant.md` §2. It is recorded rather than chosen because a round that picked one would be deciding the graph's shape for every edge in the family at once, and the other ten edges are in `power`, `comms` and `gnc`."
+  - "**The crew count is a state now, and two of the three couplings that need it still read the node.** `E-CREW-ATM`, `E-LM-CREW-ATM` and `E-CREW-WATER` declare `kg/h per crew`, and a coupling edge reads a **value**: `crew_state` carries several states, so it publishes none, and the two cabin CO2 stocks and the potable-water tank were blocked on every tick. Of the two repairs round 65 named, this domain took the one that is a domain edit: `csm_crew_count` and `lm_crew_count` are quantities on `crew_state`, projections of `crew_location`, and an edge names the one it means with `reads:` (the field the plant has had since round 70). `E-CREW-WATER` lands on this node, so it is this domain's and reads `csm_water_draw_crew`. **What is owed is the other two edges' one line each**: `E-CREW-ATM` `reads: csm_crew_count` and `E-LM-CREW-ATM` `reads: lm_crew_count`. Those edges land on the cabins, so they are ECLSS's to write, and a tick with both lines added advances both CO2 stocks."
   - "**The display mode has no state.** `set_display_mode` changes what a station's panel is showing — the four modes are `crew_diode.md:352-370`'s widget types, and its own provenance says implementing them as a *display* command rather than as a perception change is the point D-06 turns on — and the vehicle records that nowhere. It was linked to `switch_panel`, which is the crew's switches: a surface whose own note here and whose channel's note in `points.yaml` both say agents observe it and cannot move it, and whose key was a switch id while the verb's `position` argument takes crew stations. That link is what this round removed. What closes this is a state per station holding one of the four modes, on a node the executive reaches — a new state and a new coupling node rather than a value, which is why it is here and not in a field."
   - "The displayed precisions are authored. They are the *inverse* of the channel registry's published precisions — a panel is coarser than the instrument behind it — and the mapping from one to the other is a display-design choice with no source. What is not a choice is that they must be coarser: a crew member reading a digital channel exactly would be a better instrument than the sensor."
   - "Reading times are not modelled. A real crew member takes seconds to find and read a gauge, and `ask_crew` currently answers instantly — which understates the cost of the crew as a sensor. It belongs with the allowance machinery rather than here."

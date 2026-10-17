@@ -568,10 +568,13 @@ nodes:
     # `crew_location` and `crew_availability` are `map[crew_id,...]`; `crew_workload` is a lag in
     # hours. See `key_space` below.
     key_space: by_state
-    state_order: [crew_location, crew_availability, crew_workload]
+    state_order: [crew_location, crew_availability, csm_crew_count, lm_crew_count,
+                  csm_water_draw_crew, crew_workload]
     state_order_note: >-
-      workload last because it is a lag on what the crew have been doing, and what they are doing
-      depends on where they are and whether they are available. The first two are independent of
+      where people are first, because every other state here reads it: the two cabin counts are
+      projections of the locations, and the water draw reads the CSM's count. Workload last
+      because it is a lag on what the crew have been doing, and what they are doing depends on
+      where they are and whether they are available. Location and availability are independent of
       each other and the order between them *is* the frozen tiebreak — declared here so that it is
       a recorded decision rather than an accident of the alphabet
   alert_state:
@@ -2357,6 +2360,11 @@ edges:
         question answerable. Food is the third rate in the same sentence and remains unmodelled:
         no state consumes it and no channel publishes it, so declaring an edge for it would be
         declaring a consumer that does not exist
+    # The consumer sets the rate, as on every discharge: the CSM's people, each at the planning
+    # rate. `crew_state` carries several states, so the edge names the one it reads, and it advances
+    # that same state rather than every state on the node — workload is not a drink of water.
+    reads: csm_water_draw_crew
+    advances: csm_water_draw_crew
     from: water_potable
     to: crew_state
     kind: rate
