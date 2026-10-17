@@ -192,3 +192,14 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 15:01 GNC + RCS #56 rebased on `e990b25` as `d50194c` (268 debts, 0 refusals): `gnc.sun_direction_body` from a fixed Apollo 13 TLI sun line, and `set_ptc_roll` (0.3 deg/s, as flown at three revolutions per hour). The PTC roll goes in the ledger as a decision.
 - 15:02 Research delivers the Apollo 13 MSFN network as flown (`sources/comms.md`); no as-flown rise/set table. D51: Vanguard and ARIA positions from the pre-flight press kit, labelled planned. Comms models handovers in its own PR after #48.
 - 15:03 Governance #55 merged as `7ad188f` (D41–D44, lane events to 14:30); the next batch carries D45–D51.
+- 15:23 D52: GNC navigation (`select_nav_source`) as a reduced Apollo-shaped covariance model, not the corpus's 15×15 EKF; recorded as a dated deviation in ADR 0005 on #56. ECLSS owes a vent state; GNC owns the edge into navigation.
+- 15:26 Merge order becomes #46 → #58 → #47 → the rest. Lane 0's draft #58 (`11c8a95`) unpins the census figures #45 kept on purpose, judging that keeping them pinned was the wrong call for a parallel sprint.
+- 15:26 ECLSS sources LiOH CO2 removal (`sources/eclss-co2.md`) and finds two repo ratings wrong (LM secondary cartridge, CSM element count); D53 gives ECLSS the removal stock, absorber counters, vent state and `set_overboard_dump`.
+- 15:31 GNC + RCS (lane's call, coordinator agrees): the CM RCS becomes a separate stock isolated in coast, as flown; the slew law allocates SM quads only, which removes the ~2 % CM pricing error in E-RCSP-RCS. Lands on #56 after #44.
+- 16:10 Governance #57 merged as `6814102` (D45–D51) on a green `required`, seconds before D54 reached this thread; its review follows the merge.
+- 16:10 D54: every PR that leaves draft gets an independent Fable review report for John (`vehicle-status/reviews/pr-<N>.md`); merges need green plus a non-blocking verdict.
+- 16:11 John confirms D54 on the card: "Merge on clear".
+- 16:12 Comms builds the Apollo 13 epoch as its own PR after #48: `met_epoch_utc` at TLI, re-derived elements, periselene-targeted trajectory. Two source conflicts recorded, unresolved (415.8 vs 86.8 n mi; 73.0 h vs 75.24 h arrival). #48 is fixing census pins after its rebase.
+- 16:12 The engine lane allows prose-only edits in `check_vehicle.py` and `plant.py` on a lane's own PR when its data change makes the prose stale; logic still goes through the engine lane.
+- 16:15 Crew #54 at `e26945e` with #47's branch merged in. D55: a workload driver (`crew_workload_index`) and CRW-01 split per person.
+- 16:18 D54 verdicts: #57 clear after its merge (one wording fix: the post-#45 figure convention holds fully only after #58, fixed on #59); #59 clear (#46's draft state fixed); #46 clear with follow-ups. The review finds the cryo O2 fans are AC loads and the heaters 113.88 W DC per tank, so power splits its 166.7 W figure.
