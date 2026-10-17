@@ -18,7 +18,7 @@ shortened and with a SIGKILL, without Docker.
 It runs on the vehicle's smoke stack (`vehicle_stack`, after live/test_vehicle.py, whose world it
 replaces), needs Docker and the vehicle image, and runs 40 minutes of mission time at m = 1: about
 45 minutes of wall time. Its first run on a hosted runner (2026-10-16) drove the whole episode
-and failed only on reading the 0600 record from the host, which the chmod below answers.
+and failed only on reading the 0600 record from the host, which the walk below answers.
 """
 
 import json
@@ -105,20 +105,30 @@ def test_policy_a_through_the_window_is_judged_full_success_on_the_vehicle_s_own
     stack.compose("stop", "vehicle")
     # The executive writes its journal 0600 as the image's uid 1000, and a 0600 create mode masks
     # the runner's default ACL entry, so the host cannot read the record. The vehicle's own user
-    # opens it to the host, in a one-off container on the same mount; it changes modes, not bytes,
-    # and the evaluator verifies every line's hash.
-    stack.compose(
+    # opens what it wrote to the host, in a one-off container on the same mount: modes, not bytes,
+    # and the evaluator verifies every line's hash. `/state` itself is the host's directory, which
+    # that user does not own and the host can already read, so the walk starts below it.
+    opened = stack.compose(
         "run",
         "--rm",
         "--no-deps",
         "-T",
         "--entrypoint",
-        "chmod",
+        "find",
         "vehicle",
-        "-R",
-        "go+rX",
         "/state",
+        "-mindepth",
+        "1",
+        "-user",
+        "1000",
+        "-exec",
+        "chmod",
+        "go+rX",
+        "{}",
+        "+",
+        check=False,
     )
+    assert opened.returncode == 0, (opened.stdout[-2000:], opened.stderr[-2000:])
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     (EVIDENCE / "driver.json").write_text(json.dumps(driver.log, indent=2), encoding="utf-8")
     judged = subprocess.run(
