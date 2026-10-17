@@ -256,6 +256,23 @@ def test_one_unreadable_interlock_still_refuses_the_command_as_unevaluated(world
     assert "cabin_pressure_emergency" not in body, body
 
 
+def test_a_guard_read_through_a_dark_coupling_node_is_refused_as_unevaluated(world, tmp_path):
+    # `co2_absorber_low` reads `absorber_capacity_csm`, a coupling node, not a state. On a tick the
+    # node has no value the guard cannot be evaluated, and the command must still get a result: an
+    # assertion here once dropped the line with no result file at all.
+    built = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
+    built.attach("alpha")
+    try:
+        built.truth = {k: v for k, v in built.truth.items() if k != "absorber_capacity_csm"}
+        submit(tmp_path / "diode" / "alpha", ["set_absorber_path vehicle=csm path=secondary"])
+        built.cycle()
+        (body,) = bodies(tmp_path / "diode" / "alpha")
+    finally:
+        built.close()
+    assert "refused: INTERLOCK UNEVALUATED" in body, body
+    assert "the coupling node `absorber_capacity_csm`, which has no value this tick" in body, body
+
+
 def test_an_operator_s_closed_interlock_still_wins(world, tmp_path):
     built = executive(world, tmp_path, tripped_interlocks={"coolant_supply_high"})
     try:

@@ -4649,7 +4649,14 @@ class Executive:
         point = interlock.point
         source = str((self.world.points.get(point) or {}).get("from") or "")
         state = next((s for s in self.world.states if s.id == source), None)
-        assert state is not None  # resolve_interlock refuses a point read from no state
+        if state is None:
+            # `resolve_interlock` also accepts a coupling node as the point's source (a cross-domain
+            # read such as `prop.propellant_remaining_pct` from `prop_main`); its reading is the
+            # node's value this tick, and a node nothing drives this tick has none.
+            return (
+                f"`{name}` watches `{point}`, read from the coupling node `{source}`, which has no "
+                "value this tick"
+            )
         if state_level(self.truth, state) is None:
             if state.id in self.world.rules:
                 # A domain rule that returned its honest `None` (`params.no_value`): the rule exists
