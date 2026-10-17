@@ -97,8 +97,11 @@ thresholds:
     latched: false
     interlock: true
     severity: EMERGENCY
-    point_units: "psid, evaluated only while a hatch is not closed"
-    gated_by: "any hatch in the `open` or `latched` position"
+    point_units: "psid, evaluated only while a hatch is not latched"
+    # `latched` is the sealed position — the CSM side hatch's gear box is driven to LATCH and locked
+    # for launch (`hatch_state.initial_note`) — so the hatches the gate is about are the ones that
+    # are *not* latched. This read "open or latched", which named the sealed hatch as the unsafe one.
+    gated_by: "any hatch not in the `latched` position"
     provenance:
       basis: apollo
       ref: "apollo_diode.md:207"
