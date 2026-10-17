@@ -182,3 +182,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 14:39 John confirms the delegated decisions and adds a closing phase: a light-touch fidelity calibration pass per station after the lanes merge (D45).
 - 14:41 Comms reports #48's fidelity: `link_snr` from Bellcomm CR-125670. Open across lanes: the CSM transmit chain uses LM figures, and the PA is an AC load whose inverter path is power's call.
 - 14:41–14:43 Draft #56 (GNC and RCS, `claude/vehicle-gnc-rcs-03b5j4`): pointing modes, ADR 0005; rebases after #44 and #47. GNC scope answers under D33 (D46); three engine asks to lane 9.
+- 14:44 Research lane finished: eight source files under `sources/` in the project's shared folder. `thermal.md` finds the SM bays are not glycol-cooled; thermal decides the fix on #49.
