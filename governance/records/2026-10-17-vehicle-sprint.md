@@ -201,3 +201,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 16:11 John confirms D54 on the card: "Merge on clear".
 - 16:12 Comms builds the Apollo 13 epoch as its own PR after #48: `met_epoch_utc` at TLI, re-derived elements, periselene-targeted trajectory. Two source conflicts recorded, unresolved (415.8 vs 86.8 n mi; 73.0 h vs 75.24 h arrival). #48 is fixing census pins after its rebase.
 - 16:12 The engine lane allows prose-only edits in `check_vehicle.py` and `plant.py` on a lane's own PR when its data change makes the prose stale; logic still goes through the engine lane.
+- 16:15 Crew #54 at `e26945e` with #47's branch merged in. D55: a workload driver (`crew_workload_index`) and CRW-01 split per person.
