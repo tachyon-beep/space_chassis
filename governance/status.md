@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 13:57 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 14:02 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -33,9 +33,10 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | 2 | Finish thermal | [#49](https://github.com/tachyon-beep/space_chassis/pull/49) | draft; bays and pump speed advance; re-deriving MET-0 at 1,401 W; `heater_bank_duty` held | #45; the numeric-argument engine change (lane 9) |
 | 3 | Propulsion and propellant | [#50](https://github.com/tachyon-beep/space_chassis/pull/50) | draft | #45; primary sources (now reachable, D32) |
 | 4 | Structure states | [#51](https://github.com/tachyon-beep/space_chassis/pull/51) | draft; `arm_state` waits on #47's seeding; configuration states move to device firing after #47 | #45, #47 |
-| 7 | GNC + RCS | — | not started | the geometry lane (#44); the pointing-modes answer (independent review, D36) |
-| 8 | Crew | — | not started | John: design item D-06 |
+| 7 | GNC and RCS lane | — | started 13:59; attitude as pointing modes, a rate-limited slew law behind `set_attitude_target` (D38) | the geometry lane (#44) |
+| 8 | Crew lane | — | started 13:59 on D-06 revision 1 (D38) | D-07 default *per-console* until John answers |
 | 10 | Avionics FDIR | — | not started | last; needs lane 9's faults |
+| — | Instrument layer | — | **no owner yet** (D38 item 6); needed before the coordination test (item 8) | the coordinator assigning it |
 
 Engine work on #47 for other lanes: the fault hook (`becomes`, `scale`, `becomes_from: magnitude`);
 ruled-discrete seeding (structure, comms); the `arm_event` effect; numeric carried arguments,
@@ -59,13 +60,15 @@ which thermal cherry-picks onto power's branch. Power has applied *off* on #43 (
 
 | item | options | asked in |
 |---|---|---|
-| the arc report's eleven decisions, including attitude as pointing modes (lane 7) and D-06 (lane 8) | under independent evaluation first (D36), pointing modes and D-06 leading | Whole-vehicle arc assessment; Independent review of the arc report decisions |
+| D-07: crew dialogue per console or shared | per-console (recommended, used as the default) / shared | card from the coordinator, 14:00 |
 | D22 pilot credentials for the 10-minute smoke | — | Vehicle to smoke-ready |
 | archive `space_vehicle` (D21) | a repository setting; safe since PR #35 | `records/2026-10-15-space-vehicle-archive-check.md` |
 
 ## Answered for John, his to override
 
 Answered by John today: power d / standby pump *off* (D29, 13:35); any domain, read-only (D32, 13:46).
+
+Answered by the coordinator on the independent review at 14:00: the arc report's eleven (D38).
 
 Answered by the coordinator under D33 at 13:50 (D35), each the lane's recommended option:
 
@@ -100,7 +103,7 @@ to the coordinator; *not reported* means the lane has not said yet.
 | structure (#51) | latches, hatch and pyro as discrete devices; after #47: `pyro_health` fail-to-fire, descent stage separates only when all five staging devices fire, jettison only when the ring charge fires, `leak_sources_g_s` summed by the leak rule | not reported | latches move instantly to the drive (1 s dwell only; actuation time unsourced); the `one` scope is recorded and acts on nothing (re-cocking a failed latch unsourced); leak with an unlatched hatch or unseated ring above 0.5 psid is a named gap (aperture, seal, tunnel volume unsourced); configuration states still flip on the event until #47; `hatch_open_with_pressure` unevaluable (prose `gated_by`) |
 | ECLSS (#46, 18 of 24 states) | cabin leak per gas (bulk-flow shares); `set_o2_source` partly guarded through a general two-argument interlock condition (ADR 0004 amended; lane 7 can use it for its two verbs); suit loop on its compressor at 35 cfm, switched by `set_suit_fan` | not reported | cabin H2O waits on crew production (D-06), like CO2, since a removal-only vapour stock would dry the cabin; crew O2 uptake waits on `crew_state`, so cabin O2 still rises by the metabolic term; `o2_supply_pressure_psi` on a card to John (cryo tank sources on blocked hosts) |
 | unpin (#45) | — (test figures, no model) | — | — |
-| GNC + RCS | not started; the arc report recommends attitude as pointing modes until a decision needs 6-DOF | — | under independent review (D36); D34 and D37 bear on it |
+| GNC + RCS | attitude as pointing modes: a rate-limited slew law behind `set_attitude_target` (D38) | not reported | 6-DOF deferred; it would replace only the law |
 
 ## Known gaps in CI
 
