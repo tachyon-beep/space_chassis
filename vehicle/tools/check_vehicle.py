@@ -5262,16 +5262,67 @@ def check_domain(
         # required because a condition is a claim about the vehicle, the same discipline
         # `independent` gets for a node's state order.
         # --------------------------------------------------------------------------------------
-        condition = verb.get("interlocks_when")
-        if condition is not None:
-            cwhere2 = f"{vwhere}.interlocks_when"
+        # **One condition per direction** (ADR 0004 §Direction). A verb whose guards protect different
+        # directions — the evaporator's water reserve guards starting the feed and its supply
+        # temperature guards stopping it — writes `interlocks_when` as a list, each condition naming
+        # the `interlocks` it covers; a single mapping still covers every guard the verb declares.
+        # The shape problems — the list form's and a condition that is not a mapping — are gathered
+        # and refused in one place, so the conditions' own checks below read each one only once it is
+        # a mapping. (One call site: `docs/deep_research/integration/reconciliation/README.md`, which is
+        # frozen, states this tool's `report.refuse` call-site count.)
+        raw_condition = verb.get("interlocks_when")
+        listed_form = isinstance(raw_condition, list)
+        conditions = raw_condition if listed_form else ([] if raw_condition is None else [raw_condition])
+        shape: list[tuple[str, str]] = []
+        if listed_form and not raw_condition:
+            shape.append((f"{vwhere}.interlocks_when", "is an empty list; omit it, or name a condition"))
+        covered_by: dict[str, int] = {}
+        declared_guards = [str(i) for i in interlocks] if isinstance(interlocks, list) else []
+        for position, condition in enumerate(conditions):
+            cwhere2 = f"{vwhere}.interlocks_when[{position}]" if listed_form else f"{vwhere}.interlocks_when"
             if not isinstance(condition, dict) or not condition:
-                report.refuse(
-                    cwhere2,
-                    f"is {condition!r}, not a mapping. A condition is `argument`, `values` and "
-                    "`why`, because which values a guard applies to is not readable off the list",
+                shape.append(
+                    (
+                        cwhere2,
+                        f"is {condition!r}, not a mapping. A condition is `argument`, `values` and "
+                        "`why`, because which values a guard applies to is not readable off the list",
+                    )
                 )
-            elif not isinstance(interlocks, list) or not interlocks:
+            elif "interlocks" in condition:
+                listed = condition.get("interlocks")
+                if not isinstance(listed, list) or not listed:
+                    shape.append(
+                        (
+                            f"{cwhere2}.interlocks",
+                            f"is {listed!r}; name the guards this condition covers, or omit it to cover all",
+                        )
+                    )
+                for name in [str(n) for n in listed] if isinstance(listed, list) else []:
+                    if name not in declared_guards:
+                        shape.append(
+                            (f"{cwhere2}.interlocks", f"names {name!r}, which is not one of the verb's `interlocks`")
+                        )
+                    elif name in covered_by:
+                        shape.append(
+                            (
+                                f"{cwhere2}.interlocks",
+                                f"names {name!r}, which condition {covered_by[name]} already covers; "
+                                "one guard has one condition",
+                            )
+                        )
+                    else:
+                        covered_by[name] = position
+            elif listed_form:
+                shape.append(
+                    (f"{cwhere2}.interlocks", "is absent. In the list form each condition names the guards it covers")
+                )
+        for where, why in shape:
+            report.refuse(where, why)
+        for position, condition in enumerate(conditions):
+            cwhere2 = f"{vwhere}.interlocks_when[{position}]" if listed_form else f"{vwhere}.interlocks_when"
+            if not isinstance(condition, dict) or not condition:
+                continue
+            if not isinstance(interlocks, list) or not interlocks:
                 report.refuse(
                     cwhere2,
                     f"conditions guards the verb does not declare: `interlocks` is "

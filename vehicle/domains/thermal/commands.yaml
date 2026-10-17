@@ -23,6 +23,14 @@ commands:
     authority: A2
     gate: {kind: preference, variable: pump_<pump>_enable}
     interlocks: [pump_no_flow, coolant_supply_high]
+    interlocks_when:
+      argument: state
+      values: ["off"]
+      why: >-
+        both guards are about *stopping* a pump (ADR 0004 §Direction). `pump_no_flow` is the loop
+        with no flow, which a stop makes and a start ends, and `coolant_supply_high` is a hot loop,
+        which a stop makes worse and a start is the recovery from. Declared for the whole verb, a
+        tripped guard refused `state=on` — the restart — exactly when the loop needed it
     conflict_domain: thermal.<loop>.pump
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -31,10 +39,10 @@ commands:
     execution_class: declarative
     maximum_queue_age_s: 60
     help: >-
-      Start or stop a coolant pump. Stopping the last running pump on a loop is refused by the
-      interlock rather than by a count of running pumps: the vehicle knows whether flow is
-      present, and it does not need to trust a bookkeeping number to know that stopping the
-      only pump is a bad idea.
+      Start or stop a coolant pump. The interlocks guard stopping only: `state=off` is refused
+      while the loop has had no flow (`pump_no_flow`) or a hot supply (`coolant_supply_high`) for
+      the threshold's dwell, and `state=on` — starting a pump, the recovery from both — is never
+      refused by them.
     provenance:
       basis: apollo
       ref: "apollo_diode.md:239"
@@ -47,6 +55,13 @@ commands:
     authority: A2
     gate: {kind: preference, variable: loop_<loop>_mode_enable}
     interlocks: [pump_no_flow]
+    interlocks_when:
+      argument: mode
+      values: [isolated]
+      why: >-
+        `pump_no_flow` guards taking flow away (ADR 0004 §Direction), and of the four modes only
+        `isolated` does; selecting a loop or putting two in series is how a crew restores flow, and a
+        guard that refused them while flow was lost would refuse the recovery
     conflict_domain: thermal.<loop>.mode
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -69,6 +84,19 @@ commands:
     authority: A2
     gate: {kind: preference, variable: bypass_<loop>_enable}
     interlocks: [coolant_supply_high, coolant_supply_low]
+    interlocks_when:
+      - interlocks: [coolant_supply_high]
+        argument: state
+        values: [bypass]
+        why: >-
+          a hot supply guards taking the radiator out of the loop (ADR 0004 §Direction); routing
+          through the radiator is how a warm loop sheds heat, so it is never refused by this guard
+      - interlocks: [coolant_supply_low]
+        argument: state
+        values: [radiator]
+        why: >-
+          a cold supply guards putting the radiator back in; bypassing it is how a cold vehicle
+          warms up, so it is never refused by this guard
     conflict_domain: thermal.<loop>.bypass
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -78,9 +106,11 @@ commands:
     maximum_queue_age_s: 60
     help: >-
       Route the loop through the radiator or around it. `bypass` is how a cold vehicle warms
-      up and how a warm one stops warming; the interlock refuses a bypass that would take the
-      supply temperature past either end of its band, so the valve cannot be used to defeat
-      the loop's own limits.
+      up, and `radiator` is how a warm one sheds heat. Each interlock guards the direction that
+      would push the supply further past its end of the band: `state=bypass` is refused while
+      the supply has been hot (`coolant_supply_high`) for the dwell, and `state=radiator` while
+      it has been cold (`coolant_supply_low`), so the valve cannot be used to defeat the loop's
+      own limits and is never refused on the way back inside them.
     provenance:
       basis: apollo
       ref: "apollo_diode.md:239"
@@ -93,6 +123,19 @@ commands:
     authority: A2
     gate: {kind: preference, variable: evaporator_<vehicle>_enable}
     interlocks: [coolant_supply_high, res.cooling_water_reserve]
+    interlocks_when:
+      - interlocks: [coolant_supply_high]
+        argument: state
+        values: ["off"]
+        why: >-
+          a hot loop is what the evaporator is for (ADR 0004 §Direction): stopping the feed under
+          `coolant_supply_high` is the hazard, and starting it is the recovery
+      - interlocks: [res.cooling_water_reserve]
+        argument: state
+        values: ["on"]
+        why: >-
+          the feed spends cooling water, so a reserve below its floor guards starting it; stopping it
+          is how the reserve stops falling
     conflict_domain: thermal.<vehicle>.evaporator
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -104,8 +147,9 @@ commands:
       Feed the evaporator. It rejects about 2.3 kW and pays for it in water — roughly 3.4 kg
       per hour at full rate, derived from the latent heat of vaporisation rather than
       published, because no source gives the rate. This is the verb that converts a thermal
-      problem into a consumables problem, and the interlock is the water stock rather than the
-      temperature, because an evaporator with a dry feed is worse than a hot loop.
+      problem into a consumables problem. Two interlocks, one per direction: the water reserve
+      guards starting the feed, because an evaporator with a dry feed is worse than a hot loop, and
+      the supply temperature guards stopping it, because a hot loop is what it is for.
     provenance:
       basis: apollo
       ref: "apollo_diode.md:239"

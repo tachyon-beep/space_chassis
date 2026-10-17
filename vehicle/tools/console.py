@@ -38,9 +38,12 @@ What this slice substitutes, and says so (ADR 0001 "not established"):
 
   - **Identity instrument.** `plant.emit_frame` publishes the declared channels straight from the
     stepped truth — no noise, lag, quantisation or quality model. Instruments are WP09's.
-  - **Unevaluated interlocks are refused.** Threshold evaluation is WP05's, so a verb that declares
-    any interlock is refused `INTERLOCK UNEVALUATED` naming each one and why it cannot be read
-    (choice C). `set_bus_tie`, `start_burn`, `arm_event` and `execute_event` are all in that set.
+  - **Interlocks, evaluated where they read** (ADR 0004, narrowing choice C). An interlock guarding
+    the command's direction (`interlocks_when`) whose threshold, band, dwell and reading resolve is
+    evaluated, with its dwell count in the truth, and a tripped one is refused `INTERLOCK TRIPPED`;
+    one that does not resolve is refused `INTERLOCK UNEVALUATED`, naming the link that fails.
+    `set_bus_tie`, `start_burn`, `arm_event` and `execute_event` are still in that set. Clear values,
+    latching and the protection ladder are WP05's.
   - **The mission clock, without shedding** (ADR 0002 A, B2, J; WP08 child 5, #23). Three run inputs,
     required with no default on a fresh serving start and inherited by a restart: `--multiplier`
     (`m`, mission seconds per wall second, an exact fraction), `--cycle-ticks` (`k`, ticks per cycle,
@@ -267,6 +270,7 @@ from plant import (  # noqa: E402
     command_targets,
     emit_frame,
     gate_instantiations,
+    guarding_interlocks,
     initial_values,
     interlock_tripped,
     load_scenario,
@@ -3419,7 +3423,7 @@ class Executive:
                 self.journal, self.journal_dir_fd = canonical, opened
         # Generated once, because the configuration does not change while an executive runs.
         self.readme_text = generate_readme(world.root)
-        self.help_text = generate_help(world.root)
+        self._help_cache: dict[frozenset[str] | None, str] = {}
         # The diode directory, as a handle that follows no link: every window is opened relative to
         # it, and the directory's own record is written through it. `main` has canonicalised and opened
         # it once and passes the handle, of which this keeps a duplicate — nothing resolves the operator's
@@ -3437,6 +3441,22 @@ class Executive:
             for row in capability_snapshot(world, phase=phase)
             for name in row["gate_variables"]
         }
+
+    @property
+    def admitted_verbs(self) -> frozenset[str] | None:
+        """The scenario's verb list (`--scenario-file`), or None for the whole registry."""
+        overlay = self.scenario_overlay
+        return frozenset(overlay.verbs) if overlay is not None and overlay.verbs is not None else None
+
+    @property
+    def help_text(self) -> str:
+        """HELP.md: the whole registry, or under a scenario only the verbs it admits — a verb the run
+        refuses NOT IN THIS SCENARIO is not one to advertise. Generated once per verb list, because
+        the configuration does not change while an executive runs (a resume sets the overlay late)."""
+        key = self.admitted_verbs
+        if key not in self._help_cache:
+            self._help_cache[key] = generate_help(self.world.root, key)
+        return self._help_cache[key]
 
     # -- windows ------------------------------------------------------------------------------
     def attach(self, slug: str, *, ring_slots: int = DEFAULT_RING_SLOTS, prepare: bool = True) -> Window:
@@ -4574,7 +4594,12 @@ class Executive:
         state = next((s for s in self.world.states if s.id == source), None)
         assert state is not None  # resolve_interlock refuses a point read from no state
         if state_level(self.truth, state) is None:
-            if state.method == "algebraic":
+            if state.id in self.world.rules:
+                # A domain rule that returned its honest `None` (`params.no_value`): the rule exists
+                # and this tick is outside what it can answer. The rule's own reason carries the
+                # live load and current, so it stays in the plant's gap, not in a refusal.
+                why = "its rule has no value this tick (the plant's gap for the state says which limit)"
+            elif state.method == "algebraic":
                 why = "its algebraic rule is UNCONFIGURED"
             elif state.owed:
                 why = f"it owes {', '.join(state.owed)}"
@@ -4674,12 +4699,14 @@ class Executive:
                     "to fire this one. Nothing has been fired.\n"
                 )
 
-        interlocks = spec.get("interlocks")
-        declared = [str(i) for i in interlocks] if isinstance(interlocks, list) else []
         # ADR 0004 (narrowing ADR 0001 choice C): an interlock whose chain reads is evaluated against
         # its threshold's band and dwell, with the dwell history the truth carries; one whose chain
-        # does not read is refused as unevaluated, as before. Never the value: a refusal is a result
-        # file an agent reads, and a live reading in it is truth outside the instruments.
+        # does not read is refused as unevaluated, as before. Only the interlocks that guard *this*
+        # command's direction are asked (`interlocks_when`): the safing direction — an amplifier off,
+        # a pump or an evaporator on under a hot loop — needs no guard and is taken however the guard
+        # reads. Never the value: a refusal is a result file an agent reads, and a live reading in it
+        # is truth outside the instruments.
+        declared = guarding_interlocks(spec, arguments)
         unreadable = []
         tripped = []
         for name in declared:
@@ -4707,8 +4734,8 @@ class Executive:
                 "this executive cannot evaluate, so it must not accept the command "
                 "(ADR 0001 choice C: a command it cannot guard is a command it must not accept — "
                 f"the same rule an owed dwell is refused by):\n{reasons}\n"
-                "Threshold evaluation is WP05's; a point with no value is owed by the model that "
-                "produces it. Nothing has been staged"
+                "The executive evaluates an interlock whose threshold, band, dwell and reading all "
+                "resolve (ADR 0004); each line above names the link that does not. Nothing has been staged"
                 + (" and no arm token has been consumed" if verb == "execute_event" else "")
                 + ".\n"
             )
@@ -4843,16 +4870,21 @@ class Executive:
             )
         else:
             window.accepted += 1
-            guards = spec.get("interlocks")
-            guards = [str(g) for g in guards] if isinstance(guards, list) else []
+            declared = spec.get("interlocks")
+            declared = [str(g) for g in declared] if isinstance(declared, list) else []
+            guards = guarding_interlocks(spec, arguments)
+            if guards:
+                checked = f"interlock(s) {', '.join(guards)} evaluated and none tripped (ADR 0004). "
+            elif declared:
+                checked = (
+                    f"interlock(s) {', '.join(declared)} guard the other direction of this verb, not "
+                    "this one (ADR 0004). "
+                )
+            else:
+                checked = "no interlocks declared. "
             verdict.body = (
                 f"accepted: {verb!r}. Authority {spec.get('authority')}, phase {self.phase}, gate "
-                f"{gate_variable!r} open, "
-                + (
-                    f"interlock(s) {', '.join(guards)} evaluated and none tripped (ADR 0004). "
-                    if guards
-                    else "no interlocks declared. "
-                )
+                f"{gate_variable!r} open, " + checked
             )
         if staged is None:
             verdict.body += (
@@ -5534,12 +5566,16 @@ class Window:
         With `closed=False` the window's gates are left out, for the per-command gate check: the
         snapshot closes a *verb* when any instantiation is closed, and a command is gated by its own.
         """
-        return capability_snapshot(
+        rows = capability_snapshot(
             self.executive.world,
             phase=self.executive.phase,
             closed_gates=self.closed_gates() if closed else set(),
             tripped_interlocks=self.executive.tripped,
         )
+        # Under a scenario, its verb list is the command surface: `available_commands` and the gate
+        # variables name only what the run admits, as HELP.md does.
+        admitted = self.executive.admitted_verbs
+        return rows if admitted is None else [row for row in rows if row["verb"] in admitted]
 
     # -- results ----------------------------------------------------------------------------
     def write_result(self, command: str, body: str) -> Path:

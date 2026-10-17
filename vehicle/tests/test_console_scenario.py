@@ -196,6 +196,36 @@ def test_a_verb_outside_the_scenario_is_refused_with_a_result_and_one_inside_is_
     assert len(taken) == 1 and "recorder_play=on" in taken[0], taken
 
 
+def test_a_scenario_s_window_advertises_only_the_verbs_it_admits(world, tmp_path):
+    """The capability snapshot, `available_commands` and HELP.md name the scenario's verbs and no
+    other: a verb the run refuses NOT IN THIS SCENARIO is not one to advertise. Without a scenario
+    the whole registry is."""
+    admitted = set(console.load_scenario_file(world, QUIET_COAST).scenario.verbs)
+    texts = {}
+    for name, loaded in (("scenario", console.load_scenario_file(world, QUIET_COAST)), ("whole", None)):
+        diode = tmp_path / name
+        executive = console.Executive(world, diode, phase="translunar_coast", scenario_file=loaded)
+        try:
+            view = executive.attach("alpha")
+            executive.cycle()
+            rows = view.capability()
+            state = json.loads((diode / "alpha" / "state.json").read_text())
+            texts[name] = (diode / "alpha" / "HELP.md").read_text()
+        finally:
+            executive.close()
+        if loaded is not None:
+            assert {row["verb"] for row in rows} == admitted
+            assert set(state["available_commands"]) <= admitted
+            assert "set_coolant_pump" in state["available_commands"]
+        else:
+            assert {row["verb"] for row in rows} > admitted
+            assert "start_burn" in {row["verb"] for row in rows}
+    assert "#### `set_coolant_pump`" in texts["scenario"] and "#### `start_burn`" not in texts["scenario"]
+    assert "#### `start_burn`" in texts["whole"]
+    for code in ("NOT IN THIS SCENARIO", "INTERLOCK TRIPPED", "INTERLOCK UNEVALUATED"):
+        assert f"`{code}`" in texts["scenario"], code
+
+
 def test_a_served_run_applies_only_admitted_verbs_to_its_record(world, tmp_path):
     """Through the real process and its record: the refused verb never reaches a row's effects."""
     diode, state = tmp_path / "diode", tmp_path / "state"

@@ -92,6 +92,7 @@ jobs:
         run: |
           mkdir -p .scratch/ci
           python -m pytest -n auto -rs --junitxml=.scratch/ci/aurora.xml \
+            -m 'not quiet_coast_full' \
             aurora/tests aurora/harness/tests aurora/recorder/tests aurora/pump/tests
       - name: Compose file parses
         working-directory: aurora
@@ -184,13 +185,13 @@ jobs:
     # The bounded quiet-coast episode (D14; docs/vehicle-completion/09-quiet-coast-episode.md): the
     # four policies over the whole 120,000 ticks, each judged its class by the evaluator, and the
     # restart check at tick 60,000. Each run is about ten minutes; the runs share a lock so each
-    # policy runs once. The job took 67 minutes on a hosted runner (2026-10-16); the limit guards
-    # against a hung job.
+    # policy runs once. The job took 67 minutes on a hosted runner (2026-10-16), before the window
+    # run of policy A (about 20 minutes at m = 2) joined it; the limit guards against a hung job.
     name: quiet-coast episode
     needs: changes
     if: ${{ needs.changes.outputs.vehicle == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 110
+    timeout-minutes: 140
     defaults:
       run:
         working-directory: vehicle
@@ -207,19 +208,33 @@ jobs:
           mkdir -p .scratch/episode
           python -m pytest -n 4 -q -o addopts='' -rs --junitxml=.scratch/episode/tests.xml \
             -m quiet_coast_full tests/test_quiet_coast.py
+      # Policy A through the window over the whole episode (aurora/tests/test_quiet_coast_window.py,
+      # ADR 0004): the real executive, a SIGKILL at tick 60,000 and a resume. It needs the root's
+      # requirements, and runs from the root, where its marker is registered.
+      - run: python -m pip install -r requirements-dev.txt
+        working-directory: .
+      - name: The episode through the window, whole
+        working-directory: .
+        env:
+          QUIET_COAST_FULL: '1'
+        run: |
+          python -m pytest -q -o addopts='' -rs --junitxml=vehicle/.scratch/episode/window.xml \
+            -m quiet_coast_full aurora/tests/test_quiet_coast_window.py
       - name: Require executed tests and zero skips
         if: ${{ !cancelled() }}
         run: |
           python - <<'PY'
           from pathlib import Path
           import xml.etree.ElementTree as ET
-          root = ET.parse(Path('.scratch/episode/tests.xml')).getroot()
-          suites = [root] if root.tag == 'testsuite' else list(root.iter('testsuite'))
+          suites = []
+          for name in ('tests.xml', 'window.xml'):
+              root = ET.parse(Path('.scratch/episode') / name).getroot()
+              suites += [root] if root.tag == 'testsuite' else list(root.iter('testsuite'))
           counts = {key: sum(int(s.get(key, 0)) for s in suites)
                     for key in ('tests', 'failures', 'errors', 'skipped')}
           print(counts)
-          if counts['tests'] < 7 or any(counts[k] for k in ('failures', 'errors', 'skipped')):
-              raise SystemExit('The episode tier must execute all 7 tests with zero skips/failures/errors')
+          if counts['tests'] < 8 or any(counts[k] for k in ('failures', 'errors', 'skipped')):
+              raise SystemExit('The episode tier must execute all 8 tests with zero skips/failures/errors')
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ !cancelled() }}
