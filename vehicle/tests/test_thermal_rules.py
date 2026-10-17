@@ -550,7 +550,10 @@ def met0_service_bay_w() -> float:
 
 def test_the_service_bay_relaxes_to_its_equilibrium_with_its_own_time_constant(world):
     """Displaced 10 K, the bay returns as `exp(-t/tau)` with `tau = C/G`, over coolant the loop
-    holds at its supply. Hand solution in closed form; the rule steps it explicitly."""
+    holds at its supply. Hand solution in closed form; the rule steps it explicitly. The bay only:
+    the loop is fed the bay's raw heat, not this transfer, so the loop's side of the transient is a
+    declared debt (`components.yaml#open_debts`, the loop collects its nodes' heat) until the
+    space-sink follow-up's coupled energy-balance test."""
     spec = STATES["zone_csm_service_t"]
     tau = spec["lumped_mass_kg"] * spec["specific_heat_j_per_kg_k"] / spec["conductance_w_per_k"]
     values = dict(episode_start(world))
