@@ -277,6 +277,58 @@ thresholds:
         day is a full tank near the bottom of its band, and a tank that fell 40 psi in the last
         ten minutes is a leak. Apollo publishes both and this is why.
 
+  # The S/M cryogenic oxygen tanks' own caution, which is not the band above: the corpus's 750-950
+  # psi band and its fall rate are apollo_diode.md's, and CRYO PRESS is the spacecraft's light, set
+  # around the heater switch's 865-935 psia so that a tank the heaters cannot hold, and a tank the
+  # heat leak drives up with nothing drawing, both light it. Apollo 13's tank 2 was read from exactly
+  # this light. One lamp serves both tanks and both reactants (H2 too), so a second fault behind a
+  # lit CRYO PRESS raises no new alarm (A13RB 5-22): that masking is the alert system's, not this file's.
+  - id: cryo_press_o2_low
+    point: eclss.o2_supply_pressure_psi
+    comparator: below
+    assert: 800
+    clear: 810
+    dwell_assert_ms: 0
+    dwell_clear_s: 10
+    latched: true
+    severity: CAUTION
+    acts: crew
+    point_units: "psia"
+    provenance:
+      basis: historical
+      source: >-
+        AOH SM2A-03-BLOCK II-(1) Vol. 1, p. 2.6-14: "The caution and warning system (CRYO PRESS) will
+        alarm when oxygen pressure in either tank exceeds 950 psia or falls below **800 psia**", and
+        p. 2.10-6's C&W table, "Tank 1 O2 <800 psia ... Tank 2 O2 - Same as tank 1 O2"
+      note: >-
+        `clear` and the dwells are chosen: the AOH gives the trip and not a reset band. A master
+        caution latches until the crew reset it, which is `latched`; the 10 psi clear keeps a tank
+        sitting on the trip from relighting the lamp every sample, and is a seventh of the heater
+        switch's band. `acts: crew`, because the light tells the crew and nothing aboard acts on it:
+        the procedures (AOH p. 2.6-15) are manual
+  - id: cryo_press_o2_high
+    point: eclss.o2_supply_pressure_psi
+    comparator: above
+    assert: 950
+    clear: 940
+    dwell_assert_ms: 0
+    dwell_clear_s: 10
+    latched: true
+    severity: CAUTION
+    acts: crew
+    point_units: "psia"
+    provenance:
+      basis: historical
+      source: >-
+        AOH SM2A-03-BLOCK II-(1) Vol. 1, p. 2.6-14, as `cryo_press_o2_low`: "exceeds **950 psia**".
+        The Apollo 13 Review Board (5-22) gives 975 psia for CSM-109; the AOH is Apollo 11's
+      note: >-
+        the overpressure half, and the one a quiet vehicle can reach on its own: with no draw the
+        26 Btu/h heat leak drives a full tank up about a psi a minute past the 935 psia switch, so
+        a powered-down stack lights CRYO PRESS before the 983 psig relief valve opens. The AOH's
+        corrections (p. 2.6-15) are a fuel cell purge, opening ECS DIRECT O2, or more electrical
+        load, each a cost. `clear` and the dwells are chosen, as the low half's
+
   # --- the LM's own atmosphere ------------------------------------------------------------
   # Four thresholds that did not exist. The CSM had `cabin_pressure_caution`,
   # `cabin_pressure_emergency`, `co2_caution` and the ppO2 pair; the LM had **none of them**,

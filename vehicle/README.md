@@ -220,7 +220,7 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 160 states over 64 scheduled nodes, 142
+**All eleven domains have landed** — 148 channels, 160 states over 64 scheduled nodes, 144
 thresholds, 59 verbs and 128 classified events across the eleven directories, with every debt
 named. Those are the corpus's declarations, and the linter holds each of them against the files
 (`check_readme_figures`); they move when a domain adds a channel, a state or a verb, not when one
@@ -306,7 +306,7 @@ are the vehicle's only two-step verbs (C-16: a burn is interruptible, so requiri
 one adds a delay rather than a safety).
 
 `domains/eclss/` is the one where a fault has minutes rather than hours.
-It declares 25 states, 20 thresholds, 6 verbs, 21 faults — four conserved gases in each of
+It declares 25 states, 22 thresholds, 6 verbs, 21 faults — four conserved gases in each of
 **two** compartments. Three things in it are worth reading:
 
 - **The atmosphere is modelled as gas masses, not as a pressure.** Pressure is `nRT/V`, so a
