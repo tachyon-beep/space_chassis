@@ -12692,9 +12692,10 @@ def test_every_stock_declares_where_it_starts():
     # id and its single-state node's alias, `environment_heat`.
     # 89 -> 91 with ECLSS: `suit_fan` (the switch `set_suit_fan` moves) under its id, and
     # `o2_tank_heaters`, a ruled discrete whose id and single-state node share one name.
-    # 91 -> 94 with the structure lane: `events_fired` on `structure_config`, and the sentinel's
-    # `hatch_state` (settled at launch) and `latch_drive`, seeded under their ids.
-    assert len(on_nodes) == 94, f"{len(on_nodes)} node keys carry a value"
+    # 91 -> 96 with the structure lane: `events_fired` on `structure_config`, and the sentinel's
+    # `hatch_state` (settled at launch), `latch_drive` and the arm token's `arm_state` and
+    # `arm_age_s`, seeded under their ids.
+    assert len(on_nodes) == 96, f"{len(on_nodes)} node keys carry a value"
     # And the map a tick actually starts from is that seed plus the declared arithmetic, so the
     # resolved states are a strict superset and every one of them is `algebraic`.
     assert seeded_integrators.keys() < seeded.keys(), "the resolution added nothing to the seed"
@@ -12709,13 +12710,14 @@ def test_every_stock_declares_where_it_starts():
     # 18 -> 22 with ADR 0003's thermal rules: the amplifier's temperature and the three loop
     # switch maps (`coolant_pump`, `evaporator_feed`, `radiator_bypass`) are sentinel states.
     # 22 -> 23 with ECLSS's `suit_fan`, the compressor switch, also on the sentinel; 23 -> 25 with
-    # the structure lane: `hatch_state`, settled at launch, and `latch_drive`.
-    assert len(seeded_integrators["internal"]) == 25, sorted(seeded_integrators["internal"])
+    # the structure lane: `hatch_state`, settled at launch, and `latch_drive`; 27 with the arm
+    # token's two maps, which start at `none` and zero for every event.
+    assert len(seeded_integrators["internal"]) == 27, sorted(seeded_integrators["internal"])
     # Five of the sentinel's `algebraic` states resolve at t=0 as well — the bay heat, the cabin
     # pressure differential and three more — so the sentinel's sub-map is the same map the tick
     # commits, merged rather than replaced. (Six until ADR 0003's power rules moved the bus load to
-    # the cells' node.) 28 with ECLSS's `suit_fan`, 30 with the structure lane's two positions.
-    assert len(seeded["internal"]) == 30, sorted(seeded["internal"])
+    # the cells' node.) 28 with ECLSS's `suit_fan`, 32 with the structure lane's four maps.
+    assert len(seeded["internal"]) == 32, sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
     # six of the twenty-four declared values are the last of their key rather than a key of their
@@ -12797,9 +12799,12 @@ def test_every_stock_declares_where_it_starts():
         "coolant_pump",
         "evaporator_feed",
         "radiator_bypass",
-        # The structure lane: the four hatches latched at launch, and the latch ring's drive.
+        # The structure lane: the four hatches latched at launch, the latch ring's drive, and the
+        # arm token with its age.
         "hatch_state",
         "latch_drive",
+        "arm_state",
+        "arm_age_s",
     }, sorted(seeded_integrators["internal"])
     # **And the five `algebraic` states the resolver adds**, the sentinel's half of the declared
     # arithmetic: the bay heat rate, the cabin pressure differential, the two loops' collected loads
@@ -12821,6 +12826,7 @@ def test_every_stock_declares_where_it_starts():
     # The structure lane's two are maps as well: the hatches and the latch ring's drive.
     assert switch_maps == {
         "coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan", "hatch_state", "latch_drive",
+        "arm_state", "arm_age_s",
     }, switch_maps
     assert {v for k, v in seeded_integrators["internal"].items() if k not in switch_maps} == {
         0.0,
@@ -20104,9 +20110,10 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
-    # 27 -> 28 with ECLSS's `suit_fan`; 28 -> 30 with the structure lane: `latches_engaged` and
-    # `docking_talkback`, both computed from the latch positions on the sentinel.
-    assert len(values["internal"]) == 30, sorted(values["internal"])
+    # 27 -> 28 with ECLSS's `suit_fan`; 28 -> 32 with the structure lane: `latches_engaged` and
+    # `docking_talkback`, both computed from the latch positions on the sentinel, and the arm
+    # token's `arm_state` and `arm_age_s`, seeded since ruled discrete states are.
+    assert len(values["internal"]) == 32, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
