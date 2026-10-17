@@ -702,3 +702,23 @@ def test_a_zone_cooled_by_space_is_in_no_loop_s_load_and_says_why(tmp_path):
     replace(bare / "vehicle.yaml", bay, "        cooled_by: space\n        heat_state: service_bay_heat_w\n")
     out = run_linter(bare).stdout
     assert "is 'space' without a `cooled_by_note`" in out, out[-3000:]
+
+
+def test_a_dark_reads_state_is_named_and_blamed(world):
+    """The GNC lane's ask: an edge whose `reads:` state is dark this tick names that state.
+
+    The gap used to say the driver "was never declared" beside the `reads:` that declares it, and
+    its `needs` named the node, so `blame` filed the stock under itself instead of the dark state.
+    """
+    edge = next(e for e in world.edges if e.id == "E-REC-GND")
+    with pytest.raises(plant.Unconfigured) as caught:
+        plant.stock_flux(world, edge, {}, 0.02)
+    assert "reads `playback_rate` (this edge's `reads:`), which has no value this tick" in caught.value.what
+    assert "never declared" not in caught.value.what
+    assert caught.value.needs == "playback_rate"
+
+    by_id = {state.id: state for state in world.states}
+    received, rate = by_id["delivered_bits"], by_id["playback_rate"]
+    stock = plant.Gap(state=received, where="w", owed=caught.value.what, needs="playback_rate")
+    upstream = plant.Gap(state=rate, where="w", owed="its rule is owed", needs=None)
+    assert plant.blame(world, [stock, upstream])[received.id] is upstream
