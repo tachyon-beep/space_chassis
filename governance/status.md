@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:28 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 14:29 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -57,8 +57,8 @@ regime rows dropped from E-BUS-GNC, E-BUS-COMM, E-BUS-RCS and E-BUS-INST; comms 
 ascent circuit interrupters wait for the LM power slice; structure holds a placeholder
 `lm_ascent_interrupter`. ECLSS routes each cryo tank's 166.7 W heater and fan to power as a periodic
 load (a confounder): power cannot read `o2_tank_heaters` on node `internal` (`plant.md` §2 sentinel
-rule), so ECLSS moves it onto a coupling node with the node-to-fuel-cell edge on #46, and power then
-adds two 166.7 W gated loads (tank 1 on main A, tank 2 on main B, `chosen` pending a source); the CRYO PRESS caution follows #46. Crew (#54) adds `csm_crew_count` and
+rule), so ECLSS puts it on its own node on #46 (commit 0007, edges E-O2-HTR-BUSA/BUSB, 166.68 W each),
+and power adds, after `main` has it, two 166.7 W gated loads (tank 1 on main A, tank 2 on main B, `chosen` pending a source); the CRYO PRESS caution follows #46. Crew (#54) adds `csm_crew_count` and
 `lm_crew_count`, taking the README census from 152 to 156, so lanes adding states rewrite it from the
 tools on rebase (sprint rule 4). `fleet_class` vocabulary is published (14:15; the project's shared folder,
 `vehicle-status/fault-injection-lane/fleet-class-vocabulary.md`): `precursor | onboard |
@@ -104,6 +104,12 @@ Answered by the coordinator under D33 at 13:50 (D35), each the lane's recommende
 | ECLSS: `o2_supply_pressure_psi` | resolved from sources on #46 (`57c5db3`); six source choices recorded at the end of `sources/eclss.md` in the project's shared folder | #46 |
 | propulsion: in-burn monitors | leave `start_burn`'s admission list, become mainstage-gated monitors; pressurant from sources, 186 psia design value if primaries disagree | #50 |
 
+## Unowned debt
+
+| debt | why deferred | candidate owner |
+|---|---|---|
+| `vehicle.yaml` `consumables.metabolic` uses the NR-glossary 0.91/0.91 kg per man-day; the AOH Block I table gives CO2 2.12, O2 1.84 and water vapour 4.0 lb per man-day. Moving shifts CO2 by ~5 % and cascades through derived nominals | adds no decision (D37, D40) | whoever owns `consumables.metabolic`: the avionics lane or a cleanup pass |
+
 ## Fidelity ledger
 
 "Preference more fidelity where it doesn't start creating significant delivery risk" (D34, D31). Added fidelity must add an interesting option for a scenario, behaviour, decision or challenge,
@@ -123,7 +129,7 @@ to the coordinator; *not reported* means the lane has not said yet.
 | RCS geometry (#44) | per-jet SM, LM and CM geometry from primary sources (CM from the rendered Data Book pages), linter-checked; the CM engine its own article (D43) | not reported | minimum impulse bit owed |
 | fault injection (#47) | onset as a step change on the moved state, same tick | not reported | a ramp is a domain rule's job, not the plant's |
 | structure (#51) | two tunnel hatches (CM forward, LM overhead) in `hatch_state`, so the ring seal matters only with a tunnel hatch open; undocking fires no pyro (CSM News Reference p. 88); staging also fires two ascent circuit interrupters (Grumman study guide p. 93); latches, hatch and pyro as discrete devices; after #47: `pyro_health` fail-to-fire, descent stage separates only when all five staging devices fire, jettison only when the ring charge fires, `leak_sources_g_s` summed by the leak rule | **decision** (close the tunnel before latch release) and **confounder** (tunnel versus cabin leak) | latches move instantly to the drive (1 s dwell only; actuation time unsourced); the `one` scope is recorded and acts on nothing (re-cocking a failed latch unsourced); leak with an unlatched hatch or unseated ring above 0.5 psid is a named gap (aperture, seal, tunnel volume unsourced); configuration states still flip on the event until #47; `hatch_open_with_pressure` unevaluable (prose `gated_by`) |
-| ECLSS (#46, 21 of 25 ready; CO2 edges written against #54) | cabin leak per gas (bulk-flow shares); `set_o2_source` partly guarded through a general two-argument interlock condition (ADR 0004 amended; lane 7 can use it for its two verbs); suit loop on its compressor at 35 cfm, switched by `set_suit_fan`; O2 supply pressure on the Apollo heater relay (on 865 / off 935 psia, rate from the AOH p. 2.6-13 repressurization table; the Apollo 11-dated AOH chosen over the Apollo 13 Review Board's 950 psia caution and 983 psig relief); crew-count CO2 edges derive from `co2_kg_per_crew_day` (held as a patch in the project's shared folder, `vehicle-status/eclss-lane/held/`, applied once #54 is on `main`); next after CRYO PRESS: CO2 removal as a rule (suit-loop flow × concentration × spent-absorber efficiency) | **signal**: the heater-cycle sawtooth changes shape with quantity, and a pressure that will not hold is the Apollo 13 signature; CO2 removal is also a **signal**, and fixes constant crew-nominal removal draining the empty LM's CO2 at MET 0 | cabin H2O waits on crew production (D-06), like CO2, since a removal-only vapour stock would dry the cabin; crew O2 uptake waits on `crew_state`, so cabin O2 still rises by the metabolic term; humidity waits on a sourced condensing heat exchanger rate |
+| ECLSS (#46, 21 of 25 ready; CO2 edges written against #54) | cabin leak per gas (bulk-flow shares); `set_o2_source` partly guarded through a general two-argument interlock condition (ADR 0004 amended; lane 7 can use it for its two verbs); suit loop on its compressor at 35 cfm, switched by `set_suit_fan`; O2 supply pressure on the Apollo heater relay (on 865 / off 935 psia, rate from the AOH p. 2.6-13 repressurization table; the Apollo 11-dated AOH chosen over the Apollo 13 Review Board's 950 psia caution and 983 psig relief); crew-count CO2 edges derive from `co2_kg_per_crew_day` (held as a patch in the project's shared folder, `vehicle-status/eclss-lane/held/`, applied once #54 is on `main`); next after CRYO PRESS: CO2 removal as a rule (suit-loop flow × concentration × spent-absorber efficiency); the ~12 h LiOH canister change (`crew.md` 64, 82–101) goes into the CO2 removal piece as a crew event | **signal**: the heater-cycle sawtooth changes shape with quantity, and a pressure that will not hold is the Apollo 13 signature; CO2 removal is also a **signal**, and fixes constant crew-nominal removal draining the empty LM's CO2 at MET 0 | cabin H2O waits on crew production (D-06), like CO2, since a removal-only vapour stock would dry the cabin; crew O2 uptake waits on `crew_state`, so cabin O2 still rises by the metabolic term; humidity waits on a sourced condensing heat exchanger rate, then uses 4.0 lb per man-day vapour |
 | unpin (#45) | — (test figures, no model) | — | — |
 | crew (#54) | per-cabin crew count; location as a rule; the crew day as sourced activities; sleep at 0.7 of awake metabolism and meal water in the three meal hours (both *chosen*, D44) | **event/noise**: meals as water draws the team must tell from a leak (D40); the potable-water heater's 45 W sleep switch-off (FP11 pp. 3-11, 3-16) is a **confounder** for PWR-02, routed to power and gated on `crew_activity`; asking the crew as a **decision** | surface rest schedule owed, not invented |
 | GNC + RCS | attitude as pointing modes: a rate-limited slew law behind `set_attitude_target` (D38) | not reported | 6-DOF deferred; it would replace only the law |
