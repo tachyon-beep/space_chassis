@@ -658,7 +658,12 @@ state:
         the table is linear between rows and held at its ends, so below 5% (where the AOH says
         operation is continuous) the 5% row stands; the draw is the fuel cells' and the cabin supply's,
         the two oxygen flows this vehicle has; the pressure is held at the relief valve's 983 psia
-        crack because venting is not modelled. A stroke lasts minutes and a tick is 20 ms, so the
+        crack because venting is not modelled. **Sources that disagree, and why these figures:** Bouman
+        (MSC-04312 p. 2) gives relief at 973 psig and the switch in psig, and the Apollo 13 Review
+        Board (June 1970) gives a 975 psia high caution for CSM-109; the AOH is dated to Apollo 11's
+        flight (change of 16 July 1969) and is the Block II handbook the crew flew with, so its 983
+        psig crack and psia band stand. In vacuum a gauge vented to ambient reads absolute, so psia
+        and psig are one figure here. A stroke lasts minutes and a tick is 20 ms, so the
         explicit step is well inside its own resolution. Forester (MSC-04312 p. 65) reads Apollo 12
         and 14 strokes as "about four minutes long", which is the table's top row
   # The suit compressor's switch, which `set_suit_fan` moves. The verb existed and moved nothing, so a
