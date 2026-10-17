@@ -27897,7 +27897,7 @@ def test_a_map_states_return_guard_does_not_depend_on_the_order_of_its_keys(tmp_
     executive = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
     executive.attach("alpha")
     panel = next(state for state, _on, _off in console.command_dwell(world, "set_breaker"))
-    monkeypatch.setattr(console, "command_dwell", lambda _world, verb: [(panel, 0.0, 5.0)] if verb == "set_breaker" else [])
+    monkeypatch.setattr(console, "command_dwell", lambda _world, verb, _arguments=None: [(panel, 0.0, 5.0)] if verb == "set_breaker" else [])
     left = {"zeta": "closed", "alpha": "open"}
     now = {"zeta": "open", "alpha": "open"}
     before = {**executive.truth, "internal": {**executive.truth["internal"], panel.id: left}}
