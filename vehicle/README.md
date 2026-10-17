@@ -18423,6 +18423,11 @@ changed: **272 debts at that round**, **194 literal unset scalars**, and **52** 
 The vehicle
 referee grows from **342 to 343 tests**.
 
+That check has since been retired. It pinned one evidence state, LM-5 effectivity and both bay
+values owed, and the thermal lane is replacing that state: the service bay and the LM descent stage
+radiate to space, and the modelled LM is LM-7. A pin on the old audit would refuse the correction.
+Any bay value still `UNCONFIGURED` is counted by the debt walk, as every other owed scalar is.
+
 ## The docked LM station axis was reversed in the figure
 
 The earlier sections **“The inertia tensor was ‘not reachable’”**, **“Three more tables”** and
