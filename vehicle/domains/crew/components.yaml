@@ -514,6 +514,22 @@ state:
       source: domains/crew/components.yaml:state.crew_scheduled.initial
     moved_by:
       - "logic:resting while the person's activity is sleep, on suit while they are on the surface, available otherwise; incapacitated holds once a fault has made it so"
+      - "fault:CRW-01-incapacitation-commander"
+      - "fault:CRW-01-incapacitation-lm-pilot"
+      - "fault:CRW-01-incapacitation-csm-pilot"
+    fault_value:
+      - fault: CRW-01-incapacitation-commander
+        key: commander
+        becomes: incapacitated
+        provenance: {basis: apollo, ref: "apollo_diode.md:226", note: "the fourth silence: the person stops answering, and the rule holds it"}
+      - fault: CRW-01-incapacitation-lm-pilot
+        key: lm_pilot
+        becomes: incapacitated
+        provenance: {basis: apollo, ref: "apollo_diode.md:226", note: "as the commander's"}
+      - fault: CRW-01-incapacitation-csm-pilot
+        key: csm_pilot
+        becomes: incapacitated
+        provenance: {basis: apollo, ref: "apollo_diode.md:226", note: "as the commander's"}
     dwell:
       min_on_s: 60
       min_off_s: 60
@@ -526,8 +542,8 @@ state:
         the minimum that lets a question go unanswered for a reason: a crew member who is
         resting, on suit, or incapacitated are three different silences. **The rule is
         `domains/crew/rules.py:crew_availability`**, and `incapacitated` is the one value it never
-        writes: what puts a person there is CRW-01, whose onset names a person, and which person is
-        a scenario's choice rather than this file's (`open_debts`).
+        writes: what puts a person there is CRW-01's onset (`fault_value`), one fault per person, so
+        which person stops answering is the scenario's choice.
   - id: csm_crew_count
     node: crew_state
     method: algebraic
@@ -1028,6 +1044,5 @@ open_debts:
 # omitted", so the rule may not grow a model of a person.
   - "**What moves the crew is declared now, and three of the egress rule's gates are not reachable from it.** `crew_location` is a rule (`domains/crew/rules.py`): a person is where `ask_crew` last sent them while the station is reachable in `structure.configuration`, and in their own seat in the vehicle the configuration puts them in otherwise. The shape the earlier debt fixed — egress gated on the phase being `surface`, the hatch open and the suit loop running; ingress on the hatch closing — is only half reachable: a rule reads its snapshot, and the phase is in no state, while `hatch_state` and `suit_loop_flow_cfm` are on the structure and ECLSS sentinels, which no other domain's rule can read. So `surface_eva` is reachable from the LM whenever it is `undocked`, in orbit as well as on the surface, and the hatch and the suit are the structure and ECLSS lanes' to enforce on their own side. What closes it: the hatch position and the suit-loop flow on coupling nodes the crew can declare in `reads:`, and the mission phase as a state."
   - "**The surface has no flight plan rows.** `crew_scheduled.flight_plan` carries the Apollo 11 plan's translunar, lunar-orbit and transearth eat and rest periods; the plan's surface stay has \"two 4 to 5 hour sleep periods while the LM is on the lunar surface\" (FP11 printed p1-13), and their GETs, and the CM pilot's matching rest in orbit (MR11: \"timed to coincide with that of the lunar module crew so that radio silence could be observed\"), are not extracted. Until they are, the crew work through the descent, the surface and the ascent. What closes it: the FP11 detailed timeline pages for GET ~100-130, anchored to `descent`, `surface` and `ascent_rendezvous`."
-  - "**CRW-01 has no onset, because its onset names a person.** `crew_availability` holds `incapacitated` once written and its rule never writes it, so the fault is the only way there; an onset row with `becomes: incapacitated` needs a `key`, and which crew member a scenario incapacitates is the scenario's choice. What closes it: an onset row per crew id (three faults, or a fault the scheduler parameterises by person)."
   - "**The workload reads the flight plan and the questions, and not the alarms.** `crew_workload_index` is a five-minute lag on each person's demand (asleep, at work, or kept busy by a question for `crew_busy_s`), which is the separation between a busy crew member and an incapacitated one that CRW-01's `false_positive_risk` asks for. An alert storm (CRW-06) is the other thing that makes a crew busy, and `alert_lifecycle` has no rule yet, so a panel full of active cautions leaves the workload where the schedule put it. What closes it: the lifecycle's rule, then `busy` demand for a person while an alert at their station is `active_unacknowledged`. The demand levels and the 120 s a question occupies are `chosen`."
   - "Crew physiology is out of scope by design (`apollo_diode.md:754`: metabolic rates are an input, not a model of a person). `incapacitated` is therefore a state with a cause the vehicle does not model."

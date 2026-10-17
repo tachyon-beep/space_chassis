@@ -380,3 +380,29 @@ def test_ask_crew_makes_the_person_it_names_busy_through_the_plant(world, tmp_pa
     busy = trace[-1]["crew_busy_s"]
     assert busy["commander"] == 0.0 and busy["lm_pilot"] == 0.0
     assert 119.0 < busy["csm_pilot"] < 120.0
+
+
+@pytest.mark.parametrize(
+    ("fault", "person"),
+    [
+        ("CRW-01-incapacitation-commander", "commander"),
+        ("CRW-01-incapacitation-lm-pilot", "lm_pilot"),
+        ("CRW-01-incapacitation-csm-pilot", "csm_pilot"),
+    ],
+)
+def test_an_incapacitation_takes_out_the_one_person_it_names_and_the_rule_holds_it(world, fault, person):
+    values = plant.initial_values(world)
+    dt = plant.tick_seconds(world)
+    values = plant.step(world, values, dt, faults=[plant.FaultOnset(offset_us=0, fault=fault)])
+    for _ in range(3):
+        values = plant.step(world, values, dt, [])
+    available = plant.state_level(values, state(world, "crew_availability"))
+    assert available[person] == "incapacitated"
+    assert {p: s for p, s in available.items() if p != person} == dict.fromkeys(set(PEOPLE) - {person}, "available")
+
+
+def test_the_three_incapacitations_keep_the_vehicle_s_chance_that_somebody_stops_answering(world):
+    policy = yaml.safe_load((VEHICLE / "domains" / "crew" / "fault_policy.yaml").read_text())
+    split = [f["seeding"]["on_demand_p"] for f in policy["faults"] if f["id"].startswith("CRW-01-")]
+    assert len(split) == 3
+    assert sum(split) == pytest.approx(2.0e-4, rel=1e-3)

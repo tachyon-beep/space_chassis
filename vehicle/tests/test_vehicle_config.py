@@ -1708,7 +1708,8 @@ def test_the_linter_links_every_failure_chain_to_a_fault(tmp_path):
     for path in sorted((VEHICLE / "domains").glob("*/fault_policy.yaml")):
         for fault in (yaml.safe_load(path.read_text()) or {}).get("faults") or []:
             faults[str(fault["id"])] = [str(p) for p in fault.get("perturbs") or []]
-    assert len(faults) == 128, len(faults)
+    # 128 -> 130 with the crew lane: CRW-01 is one fault per person, so its onset can name who.
+    assert len(faults) == 130, len(faults)
     for chain in chains:
         realised = chain["realised_by"]
         assert realised, chain["id"]

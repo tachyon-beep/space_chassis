@@ -221,7 +221,7 @@ ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.m
 pricing is now derived from a phase list rather than assumed.
 
 **All eleven domains have landed** — 148 channels, 165 states over 61 scheduled nodes, 142
-thresholds, 59 verbs and 128 classified events across the eleven directories, with every debt
+thresholds, 59 verbs and 130 classified events across the eleven directories, with every debt
 named. Those are the corpus's declarations, and the linter holds each of them against the files
 (`check_readme_figures`); they move when a domain adds a channel, a state or a verb, not when one
 closes.
@@ -423,7 +423,7 @@ wrench through `B = [Fᵢdᵢ ; rᵢ × Fᵢdᵢ]`, so what that edge needs is f
 lever arms plus the inertia tensor — one artifact, and the same one `E-RCS-DYN` is waiting on.
 
 `domains/crew/` is the one that decides what the experiment actually
-measures. It carries no physics at all: 20 states, 10 points, 9 thresholds, 4 verbs, 7 faults.
+measures. It carries no physics at all: 20 states, 10 points, 9 thresholds, 4 verbs, 9 faults.
 What it carries is the **display contract** — the third argument of
 `review-findings.md` #4's perception function, `(full_truth, crew_position, display_contract) →
 perceivable_subset`, which the design claimed `crew_diode.md` supplied and which that document
