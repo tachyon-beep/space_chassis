@@ -82,7 +82,7 @@ spacecraft:
 # --------------------------------------------------------------------------------------
 conventions:
   # `units: SI` was the only one of the six that a reader could hold the corpus to, and it was
-  # **false**: the registry publishes `psia`, `mmHg`, `ft3/min`, `degC` and seven more, deliberately,
+  # **false**: the registry publishes `psia`, `mmHg`, `ft3/min`, `degC` and six more, deliberately,
   # because `channels.yaml`'s header says the apollo rows are the catalogue "verbatim — identifiers,
   # units, ranges, precisions and rates included". The claim is now the claim the corpus can keep,
   # and the exceptions are part of it rather than an escape from it: `check_conventions` refuses a
@@ -103,7 +103,6 @@ conventions:
     ft3/min: "the suit loop's flow is published in cubic feet per minute and no source states it any other way"
     L/min: "the coolant loops' flows are published in litres per minute; the loop relations convert to kg/s with the fluid density declared beside them"
     Wh: "battery energy is published in watt-hours and the load budget states it that way; `battery_charge_j` converts once, with `initial_factor: 3600`"
-    rpm: "pump speed is published in revolutions per minute and no source gives rad/s"
     g: >-
       standard gravity, not grams — and the symbol collides, which is why it is declared rather
       than assumed: `structure.accel_xyz_g` is an acceleration in g, while `g/s` on the two
