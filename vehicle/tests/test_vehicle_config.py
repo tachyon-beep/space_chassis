@@ -3358,6 +3358,33 @@ def test_the_linter_holds_a_domain_s_declared_reads(tmp_path):
     assert int(delayed) == listed(delayed_list), owed
     assert int(total) == int(back) + int(one_way), owed
     assert "thermal->load_shed_state" in owed, owed
+    # The corpus figures check only that the message agrees with itself, so the classification is
+    # held on a graph whose answer is known: `alpha` reads three of `beta`'s nodes, one closed by an
+    # edge from a node alpha writes that no cycle names (feedback), one nothing carries (one-way),
+    # and one closed by a named back-edge (declared). A rule that sorted every read one way, which
+    # the corpus half would let through, puts a trail in the wrong list here.
+    known = {
+        "coupling.yaml": {
+            "edges": [
+                {"id": "E-LOOP", "from": "a1", "to": "b1"},
+                {"id": "E-BACK", "from": "a1", "to": "b3"},
+            ],
+            "cycles": [{"back_edge": "E-BACK"}],
+        },
+        "domains/alpha/components.yaml": {"writes": ["a1"], "reads": ["b1", "b2", "b3"]},
+        "domains/beta/components.yaml": {"writes": ["b1", "b2", "b3"], "reads": ["a1"]},
+    }
+    sorted_out = linter.Report()
+    linter.check_domain_reads(known, sorted_out)
+    assert sorted_out.refusals == [], sorted_out.refusals
+    assert len(sorted_out.debts) == 1, sorted_out.debts
+    assert re.search(
+        r"declares 2 cross-domain reads .*? — 1 of them return into a node the reading domain "
+        r"writes \(alpha->b1\).*?and 1 are one-way dependencies the graph does not contain at all "
+        r"\(alpha->b2\)\. 1 more are the delayed half of a loop `coupling.yaml#cycles` does name "
+        r"\(alpha->b3\)",
+        sorted_out.debts[0],
+    ), sorted_out.debts[0]
 
     # And the refusal fires when a declaration loses a node an edge carries.
     definition = copy_definition(tmp_path / "domainreads")
