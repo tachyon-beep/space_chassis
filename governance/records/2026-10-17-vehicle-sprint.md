@@ -196,3 +196,5 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 15:26 Merge order becomes #46 → #58 → #47 → the rest. Lane 0's draft #58 (`11c8a95`) unpins the census figures #45 kept on purpose, judging that keeping them pinned was the wrong call for a parallel sprint.
 - 15:26 ECLSS sources LiOH CO2 removal (`sources/eclss-co2.md`) and finds two repo ratings wrong (LM secondary cartridge, CSM element count); D53 gives ECLSS the removal stock, absorber counters, vent state and `set_overboard_dump`.
 - 15:31 GNC + RCS (lane's call, coordinator agrees): the CM RCS becomes a separate stock isolated in coast, as flown; the slew law allocates SM quads only, which removes the ~2 % CM pricing error in E-RCSP-RCS. Lands on #56 after #44.
+- 16:10 Governance #57 merged as `6814102` (D45–D51) on a green `required`, seconds before D54 reached this thread; its review follows the merge.
+- 16:10 D54: every PR that leaves draft gets an independent Fable review report for John (`vehicle-status/reviews/pr-<N>.md`); merges need green plus a non-blocking verdict.
