@@ -87,7 +87,7 @@ flag.
 It needs `PyYAML`. It is deliberately *not* wired into the operator-side services, which are
 standard library only.
 
-Current state: **composes, with 265 declared debts.** A debt is reported and is fatal under
+Current state: **composes, with 261 declared debts.** A debt is reported and is fatal under
 `--strict`; a refusal is fatal always. The linter refuses a build, it does not warn:
 
 **The direction of travel, because the headline alone reads the wrong way.** The count went
@@ -219,10 +219,10 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 159 states over 63 scheduled nodes, 142
-thresholds, 59 verbs and 128 classified events across the eleven directories, with 265 declared debts
-and every one of them named. **131 of the 159 states are fully configured and 28 carry a debt**, and
-a real tick advances **84** of the 159 states, and the build order's **84** ready are that same set
+**All eleven domains have landed** — 148 channels, 160 states over 63 scheduled nodes, 142
+thresholds, 59 verbs and 128 classified events across the eleven directories, with 261 declared debts
+and every one of them named. **133 of the 160 states are fully configured and 27 carry a debt**, and
+a real tick advances **86** of the 160 states, and the build order's **86** ready are that same set
 — the second of those figures is the objective's own second completion criterion, and both
 are read out of `tools/plant.py`'s output by `test_the_readme_status_matches_the_tools`. Since round
 58 the first line of `--build-order` *is* a tick's own gap list rather than a second opinion about
@@ -235,12 +235,12 @@ recurring finding arriving at its own status section. That completes the design'
 asks for the dictionary and linter, then a spike on electrical, thermal and consumables) and goes
 well past it: what remains is not a domain but the **plant**, and the debts are its shopping list.
 
-Two counts, and the difference is deliberate. The **265** is every obligation the linter can name:
-**183** literal `UNCONFIGURED` scalars and **82** prose obligations in `open_debts` and edge records.
-The plant independently reports **182** literal unset scalars, matching that subtotal but for one:
+Two counts, and the difference is deliberate. The **261** is every obligation the linter can name:
+**181** literal `UNCONFIGURED` scalars and **80** prose obligations in `open_debts` and edge records.
+The plant independently reports **180** literal unset scalars, matching that subtotal but for one:
 `tx_power_high` (ADR 0004 operator item 2) has its `assert` now and owes only its `clear`. The linter
-reported the unset pair as one missing limit and reports the lone `clear` as one, so its 265 did not
-move; the plant counts literal fields, so its figure fell by one. The linter also names the **82**
+reported the unset pair as one missing limit and reports the lone `clear` as one, so its 261 did not
+move; the plant counts literal fields, so its figure fell by one. The linter also names the **80**
 prose obligations. Graph sensitivities are reported against their owning
 edges rather than added a second time. Until round 46 the scalar subtotal was
 itself incomplete: the domain files were walked for unset values by `check_domain` and the coupling
@@ -302,7 +302,7 @@ are the vehicle's only two-step verbs (C-16: a burn is interruptible, so requiri
 one adds a delay rather than a safety).
 
 `domains/eclss/` is the one where a fault has minutes rather than hours.
-It declares 24 states, 20 thresholds, 6 verbs, 21 faults — four conserved gases in each of
+It declares 25 states, 20 thresholds, 6 verbs, 21 faults — four conserved gases in each of
 **two** compartments. Three things in it are worth reading:
 
 - **The atmosphere is modelled as gas masses, not as a pressure.** Pressure is `nRT/V`, so a
@@ -1632,7 +1632,7 @@ The reference plant's `advance()` implements two of `plant.md` §3's seven integ
 this was written, and the split is worth stating plainly: **`algebraic`, `discrete` and `dynamics`
 are rules the configuration deliberately does not carry** — `delay` *is* carried, as a `delay_s` and
 a ring, and the vehicle's one delay state is in *ready now* — and counting them together with the
-states a tick cannot reach because a coupling is missing, so 39 of the 159 states need code.
+states a tick cannot reach because a coupling is missing, so 39 of the 160 states need code.
 (This said *before the plant can walk a whole tick*, which was true when it was written and is not
 now: a tick walks all 139 of them and records what it cannot advance. See *The tick stopped at its
 first debt* below.)
@@ -1829,12 +1829,12 @@ debt and 24 of them are in this bucket — the four that differ are debts a tick
 the distinction between a value nobody has written down and a state nothing can reach.
 
 ```
-159 states, by what blocks them:
+160 states, by what blocks them:
 
-    83   53 %  ready now — the states a real tick advances
-    24   15 %  owes a value — the cheapest to close, and the debt count already tracks them
+    86   54 %  ready now — the states a real tick advances
+    23   14 %  owes a value — the cheapest to close, and the debt count already tracks them
     12    8 %  owes an edge — a coupling with no sensitivity, or a state nothing drives
-    39   25 %  owes a rule — `algebraic`, `discrete`, `dynamics` or `hazard`: domain code
+    39   24 %  owes a rule — `algebraic`, `discrete`, `dynamics` or `hazard`: domain code
 ```
 
 **A quarter of the vehicle still owes a rule, and that is by construction.** `plant.md` §3's four rule classes are

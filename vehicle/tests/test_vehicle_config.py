@@ -11426,7 +11426,7 @@ def test_the_plant_reports_the_build_order():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "152 states, by what blocks them" in result.stdout
+    assert "160 states, by what blocks them" in result.stdout
     for phrase in ("ready now", "owes a value", "owes an edge", "owes a rule"):
         assert phrase in result.stdout, f"{phrase!r} missing from the build order"
 
@@ -11674,7 +11674,7 @@ def test_every_heated_zone_declares_the_state_that_carries_its_heat(tmp_path):
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
     # 268 -> 265: the thermal rules (ADR 0003) and the power and comms rules they merged with.
-    assert "COMPOSES, with 265 declared debt(s)." in intact.stdout
+    assert "COMPOSES, with 261 declared debt(s)." in intact.stdout
     assert "names no heat-rate state" not in intact.stdout
 
     def fixture(name: str, old: str, new: str) -> subprocess.CompletedProcess[str]:
@@ -11770,7 +11770,7 @@ def test_a_loop_s_collected_load_is_the_sum_over_the_zones_that_name_it(tmp_path
     # The note rather than a debt, in the linter's own words, and the count unmoved by it.
     intact = run_linter(VEHICLE)
     assert intact.returncode == 0
-    assert "COMPOSES, with 265 declared debt(s)." in intact.stdout
+    assert "COMPOSES, with 261 declared debt(s)." in intact.stdout
     assert (
         "vehicle.yaml#thermal.loops.loop_secondary.load_state: is not declared, and no zone names "
         "this loop" in intact.stdout
@@ -14754,7 +14754,7 @@ def test_a_threshold_with_no_limit_is_one_debt_not_two():
     ], alone
 
     # And the count is the honest one, not the inflated one.
-    assert "with 265 declared debt(s)" in result.stdout, result.stdout[-400:]
+    assert "with 261 declared debt(s)" in result.stdout, result.stdout[-400:]
 
 
 def test_a_note_that_only_points_at_another_entry_is_refused(tmp_path):
@@ -14931,7 +14931,7 @@ def test_the_debts_view_groups_by_what_each_one_wants():
     # prose obligation in `coupling.yaml#open_debts` for the three bands whose vocabulary is wider
     # than their comparator. The round adds a field to four states; nothing was answered, so nothing
     # fell.
-    assert owed == "265", "the view must agree with the headline count"
+    assert owed == "261", "the view must agree with the headline count"
 
 
 def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
@@ -16888,7 +16888,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         CO2,
         CO2.replace("    precision: 0.1\n", "    precision: 0.05\n"),
-        "COMPOSES, with 265 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
     refusal(
@@ -16896,7 +16896,7 @@ def test_an_instrument_states_what_it_measures_in_the_channels_own_vocabulary(tm
         components,
         PRESSURE,
         PRESSURE.replace("    range: [0, 10]\n", "    range: [4.8, 5.2]\n"),
-        "COMPOSES, with 265 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
 
@@ -17227,7 +17227,7 @@ def test_a_pump_is_one_article_declared_in_two_domains(tmp_path):
         "domains/thermal/components.yaml",
         LM_PUMP,
         LM_PUMP.replace("    rated_w: 200\n", "    rated_w: 210\n"),
-        "COMPOSES, with 265 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
 
@@ -17369,7 +17369,7 @@ def test_a_zones_temperature_state_is_named_rather_than_guessed(tmp_path):
         "vehicle.yaml",
         "        temperature_state: zone_radiator_t\n",
         "        temperature_state: zone_radiator_t\n",
-        "COMPOSES, with 265 declared debt(s)",
+        "COMPOSES, with 261 declared debt(s)",
         composes=True,
     )
 
