@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:30 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 14:30 UTC**, `tachyon-beep/space_chassis` `main` @ `e90d9f1`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
