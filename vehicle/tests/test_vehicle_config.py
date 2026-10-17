@@ -3359,9 +3359,10 @@ def test_the_linter_holds_a_domain_s_declared_reads(tmp_path):
     definition = copy_definition(tmp_path / "domainreads")
     path = definition / "domains" / "power" / "components.yaml"
     text = path.read_text()
-    old = "reads: [o2_csm, h2_csm, coldplate_t, link, command_executive]"
-    assert old in text, "the fixture no longer matches the power domain's reads"
-    path.write_text(text.replace(old, "reads: [o2_csm, h2_csm, link, command_executive]", 1))
+    # Power's declaration, found by its form rather than quoted whole (lane 0's follow-up): every
+    # lane that gives power a read edited the quoted list.
+    old = live_text(text, r"(?m)^reads: \[[^\]]*\bcoldplate_t, [^\]]*\]")
+    path.write_text(text.replace(old, old.replace("coldplate_t, ", ""), 1))
     out = run_linter(definition).stdout
     assert "does not declare 'coldplate_t'" in out, out[-1200:]
 
