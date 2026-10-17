@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 20:26 UTC**, `tachyon-beep/space_chassis` `main` @ `4f969aa`. Kept by the
+As of **2026-10-17 21:25 UTC**, `tachyon-beep/space_chassis` `main` @ `f4d576a`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -11,7 +11,7 @@ the sprint's rules and history are in
 
 | | where | checked |
 |---|---|---|
-| `main` | `4f969aa` (#61, the aurora diode-probe deflake); since 2026-10-15: #2–#9, #35–#38, #40 tranche 2 (`54257b7`), #41 recovery fix (`c1b244d`), #42, then the sprint's #45 and #46, governance #52, #53, #55, #57, #59, #60, #62 (`e18e022`) and #61 | `git log --first-parent origin/main` |
+| `main` | `f4d576a` (governance #63); since 2026-10-15: #2–#9, #35–#38, #40 tranche 2 (`54257b7`), #41 recovery fix (`c1b244d`), #42, then the sprint's #45 and #46, governance #52, #53, #55, #57, #59, #60, #62 (`e18e022`), #61 and #63 (`f4d576a`) | `git log --first-parent origin/main` |
 | vehicle | 160 states, **86 ready**, 23 owe a value, 12 an edge, 39 a rule; **261** declared debts (152 / 74 / 265 before #46); a trial merge of nine sprint PRs measured 124 of 179 ready ([vehicle status report](https://claude.ai/code/artifact/d86a2e9b-4b1c-4be4-907e-ff5c8e65defe)) | `vehicle/tools/plant.py --build-order`; `check_vehicle.py` on `9a0430a` |
 | quiet-coast episode | accepted after #40 (policies A/B full success, C partial, D physical loss; restart at tick 60,000 reproduces every hash). A milestone, not a record: lanes may move its numbers (D29) | PR #40 |
 | CI | `required` rolls up lint, the aurora suite, the vehicle check on 3.12 and 3.13 (~50 min each), readiness and the quiet-coast episode jobs (hours); vehicle jobs skip when a change cannot touch `vehicle/` | `.github/workflows/ci.yml` |
@@ -171,4 +171,4 @@ Nothing in the sprint changes for it.
 - 2026-10-15: three-stream restructure (#2); governance review; D1–D23.
 - 2026-10-17: tranche 2 (#40) accepted the quiet-coast episode; #41 and #42 merged; the vehicle
   sprint opened (D24–D31, [`records/2026-10-17-vehicle-sprint.md`](records/2026-10-17-vehicle-sprint.md));
-  governance batches #52, #53, #55, #57, #59, #60, #62 (D24–D56); #46, the first lane, merged.
+  governance batches #52, #53, #55, #57, #59, #60, #62, #63 (D24–D56); #46, the first lane, merged.
