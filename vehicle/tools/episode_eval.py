@@ -111,7 +111,8 @@ def load_episode(
             f"{Path(scenario_path).name}:script",
             "an episode's script is its policy's, not the scenario's",
         )
-    merged = {key: doc[key] for key in ("scenario", "initial", "verbs") if key in doc}
+    # `faults` is the scenario's (WP09): what breaks is the episode's, and the same for every policy.
+    merged = {key: doc[key] for key in ("scenario", "initial", "verbs", "faults") if key in doc}
     merged["script"] = list(policy.get("commands") or [])
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / Path(scenario_path).name

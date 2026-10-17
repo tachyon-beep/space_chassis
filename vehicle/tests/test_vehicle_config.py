@@ -961,9 +961,11 @@ def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
     assert not offenders, offenders
 
     # And the three that were filed that way are their own roots now, in the edge bucket, because
-    # the thing to fix is which state their edge advances.
+    # the thing to fix is which state their edge advances. Two since the crew lane: the potable
+    # tank's edge names `csm_water_draw_crew`, so the tank advances and owes nothing.
+    assert "water_potable_kg" not in {gap.state.id for gap in gaps}
     buckets = plant.build_order(world)
-    for sid in ("csm_cabin_co2_kg", "lm_cabin_co2_kg", "water_potable_kg"):
+    for sid in ("csm_cabin_co2_kg", "lm_cabin_co2_kg"):
         assert blamed[sid].state.id == sid, (sid, blamed[sid].state.id)
         assert next(s for s in world.states if s.id == sid) in buckets["edge"], sid
         # The refusal that would have misled names the shared node, so the reader can see that the
@@ -978,7 +980,7 @@ def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
     # to do with the guard: `csm_cabin_co2_kg`'s *own* node, `cabin_atm`, carries five states, and a
     # state is allowed to live on a crowded node. What the guard is about is the node it declined to
     # *follow into*.
-    for sid in ("csm_cabin_co2_kg", "water_potable_kg"):
+    for sid in ("csm_cabin_co2_kg", "lm_cabin_co2_kg"):
         gap = next(g for g in gaps if g.state.id == sid)
         assert blamed[sid].state.id == sid
         assert blamed[sid].state.node != gap.needs, (sid, gap.needs)
@@ -3880,6 +3882,40 @@ def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
         ],
         ["without a `pattern_note`"],
     )
+    # A measured pair: both figures published, held to the bound rather than to equality. The
+    # high-gain antenna's own pair sits on the ideal product, so declared measured on its
+    # `historical` basis it raises nothing; a beam wider than the ideal for its gain is impossible
+    # either way, and the claim on another basis is refused.
+    measured = "      pattern: measured\n      gain_db: 26.7\n"
+    definition = copy_definition(tmp_path / "measured")
+    for rel, old, new in [
+        ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
+        (dom, "    pattern: aperture\n    gain_db: 26.7\n", "    pattern: measured\n    gain_db: 26.7\n"),
+    ]:
+        path = definition / rel
+        path.write_text(path.read_text().replace(old, new, 1))
+    out = run_linter(definition).stdout
+    assert not [line for line in out.splitlines() if line.startswith("vehicle.yaml:comms.antennas.high_gain")], out[-1500:]
+    refusal(
+        "measured_wide",
+        [
+            ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
+            ("vehicle.yaml", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 18.7}", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 20.0}"),
+            ("vehicle.yaml", "    - id: omni_a\n      pattern: near_isotropic\n", "    - id: omni_a\n      pattern: measured\n"),
+        ],
+        [
+            "declares 20.7 dB with a 20.0-degree beamwidth, wider than the",
+            "declares 2 dB with a 180-degree beamwidth, wider than the",
+        ],
+    )
+    refusal(
+        "measured_unsourced",
+        [
+            ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
+            ("vehicle.yaml", "        basis: historical\n        source: \"NR ch.18: four", "        basis: chosen\n        source: \"NR ch.18: four"),
+        ],
+        ["declares its pattern measured on a 'chosen' provenance"],
+    )
     # One gap, one refusal: the missing declaration above is one fact about the antenna, and the
     # high-gain entry has four pairs it governs.
     definition = copy_definition(tmp_path / "once")
@@ -6633,11 +6669,12 @@ def test_an_edge_reading_a_node_that_publishes_no_value_is_a_counted_debt():
     # were about the wrong end) and then found that the crowding predicate itself was the wrong one —
     # so three edges that had never been asked about are counted now. A count that falls to zero and
     # comes back is the honest shape here: the zero was a check that had stopped looking.
-    assert len(debts) == 3, debts
+    # **3 -> 2 with the crew lane**: `E-CREW-WATER` reads `csm_water_draw_crew`. The two cabins' CO2
+    # edges are ECLSS's to name, and the crew node now has the counts they would read.
+    assert len(debts) == 2, debts
     assert {line.split("edge ")[1].split(":")[0] for line in debts} == {
         "E-CREW-ATM",
         "E-LM-CREW-ATM",
-        "E-CREW-WATER",
     }, debts
     # **And the count does not move with the corpus's other debts**, which is what makes it a family
     # rather than an accident: the same eleven edges are the ones whose source node carries more than
@@ -6687,12 +6724,14 @@ def test_an_edge_reading_a_node_that_publishes_no_value_is_a_counted_debt():
     # actual) and `structure_config` (none, four) looked uncrowded. The three crew edges were
     # therefore reported nowhere, which is how three rounds came to call them "spoken for by their
     # targets' blockers".
-    assert len(named) == 3, sorted(named)
-    assert named == {"E-CREW-ATM", "E-LM-CREW-ATM", "E-CREW-WATER"}, sorted(named)
+    # 3 -> 2 with the crew lane: `E-CREW-WATER` declares `reads: csm_water_draw_crew` and left the
+    # family; the two CO2 edges wait on ECLSS's `reads:` lines.
+    assert len(named) == 2, sorted(named)
+    assert named == {"E-CREW-ATM", "E-LM-CREW-ATM"}, sorted(named)
     # And the graph family is larger than the debt family, which is the point: five edges name the
     # state they read and the other four do not, and `E-STRUCT-PLATE` is one of the four for a
     # reason of its own — its states are all `discrete`, so no *value* drives one.
-    declared_reads = {"E-AMP-LOAD", "E-DYN-GNC", "E-DYN-GEOM", "E-LINK-TEL", "E-WATER-RAD"}
+    declared_reads = {"E-AMP-LOAD", "E-DYN-GNC", "E-DYN-GEOM", "E-LINK-TEL", "E-WATER-RAD", "E-CREW-WATER"}
     assert declared_reads <= from_graph, sorted(from_graph)
     assert declared_reads & named == set(), sorted(declared_reads & named)
 
@@ -8118,12 +8157,14 @@ def test_the_stock_integrator_refuses_a_missing_driver():
     edge = next(e for e in world.edges if e.id == "E-CREW-ATM")
 
     # **A driver that no tick can supply is not a value that is late, and round 57 made the refusal
-    # say which of the two it is.** `crew_state` carries three states, so `state_values` never writes
-    # a node key for it: the flux is unreadable on *every* tick, and the message names the states
-    # rather than the missing number. The single-state case below keeps the other sentence alive.
+    # say which of the two it is.** `crew_state` carries more than one state, so `state_values` never
+    # writes a node key for it: the flux is unreadable on *every* tick, and the message names the
+    # states rather than the missing number. The crowd is the node's own count, read off the world:
+    # the crew lane put twelve states there and named the one the water edge reads, and this edge
+    # waits on ECLSS's `reads:` line. The single-state case below keeps the other sentence alive.
     with pytest.raises(plant.Unconfigured) as caught:
         plant.stock_flux(world, edge, {}, 0.02)
-    assert "which carries 3 states" in caught.value.what
+    assert f"which carries {len(world.states_on('crew_state'))} states" in caught.value.what
     assert "a driver that was never declared" in caught.value.what
 
     single = next(e for e in world.edges if e.id == "E-H2-DRAW")
@@ -8302,10 +8343,14 @@ def test_the_stock_integrator_drains_as_well_as_fills():
     assert edge.sensitivity["unit"] == "kg/h per crew"
 
     # A discharge is driven by the *consumer*, not by the stock: reading the tank's own level and
-    # multiplying by a kg/h-per-crew sensitivity is how this returned zero at every crew count.
+    # multiplying by a kg/h-per-crew sensitivity is how this returned zero at every crew count. The
+    # consumer is a crowded node since the crew lane, so the edge names the state it reads —
+    # `csm_water_draw_crew`, the drinkers weighted by the flight plan's meal and rest periods — and
+    # the value map carries it under that id.
+    assert edge.reads == "csm_water_draw_crew"
     for crew, expected in ((0.0, 0.0), (1.0, 0.094583), (3.0, 0.283749)):
         flux = plant.stock_flux(
-            world, edge, {edge.source: 137.0, edge.target: crew}, 3600.0, driver_node=edge.target
+            world, edge, {edge.source: 137.0, edge.reads: crew}, 3600.0, driver_node=edge.target
         )
         assert flux == pytest.approx(expected, rel=1e-6), f"{crew} crew gave {flux}"
 
@@ -12801,6 +12846,11 @@ def test_every_stock_declares_where_it_starts():
     # starts at 900 because `csm_ecs_study_guide.pdf` p. 12 says so; and a suit loop starts at 35
     # because p. 39 says so. Which is which is the *declaration's* business, and this is the map's.
     assert set(seeded_integrators["internal"]) == {
+        # The crew lane's three records of a question: where a person was sent, whether it woke them,
+        # and how long it keeps them busy.
+        "crew_destination",
+        "crew_roused",
+        "crew_busy_s",
         "bias_accumulator",
         "sensor_bus_errors",
         "frame_loss",
@@ -12856,11 +12906,13 @@ def test_every_stock_declares_where_it_starts():
     # Zero everywhere except the supply tank's pressure, which is the one seeded sentinel value that
     # is not an accumulator's origin — and, from round 67, `auto`, which is not a number at all and
     # is the reason the value assertions below name their states rather than ranging over the map.
-    # The four switch maps are maps, which a set cannot hold, so they are asserted by name below.
+    # The four switch maps are maps, which a set cannot hold, so they are asserted by name below,
+    # and so are the crew lane's three per-person maps.
     switch_maps = {k for k, v in seeded_integrators["internal"].items() if isinstance(v, dict)}
-    assert switch_maps == {"coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan"}, (
-        switch_maps
-    )
+    assert switch_maps == {
+        "coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan",
+        "crew_destination", "crew_roused", "crew_busy_s",
+    }, switch_maps
     assert {v for k, v in seeded_integrators["internal"].items() if k not in switch_maps} == {
         0.0,
         35.0,
@@ -13088,6 +13140,11 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
                 elif kind == "event":
                     events += 1
                     assert name in events_here, (state["id"], name)
+                elif kind == "fault":
+                    # The crew lane's CRW-01, the first `fault:` mover in the corpus: a fault the
+                    # state declares the onset of, so the effect path knows what it becomes.
+                    onsets = {str(r.get("fault")) for r in state.get("fault_value") or []}
+                    assert name in onsets, (state["id"], name)
                 elif kind == "logic":
                     logic += 1
                     assert len(name.strip()) >= 12, (state["id"], mover)
@@ -13106,14 +13163,15 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
     assert states and all((commands, triggers, events, logic)), (
         states, commands, triggers, events, logic,
     )
-    # Two states still owe it, and they are the two the crew debt names.
+    # Two states owed it until the crew lane, and they were the two the crew debt named:
+    # `crew_location` and `crew_availability` are rules now.
     owed = {
         state["id"]
         for path in sorted((VEHICLE / "domains").glob("*/components.yaml"))
         for state in (yaml.safe_load(path.read_text()) or {}).get("state") or []
         if state.get("moved_by") == "UNCONFIGURED"
     }
-    assert owed == {"crew_location", "crew_availability"}, owed
+    assert owed == set(), owed
 
     definition = copy_definition(tmp_path / "movers")
     path = definition / "domains" / "rcs" / "components.yaml"
@@ -15804,8 +15862,13 @@ def test_a_command_value_says_which_argument_carries_the_value():
     # Five quantity states joined the eight mode ones this round, and one keyed state declares
     # nothing but its key. 17 -> 21 with ADR 0003: thermal's `coolant_pump`, `evaporator_feed` and
     # `radiator_bypass` and power's `load_enabled`, each keyed; 22 with ECLSS's `suit_fan`.
-    assert declared == 22, declared
+    # 22 -> 25 with the crew lane: `ask_crew` writes a person's `position` into `crew_destination`,
+    # a constant `true` into `crew_roused` and a constant 120 s into `crew_busy_s`, each keyed by
+    # `crew_id`.
+    assert declared == 25, declared
     assert sorted(constants) == [
+        "crew.crew_busy_s.ask_crew",
+        "crew.crew_roused.ask_crew",
         "rcs.thruster_valve.isolate_rcs_manifold",
         "structure.pyro_fired.execute_event",
     ], constants
@@ -16246,8 +16309,8 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     # `UNCONFIGURED`, which is the honest answer for an input nobody has declared.
     # 14 -> 20 with ADR 0003: `set_coolant_pump`, `set_evaporator_feed`, `set_radiator_bypass`
     # (thermal), `set_load` (power), `set_power_amplifier` and `play_recorder` (comms); 21 with
-    # `set_suit_fan` (ECLSS).
-    assert len(applied) == 21, applied
+    # `set_suit_fan` (ECLSS), and 22 with `ask_crew`, which writes the crew lane's three records.
+    assert len(applied) == 22, applied
     assert "select_antenna" in applied
     # 7 -> 5: `set_coolant_pump` and `set_power_amplifier` stopped owing (ADR 0003): the pump's speed
     # selects `coolant_pump` (thermal) and the amplifier's power selects `transmitter_on` (comms).
@@ -16577,7 +16640,8 @@ def test_a_commanded_state_is_guarded_by_a_dwell_and_the_executive_reads_it(tmp_
     assert commanded, "no discrete state is moved by a command"
     # The one-way state is the first exemption; the four keyed maps are the second.
     assert sorted(s.id for s in commanded if not s.spec.get("dwell")) == [
-        "coolant_pump", "evaporator_feed", "load_enabled", "pyro_fired", "radiator_bypass",
+        "coolant_pump", "crew_busy_s", "crew_roused", "evaporator_feed", "load_enabled",
+        "pyro_fired", "radiator_bypass",
     ]
     assert all(
         s.spec.get("one_way") or str(s.spec.get("unit") or "").startswith("map[")
@@ -19941,11 +20005,20 @@ def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     # not about the tick's total: whatever else the plant learns to advance, a driver in the wrong
     # quantity must stay refused.
     reasons = {g.state.id: (g.where, g.owed) for g in gaps}
-    assert "crew_workload" in reasons and "thrust_main_n" in reasons, sorted(reasons)[:8]
-    assert "coupling.yaml:edge E-CREW-WATER" in reasons["crew_workload"][0], reasons["crew_workload"]
+    # **And `crew_workload` is no longer one of them: it is the first of the two to be advanced, and
+    # by being taken off the integrator rather than by being given an edge.** `E-CREW-WATER` left it
+    # when the edge named `csm_water_draw_crew`, which left a lag with no driver; the crew lane made
+    # the lag a rule's (`crew_workload_index`, five minutes on the crew's demand) and the workload a
+    # band on it, so a drink of water is not the input in any quantity. `thrust_main_n` is the one
+    # this test still holds.
+    assert "thrust_main_n" in reasons, sorted(reasons)[:8]
+    assert "crew_workload" not in reasons and "crew_workload_index" not in reasons, reasons.get(
+        "crew_workload"
+    )
     assert "coupling.yaml:edge E-PROP-ENG" in reasons["thrust_main_n"][0], reasons["thrust_main_n"]
-    for state_id in ("crew_workload", "thrust_main_n"):
-        assert "driver" in reasons[state_id][1] or "quantity" in reasons[state_id][1], reasons[state_id]
+    assert "driver" in reasons["thrust_main_n"][1] or "quantity" in reasons["thrust_main_n"][1], reasons[
+        "thrust_main_n"
+    ]
 
 
 def test_every_domain_that_uses_the_sentinel_declares_the_order_it_advances_in():
@@ -20137,8 +20210,9 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
-    # 27 -> 28 with ECLSS's `suit_fan`.
-    assert len(values["internal"]) == 28, sorted(values["internal"])
+    # 27 -> 28 with ECLSS's `suit_fan`, and 28 -> 31 with the crew lane's `crew_destination`,
+    # `crew_roused` and `crew_busy_s`.
+    assert len(values["internal"]) == 31, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
@@ -20222,7 +20296,7 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
     # And the debt states both figures, because a number in prose with no reader is the next round's
     # finding — this is that reader.
     entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
-    assert "142 published points" in entry and "72 are *derived*" in entry
+    assert "142 published points" in entry and "71 are *derived*" in entry
 
 
 def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
@@ -20275,8 +20349,10 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     ), report)
     counts = _cv.CHANNEL_DERIVATION_COUNTS
     # 64/71 -> 63/72 with the comms quiet-coast model (7b22cd7), which moved the docstring too.
-    assert counts["same"] == 63, counts
-    assert counts["derived"] == 72, counts
+    # 63/72 -> 64/71 with the crew workload: `crew.workload` reads a discrete in its own vocabulary
+    # now, where it read an `enum-level` lag.
+    assert counts["same"] == 64, counts
+    assert counts["derived"] == 71, counts
     assert counts["total"] == 135, counts
     assert not [r for r in report.refusals if "channels read from a state" in r], report.refusals
     doc = _cv.CHANNEL_DERIVATION_FIGURES.search(_cv.inspect.getdoc(_cv.check_channel_derivations) or "")
@@ -20333,10 +20409,12 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     # 63 -> 64 in round 32: `eclss.o2_supply_pressure_psi` moved from the node-sourced set to the
     # state-sourced one, where its unit is its source's. 134 -> 135 in round 61, when the total was
     # given a reader and the sentence it was read from turned out to be the stale copy.
-    assert "only 63 have the state's own unit" in entry
+    # 63 -> 64 and 72 -> 71 with the crew workload, whose channel reads a discrete in its own
+    # vocabulary now.
+    assert "only 64 have the state's own unit" in entry
     assert "of the 135 channels read from a state" in entry
-    assert "The other 72 are *derived*" in entry
-    assert "15 of the 72 now carry an evaluable `derivation`" in entry
+    assert "The other 71 are *derived*" in entry
+    assert "15 of the 71 now carry an evaluable `derivation`" in entry
 
 
 def test_the_frame_publishes_a_derived_channel_at_this_tick_s_own_readings():
@@ -21441,13 +21519,13 @@ def test_the_mechanical_conversions_land_on_the_declarations_that_sized_them():
     # The nine, by the registry's own count of evaluable derivations.
     lint = run_linter(VEHICLE)
     assert lint.returncode == 0, lint.stdout[-900:]
-    assert "15 of the 72 now carry an evaluable `derivation`" in lint.stdout
+    assert "15 of the 71 now carry an evaluable `derivation`" in lint.stdout
     entry = next(
         d
         for d in yaml.safe_load((VEHICLE / "presentation.yaml").read_text())["open_debts"]
         if "frame publishes channel ids now" in d
     )
-    assert "15 of the 72 now carry an evaluable `derivation`" in entry
+    assert "15 of the 71 now carry an evaluable `derivation`" in entry
     assert "0 of the prose rows declare in their own `owed` field" in entry
 
 
@@ -28033,7 +28111,7 @@ def test_a_map_states_return_guard_does_not_depend_on_the_order_of_its_keys(tmp_
     executive = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
     executive.attach("alpha")
     panel = next(state for state, _on, _off in console.command_dwell(world, "set_breaker"))
-    monkeypatch.setattr(console, "command_dwell", lambda _world, verb: [(panel, 0.0, 5.0)] if verb == "set_breaker" else [])
+    monkeypatch.setattr(console, "command_dwell", lambda _world, verb, _arguments=None: [(panel, 0.0, 5.0)] if verb == "set_breaker" else [])
     left = {"zeta": "closed", "alpha": "open"}
     now = {"zeta": "open", "alpha": "open"}
     before = {**executive.truth, "internal": {**executive.truth["internal"], panel.id: left}}
