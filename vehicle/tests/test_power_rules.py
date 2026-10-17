@@ -33,6 +33,8 @@ _COUNTER = itertools.count()
 
 # Every fuel-cell module connected, as at MET 0 (`source_enabled`).
 ALL_ON = {"fc_1": "on", "fc_2": "on", "fc_3": "on"}
+# ... and every module at its published resistance (WP02 E-2).
+HEALTHY = {f"fc_{n}_resistance_ohm": 0.1008 for n in (1, 2, 3)}
 
 # The published per-module terminal line (WP02 E-2) and its envelope, written out by hand.
 E0 = 32.30
@@ -115,10 +117,10 @@ def test_the_rule_parameters_are_the_inventory_and_the_cells_they_copy():
     doc = power_yaml()
     states = {s["id"]: s for s in doc["state"]}
     cells = {c["id"]: c for c in doc["components"] if c.get("class") == "source"}
-    for sid in ("bus_a_v", "bus_b_v", "fuel_cell_current_a"):
+    for sid in ("bus_a_v", "bus_b_v", "fuel_cell_current_a", "fc_1_current_a"):
+        assert states[sid]["resistance_of"] == {c: f"{c}_resistance_ohm" for c in cells}, sid
         for cell in cells.values():
             assert states[sid]["cell_open_circuit_v"] == cell["open_circuit_intercept_v"]
-            assert states[sid]["cell_resistance_ohm"] == cell["source_resistance_ohm"]
             low_w, high_w = cell["normal_power_w"]
             high_v, low_v = cell["terminal_v_at_normal_power"]
             assert states[sid]["cell_current_envelope_a"] == [
@@ -139,12 +141,13 @@ def test_the_rule_parameters_are_the_inventory_and_the_cells_they_copy():
     for sid in ("fuel_cell_current_a", "fc_1_current_a"):
         assert {b["bus"]: b["cells"] for b in states[sid]["buses"]} == feeding, sid
         assert [b["load"] for b in states[sid]["buses"]] == ["bus_a_load_w", "bus_b_load_w"], sid
-    for cell in cells.values():
-        for field, key in (
-            ("cell_open_circuit_v", "open_circuit_intercept_v"),
-            ("cell_resistance_ohm", "source_resistance_ohm"),
-        ):
-            assert states["fc_1_current_a"][field] == cell[key]
+    # Every module starts at its published resistance, and the margin's nominal is that resistance.
+    for cid, cell in cells.items():
+        assert states[f"{cid}_resistance_ohm"]["initial"] == cell["source_resistance_ohm"]
+        assert states["bus_a_rated_w"]["cell_resistance_ohm"] == cell["source_resistance_ohm"]
+    assert states["bus_a_rated_w"]["resistance_of"] == {
+        c: f"{c}_resistance_ohm" for c in feeding["csm_bus_a"]
+    }
     assert (
         states["fc_1_current_a"]["cell_current_envelope_a"]
         == states["bus_a_v"]["cell_current_envelope_a"]
@@ -192,9 +195,9 @@ def test_bus_b_voltage_is_the_cells_terminal_line_at_two_currents(world, module_
     p_hand = v_hand * module_current_a
     rules = rules_module()
     spec = spec_of(world, "bus_b_v")
-    assert rules.bus_b_v({"bus_b_load_w": p_hand, "source_enabled": ALL_ON}, spec, DT) == (
-        pytest.approx(v_hand, abs=1e-9)
-    )
+    assert rules.bus_b_v(
+        {"bus_b_load_w": p_hand, "source_enabled": ALL_ON, **HEALTHY}, spec, DT
+    ) == (pytest.approx(v_hand, abs=1e-9))
     current, volts = rules.solve_bus(p_hand, 1, E0, R, [12.903, 52.593])
     assert (current, volts) == pytest.approx((module_current_a, v_hand), abs=1e-9)
 
@@ -205,7 +208,7 @@ def test_bus_a_voltage_is_two_cells_in_parallel_at_two_currents(world, bus_curre
     v_hand = E0 - R * (bus_current_a / 2)  # 30.788 V at 30 A, 28.268 V at 80 A
     p_hand = v_hand * bus_current_a
     rules = rules_module()
-    inputs = {"bus_a_load_w": p_hand, "source_enabled": ALL_ON}
+    inputs = {"bus_a_load_w": p_hand, "source_enabled": ALL_ON, **HEALTHY}
     assert rules.bus_a_v(inputs, spec_of(world, "bus_a_v"), DT) == (pytest.approx(v_hand, abs=1e-9))
 
 
@@ -229,11 +232,14 @@ def test_a_bus_below_the_module_minimum_is_a_named_gap_not_a_bare_none(world):
         ("bus_b_v", "bus_b_load_w", 380.0, 1),
     ):
         params = plant.RuleParams(spec_of(world, state), f"state {state}")
-        assert getattr(rules, state)({key: light, "source_enabled": ALL_ON}, params, DT) is None
+        assert (
+            getattr(rules, state)({key: light, "source_enabled": ALL_ON, **HEALTHY}, params, DT)
+            is None
+        )
         assert f"a load of {light:.0f} W puts each of {cells} module(s) at" in params.why_none
         assert "below the published normal envelope's 12.903 A" in params.why_none, params.why_none
         heavy = plant.RuleParams(spec_of(world, state), f"state {state}")
-        heavy_inputs = {key: E0**2 / (4 * R / cells) + 1.0, "source_enabled": ALL_ON}
+        heavy_inputs = {key: E0**2 / (4 * R / cells) + 1.0, "source_enabled": ALL_ON, **HEALTHY}
         assert getattr(rules, state)(heavy_inputs, heavy, DT) is None
         assert "more than" in heavy.why_none and "can deliver" in heavy.why_none, heavy.why_none
     # And the plant's gap carries the reason.
@@ -448,3 +454,49 @@ def test_a_bus_with_no_connected_module_is_dead(world):
     assert after["fuel_cell_power_w"] == values["bus_a_load_w"]
     assert after["fuel_cell_current_a"] == pytest.approx(after["bus_a_load_w"] / after["bus_a_v"])
     assert after["bus_a_v"] == values["bus_a_v"]
+
+
+# ------------------------------------------------------------------------------------------------
+# PWR-02: a degrading module, as its rising source resistance.
+# ------------------------------------------------------------------------------------------------
+
+
+def test_modules_at_unequal_resistance_share_one_voltage_by_hand():
+    """Two modules in parallel at one bus voltage: i_k = (E0 - V) / R_k, and the bus is
+    V = E0 - R_eq I with R_eq = 1 / (1/R_1 + 1/R_2). Pick V, compute the load by hand."""
+    rules = rules_module()
+    r1, r2, v = 1.5 * R, R, 29.8
+    i1, i2 = (E0 - v) / r1, (E0 - v) / r2
+    solved, why = rules.solve_modules(v * (i1 + i2), E0, [r1, r2], [12.903, 52.593])
+    assert why is None
+    current, volts, modules = solved
+    assert (current, volts) == pytest.approx((i1 + i2, v), abs=1e-9)
+    assert modules == pytest.approx([i1, i2], abs=1e-9)
+
+
+def test_a_degraded_fuel_cell_1_carries_less_and_its_partner_more(world):
+    """R_1 x 1.5, PWR-02's "loses a third of its capacity and its internal resistance rises": fuel
+    cell 1's own current falls by about AOH p. 2.6-25's 3-5 A purge cue at the MET-0 load, fuel cell
+    2 takes it up, bus A sags, and the margin loses a third of fuel cell 1's 1,420 W."""
+    values, _ = tick(world, plant.initial_values(world))
+    degraded, gaps = tick(world, {**values, "fc_1_resistance_ohm": 1.5 * R})
+    assert not {"bus_a_v", "fc_1_current_a", "bus_a_rated_w"} & set(gaps)
+    drop = values["fc_1_current_a"] - degraded["fc_1_current_a"]
+    assert 3.0 <= drop <= 5.0, drop
+    # Bus A by hand at R_eq = 1 / (1/1.5R + 1/R) = 0.6 R.
+    p = degraded["bus_a_load_w"]
+    r_eq = 0.6 * R
+    i_hand = (E0 - math.sqrt(E0**2 - 4 * r_eq * p)) / (2 * r_eq)
+    v_hand = E0 - r_eq * i_hand
+    assert degraded["bus_a_v"] == pytest.approx(v_hand, abs=1e-9)
+    assert degraded["fc_1_current_a"] == pytest.approx((E0 - v_hand) / (1.5 * R), abs=1e-9)
+    assert degraded["bus_a_v"] < values["bus_a_v"]
+    assert degraded["bus_a_rated_w"] == pytest.approx(1420 / 1.5 + 1420)
+    # The held resistance stays where the fault put it, and bus B never saw it.
+    assert degraded["fc_1_resistance_ohm"] == 1.5 * R
+    assert degraded["bus_b_v"] == values["bus_b_v"]
+    # Taking the degraded module off line restores none of its rating, and a healthy module alone
+    # carries bus A.
+    off = plant.Effect(0, "set_source", {"source": "fc_1", "state": "off"})
+    isolated, _ = tick(world, degraded, [off])
+    assert isolated["bus_a_rated_w"] == 1420 and isolated["fc_1_current_a"] == 0.0

@@ -219,10 +219,10 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 155 states over 61 scheduled nodes, 142
+**All eleven domains have landed** — 148 channels, 158 states over 61 scheduled nodes, 142
 thresholds, 59 verbs and 128 classified events across the eleven directories, with 266 declared debts
-and every one of them named. **126 of the 155 states are fully configured and 29 carry a debt**, and
-a real tick advances **77** of the 155 states, and the build order's **77** ready are that same set
+and every one of them named. **129 of the 158 states are fully configured and 29 carry a debt**, and
+a real tick advances **80** of the 158 states, and the build order's **80** ready are that same set
 — the second of those figures is the objective's own second completion criterion, and both
 are read out of `tools/plant.py`'s output by `test_the_readme_status_matches_the_tools`. Since round
 58 the first line of `--build-order` *is* a tick's own gap list rather than a second opinion about
@@ -255,7 +255,7 @@ took them from being read by nobody to being refusals under `--strict`, which is
 is only displayed stops being a debt.
 
 `domains/power/` carries a 25-load inventory with inrush currents and shed classes, and it
-declares 19 states, 17 thresholds, 5 verbs, 12 faults. Two
+declares 22 states, 17 thresholds, 5 verbs, 12 faults. Two
 things in it are worth reading rather than skimming:
 
 - **The load-shed ladder is re-anchored.** `review-findings.md` recommends generalising
