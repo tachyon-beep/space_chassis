@@ -18493,6 +18493,47 @@ def test_the_linter_refuses_one_rcs_command_on_time_for_three_systems(tmp_path):
     assert "must be a chosen zero-duration group policy" in result.stdout, result.stdout[-1500:]
 
 
+def test_the_linter_refuses_an_rcs_jet_table_that_breaks_its_cross_check(tmp_path):
+    """Each RCS jet table was hand-read from an OCR text layer and has one relation to keep.
+
+    The SM table is the CSM autopilot's jet-selection tables placed on quads, so a jet moved to
+    the wrong quad or given the wrong torque sign turns the vehicle the other way under r x F.
+    The LM table is a simulator's, and its positions must reproduce the Operational Data Book's
+    66.1 in moment arm; its jet 4 sign is derived from the rule that a jet exhausts away from its
+    own cluster, so flipping it back to the printed +Y must be refused.
+    """
+    for name, break_entry, expected in (
+        (
+            "sm-jet-on-wrong-quad",
+            lambda doc: doc["geometry"]["rcs_sm"]["jets"][0].update(quad="A"),
+            "declares '+pitch' and its geometry turns the vehicle the other way",
+        ),
+        (
+            "sm-roll-sign-flipped",
+            lambda doc: doc["geometry"]["rcs_sm"]["jets"][8].update(torque="-roll"),
+            "rcs_sm.jets.9: declares '-roll'",
+        ),
+        (
+            "lm-jet-4-as-printed",
+            lambda doc: doc["geometry"]["rcs_lm"]["jets"][3].update(force_axis="+Y"),
+            "rcs_lm.jets.4: pushes along +Y",
+        ),
+        (
+            "lm-arm-misread",
+            lambda doc: doc["geometry"]["rcs_lm"]["jets"][0]["position_m"].__setitem__(1, 1.70),
+            "effective moment arm is 66.1 in",
+        ),
+    ):
+        broken = copy_definition(tmp_path / name)
+        path = broken / "domains" / "rcs" / "components.yaml"
+        rcs = yaml.safe_load(path.read_text())
+        break_entry(rcs)
+        path.write_text(yaml.safe_dump(rcs, sort_keys=False))
+        result = run_linter(broken)
+        assert result.returncode == 1
+        assert expected in result.stdout, result.stdout[-1500:]
+
+
 def test_the_linter_refuses_a_same_as_naming_a_field_its_mapping_lacks(tmp_path):
     """A link to a field that is not there holds nothing, and reads as a join that exists.
 
