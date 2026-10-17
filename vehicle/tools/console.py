@@ -6005,6 +6005,13 @@ def load_scenario_file(world: World, path: Path) -> ScenarioFile:
             f"--scenario-file {path} carries a `script`, which is batch mode's: a window run takes its commands "
             "through the window, so the file is refused rather than half-applied"
         )
+    if scenario.faults:
+        # WP09: the live cycle and its replay (`advance`, the lineage link) do not carry fault onsets
+        # yet, so a window world would run the scenario's faults as if they were not there.
+        raise ValueError(
+            f"--scenario-file {path} carries `faults`, which batch mode injects (`plant.run_scenario`) "
+            "and the window run does not yet: the file is refused rather than run without them"
+        )
     return ScenarioFile(Path(path), scenario, digest)
 
 

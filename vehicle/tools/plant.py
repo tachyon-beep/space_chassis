@@ -178,6 +178,26 @@ class Effect:
     arguments: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class FaultOnset:
+    """One fault arriving in the hidden truth, stamped to the microsecond within its tick (WP09).
+
+    The fault is a `domains/*/fault_policy.yaml` id, and what its onset does is declared by the
+    states it moves (`fault_value`, beside `moved_by: [fault:<id>]`), so the queue's job is *when*
+    and `apply_fault` remains the only thing that knows *what* — the same split `Effect` makes for a
+    command. It shares the command's queue rather than having one of its own: a fault that lands at
+    5,000 µs is integrated around exactly as a command at 5,000 µs is, so a split tick stays the same
+    arithmetic as consecutive short ticks.
+
+    It is not an `Effect` because it does not pass the executive. A command is revalidated at the
+    moment of effect (§9 steps 1–2) and can be refused by a phase gate or an interlock; a fault is
+    the world, and nothing aboard gets to refuse it (`plant.md` §8: faults go into hidden truth).
+    """
+
+    offset_us: int
+    fault: str
+
+
 def unset_paths(node: Any, trail: str = "") -> list[str]:
     """Every `UNCONFIGURED` scalar under a node, with the path that reaches it."""
     found: list[str] = []
@@ -311,6 +331,11 @@ class World:
     # domain -> every key a rule of that domain may read, mapped to the state it names (or `None`
     # for a node key): the domain's own states and nodes, and what `reads:` and `writes:` declare.
     rule_reads: dict[str, dict[str, State | None]] = field(default_factory=dict)
+    # **WP09: fault id -> the domain whose `fault_policy.yaml` declares it**, and fault id -> every
+    # (state, `fault_value` row) its onset moves. A declared fault with no row is one the plant
+    # refuses to fire, by name, because firing it would change nothing.
+    faults: dict[str, str] = field(default_factory=dict)
+    fault_effects: dict[str, list[tuple[State, dict[str, Any]]]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # Which states share a coupling node, for `state_level`'s fallback: a node key on a shared node
@@ -1132,6 +1157,17 @@ def load_world(root: Path) -> World:
         raise Unconfigured(refused[0][0], "; ".join(f"{w}: {why}" for w, why in refused))
     world.rules = rules
     world.rule_reads = rule_readable(world, declarations)
+    world.faults = {
+        str(row.get("id")): name.split("/")[1]
+        for name, document in sorted(documents.items())
+        if name.endswith("/fault_policy.yaml")
+        for row in ((document or {}).get("faults") or [])
+        if isinstance(row, dict) and row.get("id")
+    }
+    for state in world.states:
+        for row in state.spec.get("fault_value") or []:
+            if isinstance(row, dict) and row.get("fault"):
+                world.fault_effects.setdefault(str(row["fault"]), []).append((state, row))
     return world
 
 
@@ -3561,6 +3597,7 @@ def step(
     gaps: list[Gap] | None = None,
     effects: list[Effect] | None = None,
     ledger: Ledger | None = None,
+    faults: list[FaultOnset] | None = None,
 ) -> dict[str, Any]:
     """`plant.md`'s seven-step tick, with the parts that need code named rather than faked.
 
@@ -3596,12 +3633,20 @@ def step(
 
     The states on the `internal` sentinel advance last, in the order `sentinel_states()` derives —
     see there for why the sentinel is last and why the order *between* domains does not matter.
+
+    **WP09: `faults` are the hidden truth's own arrivals**, on the same queue as the effects
+    (`FaultOnset`, `apply_fault`). At an equal stamp the fault lands first: the hardware breaks at
+    that microsecond and a command stamped there acts on what it finds, which is the one order a
+    stamp cannot decide and so is decided here, once. A tick with no fault due pays one falsy test.
     """
     # 1. Effects — everything external enters here and nowhere else.
     # 2. Revalidate at the moment of effect. Nothing is captured at schedule time.
     #    Both belong to the executive; the plant's contract is that it never sees an effect that
     #    has not been through them. What arrives here is already accepted, and already stamped.
-    queue = _stamped(world, dt, effects)
+    queue: list[tuple[int, Effect | FaultOnset]] = list(_stamped(world, dt, effects))
+    if faults:
+        # Faults ahead of effects before a stable sort by stamp: equal stamps put the fault first.
+        queue = sorted([*_stamped_faults(world, dt, faults), *queue], key=lambda row: row[0])
 
     # 3. Advance to the next event boundary, one sub-interval at a time: §9's `horizon` for each
     #    segment is `min(remaining, time to next event)`, and the walk in between is the same walk.
@@ -3627,10 +3672,13 @@ def step(
             )
         # The effect lands on what the walk just committed, so a state it moves is visible to the
         # next segment's walk — which is the whole difference between a queue and a list of commands
-        # applied at the tick's end.
-        committed = _merged(
-            committed, apply_command(world, committed, effect.verb, effect.arguments)
-        )
+        # applied at the tick's end. A fault's onset lands the same way.
+        if isinstance(effect, FaultOnset):
+            committed = _merged(committed, apply_fault(world, committed, effect.fault))
+        else:
+            committed = _merged(
+                committed, apply_command(world, committed, effect.verb, effect.arguments)
+            )
         elapsed_us = offset_us
     # **Integer microseconds, subtracted before the one division.** This read
     # `_tick_us(dt) / 1_000_000 - elapsed_us / 1_000_000`, and `0.02 - 0.015` is
@@ -3699,6 +3747,9 @@ class Scenario:
     verbs: frozenset[str] | None = None
     # tick -> the effects a scripted policy applies in that tick, already validated.
     script: dict[int, list[Effect]] = field(default_factory=dict)
+    # tick -> the faults whose onset lands in that tick, already validated (WP09). Scripted by the
+    # scenario's `faults:` block, or placed by `faults.py`'s schedule (`faults.with_schedule`).
+    faults: dict[int, list[FaultOnset]] = field(default_factory=dict)
 
     def admit(self, verb: str) -> None:
         """Refuse a verb the episode does not admit — the check the executive makes at effect time."""
@@ -3710,6 +3761,9 @@ class Scenario:
 
     def effects_at(self, tick: int) -> list[Effect]:
         return list(self.script.get(tick, []))
+
+    def faults_at(self, tick: int) -> list[FaultOnset]:
+        return list(self.faults.get(tick, []))
 
 
 def load_scenario(world: World, path: Path) -> Scenario:
@@ -3768,7 +3822,22 @@ def load_scenario(world: World, path: Path) -> Scenario:
         except EffectRefused as exc:
             raise Unconfigured(at, str(exc)) from None
         script.setdefault(tick, []).append(effect)
-    return Scenario(name=name, initial=initial, verbs=verbs, script=script)
+
+    # WP09: the faults the scenario injects, by tick and microsecond. Not subject to `verbs`: a fault
+    # is not a command and the episode's allow-list is about what the crew may do, not what may break.
+    faults: dict[int, list[FaultOnset]] = {}
+    for index, row in enumerate(doc.get("faults") or []):
+        at = f"{where}:faults[{index}]"
+        tick = row.get("tick") if isinstance(row, dict) else None
+        if not isinstance(tick, int) or isinstance(tick, bool) or tick < 0:
+            raise Unconfigured(at, f"has tick {tick!r}; a fault is keyed by a non-negative tick")
+        onset = FaultOnset(offset_us=row.get("offset_us", 0), fault=str(row.get("fault")))
+        try:
+            _stamped_faults(world, dt, [onset])
+        except EffectRefused as exc:
+            raise Unconfigured(at, str(exc)) from None
+        faults.setdefault(tick, []).append(onset)
+    return Scenario(name=name, initial=initial, verbs=verbs, script=script, faults=faults)
 
 
 def run_scenario(
@@ -3795,7 +3864,10 @@ def run_scenario(
             scenario.admit(effect.verb)
         ledger = Ledger()
         gaps: list[Gap] = []
-        current = step(world, current, dt, gaps, effects or None, ledger=ledger)
+        current = step(
+            world, current, dt, gaps, effects or None, ledger=ledger,
+            faults=scenario.faults.get(tick),
+        )
         if on_tick is not None:
             on_tick(tick, current, ledger, gaps)
     return current
@@ -3874,6 +3946,97 @@ def _stamped(world: World, dt: float, effects: list[Effect] | None) -> list[tupl
         queue.append((offset_us, effect))
     queue.sort(key=lambda row: row[0])
     return queue
+
+
+def _stamped_faults(
+    world: World, dt: float, faults: list[FaultOnset] | None
+) -> list[tuple[int, FaultOnset]]:
+    """The faults validated and sorted by stamp, or a named refusal — `_stamped`'s rule for a fault.
+
+    Refused for the same reasons an effect is, and one more: a declared fault that no state declares
+    an onset for (`fault_value`). Firing it would leave the value map unchanged, and a caller that
+    injects a fault believes the vehicle broke; that is §5's first refusal in the fault's words.
+    """
+    if not faults:
+        return []
+    tick_us = _tick_us(dt)
+    queue: list[tuple[int, FaultOnset]] = []
+    for onset in faults:
+        if not isinstance(onset, FaultOnset):
+            raise EffectRefused(f"plant.py:step: {onset!r} is not a `FaultOnset`")
+        offset_us = onset.offset_us
+        if not isinstance(offset_us, int) or isinstance(offset_us, bool):
+            raise EffectRefused(
+                f"plant.py:step: fault {onset.fault!r} carries `offset_us` {offset_us!r}, which is "
+                "not an integer number of microseconds"
+            )
+        if not 0 <= offset_us < tick_us:
+            raise EffectRefused(
+                f"plant.md:5: fault {onset.fault!r} is stamped {offset_us} µs, outside the tick "
+                f"[0, {tick_us}); an onset belonging to another tick is that tick's"
+            )
+        if onset.fault not in world.faults:
+            raise EffectRefused(
+                f"plant.py:fault {onset.fault}: is not declared by any domain's `fault_policy.yaml`"
+            )
+        if onset.fault not in world.fault_effects:
+            raise EffectRefused(
+                f"domains/{world.faults[onset.fault]}/fault_policy.yaml:{onset.fault}: no state "
+                "declares what its onset does (`fault_value` beside `moved_by: [fault:<id>]`), so "
+                "firing it would change nothing in the truth"
+            )
+        queue.append((offset_us, onset))
+    queue.sort(key=lambda row: row[0])
+    return queue
+
+
+# The truth's record of every fault that has arrived: fault id -> onsets so far. Carried in the value
+# map so the per-tick hash covers it and a checkpoint restores it, and absent until the first onset,
+# so a run with no fault hashes exactly as it did before WP09.
+FAULT_ONSETS = "__fault_onsets"
+
+
+def apply_fault(world: World, values: dict[str, Any], fault: str) -> dict[str, Any]:
+    """A fault's onset, applied to the value map: what every declaring state becomes (WP09).
+
+    `apply_command`'s counterpart for the hidden truth. Each `fault_value` row says `becomes` (the
+    value the state takes) or `scale` (the factor its current value is multiplied by), on one
+    element (`key`) of a keyed state or on the whole of a scalar one; the linter holds the row to the
+    state's unit and to a method that keeps the value (`check_fault_value`). Returns the staged
+    delta, with the onset counted under `FAULT_ONSETS`.
+    """
+    if fault not in world.fault_effects:
+        raise EffectRefused(
+            f"plant.py:fault {fault}: no state declares what its onset does (`fault_value`)"
+        )
+    staged: dict[str, Any] = {}
+    for state, row in world.fault_effects[fault]:
+        where = f"domains/{state.domain}/components.yaml:state {state.id}.fault_value"
+        key = row.get("key")
+        current = state_level({**values, **staged}, state)
+        if key is not None:
+            current = (current or {}).get(str(key)) if isinstance(current, Mapping) else None
+        if "scale" in row:
+            if isinstance(current, bool) or not isinstance(current, int | float):
+                raise Unconfigured(
+                    where,
+                    f"scales {state.id}{f'[{key}]' if key is not None else ''} by {row['scale']}, "
+                    f"and its value this tick is {current!r}, which is not a quantity",
+                    needs=state.id,
+                )
+            value: Any = current * row["scale"]
+        else:
+            value = row.get("becomes")
+        if key is not None:
+            _stage_element(state, value, str(key), staged, values)
+        else:
+            # `_merged`, not `update`: two sentinel states moved by one onset each stage an
+            # `internal` sub-map, and an update would keep only the second.
+            staged = _merged(staged, state_values(world, state, value))
+    record = dict(values.get(FAULT_ONSETS) or {})
+    record[fault] = int(record.get(fault, 0)) + 1
+    staged[FAULT_ONSETS] = record
+    return staged
 
 
 def _merged(values: dict[str, Any], staged: dict[str, Any]) -> dict[str, Any]:

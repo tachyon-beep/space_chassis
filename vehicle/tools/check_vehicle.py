@@ -287,6 +287,10 @@ def effect_owned_movers(state: dict[str, Any]) -> list[str]:
     the same shape of transition, because an irreversible event is not a per-tick computation either.
     The plant holds such a state between transitions and the effect path carries them, so both the
     hold and the initial-value rule ask this one predicate rather than a second spelling of it.
+
+    **And a `fault:` mover whose onset the state declares (`fault_value`), since WP09.** A fault's
+    onset lands on the same sub-tick queue a command's effect does (`plant.apply_fault`), and what it
+    leaves is held between onsets exactly as a command's value is held between commands.
     """
     movers = [str(m) for m in state.get("moved_by") or []]
     if not movers:
@@ -296,13 +300,115 @@ def effect_owned_movers(state: dict[str, Any]) -> list[str]:
         for row in state.get("event_value") or []
         if isinstance(row, dict)
     }
+    faulted = {
+        str(row.get("fault"))
+        for row in state.get("fault_value") or []
+        if isinstance(row, dict)
+    }
     for mover in movers:
         if mover.startswith("command:"):
             continue
         if mover.startswith("event:") and mover.split(":", 1)[1] in declared:
             continue
+        if mover.startswith("fault:") and mover.split(":", 1)[1] in faulted:
+            continue
         return []
     return movers
+
+
+# --------------------------------------------------------------------------------------------------
+# **WP09: what a fault's onset does to the truth, declared on the state it moves.**
+#
+# A fault policy says what breaks (`component`, `mechanism`) and what the evidence looks like
+# (`perturbs`), and until WP09 nothing said what the *truth* becomes: the scheduler could place a
+# fault in time and the plant had nowhere to put it. The answer is declared where `event_value`
+# declares an event's — on the state the fault moves — because the state owns its vocabulary and its
+# unit, and an edge in this folder belongs to the lane that owns its target state. A row is
+#
+#     moved_by: ["fault:PWR-02-fuel-cell-degradation"]
+#     fault_value:
+#       - fault: PWR-02-fuel-cell-degradation
+#         scale: 1.5                # or `becomes: <value>`; `key: <element>` on a keyed state
+#         provenance: {basis: ..., ...}
+#
+# Only a state with memory can take one. An `algebraic` state is recomputed from its inputs every
+# segment, so an onset written into it would be gone before anything read it — the silent no-op this
+# folder refuses everywhere else; a `stock` moves only by ledgered transfers (WP10), and a jump in its
+# level is a conservation violation by definition; `lag`, `delay` and `hazard` are the plant's own
+# integrators. A `discrete` state is held by the effect path, and a `dynamics` state's rule carries
+# its own previous value, so the onset becomes the value the next segment starts from.
+# --------------------------------------------------------------------------------------------------
+FAULT_HELD_METHODS = ("discrete", "dynamics")
+
+
+def check_fault_value(
+    where: str, sid: str, state: dict[str, Any], row: dict[str, Any], report: Report
+) -> None:
+    """One `fault_value` row against the state it moves: one effect, a value the state can hold."""
+    method = state.get("method")
+    if method not in FAULT_HELD_METHODS:
+        report.refuse(
+            where,
+            f"declares a fault onset on {sid}, {'an' if str(method)[:1] in 'aeiou' else 'a'} "
+            f"`{method}` state. An onset is a jump in a state's "
+            f"value, and only a state with memory keeps one ({', '.join(FAULT_HELD_METHODS)}): an "
+            "`algebraic` state is recomputed before anything reads it, a `stock` moves only by "
+            "ledgered transfers, and the integrators are the plant's",
+        )
+        return
+    effects = [name for name in ("becomes", "scale") if name in row]
+    if len(effects) != 1:
+        report.refuse(
+            where,
+            f"declares {effects or 'no effect'}; a fault onset says exactly one of `becomes` (the "
+            "value the state takes) or `scale` (the factor its value is multiplied by)",
+        )
+        return
+    unit = str(state.get("unit") or "")
+    keyed = unit.startswith("map[")
+    key = row.get("key")
+    if keyed and key is None:
+        report.refuse(
+            where,
+            f"moves {sid}, a keyed state ({unit!r}), and names no `key`. A fault breaks a component, "
+            "so its onset moves one element; writing the whole map would reset every sibling",
+        )
+        return
+    if not keyed and key is not None:
+        report.refuse(
+            where, f"names `key` {key!r} on {sid}, which is not a keyed state ({unit!r})"
+        )
+        return
+    vocabulary = unit_vocabulary(state.get("unit"))
+    if "scale" in row:
+        factor = row.get("scale")
+        if (
+            isinstance(factor, bool)
+            or not isinstance(factor, int | float)
+            or not math.isfinite(factor)
+            or factor <= 0
+        ):
+            report.refuse(where, f"scales by {factor!r}; a scale is a finite positive number")
+        if vocabulary is not None:
+            report.refuse(
+                where,
+                f"scales {sid}, whose unit ({unit!r}) is a vocabulary rather than a quantity",
+            )
+    elif vocabulary is not None and str(row.get("becomes")) not in vocabulary:
+        report.refuse(
+            where,
+            f"makes {sid} {row.get('becomes')!r}, which its `unit` ({unit!r}) cannot hold — the "
+            f"vocabulary is {sorted(vocabulary)}",
+        )
+    provenance = row.get("provenance")
+    if not isinstance(provenance, dict):
+        report.refuse(
+            where,
+            "carries no `provenance`. The size of a fault is a value that matters — it is what the "
+            "fleet will have to diagnose — and an unsourced magnitude is a guess",
+        )
+        return
+    check_basis(f"{where}.provenance", provenance.get("basis"), provenance, report)
 
 
 def unit_vocabulary(unit: Any) -> set[str] | None:
@@ -6552,12 +6658,34 @@ def check_domain(
     # say what changes it is an omission, while an `algebraic` state whose rule is domain code may
     # have no command mover at all and be complete.
     # --------------------------------------------------------------------------------------
+    # WP09: the faults a `fault:` mover may name, which are this domain's own.
+    faults_here = {
+        str(f.get("id"))
+        for f in (docs.get("fault_policy.yaml") or {}).get("faults") or []
+        if isinstance(f, dict) and f.get("id")
+    }
     for state in components.get("state") or []:
         if not isinstance(state, dict):
             continue
         sid = str(state.get("id"))
         mwhere = f"{where}:state {sid}.moved_by"
         movers = state.get("moved_by")
+        # A `fault_value` row with no `fault:` mover is an onset nothing fires, which reads exactly
+        # like one that does: refused here, before the mover rules, because a state with no movers
+        # at all leaves the loop below early.
+        named = {
+            str(m).split(":", 1)[1]
+            for m in (movers if isinstance(movers, list) else [])
+            if str(m).startswith("fault:")
+        }
+        for row in state.get("fault_value") or []:
+            fault = str(row.get("fault")) if isinstance(row, dict) else repr(row)
+            if fault not in named:
+                report.refuse(
+                    f"{where}:state {sid}.fault_value",
+                    f"declares an onset for {fault!r}, which `moved_by` does not name as "
+                    f"`fault:{fault}`, so nothing would ever fire it",
+                )
         if movers is None:
             if state.get("method") == "discrete":
                 report.debt(
@@ -6619,12 +6747,41 @@ def check_domain(
                             "record of what starts it",
                         )
                 continue
-            if kind not in ("command", "event", "trigger"):
+            if kind not in ("command", "event", "trigger", "fault"):
                 report.refuse(
                     f"{mwhere}",
                     f"declares {text!r}; a mover is `command:<verb>`, `trigger:<verb>`, "
-                    "`event:<id>` or `logic:<reason>`",
+                    "`event:<id>`, `fault:<id>` or `logic:<reason>`",
                 )
+                continue
+            if kind == "fault":
+                # WP09: a fault this domain declares, whose onset the state declares. Same-domain,
+                # because a fault breaks a component of its own domain and reaches the others
+                # through the coupling, as every other change in the truth does (`plant.md` §8).
+                if name not in faults_here:
+                    report.refuse(
+                        f"{mwhere}",
+                        f"names fault {name!r}, which this domain's `fault_policy.yaml` does not "
+                        "declare. A fault moves the truth of its own domain and reaches the others "
+                        "through the coupling",
+                    )
+                    continue
+                onset = next(
+                    (
+                        row
+                        for row in state.get("fault_value") or []
+                        if isinstance(row, dict) and str(row.get("fault")) == name
+                    ),
+                    None,
+                )
+                if onset is None:
+                    report.refuse(
+                        f"{mwhere}",
+                        f"names fault {name!r} and nothing says what its onset makes this state: "
+                        f"a `fault_value` entry for {name!r}",
+                    )
+                    continue
+                check_fault_value(f"{where}:state {sid}.fault_value", sid, state, onset, report)
                 continue
             if kind == "event":
                 if name not in events_here:
