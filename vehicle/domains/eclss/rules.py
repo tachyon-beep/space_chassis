@@ -1,5 +1,6 @@
-"""ECLSS's domain rules (D5, `plant.md` §2): the suit circuit's flow, the cabin leak by gas, and the
-oxygen supply tanks' pressure under their heater relay.
+"""ECLSS's domain rules (D5, `plant.md` §2): the suit circuit's flow, the cabin leak by gas, the
+regulator's draw on the store its source selects, and the oxygen supply tanks' pressure under their
+heater relay.
 
 Every number a rule uses is a field on its own state in `components.yaml`, where its provenance is.
 Each function is `rule(inputs, params, dt) -> value`; `None` is a gap, not a value.
@@ -43,6 +44,24 @@ def _leak_share(inputs, params, dt):
         return 0.0
     share = max(float(inputs[params["gas_stock"]]), 0.0) / total
     return float(params["leak_kg_per_h"]) / 3600.0 * share
+
+
+def _o2_supply(inputs, params, dt):
+    """The regulator's demand from one store: the nominal flow while the vehicle's source selects
+    this store and the cabin regulator is open, else nothing, and never more than the store holds
+    for the tick, so an empty tank stops the flow instead of filling the cabin from nothing."""
+    switch = params["source_switch"]
+    selected = inputs[switch["state"]]
+    if switch["element"] not in selected:
+        return params.no_value(f"{switch['state']} names no {switch['element']!r}")
+    if selected[switch["element"]] != params["draws_on"]:
+        return 0.0
+    if inputs[params["regulator_state"]] not in params["regulator_open"]:
+        return 0.0
+    demand = float(params["nominal_kg_s"])
+    if dt <= 0:
+        return demand
+    return min(demand, max(float(inputs[params["stock_state"]]), 0.0) / dt)
 
 
 def _tank_heaters(inputs, params, dt):
@@ -103,6 +122,8 @@ def _tank_pressure(inputs, params, dt):
 RULES = {
     "suit_loop_flow_cfm": _suit_loop_flow,
     "o2_tank_heaters": _tank_heaters,
+    "cabin_o2_supply_csm_kg_s": _o2_supply,
+    "cabin_o2_surge_supply_csm_kg_s": _o2_supply,
     "o2_supply_pressure_psi": _tank_pressure,
     **{
         f"{cabin}_leak_{gas}_kg_s": _leak_share

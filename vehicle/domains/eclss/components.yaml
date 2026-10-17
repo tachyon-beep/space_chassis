@@ -54,13 +54,16 @@ reads: [o2_csm, o2_lm, absorber_capacity_csm, absorber_capacity_lm, crew_state,
         cabin_zone_t, lm_cabin_zone_t, command_executive, load_shed_state, fc_o2_draw]
 writes: [cabin_atm, lm_cabin_atm, cabin_regulator, cabin_o2_supply_csm,
          cabin_o2_supply_lm, co2_removal_csm, co2_removal_lm, cabin_leak_csm, cabin_leak_lm,
-         o2_tank_heaters]
+         o2_tank_heaters, o2_surge_csm, cabin_o2_surge_supply_csm]
 
-# Three states on the `internal` sentinel, so their order is a declaration rather than the alphabet's,
+# Four states on the `internal` sentinel, so their order is a declaration rather than the alphabet's,
 # and the sentinel is advanced after every node.
-internal_order: [suit_fan, suit_loop_flow_cfm, o2_supply_pressure_psi]
+internal_order: [o2_source, suit_fan, suit_loop_flow_cfm, o2_supply_pressure_psi]
 internal_order_note: >-
-  the compressor's switch before the flow it gates, so a `set_suit_fan` acts on the tick it lands.
+  `o2_source` first, as the switch nothing on the sentinel reads: the two regulator flows that read it
+  are on their own scheduled nodes, so they act on the selection the previous tick left and a
+  `set_o2_source` reaches the cabin one tick after it lands. Then the compressor's switch before the
+  flow it gates, so a `set_suit_fan` acts on the tick it lands.
   Between the flow and the tank, **nothing at all**: the suit circuit's flow and the oxygen supply tank's pressure are published
   quantities with no edge between them and no shared input, so the order is a declaration rather than
   a finding. What it is not is the alphabet's — `o2_supply_pressure_psi` sorts before
@@ -455,26 +458,31 @@ state:
         figure is the leak term of `cabin_o2_supply_lm_kg_s`, so the regulator replaces what this
         takes. Water vapour's share has no state yet: its drain lands with the crew's vapour source
   - id: cabin_o2_supply_csm_kg_s
+    # **The regulator's demand, drawn from the store `o2_source` selects** (ECLSS lane, 2026-10-17).
+    # The demand is the nominal figure below; it reaches this node only while the CSM's source is
+    # `primary` and the cabin regulator is open, and never more than the S/M stock holds for a tick.
+    # `cabin_o2_surge_supply_csm_kg_s` is the same demand from the CM's surge tank.
     node: cabin_o2_supply_csm
     method: algebraic
     unit: kg O2/s
     nominal_kg_s: 3.798611e-05
+    draws_on: primary
+    source_switch: {state: o2_source, element: csm}
+    regulator_state: cabin_regulator_position
+    regulator_open: [primary, emergency]
+    stock_state: o2_csm_kg
     provenance:
       basis: derived
-      computes: nominal_kg_s
-      derivation:
-        expression: "(leak_kg_per_h + crew * o2_kg_per_crew_day / hours_per_day) / seconds_per_hour"
-        inputs:
-          leak_kg_per_h: vehicle.yaml:consumables.leak.csm_kg_per_h
-          crew: mission.yaml:crew.size
-          o2_kg_per_crew_day: vehicle.yaml:consumables.metabolic.o2_kg_per_crew_day
-          hours_per_day: 24
-          seconds_per_hour: 3600
       relation: >-
         the regulator replaces what the cabin loses, and both terms are published: the cabin leak at
-        0.023 kg/h and the crew's metabolic consumption at 0.91 kg of oxygen per crew-day for three
-        crew. 0.023 + 3 x 0.91/24 = 0.13675 kg/h = **3.798611e-05 kg/s**. Algebraic rather than a
-        stock because the rate follows the loss rather than accumulating
+        0.023 kg/h (`vehicle.yaml#consumables.leak.csm_kg_per_h`) and the crew's metabolic consumption
+        at 0.91 kg of oxygen per crew-day (`vehicle.yaml#consumables.metabolic.o2_kg_per_crew_day`) for
+        three crew (`mission.yaml#crew.size`). 0.023 + 3 x 0.91/24 = 0.13675 kg/h = **3.798611e-05
+        kg/s**. Algebraic rather than a stock because the rate follows the loss rather than
+        accumulating. The figure is `nominal_kg_s`, the demand the rule routes
+        (`domains/eclss/rules.py`); it is no longer a `provenance.derivation` because the plant would
+        then compute the state from it and the store selection could not act, and
+        `check_metabolic_rules` still holds it to the same leak, crew and metabolic figures within 1 %
       note: >-
         **the leak term's attribution is in doubt and is recorded in `open_debts`.** The datum is
         Apollo 11's LM cabin leak of 0.05 lb/hr = 0.0227 kg/h against a 0.2 lb/hr specification, and
@@ -482,6 +490,57 @@ state:
         `domains/consumables/components.yaml` sizes `o2_csm_kg`'s quantum from "the nominal cabin
         leak, 0.023 kg/h" as though it were the CSM's. The figure is used here because that is the
         number this tank is already accounted against; what is owed is a separate CSM measurement
+  - id: cabin_o2_surge_supply_csm_kg_s
+    # The CSM regulator's demand while `o2_source` has the CSM on `surge`: the S/M supply valve
+    # closed and the surge tank's valve open, so the cabin draws on the CM's own store.
+    node: cabin_o2_surge_supply_csm
+    method: algebraic
+    unit: kg O2/s
+    nominal_kg_s: 3.798611e-05
+    same_as:
+      nominal_kg_s: domains/eclss/components.yaml:state.cabin_o2_supply_csm_kg_s.nominal_kg_s
+    draws_on: surge
+    source_switch: {state: o2_source, element: csm}
+    regulator_state: cabin_regulator_position
+    regulator_open: [primary, emergency]
+    stock_state: o2_surge_csm_kg
+    provenance:
+      basis: derived
+      relation: >-
+        the same regulator demand as `cabin_o2_supply_csm_kg_s`, 3.798611e-05 kg/s, from the other
+        store: the surge tank sits "in parallel" downstream of the S/M SUPPLY valve
+        (`sources/eclss.md` Q3, AOH ECS p. 2.7-7), so with that valve closed the regulator's flow comes
+        from the surge tank alone. Capped at what the tank holds for a tick, so an empty tank stops
+        the flow rather than filling the cabin with oxygen it does not have
+      note: >-
+        **Not modelled:** the surge tank's other job, "augmenting the SM supply when the operational
+        demand exceeds the flow capacity of the inlet restrictors" (same page), because the demand is
+        the nominal figure and never reaches the 8.2 lb/h restrictors; and the refill from the S/M
+        supply after a draw, whose rate no source reached gives
+  - id: o2_surge_csm_kg
+    node: o2_surge_csm
+    method: stock
+    unit: kg
+    initial: 1.678292
+    initial_provenance:
+      basis: historical
+      source: >-
+        AOH ECS p. 2.7-7 (`sources/eclss.md` Q3): "The surge tank stores approximately 3.7 pounds of
+        oxygen at 900 psig for use during entry". 3.7 lb x 0.45359237 = **1.678292 kg**. The tank is
+        filled from the S/M supply before launch and is normally open in flight, so MET 0 is full
+    quantum: 1.0e-6
+    min_flow_per_s: 3.8e-5
+    provenance:
+      basis: derived
+      relation: >-
+        quantum 1 mg, as `o2_csm_kg`'s, so the one stock-to-stock reading of the two is in one unit;
+        the smallest flow this tank must represent is the regulator's nominal 3.798611e-05 kg/s
+      note: >-
+        **The cabin repressurization package is not this stock.** Its three 1 lb tanks feed the
+        cabin through the REPRESS O2 valve and the face masks, and "augment the surge tank supply for
+        entry and emergencies" only with the PLSS valve at ON (`sources/eclss.md` Q3); no verb carries
+        that valve, so the package's 1.36 kg is outside the surge store until one does. The surge
+        tank's pressure transducer (sharing the O2 tank 1 meter) is not a channel yet
   - id: cabin_o2_supply_lm_kg_s
     node: cabin_o2_supply_lm
     method: algebraic
@@ -711,6 +770,38 @@ state:
         apollo's set_suit_fan, as a switch the plant holds. The LM's element has no flow state to
         drive yet. The one-second dwell each way is chosen, as `cabin_regulator_position`'s is: a
         compressor switch has a transit and a fleet must not chatter it by re-commanding every tick
+  - id: o2_source
+    method: discrete
+    node: internal
+    unit: "map[vehicle,enum[primary,surge,isolated]]"
+    initial: {csm: primary, lm: primary}
+    initial_provenance:
+      basis: historical
+      reason: >-
+        AOH ECS p. 2.7-7 (`sources/eclss.md` Q3): the surge tank "is normally open during flight, and
+        is closed only when it is necessary to isolate the surge tank from the system", and the S/M
+        supply feeds the regulator in flight, so the CSM starts on `primary`. The LM's element is
+        declared for the verb's vocabulary and drives nothing yet
+    moved_by: ["command:set_o2_source"]
+    command_value:
+      - verb: set_o2_source
+        argument: source
+        key: vehicle
+        why: >-
+          one element per vehicle; the CSM's selects which store the regulator draws on: `primary` is
+          the S/M supply valve open, `surge` is that valve closed with the surge tank open, and
+          `isolated` is both closed, so the cabin gets nothing
+    dwell:
+      min_on_s: 1
+      min_off_s: 1
+    provenance:
+      basis: apollo
+      ref: "apollo_diode.md:312"
+      note: >-
+        the corpus's surge and emergency stores as a selection the plant holds. `set_o2_source`'s
+        `flow` argument moves nothing yet: the regulator's flow is its nominal demand, and the
+        `low`/`nominal`/`high` settings have no published rates. The one-second dwell each way is
+        chosen, as `suit_fan`'s is, for a valve's transit
   - id: suit_loop_flow_cfm
     # **The compressor as flow** (`domains/eclss/rules.py`). The rule relaxes the flow toward
     # `rated_flow_cfm` while the CSM suit compressor is commanded on (`suit_fan`) and its load is

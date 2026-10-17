@@ -146,9 +146,8 @@ commands:
           3.7 lb surge tank in the command module's LH equipment bay, fed in parallel downstream of
           the S/M shut-off valve, so `surge` draws a different store and `isolated` draws none.
           `primary` at `off`, `surge` and `isolated` are the recovery, and the surge tank's own
-          floor is not this guard's to hold. The vehicle does not yet model the surge store:
-          `set_o2_source` has no effect and `E-O2-SUPPLY-CSM` drains `o2_csm` whatever the source,
-          so until the surge stock lands `surge` is admitted here while the S/M tanks keep draining
+          floor is not this guard's to hold. In the plant `surge` moves the regulator's draw to
+          `eclss.o2_surge_csm_kg` (`eclss.o2_source`), so the S/M tanks stop feeding the cabin
     conflict_domain: res.<vehicle>.o2_source
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]

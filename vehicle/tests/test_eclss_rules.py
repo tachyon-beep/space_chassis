@@ -161,3 +161,75 @@ def test_the_tank_pressure_moves_on_a_real_tick_at_the_rate_the_table_gives(worl
     expected = rules_module().tank_pressure_rate_psi_h(False, quantity, per_tank_lb_h, TANK) / 3600.0
     assert after["o2_supply_pressure_psi"] - 900.0 == pytest.approx(expected, rel=1e-3)
     assert after["o2_tank_heaters"] == "off"
+
+
+# --------------------------------------------------------------------------------------------
+# The CM's surge tank (AOH ECS p. 2.7-7): `set_o2_source` moves the regulator's draw between the
+# S/M supply and the surge tank, and `isolated` or a closed regulator stops it.
+# --------------------------------------------------------------------------------------------
+
+SUPPLY = STATES["cabin_o2_supply_csm_kg_s"]
+SURGE = STATES["o2_surge_csm_kg"]
+
+
+def test_the_surge_tank_starts_full_and_the_cabin_draws_on_the_service_module(world):
+    assert "3.7 pounds" in SURGE["initial_provenance"]["source"]
+    assert SURGE["initial"] == pytest.approx(3.7 * 0.45359237, rel=1e-6)
+    values = plant.initial_values(world)
+    assert values["o2_source"] == {"csm": "primary", "lm": "primary"}
+    after = walk(world, values, 50)
+    assert after["cabin_o2_supply_csm_kg_s"] == pytest.approx(SUPPLY["nominal_kg_s"])
+    assert after["cabin_o2_surge_supply_csm_kg_s"] == 0.0
+    assert after["o2_surge_csm_kg"] == pytest.approx(SURGE["initial"])
+
+
+def test_set_o2_source_surge_moves_the_draw_to_the_surge_tank(world):
+    values = walk(world, plant.initial_values(world), 1)
+    staged = plant.apply_command(
+        world, values, "set_o2_source", {"vehicle": "csm", "source": "surge", "flow": "nominal"}
+    )
+    values = walk(world, {**values, **staged}, 2)  # the regulator acts on the next tick's selection
+    sm_before = values["o2_csm_kg"]
+    ticks = 500  # 10 s
+    after = walk(world, values, ticks)
+    assert after["cabin_o2_supply_csm_kg_s"] == 0.0
+    assert after["cabin_o2_surge_supply_csm_kg_s"] == pytest.approx(SUPPLY["nominal_kg_s"])
+    drawn = values["o2_surge_csm_kg"] - after["o2_surge_csm_kg"]
+    assert drawn == pytest.approx(SUPPLY["nominal_kg_s"] * ticks * DT, rel=1e-2)
+    # The S/M tanks now feed only the fuel cells.
+    assert sm_before - after["o2_csm_kg"] == pytest.approx(
+        values["fc_o2_draw_kg_s"] * ticks * DT, rel=1e-2
+    )
+
+
+@pytest.mark.parametrize("source, regulator", [("isolated", "primary"), ("primary", "closed")])
+def test_an_isolated_source_or_a_closed_regulator_admits_nothing(world, source, regulator):
+    values = plant.initial_values(world)
+    values = {
+        **values,
+        "o2_source": {"csm": source, "lm": "primary"},
+        "cabin_regulator_position": regulator,
+    }
+    after = walk(world, values, 5)
+    assert after["cabin_o2_supply_csm_kg_s"] == 0.0
+    assert after["cabin_o2_surge_supply_csm_kg_s"] == 0.0
+
+
+def test_an_empty_surge_tank_stops_the_flow_rather_than_filling_the_cabin_from_nothing():
+    rule = rules_module().RULES["cabin_o2_surge_supply_csm_kg_s"]
+
+    class Params(dict):
+        def no_value(self, why):
+            raise AssertionError(why)
+
+    params = Params(STATES["cabin_o2_surge_supply_csm_kg_s"])
+    inputs = {
+        "o2_source": {"csm": "surge", "lm": "primary"},
+        "cabin_regulator_position": "primary",
+        "o2_surge_csm_kg": 0.0,
+    }
+    assert rule(inputs, params, DT) == 0.0
+    inputs["o2_surge_csm_kg"] = 1.0e-7
+    assert rule(inputs, params, DT) == pytest.approx(1.0e-7 / DT)
+    inputs["o2_surge_csm_kg"] = 1.0
+    assert rule(inputs, params, DT) == pytest.approx(params["nominal_kg_s"])
