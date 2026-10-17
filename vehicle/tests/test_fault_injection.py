@@ -649,3 +649,56 @@ def test_a_commanded_machine_with_a_rule_runs_a_timed_sequence_after_the_command
     assert seen.index("mainstage") - seen.index("ignition") == 5, seen
     # Only the SPS: start_burn routes on `engine`, so the other machines did not move.
     assert values["dps_state"] == "off" and values["aps_state"] == "off"
+
+
+def test_a_dynamics_state_starts_from_its_declared_vector(tmp_path):
+    """The GNC lane's ask: a quaternion and a body rate start where their `initial` says.
+
+    The scalar seed above skipped anything that was not a number, so a `dynamics` state's vector
+    started as nothing and its rule's first read of itself was a gap.
+    """
+    copy = faulted_copy(tmp_path / "vehicle")
+    components = copy / "domains" / "gnc" / "components.yaml"
+    replace(
+        components,
+        "  - id: attitude\n    node: vehicle_dynamics\n    method: dynamics\n",
+        "  - id: attitude\n    node: vehicle_dynamics\n    method: dynamics\n"
+        "    initial: [0.7071067811865476, 0.0, -0.7071067811865476, 0.0]\n",
+    )
+    replace(
+        components,
+        "  - id: body_rate\n    node: vehicle_dynamics\n    method: dynamics\n",
+        "  - id: body_rate\n    node: vehicle_dynamics\n    method: dynamics\n    initial: [0.0, 0.1, 0.0]\n",
+    )
+    vectored = plant.load_world(copy)
+    values = plant.initial_values(vectored)
+    assert values["attitude"] == [0.7071067811865476, 0.0, -0.7071067811865476, 0.0]
+    assert values["body_rate"] == [0.0, 0.1, 0.0]
+    declared = next(state for state in vectored.states if state.id == "body_rate").spec["initial"]
+    values["body_rate"][1] = 9.0
+    assert declared == [0.0, 0.1, 0.0]
+    # A vector in the truth hashes and survives the checkpoint's JSON like any other value.
+    assert plant.state_hash(values) == plant.state_hash(json.loads(json.dumps(values)))
+
+
+def test_a_zone_cooled_by_space_is_in_no_loop_s_load_and_says_why(tmp_path):
+    """The thermal lane's ask: the SM service bay is not on the glycol loop.
+
+    `cooled_by: space` is accepted with a `cooled_by_note`, the exemption's reason, and the bay
+    leaves the primary loop's collected load; without the note it is refused.
+    """
+    bay = "        cooled_by: loop_primary\n        heat_state: service_bay_heat_w\n"
+    noted = tmp_path / "noted"
+    copy_noted = faulted_copy(noted)
+    replace(
+        copy_noted / "vehicle.yaml",
+        bay,
+        "        cooled_by: space\n        cooled_by_note: radiates through the SM skin\n"
+        "        heat_state: service_bay_heat_w\n",
+    )
+    out = run_linter(copy_noted).stdout
+    assert "zones.csm_service_bay.cooled_by" not in out, out[-3000:]
+    bare = faulted_copy(tmp_path / "bare")
+    replace(bare / "vehicle.yaml", bay, "        cooled_by: space\n        heat_state: service_bay_heat_w\n")
+    out = run_linter(bare).stdout
+    assert "is 'space' without a `cooled_by_note`" in out, out[-3000:]

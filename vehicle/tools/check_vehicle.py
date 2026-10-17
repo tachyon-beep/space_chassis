@@ -8282,6 +8282,10 @@ COMMS_STRUCTURAL = {
 # and evaluated in none of them.
 IDEAL_APERTURE_PRODUCT = 41253.0
 
+# What a zone's `cooled_by` says when no coolant loop serves it and it rejects its heat by radiation
+# through its own structure. Such a zone is in no loop's collected load.
+RADIATIVE_COOLING = "space"
+
 # What an antenna's `pattern` may say. `aperture` means the two published figures are one figure:
 # the half-power beamwidth is the gain's own consequence, so a change to either re-derives the
 # other. `near_isotropic` means they are independent — a flush omni's 180 degrees is a nominal
@@ -15445,12 +15449,31 @@ def check_thermal_heat_inputs(root: Path, report: Report) -> None:
         zone_row = zones_by_id.get(zone) or {}
         zone_where = f"vehicle.yaml#thermal.zones.{zone}"
         cooled = zone_row.get("cooled_by")
-        if cooled not in loops:
+        if cooled == RADIATIVE_COOLING:
+            # A zone no loop serves — the SM service bays, which reject heat through their own skin
+            # — is a heat rate with somewhere to go that is not a loop's collected load. It is the
+            # one exemption from naming a loop, so it carries its reason.
+            if not zone_row.get("cooled_by_note"):
+                report.refuse(
+                    f"{zone_where}.cooled_by",
+                    f"is {RADIATIVE_COOLING!r} without a `cooled_by_note`. A zone outside every "
+                    "loop's collected load is exempt from the sum that holds the others, and an "
+                    "exemption without a reason is how a rule stops being one: the note says what "
+                    "surface radiates the heat and where the claim that no loop serves it comes from",
+                )
+        elif cooled not in loops:
             report.refuse(
                 f"{zone_where}.cooled_by",
                 f"names {cooled!r}, which is not a loop `vehicle.yaml#thermal.loops` declares "
-                f"({sorted(loops)}). A zone whose heat has no loop is a heat rate with nowhere to "
-                "go, and a loop's collected load is the sum over the zones that name it",
+                f"({sorted(loops)}), nor {RADIATIVE_COOLING!r}. A zone whose heat has no loop and "
+                "no radiating skin is a heat rate with nowhere to go, and a loop's collected load is "
+                "the sum over the zones that name it",
+            )
+        if cooled == RADIATIVE_COOLING and RADIATIVE_COOLING in loops:
+            report.refuse(
+                f"{zone_where}.cooled_by",
+                f"is {RADIATIVE_COOLING!r}, which is also a declared loop's id, so whether this zone "
+                "is in that loop's collected load is not readable",
             )
         declared = sum(
             int(loads[str(load_id)].get("demand_w") or 0)
