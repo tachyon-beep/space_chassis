@@ -3174,7 +3174,7 @@ def test_the_linter_refuses_a_range_it_cannot_read(tmp_path):
     path = definition / "channels.yaml"
     text = path.read_text()
     stripped = re.sub(
-        r"(    range: \[27\.0, 30\.5\]\n)(    #.*?\n)*    range_kind: band\n",
+        r"(    range: \[27\.0, 31\.0\]\n)(    #.*?\n)*    range_kind: band\n",
         r"\1",
         text,
         count=1,
@@ -6317,8 +6317,6 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
         "csm_cabin_pressure_pa": "o2_mass",
         "lm_cabin_pressure_pa": "o2_mass",
         "cabin_dp_psi": "pressure_pa",
-        # The cells' output is the two bus loads read the other way (ADR 0003 item 1).
-        "fuel_cell_power_w": "bus_a_load",
         # And the RCS propellant estimate (round 48): the relation was a sentence and every
         # ingredient — the impulse stock and the capacity C-26 re-derived — was declared.
         "propellant_estimate": "impulse_used",
@@ -6808,14 +6806,15 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     # equilibria, the radiator's equilibrium and rejection, the bus load, the coldplate), and a rule is
     # not also a derivation. `environment_heat_w`'s derivation computes the hot hold, `sun_hold_w`
     # (ADR 0003 item 9), where it computed the state's `total_w`.
-    assert len(declared) == 14, f"{len(declared)} declared arithmetics"
+    # 14 -> 13 when batteries A and B could be tied onto the main buses (decision a, WP02 E-8):
+    # `fuel_cell_power_w` is each bus's load less the batteries' share of its solve, a rule now.
+    assert len(declared) == 13, f"{len(declared)} declared arithmetics"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
     assert subjects == [
         "cabin_dp_psi",
         "csm_cabin_pressure_pa",
         "draw_kg_s",
-        "fuel_cell_power_w",
         "lm_cabin_pressure_pa",
         "nominal_kg_s",
         "propellant_estimate",
@@ -10477,8 +10476,8 @@ def test_the_bus_load_is_the_sum_the_inventory_already_states(tmp_path):
     assert set(bus_a).isdisjoint(bus_b) and set(bus_a) | set(bus_b) == set(csm)
     for name, watts in {**bus_a, **bus_b}.items():
         assert watts == csm[name]["demand_w"], name
+    # With no battery tied on (the MET 0 configuration) the cells carry the whole of it.
     assert states["fuel_cell_power_w"]["fuel_cell_power_w"] == 1723
-    assert states["fuel_cell_power_w"]["provenance"]["computes"] == "fuel_cell_power_w"
 
     # The plant computes bus B's share from the switches, and the number is the inventory's.
     plant = _plant()
@@ -10578,15 +10577,13 @@ def test_the_cells_output_is_the_load_read_the_other_way(tmp_path):
     states = {s["id"]: s for s in power["state"]}
     cell = states["fuel_cell_power_w"]
     assert cell["provenance"]["basis"] == "derived"
-    assert cell["provenance"]["computes"] == "fuel_cell_power_w"
     assert cell["fuel_cell_power_w"] == 1723
     # ADR 0003 item 2: the load is two bus loads now, each the switched sum of its share of the
-    # inventory, and the generation is the two of them added — so it still names nothing but the
-    # loads, through the states that sum them.
-    assert cell["provenance"]["derivation"]["inputs"] == {
-        "bus_a_load": "bus_a_load_w",
-        "bus_b_load": "bus_b_load_w",
-    }
+    # inventory. Since batteries A and B can be tied onto the buses (decision a, WP02 E-8) the
+    # generation is a rule rather than a derivation: each bus's load less what a tied battery
+    # carries in that bus's solve, which is the two loads summed whenever no battery is on.
+    assert "derivation" not in cell["provenance"]
+    assert {b["load"] for b in cell["buses"]} == {"bus_a_load_w", "bus_b_load_w"}
     shares = [set(states[bus]["loads_w"]) for bus in ("bus_a_load_w", "bus_b_load_w")]
     assert shares[0].isdisjoint(shares[1]) and shares[0] | shares[1] == set(csm)
     assert states["bus_a_load_w"]["bus_a_load_w"] + states["bus_b_load_w"]["bus_b_load_w"] == 1723
@@ -12672,7 +12669,10 @@ def test_every_stock_declares_where_it_starts():
     # `zone_csm_avionics_t` seed under their ids, `load_enabled` (the switch map `set_load`
     # writes) under its own, and `environment_heat_w` — a held boundary since item 9 — under its
     # id and its single-state node's alias, `environment_heat`.
-    assert len(on_nodes) == 89, f"{len(on_nodes)} node keys carry a value"
+    # 89 -> 91 with the power burndown: the three modules' `fc_[n]_resistance_ohm` and the
+    # `source_enabled` switch map seed under their ids, and the retired converter takes
+    # `source_converter_v` and its node alias `source_converter` with it.
+    assert len(on_nodes) == 91, f"{len(on_nodes)} node keys carry a value"
     # And the map a tick actually starts from is that seed plus the declared arithmetic, so the
     # resolved states are a strict superset and every one of them is `algebraic`.
     assert seeded_integrators.keys() < seeded.keys(), "the resolution added nothing to the seed"
@@ -12686,12 +12686,13 @@ def test_every_stock_declares_where_it_starts():
     # position now, so they join this sub-map as well as the ids beside it.
     # 18 -> 22 with ADR 0003's thermal rules: the amplifier's temperature and the three loop
     # switch maps (`coolant_pump`, `evaporator_feed`, `radiator_bypass`) are sentinel states.
-    assert len(seeded_integrators["internal"]) == 22, sorted(seeded_integrators["internal"])
+    # 22 -> 23 with power's `source_enabled`, the sources' switch map, on the sentinel.
+    assert len(seeded_integrators["internal"]) == 23, sorted(seeded_integrators["internal"])
     # Five of the sentinel's `algebraic` states resolve at t=0 as well — the bay heat, the cabin
     # pressure differential and three more — so the sentinel's sub-map is the same map the tick
     # commits, merged rather than replaced. (Six until ADR 0003's power rules moved the bus load to
-    # the cells' node.)
-    assert len(seeded["internal"]) == 27, sorted(seeded["internal"])
+    # the cells' node; 27 -> 28 with `source_enabled`.)
+    assert len(seeded["internal"]) == 28, sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
     # six of the twenty-four declared values are the last of their key rather than a key of their
@@ -12772,6 +12773,8 @@ def test_every_stock_declares_where_it_starts():
         "coolant_pump",
         "evaporator_feed",
         "radiator_bypass",
+        # The power burndown: which sources the crew has on the buses (`set_source`).
+        "source_enabled",
     }, sorted(seeded_integrators["internal"])
     # **And the five `algebraic` states the resolver adds**, the sentinel's half of the declared
     # arithmetic: the bay heat rate, the cabin pressure differential, the two loops' collected loads
@@ -12788,9 +12791,11 @@ def test_every_stock_declares_where_it_starts():
     # Zero everywhere except the supply tank's pressure, which is the one seeded sentinel value that
     # is not an accumulator's origin — and, from round 67, `auto`, which is not a number at all and
     # is the reason the value assertions below name their states rather than ranging over the map.
-    # The three switch maps are maps, which a set cannot hold, so they are asserted by name below.
+    # The four switch maps are maps, which a set cannot hold, so they are asserted by name below.
     switch_maps = {k for k, v in seeded_integrators["internal"].items() if isinstance(v, dict)}
-    assert switch_maps == {"coolant_pump", "evaporator_feed", "radiator_bypass"}, switch_maps
+    assert switch_maps == {
+        "coolant_pump", "evaporator_feed", "radiator_bypass", "source_enabled",
+    }, switch_maps
     assert {v for k, v in seeded_integrators["internal"].items() if k not in switch_maps} == {
         0.0,
         35.0,
@@ -15651,8 +15656,9 @@ def test_a_command_value_says_which_argument_carries_the_value():
                 targets[key] = str(source)
     # Five quantity states joined the eight mode ones this round, and one keyed state declares
     # nothing but its key. 17 -> 21 with ADR 0003: thermal's `coolant_pump`, `evaporator_feed` and
-    # `radiator_bypass` and power's `load_enabled`, each keyed.
-    assert declared == 21, declared
+    # `radiator_bypass` and power's `load_enabled`, each keyed. 21 -> 22 with power's
+    # `source_enabled`, the keyed map `set_source` writes (WP02 E-8, decision a).
+    assert declared == 22, declared
     assert sorted(constants) == [
         "rcs.thruster_valve.isolate_rcs_manifold",
         "structure.pyro_fired.execute_event",
@@ -16094,7 +16100,8 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     # `UNCONFIGURED`, which is the honest answer for an input nobody has declared.
     # 14 -> 20 with ADR 0003: `set_coolant_pump`, `set_evaporator_feed`, `set_radiator_bypass`
     # (thermal), `set_load` (power), `set_power_amplifier` and `play_recorder` (comms).
-    assert len(applied) == 20, applied
+    # 20 -> 21 with `set_source` (power), which writes `source_enabled`.
+    assert len(applied) == 21, applied
     assert "select_antenna" in applied
     # 7 -> 5: `set_coolant_pump` and `set_power_amplifier` stopped owing (ADR 0003): the pump's speed
     # selects `coolant_pump` (thermal) and the amplifier's power selects `transmitter_on` (comms).
@@ -16419,12 +16426,14 @@ def test_a_commanded_state_is_guarded_by_a_dwell_and_the_executive_reads_it(tmp_
     # `evaporator_feed`, `radiator_bypass`): `command_dwell` holds the whole value against its last
     # change, so a dwell there would make one element's switch block every other's. They declare
     # none, and that is the second exemption, written down here rather than left as a gap.
-    assert len(commanded) == 22, [s.id for s in commanded]
+    # 22 -> 23 with power's `source_enabled` (`set_source`), a fifth keyed map and so undwelled.
+    assert len(commanded) == 23, [s.id for s in commanded]
     guarded = [s for s in commanded if s.spec.get("dwell")]
     assert len(guarded) == 17, [s.id for s in commanded if not s.spec.get("dwell")]
-    # The one-way state is the first exemption; the four keyed maps are the second.
+    # The one-way state is the first exemption; the five keyed maps are the second.
     assert sorted(s.id for s in commanded if not s.spec.get("dwell")) == [
         "coolant_pump", "evaporator_feed", "load_enabled", "pyro_fired", "radiator_bypass",
+        "source_enabled",
     ]
     assert all(
         s.spec.get("one_way") or str(s.spec.get("unit") or "").startswith("map[")
@@ -19967,7 +19976,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
-    assert len(values["internal"]) == 27, sorted(values["internal"])
+    # 27 -> 28 with `source_enabled`, the sources' switch map, on the sentinel.
+    assert len(values["internal"]) == 28, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1401.0 and values["loop_lm_load_w"] == 0.0
@@ -20051,7 +20061,7 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
     # And the debt states both figures, because a number in prose with no reader is the next round's
     # finding — this is that reader.
     entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
-    assert "142 published points" in entry and "72 are *derived*" in entry
+    assert "142 published points" in entry and "71 are *derived*" in entry
 
 
 def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
@@ -20104,8 +20114,10 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     ), report)
     counts = _cv.CHANNEL_DERIVATION_COUNTS
     # 64/71 -> 63/72 with the comms quiet-coast model (7b22cd7), which moved the docstring too.
-    assert counts["same"] == 63, counts
-    assert counts["derived"] == 72, counts
+    # 63/72 -> 64/71 when `power.source_1_current_a` read fuel cell 1's own current
+    # (`fc_1_current_a`, amperes) rather than the three modules' watts over bus A's volts.
+    assert counts["same"] == 64, counts
+    assert counts["derived"] == 71, counts
     assert counts["total"] == 135, counts
     assert not [r for r in report.refusals if "channels read from a state" in r], report.refusals
     doc = _cv.CHANNEL_DERIVATION_FIGURES.search(_cv.inspect.getdoc(_cv.check_channel_derivations) or "")
@@ -20139,8 +20151,8 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     # count buys over the old gate: a reader is told how far the conversion has got, not that it
     # should not have started.
     assert (
-        "states that 15 of the derived channels carry an evaluable `derivation`, and the registry "
-        "now has 16" in result.stdout
+        "states that 14 of the derived channels carry an evaluable `derivation`, and the registry "
+        "now has 15" in result.stdout
     ), result.stdout[-900:]
 
     # And the total, which was the figure nothing read. Move it and the sentence is refused on its
@@ -20162,10 +20174,11 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     # 63 -> 64 in round 32: `eclss.o2_supply_pressure_psi` moved from the node-sourced set to the
     # state-sourced one, where its unit is its source's. 134 -> 135 in round 61, when the total was
     # given a reader and the sentence it was read from turned out to be the stale copy.
-    assert "only 63 have the state's own unit" in entry
+    # 64/71 when `power.source_1_current_a` became fuel cell 1's own current.
+    assert "only 64 have the state's own unit" in entry
     assert "of the 135 channels read from a state" in entry
-    assert "The other 72 are *derived*" in entry
-    assert "15 of the 72 now carry an evaluable `derivation`" in entry
+    assert "The other 71 are *derived*" in entry
+    assert "14 of the 71 now carry an evaluable `derivation`" in entry
 
 
 def test_the_frame_publishes_a_derived_channel_at_this_tick_s_own_readings():
@@ -21268,13 +21281,13 @@ def test_the_mechanical_conversions_land_on_the_declarations_that_sized_them():
     # The nine, by the registry's own count of evaluable derivations.
     lint = run_linter(VEHICLE)
     assert lint.returncode == 0, lint.stdout[-900:]
-    assert "15 of the 72 now carry an evaluable `derivation`" in lint.stdout
+    assert "14 of the 71 now carry an evaluable `derivation`" in lint.stdout
     entry = next(
         d
         for d in yaml.safe_load((VEHICLE / "presentation.yaml").read_text())["open_debts"]
         if "frame publishes channel ids now" in d
     )
-    assert "15 of the 72 now carry an evaluable `derivation`" in entry
+    assert "14 of the 71 now carry an evaluable `derivation`" in entry
     assert "0 of the prose rows declare in their own `owed` field" in entry
 
 

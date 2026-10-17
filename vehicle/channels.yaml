@@ -71,7 +71,7 @@ power:
     precision: 0.05
     rate_hz: 10
     priority: P2
-    range: [27.0, 30.5]
+    range: [27.0, 31.0]
     # `band` is an acceptable operating region and every alarm fires outside it; `scale` is the
     # quantity's full span, and a reserve alarm inside it is normal. The two are indistinguishable
     # from the numbers alone, which is why this is declared rather than inferred.
@@ -81,13 +81,20 @@ power:
     provenance:
       basis: apollo
       ref: "apollo_diode.md:73"
+      note: >-
+        the ceiling is the ODB's: its "nominal main bus operating range" runs to 31.0 V (Fig.
+        4.1-11, printed p. 4.1-31; the crew powers up and down watching 31 V and 26.5 V, §4.1.1.5),
+        where the corpus row's 30.5 is marked **Sim**. A bus its two modules carry lightly sits near
+        31 V (fuel cell 1 at 13.3 A is 30.96 V on E-2's line at MET 0), so 30.5 put the coast
+        configuration outside its own band. The floor stays the corpus's 27.0, because 26.5 is this
+        vehicle's loss line (`csm_bus_a.v_band`, the quiet-coast margin)
   - id: power.dc_bus_b_v
     unit: V
     layer: measurement
     precision: 0.05
     rate_hz: 10
     priority: P2
-    range: [27.0, 30.5]
+    range: [27.0, 31.0]
     # `band` is an acceptable operating region and every alarm fires outside it; `scale` is the
     # quantity's full span, and a reserve alarm inside it is normal. The two are indistinguishable
     # from the numbers alone, which is why this is declared rather than inferred.
@@ -97,6 +104,13 @@ power:
     provenance:
       basis: apollo
       ref: "apollo_diode.md:74"
+      note: >-
+        the ceiling is the ODB's: its "nominal main bus operating range" runs to 31.0 V (Fig.
+        4.1-11, printed p. 4.1-31; the crew powers up and down watching 31 V and 26.5 V, §4.1.1.5),
+        where the corpus row's 30.5 is marked **Sim**. A bus its two modules carry lightly sits near
+        31 V (fuel cell 1 at 13.3 A is 30.96 V on E-2's line at MET 0), so 30.5 put the coast
+        configuration outside its own band. The floor stays the corpus's 27.0, because 26.5 is this
+        vehicle's loss line (`csm_bus_a.v_band`, the quiet-coast margin)
   - id: power.bus_a_current_a
     unit: A
     layer: measurement

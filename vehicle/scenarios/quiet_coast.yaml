@@ -74,13 +74,13 @@ episode:
       margin: {at_least: 27.0}
       loss: {below: 26.5}
       unit: V
-      source: "09 §5; `power` components `csm_bus_a.v_band` [27.0, 30.5] lower edge; 26.5 V the loss in 09 §5"
+      source: "09 §5; `power` components `csm_bus_a.v_band` [27.0, 31.0] lower edge; 26.5 V the loss in 09 §5"
     bus_b_v:
       state: bus_b_v
       margin: {at_least: 27.0}
       loss: {below: 26.5}
       unit: V
-      source: "as bus_a_v; `csm_bus_b.v_band` [27.0, 30.5]"
+      source: "as bus_a_v; `csm_bus_b.v_band` [27.0, 31.0]"
     coldplate:
       state: zone_csm_avionics_t
       margin: {below_c: 50.0}
