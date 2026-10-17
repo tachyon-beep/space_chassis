@@ -7,6 +7,8 @@ person was sent (`crew_destination`, before the tick) and that they were asked (
 these rules decide whether they got there, and what the flight plan has them doing.
 """
 
+import math
+
 US_PER_H = 3_600_000_000
 
 
@@ -172,6 +174,40 @@ def csm_water_draw_crew(inputs, params, dt):
     return _weighted(inputs, params, params["draw_weight"])
 
 
+def crew_busy_s(inputs, params, dt):
+    """The seconds a question still occupies each person: set by `ask_crew`, counted down here."""
+    return {person: max(0.0, seconds - dt) for person, seconds in sorted(inputs["crew_busy_s"].items())}
+
+
+def crew_workload_index(inputs, params, dt):
+    """A first-order lag toward the crew's demand: the highest of the people not incapacitated, each
+    0 asleep, 1 at a meal or at work, and 2 while a question keeps them busy."""
+    demand = params["demand"]
+    present = [
+        p for p, state in sorted(inputs["crew_availability"].items()) if state != "incapacitated"
+    ]
+    target = max(
+        (
+            demand["busy"] if inputs["crew_busy_s"][p] > 0 else demand[inputs["crew_activity"][p]]
+            for p in present
+        ),
+        default=0.0,
+    )
+    previous = float(inputs["crew_workload_index"])
+    return previous + (target - previous) * (1.0 - math.exp(-dt / params["tau_s"]))
+
+
+def crew_workload(inputs, params, dt):
+    """The band the workload index is in."""
+    index = inputs["crew_workload_index"]
+    bands = params["bands"]
+    if index < bands["low"]:
+        return "low"
+    if index < bands["medium"]:
+        return "medium"
+    return "high"
+
+
 RULES = {
     "crew_clock_us": crew_clock_us,
     "crew_scheduled": crew_scheduled,
@@ -185,4 +221,7 @@ RULES = {
     "csm_metabolic_crew": csm_metabolic_crew,
     "lm_metabolic_crew": lm_metabolic_crew,
     "csm_water_draw_crew": csm_water_draw_crew,
+    "crew_busy_s": crew_busy_s,
+    "crew_workload_index": crew_workload_index,
+    "crew_workload": crew_workload,
 }

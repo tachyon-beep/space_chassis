@@ -8,6 +8,7 @@ to the declarations they are derived from.
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -202,21 +203,31 @@ def walk(world, hours, step_s=60.0, questions=(), location=SEATS):
         "crew_activity": dict.fromkeys(PEOPLE, "work"),
         "crew_availability": dict.fromkeys(PEOPLE, "available"),
         "crew_location": dict(location),
+        "crew_busy_s": dict.fromkeys(PEOPLE, 0.0),
+        "crew_workload_index": state(world, "crew_workload_index").spec["initial"],
     }
+    # What `ask_crew` writes, read off its `command_value` rows rather than restated.
+    busy_for = next(r["constant"] for r in state(world, "crew_busy_s").spec["command_value"])
     pending = sorted(questions, key=lambda q: q[1])
     rows = []
     for _ in range(int(hours * 3600 / step_s)):
         met_h = values["crew_clock_us"] / 3.6e9
         while pending and pending[0][1] <= met_h:
-            values["crew_roused"] = {**values["crew_roused"], pending.pop(0)[0]: True}
-        for sid in ("crew_clock_us", "crew_scheduled", "crew_rest_owed_s", "crew_activity", "crew_availability"):
+            person = pending.pop(0)[0]
+            values["crew_roused"] = {**values["crew_roused"], person: True}
+            values["crew_busy_s"] = {**values["crew_busy_s"], person: busy_for}
+        for sid in ("crew_clock_us", "crew_scheduled", "crew_rest_owed_s", "crew_activity", "crew_availability",
+                    "crew_workload_index", "crew_workload"):
             values[sid] = rules[sid](values, params(world, sid), step_s)
-        values["crew_roused"] = rules["crew_roused"](values, params(world, "crew_roused"), step_s)
+        # The sentinel's, last.
+        for sid in ("crew_roused", "crew_busy_s"):
+            values[sid] = rules[sid](values, params(world, sid), step_s)
         draw = rules["csm_water_draw_crew"](values, params(world, "csm_water_draw_crew"), step_s)
         metabolic = rules["csm_metabolic_crew"](values, params(world, "csm_metabolic_crew"), step_s)
         rows.append(
             (values["crew_clock_us"] / 3.6e9, dict(values["crew_activity"]), dict(values["crew_availability"]),
-             dict(values["crew_rest_owed_s"]), draw, metabolic)
+             dict(values["crew_rest_owed_s"]), draw, metabolic, values["crew_workload_index"],
+             values["crew_workload"])
         )
     return rows
 
@@ -326,3 +337,46 @@ def test_a_person_on_the_surface_is_on_suit_and_an_incapacitated_one_stays_so(wo
         0.02,
     )
     assert out == {"commander": "suit", "lm_pilot": "incapacitated", "csm_pilot": "available"}
+
+
+def test_the_workload_reads_low_asleep_and_medium_at_work_five_minutes_behind_the_schedule(world):
+    rows = walk(world, 18.5, step_s=10.0)
+    def at(h):
+        return min(rows, key=lambda r: abs(r[0] - h))
+    first_rest = met(world, "translunar_coast", 13.5)
+    assert at(1.0)[7] == "medium"
+    # A lag, not a switch: a minute into the rest period the crew still read as working.
+    assert at(first_rest + 1 / 60)[7] == "medium"
+    assert at(first_rest + 0.5)[7] == "low"
+
+
+def test_one_question_is_not_a_busy_crew_and_a_second_as_it_wears_off_is(world):
+    """A question occupies its person for `crew_busy_s`'s constant. Against the five-minute lag one
+    moves the index a third of a level and stays medium; a second as the first wears off reads high,
+    which is what separates a crew slow to answer because it is busy from one that cannot answer."""
+    busy_for = next(r["constant"] for r in state(world, "crew_busy_s").spec["command_value"])
+    once = walk(world, 0.5, step_s=1.0, questions=[("lm_pilot", 0.1)])
+    peak = max(r[6] for r in once)
+    assert peak == pytest.approx(1.0 + (1 - math.exp(-busy_for / 300)), abs=0.01)
+    assert {r[7] for r in once} == {"medium"}
+    twice = walk(world, 0.5, step_s=1.0, questions=[("lm_pilot", 0.1), ("lm_pilot", 0.1 + busy_for / 3600)])
+    assert "high" in {r[7] for r in twice}
+    assert twice[-1][7] == "medium", "and it falls back once the questions stop"
+
+
+def test_an_incapacitated_person_does_not_count_toward_the_workload(world):
+    spec = params(world, "crew_workload_index")
+    inputs = {
+        "crew_availability": {"commander": "available", "lm_pilot": "incapacitated", "csm_pilot": "available"},
+        "crew_activity": dict.fromkeys(PEOPLE, "work"),
+        "crew_busy_s": {"commander": 0.0, "lm_pilot": 120.0, "csm_pilot": 0.0},
+        "crew_workload_index": 1.0,
+    }
+    assert rule(world, "crew_workload_index")(inputs, spec, 60.0) == pytest.approx(1.0)
+
+
+def test_ask_crew_makes_the_person_it_names_busy_through_the_plant(world, tmp_path):
+    trace = run(world, tmp_path, [(1, ASK, ask("csm_pilot", "csm_navigator"))], 4, ["crew_busy_s"])
+    busy = trace[-1]["crew_busy_s"]
+    assert busy["commander"] == 0.0 and busy["lm_pilot"] == 0.0
+    assert 119.0 < busy["csm_pilot"] < 120.0

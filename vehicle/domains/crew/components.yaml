@@ -54,10 +54,10 @@ writes: [crew_state, alert_state]
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [crew_destination, crew_roused, switch_panel, breaker_panel]
+internal_order: [crew_destination, crew_roused, crew_busy_s, switch_panel, breaker_panel]
 internal_order_note: >-
-  where each person has been sent and whether they have been roused first, because they are a
-  command's record and the panels do not read them. Both sit here rather than on `crew_state`
+  where each person has been sent, whether they have been roused and how long a question keeps
+  them busy first, because they are a command's record and the panels do not read them. Both sit here rather than on `crew_state`
   because a command reaches a coupling node only through an `E-CMD-*` edge and the crew have none:
   the sentinel is the one place a verb's write lands with no edge, and the crew-day rules on
   `crew_state` read them a tick later, which is the latency of a person being woken. Then the two panels a crew position can throw: switches before breakers, because a
@@ -322,6 +322,41 @@ state:
         let the crew sleep on rather than wake them (AFJ11, GET 47:41: "the Flight Director ...
         decided to let the crew remain asleep"). A question at night is the ground's choice to
         spend that. Private truth: the fleet sees `crew.available`
+  - id: crew_busy_s
+    node: internal
+    method: discrete
+    unit: "map[crew_id,s]"
+    initial:
+      commander: 0.0
+      lm_pilot: 0.0
+      csm_pilot: 0.0
+    initial_provenance:
+      basis: derived
+      relation: "nobody has been asked anything before MET 0"
+      source: domains/crew/commands.yaml:commands.ask_crew
+    moved_by:
+      - "command:ask_crew"
+      - "logic:counts down to zero"
+    command_value:
+      - verb: ask_crew
+        argument: crew_id
+        constant: 120.0
+        key: crew_id
+        why: >-
+          a question occupies the person it names: they stop what they were doing, go and look, and
+          answer. The seconds it occupies them are what `crew_workload` reads, so a person asked
+          again before the last question has worn off reads busy throughout
+    # A countdown, set by a question; not a reading that could chatter.
+    non_latching: true
+    provenance:
+      basis: chosen
+      reason: >-
+        120 s, a question's exchange: the person stops, goes and looks, and answers. Against the
+        workload's five-minute lag (`apollo_diode.md:227`) one question moves the crew's index a
+        third of a level, which stays inside the band it was in, and a second asked as the first
+        wears off takes it over the edge: a question is not thereby a busy crew, and a person asked
+        again and again is. No Apollo document gives how long answering a question took, and the
+        figure is the coordinator's to override. Private truth: the fleet sees `crew.workload`
   - id: crew_rest_owed_s
     node: crew_state
     method: discrete
@@ -619,26 +654,64 @@ state:
         driver. The potable quantity therefore drops by about 1.1 kg in each meal hour
         for three people and is flat through the night, against a fuel-cell fill that is steady:
         for an hour after every meal, the tank looks the way a leak or a failing fuel cell would
+  - id: crew_workload_index
+    node: crew_state
+    method: discrete
+    unit: "index"
+    # The crew at work at MET 0 (`crew_scheduled.initial`), so the index starts at its level.
+    initial: 1.0
+    initial_provenance:
+      basis: derived
+      relation: "the flight plan's period at MET 0 is work, whose demand is the middle level, and a lag that has been at its input settles there"
+      source: domains/crew/components.yaml:state crew_scheduled.initial
+    moved_by:
+      - "logic:relaxes toward the crew's demand with a five-minute time constant"
+    # A first-order lag, computed by its rule: it moves by fractions of a level per tick and is
+    # read only through `crew_workload`'s bands.
+    non_latching: true
+    tau_s: 300
+    demand:
+      sleep: 0.0
+      meal: 1.0
+      work: 1.0
+      busy: 2.0
+    provenance:
+      basis: chosen
+      ref: "apollo_diode.md:227"
+      reason: >-
+        the lag apollo_diode.md:227 gives (`tau_s`, five minutes), on an input this domain had to
+        choose: each person's demand is 0 asleep, 1 at a meal or at work, and 2 while a question
+        keeps them busy (`crew_busy_s`), and the crew's is the highest of the people not
+        incapacitated. The lag is what makes workload a *trend* rather than a reaction — a crew
+        member who has just been asked something is not thereby busy, and one who is asked again
+        before the last question has worn off is. Coarse on purpose: the same line warns against detailed
+        synthetic psychology. The highest rather than the mean, because the channel separates a
+        busy silence from an incapacitated one (CRW-01's false-positive note), and one person
+        asked repeatedly is a crew that is slow to answer
   - id: crew_workload
     node: crew_state
-    method: lag
-    unit: "enum-level"
-    initial: UNCONFIGURED
-    initial_note: >-
-      the workload level at MET 0. `apollo_diode.md:227` gives the four-level vocabulary and the
-      five-minute lag, and no source in the corpus gives a starting level — the mission's clock
-      starts at the top of `translunar_coast`, so what the crew are doing then is a property of
-      the scenario that nothing declares. What would close it: a crew activity timeline for the
-      early coast, or a decision that the index begins at `low`, which is a statement about the
-      mission's start rather than a measurement
-    tau_s: 300
+    method: discrete
+    unit: "enum[low,medium,high]"
+    initial: medium
+    initial_provenance:
+      basis: derived
+      relation: "the band `crew_workload_index.initial` (1.0) falls in"
+      source: domains/crew/components.yaml:state crew_workload_index.initial
+    moved_by:
+      - "logic:the band the workload index is in"
+    bands:
+      low: 0.5
+      medium: 1.5
+    # The index is a lag: it crosses a band edge once for each change in what the crew are doing and
+    # settles at a level's centre (0, 1 or 2), never on an edge, so there is nothing to chatter.
+    non_latching: true
     provenance:
       basis: apollo
       ref: "apollo_diode.md:227"
       note: >-
-        coarse on purpose: low, medium, high, with a five-minute lag. The lag is what makes
-        workload a *trend* rather than a reaction — a crew member who has just been asked
-        something is not thereby busy, and one who has been busy for an hour is.
+        coarse on purpose: low, medium, high, with a five-minute lag (`crew_workload_index`). The
+        bands are the levels' midpoints: below 0.5 is low and below 1.5 medium, so a crew at work
+        reads medium and a sleeping one low
   - id: alert_lifecycle
     node: alert_state
     method: discrete
@@ -956,5 +1029,5 @@ open_debts:
   - "**What moves the crew is declared now, and three of the egress rule's gates are not reachable from it.** `crew_location` is a rule (`domains/crew/rules.py`): a person is where `ask_crew` last sent them while the station is reachable in `structure.configuration`, and in their own seat in the vehicle the configuration puts them in otherwise. The shape the earlier debt fixed — egress gated on the phase being `surface`, the hatch open and the suit loop running; ingress on the hatch closing — is only half reachable: a rule reads its snapshot, and the phase is in no state, while `hatch_state` and `suit_loop_flow_cfm` are on the structure and ECLSS sentinels, which no other domain's rule can read. So `surface_eva` is reachable from the LM whenever it is `undocked`, in orbit as well as on the surface, and the hatch and the suit are the structure and ECLSS lanes' to enforce on their own side. What closes it: the hatch position and the suit-loop flow on coupling nodes the crew can declare in `reads:`, and the mission phase as a state."
   - "**The surface has no flight plan rows.** `crew_scheduled.flight_plan` carries the Apollo 11 plan's translunar, lunar-orbit and transearth eat and rest periods; the plan's surface stay has \"two 4 to 5 hour sleep periods while the LM is on the lunar surface\" (FP11 printed p1-13), and their GETs, and the CM pilot's matching rest in orbit (MR11: \"timed to coincide with that of the lunar module crew so that radio silence could be observed\"), are not extracted. Until they are, the crew work through the descent, the surface and the ascent. What closes it: the FP11 detailed timeline pages for GET ~100-130, anchored to `descent`, `surface` and `ascent_rendezvous`."
   - "**CRW-01 has no onset, because its onset names a person.** `crew_availability` holds `incapacitated` once written and its rule never writes it, so the fault is the only way there; an onset row with `becomes: incapacitated` needs a `key`, and which crew member a scenario incapacitates is the scenario's choice. What closes it: an onset row per crew id (three faults, or a fault the scheduler parameterises by person)."
-  - "**`crew_workload` has no driver.** It is a `lag` in an `enum-level` and nothing drives it: `E-CREW-WATER` did, by declaring no `advances`, which made a drink of water the workload's input. The activity is the obvious input (rest low, a meal or work medium, the surface high) and no source states the mapping or the starting level; and a lag is the plant's integrator, so an activity-driven workload is either an edge from a quantity or a rule on a different class. Owed as a design choice; it adds the separation between a busy crew member and an incapacitated one that CRW-01's own `false_positive_risk` asks for."
+  - "**The workload reads the flight plan and the questions, and not the alarms.** `crew_workload_index` is a five-minute lag on each person's demand (asleep, at work, or kept busy by a question for `crew_busy_s`), which is the separation between a busy crew member and an incapacitated one that CRW-01's `false_positive_risk` asks for. An alert storm (CRW-06) is the other thing that makes a crew busy, and `alert_lifecycle` has no rule yet, so a panel full of active cautions leaves the workload where the schedule put it. What closes it: the lifecycle's rule, then `busy` demand for a person while an alert at their station is `active_unacknowledged`. The demand levels and the 120 s a question occupies are `chosen`."
   - "Crew physiology is out of scope by design (`apollo_diode.md:754`: metabolic rates are an input, not a model of a person). `incapacitated` is therefore a state with a cause the vehicle does not model."

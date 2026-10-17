@@ -565,18 +565,19 @@ nodes:
     kind: state
     unit: enum
     apollo: "226-227"
-    # `crew_location` and `crew_availability` are `map[crew_id,...]`; `crew_workload` is a lag in
-    # hours. See `key_space` below.
+    # `crew_location` and `crew_availability` are `map[crew_id,...]`; `crew_workload` is a band on
+    # `crew_workload_index`, a lag its rule computes. See `key_space` below.
     key_space: by_state
     state_order: [crew_clock_us, crew_scheduled, crew_rest_owed_s, crew_activity, crew_location,
                   crew_availability, csm_crew_count, lm_crew_count, csm_metabolic_crew,
-                  lm_metabolic_crew, csm_water_draw_crew, crew_workload]
+                  lm_metabolic_crew, csm_water_draw_crew, crew_workload_index,
+                  crew_workload]
     state_order_note: >-
       the clock first, because the flight plan is read against it, and the flight plan's period
       next; then the rest owed, which
       the activity reads with the sentinel's `crew_roused`; then where people are,
-      which availability, the counts, the metabolic sums and the water draw all read. Workload last
-      because it is a lag on what the crew have been doing, and what they are doing depends on
+      which availability, the counts, the metabolic sums and the water draw all read. The workload index and then its band
+      last, because the index is a lag on what the crew have been doing, and what they are doing depends on
       where they are and whether they are available. Location and availability are independent of
       each other and the order between them *is* the frozen tiebreak — declared here so that it is
       a recorded decision rather than an accident of the alphabet

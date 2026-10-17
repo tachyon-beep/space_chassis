@@ -8035,7 +8035,7 @@ def test_the_stock_integrator_reads_its_driver():
     pascals-per-kelvin to kilograms-per-hour and calling the result a mass is not an approximation;
     it is a dimension error wearing a number.
 
-    That stop is gone: a tick now walks all 163 states and records what it cannot advance, so the
+    That stop is gone: a tick now walks all 165 states and records what it cannot advance, so the
     integrator is reached by the order rather than only by a hand-written call. It still cannot be
     *exercised* from the live corpus, because every stock's driver is itself gapped — the tick
     reaches `lm_cabin_o2_kg` and gives up on it for a reason that belongs to the other state. The
@@ -18263,7 +18263,7 @@ def test_the_gate_s_own_prose_states_the_vehicle_it_tests():
 def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     """The status line's own sentence, held whole rather than in the three figures a test read.
 
-    The sentence is "148 channels, 163 states over 61 scheduled nodes, 142 thresholds, 59 verbs and
+    The sentence is "148 channels, 165 states over 61 scheduled nodes, 142 thresholds, 59 verbs and
     128 classified events". `test_the_readme_status_matches_the_tools` reads the first three; the
     last three were read by nothing, which is the same defect one clause further along in the same
     line. The fixture moves the threshold count by one, because that is the smallest change the
@@ -19782,7 +19782,7 @@ def test_the_battery_s_smallest_flow_is_its_smallest_load_and_its_quantum_is_fin
 def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     """The lag integrator applies no conversion, and nothing said so — so both were dimensional errors.
 
-    A real tick advanced exactly two of the vehicle's 163 states, and both numbers were nonsense: `crew_workload`
+    A real tick advanced exactly two of the vehicle's 165 states, and both numbers were nonsense: `crew_workload`
     is an `enum-level` and was relaxed toward `water_potable`'s 14 kg of water; `thrust_main_n` is in
     newtons and was relaxed toward `prop_main`'s 18,508 kg of propellant. Neither is a crash — both
     are plausible numbers — which is why the rule has to exist rather than the values being watched.
