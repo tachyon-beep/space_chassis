@@ -27,6 +27,13 @@ profiles:
       ref: "apollo_diode.md:134-141"
       note: "the channel events are apollo's: <90 % chamber pressure after ignition, <90 % feed pressure, phase-specific pressurant limits, and a >5 % commanded-versus-estimated discrepancy. The dwells and recovery bands are chosen against the engine's own time constants"
 
+# `acts` (the arc review's item 7, decided by the coordinator 2026-10-17, the Apollo rule): a trip
+# that protects hardware in seconds acts `automatic`; one that spends a resource or closes an
+# option waits for a command and acts `crew`. Every propulsion threshold acts `crew`: neither the
+# SPS nor the LM engines shut themselves down on a chamber, feed or pressurant reading (AOH
+# SM2A-03 §2.4; the crew's thrust-on and SPS PRESS lights are indications, not trips), and the one
+# service-owned protective action in the domain, PRP-07's valve closure, is a fault response
+# rather than a threshold.
 thresholds:
 
   # --- chamber pressure: the fastest evidence that a burn is wrong -------------------------
@@ -39,6 +46,7 @@ thresholds:
     dwell_clear_s: 2
     latched: true
     severity: WARNING
+    acts: crew
     gated_by: "the engine's state is ignition or mainstage"
     provenance:
       basis: apollo
@@ -53,6 +61,7 @@ thresholds:
     dwell_clear_s: 5
     latched: true
     severity: WARNING
+    acts: crew
     point_units: "% per second"
     provenance:
       basis: apollo
@@ -69,6 +78,7 @@ thresholds:
     dwell_clear_s: 2
     latched: true
     severity: WARNING
+    acts: crew
     provenance:
       basis: apollo
       ref: "apollo_diode.md:138"
@@ -81,6 +91,7 @@ thresholds:
     dwell_clear_s: 5
     latched: true
     severity: WARNING
+    acts: crew
     point_units: "% deviation of estimated thrust from commanded, signed"
     gated_by: "a burn is in progress"
     provenance:
@@ -99,6 +110,7 @@ thresholds:
     latched: false
     interlock: true
     severity: ADVISORY
+    acts: crew
     point_units: "% commanded throttle, in the 65-92.5 % non-operating region"
     provenance:
       basis: historical
@@ -115,7 +127,8 @@ thresholds:
     latched: false
     interlock: true
     severity: ADVISORY
-    point_units: "% remaining, checked at burn start"
+    acts: crew
+    point_units: "%, remaining, checked at burn start"
     provenance:
       basis: apollo
       ref: "apollo_diode.md:140"
@@ -130,6 +143,7 @@ thresholds:
     latched: false
     interlock: true
     severity: ADVISORY
+    acts: crew
     point_units: "restarts used against the 50 the engine was qualified for"
     provenance:
       basis: historical
@@ -151,6 +165,7 @@ thresholds:
     # an interlock is survivable and for anything else is not — which is exactly why the union is
     # now enforced for every threshold rather than for the ones that look like alarms.
     severity: ADVISORY
+    acts: crew
     point_units: "seconds of accumulated burn, against the 750 s the SPS carries"
     gated_by: "accumulated burn time, not chamber pressure; expressed against this channel only because the profile schema keys on a published channel and accumulated burn seconds is service state"
     provenance:
@@ -161,16 +176,23 @@ thresholds:
   - id: pressurant_low
     point: prop.pressurant_pressure_psi
     comparator: below
-    assert: 160
+    # **The SPS PRESS light's underpressure setting, and no longer phase-gated.** This asserted at
+    # 160 under `gated_by: phase`, against an engine-inlet floor of 165 psia, when the state it
+    # reads was a pressure nothing defined. `prop.pressurant_pressure_psi` is now the propellant
+    # tanks' ullage pressure (178 psia loaded, 186 regulated in a burn), and the Block II vehicle
+    # has a setting for exactly that quantity on its own caution light, the same in every phase.
+    # The gate's prose was also what kept `start_burn` from resolving the guard at all.
+    assert: 157
     clear: 170
     dwell_assert_ms: 2000
     dwell_clear_s: 30
     latched: true
     severity: CAUTION
-    gated_by: "phase: the SPS engine inlet runs at 165 psia, so the limit is phase-specific as apollo says"
+    acts: crew
     provenance:
       basis: historical
-      source: "the AJ10 report and NR: SPS bottles at 3,600 psia regulate to 186 psia with an engine inlet of 165. Apollo's channel event is 'phase-specific low/high', and this is the low side of it with the published inlet pressure as its floor"
+      source: "AOH SM2A-03 Block II Vol. 1, p. 2.4-41: pressure transducers (2), 'Fuel and oxidizer underpressure setting (SPS PRESS light, MDC-2), 157 psia', overpressure 200 psia"
+      note: "the 170 psia clear is chosen, not published: above the 157 assert by more than the regulator's 4 psi working tolerance and below the 178 psia the tanks are loaded to, so a burn that restores the regulated 186 clears it and a tank that sits at the light does not chatter. The 2 s assert dwell is chosen against the start transient"
   - id: pressurant_high
     point: prop.pressurant_pressure_psi
     comparator: above
@@ -180,6 +202,7 @@ thresholds:
     dwell_clear_s: 30
     latched: true
     severity: WARNING
+    acts: crew
     point_units: "psi, where the transducer saturates"
     provenance:
       basis: apollo
@@ -197,6 +220,7 @@ thresholds:
     latched: true
     interlock: true
     severity: WARNING
+    acts: crew
     point_units: "evidence count: 0 nominal, 1 suspect, 2 corroborating, 3 confirmed"
     provenance:
       basis: chosen
@@ -211,6 +235,7 @@ thresholds:
     dwell_clear_s: 0
     latched: false
     severity: WARNING
+    acts: crew
     point_units: "boolean: an armed main engine"
     provenance:
       basis: apollo

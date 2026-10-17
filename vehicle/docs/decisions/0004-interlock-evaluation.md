@@ -236,3 +236,32 @@ their batch classes through the window (`aurora/tests/test_quiet_coast_window.py
   (WP05)" sentence (`set_bus_tie`'s `tie_dv_limit`, `set_relief_valve`'s `cabin_dp_low`) now assert
   the link this decision names: a difference between buses, and `psid` against `psi`. The arm and
   fire refusals list only the unreadable interlocks, which for both verbs is all of them.
+
+## Amendment: `start_burn` admits on admission guards only (2026-10-17)
+
+Proposed by the propulsion lane; decided by the coordinator under John's delegation of 13:48Z
+("for all times where the agents are blocked, if its a scope question check if it has an obvious
+answer and reply").
+
+`start_burn` declared six interlocks. Two of them, `chamber_pressure_low` and `thrust_discrepancy`,
+watch a running engine: each is `gated_by` the engine's state or a burn in progress, and at the
+moment a burn is admitted no engine is running, so the chamber reads 0 % and nothing is estimated.
+Evaluated, they refuse every burn; unevaluated, they refuse it as unreadable. Neither outcome is a
+guard. They leave the admission list (`domains/propulsion/commands.yaml#start_burn`) and become
+in-burn monitors, read while the engine is in mainstage. What a tripped monitor does is the crew's
+or the fleet's call, by `stop_burn`; nothing stops a burn on them automatically (`acts: crew`, the
+Apollo rule the arc review set), and the fleet gets no conditional cutoff it arms itself
+(`docs/diode-contract.md:278`). `set_throttle` keeps `chamber_pressure_low`, because a throttle
+change is an in-burn command.
+
+`start_burn` stays guarded whole, as above: no argument value is the recovery, and `stop_burn` is
+the safing verb. Its admission list is `feed_pressure_low`, `pressurant_low` and
+`prop_cutoff_guard_5`. `dps_throttle_band` left it too, by the same decision: it is the 65-92.5 %
+no-go region of `set_throttle`'s commanded argument, not a reading, so it could never resolve here;
+it stays on `set_throttle`, where it becomes a refused sub-range of the numeric argument (engine
+work). `pressurant_low` no longer carries a `gated_by` (it is the SPS PRESS light's 157 psia
+setting, AOH p. 2.4-41, in every phase). What still keeps the verb from being admitted:
+`prop_cutoff_guard_5` reads a node-sourced point, which the engine's `resolve_interlock` does not
+resolve until the fault-injection lane's change lands. Neither the in-burn evaluation nor its gate on
+mainstage exists yet: the engine evaluates no `gated_by`, and nothing moves an engine to mainstage
+until `start_burn` stages its sequence. Both are engine work, routed to the fault-injection lane.

@@ -89,8 +89,14 @@ commands:
       engine: {type: enum, values: [sps, dps, aps]}
     authority: A2
     gate: {kind: preference, variable: burn_start_<engine>_enable}
-    interlocks: [chamber_pressure_low, feed_pressure_low, pressurant_low, thrust_discrepancy,
-                 prop_cutoff_guard_5, dps_throttle_band]
+    # **Admission guards only.** `chamber_pressure_low` and `thrust_discrepancy` were on this list
+    # and can only ever be read once the engine is running: both are `gated_by` the engine's state
+    # or a burn in progress, so admitting a burn on them refused every burn. They are in-burn
+    # monitors now, read while the engine is in mainstage, and they leave admission; ADR 0004's
+    # amendment of 2026-10-17 records it, decided by the coordinator under John's delegation of
+    # 13:48Z. `dps_throttle_band` left with them: it is the 65-92.5 % no-go region of
+    # `set_throttle`'s commanded argument, not a reading, and it stays on that verb.
+    interlocks: [feed_pressure_low, pressurant_low, prop_cutoff_guard_5]
     conflict_domain: prop.<engine>.run
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast]
