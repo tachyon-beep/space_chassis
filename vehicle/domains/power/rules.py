@@ -70,7 +70,7 @@ def bus_b_load_w(inputs, params, dt):
     return _enabled_load_w(inputs, params)
 
 
-def solve_modules(load_w, open_circuit_v, resistances_ohm, envelope_a):
+def solve_modules(load_w, open_circuit_v, resistances_ohm, envelope_a, below_envelope="refuse"):
     """(bus current A, voltage V, module currents A) of modules in parallel delivering `load_w`.
 
     Per module V = E0 - R_k*i_k, every module at the one bus voltage and the same E0 (the published
@@ -80,7 +80,10 @@ def solve_modules(load_w, open_circuit_v, resistances_ohm, envelope_a):
     R_eq*I^2 - E0*I + P = 0, whose smaller root is the stable operating point (the larger is past the
     maximum-power point), written 2P / (E0 + sqrt(E0^2 - 4 R_eq P)) to avoid the cancellation at
     small P. Returns (None, why) when there is no root (the load exceeds E0^2 / (4 R_eq)) or when a
-    module current falls outside the published envelope, where the secant is an extrapolation.
+    module current falls outside the published envelope, where the secant is an extrapolation —
+    except below it when `below_envelope` is "extrapolate": a lightly loaded module reads the line
+    between its 31 V envelope edge and its 32.30 V intercept, a bounded extrapolation, rather than
+    leaving the bus with no voltage.
     """
     e0 = float(open_circuit_v)
     p = float(load_w)
@@ -98,6 +101,8 @@ def solve_modules(load_w, open_circuit_v, resistances_ohm, envelope_a):
     modules = [(e0 - volts) / r for r in resistances]
     low, high = (float(x) for x in envelope_a)
     for per_module in modules:
+        if per_module < low and below_envelope == "extrapolate":
+            continue
         if not low <= per_module <= high:
             side = "below" if per_module < low else "above"
             edge = low if per_module < low else high
@@ -149,6 +154,7 @@ def _solve(inputs, params, cells, load_w):
         params["cell_open_circuit_v"],
         [inputs[resistance_of[cell]] for cell in connected],
         params["cell_current_envelope_a"],
+        params["below_envelope"],
     )
     if solved is None:
         return None, why

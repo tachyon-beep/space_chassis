@@ -177,9 +177,17 @@ def test_every_load_has_a_met_zero_position_and_the_csm_ones_are_the_configured_
     assert set(initial) == {row["id"] for row in doc["loads"]}
     on = [row for row in doc["loads"] if initial[row["id"]] == "on"]
     assert {row["vehicle"] for row in on} == {"csm"}
-    assert sum(row["demand_w"] for row in on) == 1723
-    # TN D-7609 p. 2's 60-80 A coast band at the 28 V nominal: 61.5 A.
-    assert 60 <= 1723 / 28 <= 80
+    # Every CSM load but the standby glycol pump, which thermal's `coolant_pump` holds off
+    # (TN D-6718 p. 11: the loop runs on one pump).
+    csm = {row["id"] for row in doc["loads"] if row["vehicle"] == "csm"}
+    assert csm - {row["id"] for row in on} == {"csm_coolant_pump_2"}
+    thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
+    pumps = next(s for s in thermal["state"] if s["id"] == "coolant_pump")["initial"]
+    assert pumps["pump_1"] == "on" and pumps["pump_2"] == "off"
+    assert sum(row["demand_w"] for row in on) == 1723 - 250 == 1473
+    # Below TN D-7609 p. 2's 60-80 A coast band at the 28 V nominal: 52.6 A. The inventory is short
+    # of Apollo's coast load, and the switch map does not hide it.
+    assert 1473 / 28 < 60
 
 
 # ------------------------------------------------------------------------------------------------
@@ -224,30 +232,36 @@ def test_the_solve_refuses_a_load_the_cells_cannot_deliver_or_an_extrapolation()
 
 
 def test_a_bus_below_the_module_minimum_is_a_named_gap_not_a_bare_none(world):
-    """The cell solve has no value under 400 W a module (AOH p. 2.6-2's normal minimum), so under
-    800 W on two-module bus A and 400 W on bus B; the gap says that, rather than "no value"."""
+    """Under 400 W a module (AOH p. 2.6-2's normal minimum) the solve extrapolates the secant, bounded
+    by the 31 V envelope edge and the 32.30 V intercept; past the cells' maximum power it has no value,
+    and the gap says why rather than "no value"."""
     rules = rules_module()
     for state, key, light, cells in (
         ("bus_a_v", "bus_a_load_w", 780.0, 2),
         ("bus_b_v", "bus_b_load_w", 380.0, 1),
     ):
         params = plant.RuleParams(spec_of(world, state), f"state {state}")
-        assert (
-            getattr(rules, state)({key: light, "source_enabled": ALL_ON, **HEALTHY}, params, DT)
-            is None
-        )
-        assert f"a load of {light:.0f} W puts each of {cells} module(s) at" in params.why_none
-        assert "below the published normal envelope's 12.903 A" in params.why_none, params.why_none
+        volts = getattr(rules, state)({key: light, "source_enabled": ALL_ON, **HEALTHY}, params, DT)
+        r_bus = R / cells
+        i_hand = (E0 - math.sqrt(E0**2 - 4 * r_bus * light)) / (2 * r_bus)
+        assert volts == pytest.approx(E0 - r_bus * i_hand, abs=1e-9)
+        assert 31.0 < volts < E0
+        # Without the declared extrapolation, the same load is a named refusal.
+        refused, why = rules.solve_modules(light, E0, [R] * cells, [12.903, 52.593])
+        assert refused is None
+        assert f"a load of {light:.0f} W puts each of {cells} module(s) at" in why
+        assert "below the published normal envelope's 12.903 A" in why, why
         heavy = plant.RuleParams(spec_of(world, state), f"state {state}")
         heavy_inputs = {key: E0**2 / (4 * R / cells) + 1.0, "source_enabled": ALL_ON, **HEALTHY}
         assert getattr(rules, state)(heavy_inputs, heavy, DT) is None
         assert "more than" in heavy.why_none and "can deliver" in heavy.why_none, heavy.why_none
     # And the plant's gap carries the reason.
-    values = dict(plant.initial_values(world), bus_a_load_w=780.0)
+    heavy_w = E0**2 / (4 * R / 2) + 1.0
+    values = dict(plant.initial_values(world), bus_a_load_w=heavy_w)
     state = next(s for s in world.states if s.id == "bus_a_v")
     with pytest.raises(plant.Unconfigured) as refused:
         plant.call_rule(world, state, values, DT)
-    assert "has no value this tick: a load of 780 W" in str(refused.value), refused.value
+    assert f"has no value this tick: a load of {heavy_w:.0f} W" in str(refused.value), refused.value
 
 
 def test_the_buses_start_inside_the_flown_envelope(world):
@@ -256,8 +270,9 @@ def test_the_buses_start_inside_the_flown_envelope(world):
     for sid in ("bus_a_load_w", "bus_b_load_w", "bus_a_v", "bus_b_v", "fuel_cell_current_a"):
         assert sid not in gaps, gaps[sid]
     # MET 0: the transmitter is off, so the amplifier's 72 W is switched on and not drawing.
-    assert after["bus_a_load_w"] == 1148 - 72 and after["bus_b_load_w"] == 575
-    assert after["fuel_cell_power_w"] == 1651
+    # And the standby glycol pump's 250 W is off.
+    assert after["bus_a_load_w"] == 1148 - 72 - 250 and after["bus_b_load_w"] == 575
+    assert after["fuel_cell_power_w"] == 1401
     for bus in ("bus_a_v", "bus_b_v"):
         assert 26.5 <= after[bus] <= 31.0, (bus, after[bus])
     # The current is the two buses' solves added: P_A / V_A + P_B / V_B.
@@ -413,8 +428,8 @@ def test_the_source_converter_is_read_by_nothing_on_the_bus_path(world):
 def test_fuel_cell_1_publishes_its_own_current_and_shares_bus_a_equally(world):
     after, gaps = tick(world, plant.initial_values(world))
     assert not {"fc_1_current_a", "bus_a_rated_w"} & set(gaps)
-    # MET 0: bus A carries 1,076 W on two modules, so each carries half the bus current.
-    i_bus = (E0 - math.sqrt(E0**2 - 4 * (R / 2) * 1076)) / (2 * (R / 2))
+    # MET 0: bus A carries 826 W on two modules, so each carries half the bus current.
+    i_bus = (E0 - math.sqrt(E0**2 - 4 * (R / 2) * 826)) / (2 * (R / 2))
     assert after["fc_1_current_a"] == pytest.approx(i_bus / 2, abs=1e-9)
     assert after["bus_a_rated_w"] == 2840
 
@@ -476,13 +491,17 @@ def test_modules_at_unequal_resistance_share_one_voltage_by_hand():
 
 def test_a_degraded_fuel_cell_1_carries_less_and_its_partner_more(world):
     """R_1 x 1.5, PWR-02's "loses a third of its capacity and its internal resistance rises": fuel
-    cell 1's own current falls by about AOH p. 2.6-25's 3-5 A purge cue at the MET-0 load, fuel cell
-    2 takes it up, bus A sags, and the margin loses a third of fuel cell 1's 1,420 W."""
+    cell 1 carries 0.4 of bus A's current instead of 0.5, fuel cell 2 takes it up, bus A sags, and the
+    margin loses a third of fuel cell 1's 1,420 W. At the flown 23 A a module (Apollo 14 Mission
+    Report 7.2.2) that is a 4.6 A drop, inside AOH p. 2.6-25's 3-5 A degradation-purge cue."""
+    rules = rules_module()
+    v_flown = E0 - R * 23.0
+    solved, _ = rules.solve_modules(v_flown * 46.0, E0, [1.5 * R, R], [12.903, 52.593])
+    assert 3.0 <= 23.0 - solved[2][0] <= 5.0, solved
     values, _ = tick(world, plant.initial_values(world))
     degraded, gaps = tick(world, {**values, "fc_1_resistance_ohm": 1.5 * R})
     assert not {"bus_a_v", "fc_1_current_a", "bus_a_rated_w"} & set(gaps)
-    drop = values["fc_1_current_a"] - degraded["fc_1_current_a"]
-    assert 3.0 <= drop <= 5.0, drop
+    assert degraded["fc_1_current_a"] < values["fc_1_current_a"]
     # Bus A by hand at R_eq = 1 / (1/1.5R + 1/R) = 0.6 R.
     p = degraded["bus_a_load_w"]
     r_eq = 0.6 * R
