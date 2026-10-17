@@ -18558,6 +18558,13 @@ def test_the_linter_refuses_an_rcs_jet_table_that_breaks_its_cross_check(tmp_pat
             "subsystem 1 must turn the CM both ways about every axis",
         ),
         (
+            "cm-roll-vector-swapped",
+            lambda doc: doc["geometry"]["rcs_cm"]["jets"][0].update(
+                thrust_unit=[0.0, -0.9992, -0.0405]
+            ),
+            "rcs_cm.jets.11: declares thrust",
+        ),
+        (
             "lm-jet-4-as-printed",
             lambda doc: doc["geometry"]["rcs_lm"]["jets"][3].update(force_axis="+Y"),
             "rcs_lm.jets.4: pushes along +Y",

@@ -13296,6 +13296,65 @@ def rcs_sm_jet_vector(jet: dict[str, Any], cant_deg: float) -> tuple[float, floa
     return tuple(cos_c * n - sin_c * r for n, r in zip(nominal, radial, strict=True))  # type: ignore[return-value]
 
 
+def check_rcs_cm_vectors(
+    cm: dict[str, Any], jets: list[dict[str, Any]], where: str, report: Report
+) -> None:
+    """Rebuild each CM jet's thrust from SNA-8-D-027(I) Figure 4.4-2's angles and check its torque.
+
+    Yaw and aft pitch engines exhaust at `aft_engine_angle_deg` from the radial towards +X; the
+    forward pitch engines exhaust -Z; the roll engines exhaust in their X plane at alpha or beta
+    either side of their point's radial. A declared vector more than 0.001 from the rebuilt one,
+    or one whose torque about the check point turns the CM against its function, is refused.
+    """
+    aft = math.radians(float(cm.get("aft_engine_angle_deg", 0.0)))
+    alpha = float(cm.get("roll_alpha_deg", 0.0))
+    beta = float(cm.get("roll_beta_deg", 0.0))
+    theta = cm.get("roll_point_theta_deg") or {}
+    roll_exhaust = {
+        12: theta.get("H", 0.0) + alpha,
+        11: theta.get("H", 0.0) - beta,
+        21: theta.get("G", 0.0) - alpha,
+        22: theta.get("G", 0.0) + beta,
+    }
+    check_point = cm.get("torque_check_point_in") or [0.0, 0.0, 0.0]
+    index = {"roll": 0, "pitch": 1, "yaw": 2}
+    for jet in jets:
+        jid, position = jet.get("id"), jet.get("position_in")
+        declared, torque = jet.get("thrust_unit"), str(jet.get("torque", ""))
+        if not isinstance(position, list) or not isinstance(declared, list) or torque[1:] not in index:
+            report.refuse(f"{where}.jets.{jid}", "needs a position, a thrust_unit and a function")
+            continue
+        if jid in roll_exhaust:
+            angle = math.radians(roll_exhaust[jid])
+            exhaust = (0.0, math.cos(angle), math.sin(angle))
+        elif jid in (14, 24):
+            exhaust = (0.0, 0.0, -1.0)
+        else:
+            radial = math.hypot(position[1], position[2])
+            exhaust = (
+                math.sin(aft),
+                math.cos(aft) * position[1] / radial,
+                math.cos(aft) * position[2] / radial,
+            )
+        rebuilt = tuple(-e for e in exhaust)
+        if max(abs(d - b) for d, b in zip(declared, rebuilt, strict=True)) > 0.001:
+            report.refuse(
+                f"{where}.jets.{jid}",
+                f"declares thrust {declared}; Figure 4.4-2's angles give "
+                f"({rebuilt[0]:.4f}, {rebuilt[1]:.4f}, {rebuilt[2]:.4f})",
+            )
+            continue
+        r = [p - c for p, c in zip(position, check_point, strict=True)]
+        f = declared
+        tau = (r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0])
+        if (tau[index[torque[1:]]] > 0) != (torque[0] == "+"):
+            report.refuse(
+                f"{where}.jets.{jid}",
+                f"declares {torque!r} and its thrust turns the CM the other way about the check "
+                f"point: tau = ({tau[0]:.1f}, {tau[1]:.1f}, {tau[2]:.1f}) in per unit thrust",
+            )
+
+
 def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
     """The RCS jet tables must reproduce the sources that cross-check them.
 
@@ -13330,7 +13389,10 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
         report.refuse(sm_where, "must list the DAP's jets 1 to 16 in order")
     else:
         cant = float(sm.get("cant_deg", 0.0))
-        radius = float(sm.get("quad_radius_in", 0.0))
+        radii = {
+            "pitch_yaw": float(sm.get("pitch_yaw_radius_in", 0.0)),
+            "roll": float(sm.get("roll_radius_in", 0.0)),
+        }
         per_quad: dict[str, list[int]] = {}
         for jet in sm_jets:
             jid = jet["id"]
@@ -13339,6 +13401,7 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
                 continue
             per_quad.setdefault(jet["quad"], []).append(jid)
             angle = math.radians(RCS_SM_QUAD_ANGLE_DEG[jet["quad"]])
+            radius = radii["pitch_yaw" if jet["axis"] in ("+X", "-X") else "roll"]
             r = (0.0, radius * math.cos(angle), radius * math.sin(angle))
             f = rcs_sm_jet_vector(jet, cant)
             tau = (
@@ -13397,6 +13460,7 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
                     f"subsystem {subsystem} must turn the CM both ways about every axis, one jet "
                     f"each, odd-numbered jets positive (AOH Figure 2.5-1); it declares {torques}",
                 )
+        check_rcs_cm_vectors(cm, cm_jets, f"{where}.rcs_cm", report)
 
     lm = geometry.get("rcs_lm")
     lm_where = f"{where}.rcs_lm"
