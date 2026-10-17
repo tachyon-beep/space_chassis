@@ -2927,7 +2927,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 1, result.stdout[-900:]
     assert "calls `coupling.yaml`'s chain list 'fifteen' while it declares 0" in result.stdout
     assert (
-        "declares no failure chains, and the domains' fault policies declare 128 fault(s) between them"
+        "declares no failure chains, and the domains' fault policies declare 130 fault(s) between them"
         in result.stdout
     ), result.stdout[-1400:]
 
@@ -13084,6 +13084,11 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
                 elif kind == "event":
                     events += 1
                     assert name in events_here, (state["id"], name)
+                elif kind == "fault":
+                    # The crew lane's CRW-01, the first `fault:` mover in the corpus: a fault the
+                    # state declares the onset of, so the effect path knows what it becomes.
+                    onsets = {str(r.get("fault")) for r in state.get("fault_value") or []}
+                    assert name in onsets, (state["id"], name)
                 elif kind == "logic":
                     logic += 1
                     assert len(name.strip()) >= 12, (state["id"], mover)
@@ -13159,7 +13164,8 @@ def test_the_adversarys_ids_and_rates_are_validated(tmp_path):
             seeding = fault.get("seeding") or {}
             if "hazard" in seeding:
                 units[str(seeding.get("unit"))] += 1
-    assert faults == 128, faults
+    # 128 -> 130 with the crew lane's CRW-01, one fault per person.
+    assert faults == 130, faults
     assert set(ids.values()) == {1}, [i for i, n in ids.items() if n > 1]
     assert set(units) == {"per_h"}, dict(units)
 
@@ -17547,7 +17553,7 @@ def test_the_linter_refuses_a_tool_docstring_whose_fault_counts_have_drifted(tmp
     definition = copy_definition(tmp_path / "fault-docstring")
     path = definition / "tools" / "faults.py"
     text = path.read_text()
-    old = "The vehicle has 128 declared faults"
+    old = "The vehicle has 130 declared faults"
     assert old in text, "the fixture no longer matches the faults.py docstring"
     path.write_text(text.replace(old, "The vehicle has 118 declared faults", 1))
     result = run_linter(definition)
@@ -18297,12 +18303,12 @@ def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     # The sentence is hard-wrapped between "142" and "thresholds", so the anchor is the half that
     # fits on one line. A fixture that matched the whole clause would fail on a reflow rather than
     # on the value it is about — the same distinction the reader itself makes.
-    old = "thresholds, 59 verbs and 128 classified events"
+    old = "thresholds, 59 verbs and 130 classified events"
     assert old in text, "the fixture no longer matches the status line"
-    path.write_text(text.replace(old, "thresholds, 59 verbs and 127 classified events", 1))
+    path.write_text(text.replace(old, "thresholds, 59 verbs and 129 classified events", 1))
     result = run_linter(definition)
     assert result.returncode == 1
-    assert "states 127 classified events while the corpus declares 128" in result.stdout, (
+    assert "states 129 classified events while the corpus declares 130" in result.stdout, (
         result.stdout[-900:]
     )
 
@@ -21389,13 +21395,13 @@ def test_the_mechanical_conversions_land_on_the_declarations_that_sized_them():
     # The nine, by the registry's own count of evaluable derivations.
     lint = run_linter(VEHICLE)
     assert lint.returncode == 0, lint.stdout[-900:]
-    assert "15 of the 72 now carry an evaluable `derivation`" in lint.stdout
+    assert "15 of the 71 now carry an evaluable `derivation`" in lint.stdout
     entry = next(
         d
         for d in yaml.safe_load((VEHICLE / "presentation.yaml").read_text())["open_debts"]
         if "frame publishes channel ids now" in d
     )
-    assert "15 of the 72 now carry an evaluable `derivation`" in entry
+    assert "15 of the 71 now carry an evaluable `derivation`" in entry
     assert "0 of the prose rows declare in their own `owed` field" in entry
 
 
