@@ -65,7 +65,10 @@ Operator items (proposed; John decides, `09-quiet-coast-episode.md` §8 and the 
    the loop at its 280.35 K supply, so the radiator outlet (`thermal.coolant_return_c`) reads
    7.2 °C at MET 0, inside Apollo's 5–15 °C band, where the hot hold put it at 19.7 °C. The
    derivation is on `environment_heat_w.initial_provenance` and held by
-   `tests/test_quiet_coast_scenario.py`.
+   `tests/test_quiet_coast_scenario.py`. **Re-derived 2026-10-17** when the standby coolant pump 2
+   left the MET-0 load (John: "off"): the collected load is 1,401 W, now inside the flown band, the
+   default absorbed load 1,285.5 W with the panel at 288.02 K, and the hold's equilibrium 293.40 K
+   with the evaporator at 984.8 W; the hot-hold outlet reads 18.0 °C. The method is unchanged.
 10. B5 — zone start temperatures are the model's derived equilibrium.
 11. Thermal node masses and conductances are `chosen`, constrained to reproduce the flown coast
     rejection of 1,170–1,470 W (SP-368 p. 525), each labelled with that bound.
@@ -80,3 +83,10 @@ Operator items (proposed; John decides, `09-quiet-coast-episode.md` §8 and the 
   counterpart; they are outside the episode and are not changed here.
 - If John rejects an operator item, the episode design changes as `09-quiet-coast-episode.md` §8
   lists; the maintainer items stand on their evidence either way.
+- 2026-10-17, the power burndown (PR #43): the load-shed ladder is retired (decision b, the crew
+  sheds; `load_shed_class` reports the crew's switches), the battery-to-bus tie lands (decision a),
+  and the standby glycol pump is off at MET 0 (decision d: the MET-0 load is 1,401 W, not 1,651 W).
+  The loop has more margin, so policy D's loss (the coolant supply held past 10 C) moves from
+  about tick 8,686 to tick 10,017 in batch, and `aurora/tests/test_quiet_coast_window.py` runs policy D for
+  11,000 ticks rather than 9,500. That one-line aurora test change rides on the vehicle PR, a one-off
+  cross-stream exception John chose on 2026-10-17, because the vehicle change is what moves it.

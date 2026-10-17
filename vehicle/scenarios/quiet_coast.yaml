@@ -19,10 +19,11 @@ initial:
   # environment hold (owned by the integrator): 1,361 W/m2 x 0.2 x 9.1 m2, 09 §2
   environment_heat_w: 2477.02
   # The MET-0 equilibrium under the hold (ADR 0003 item 10, B5): the panel's fixed point at
-  # 2,477.02 W with the loop at its 280.35 K supply and the 1,651 W MET-0 collected load, and the
-  # evaporator carrying the rest, 1,651 - 505.8 W. Held by `tests/test_thermal_rules.py`.
-  zone_radiator_t: 295.65
-  evaporator_duty_w: 1145.2
+  # 2,477.02 W with the loop at its 280.35 K supply and the 1,401 W MET-0 collected load (the
+  # standby pump 2 off), and the evaporator carrying the rest, 1,401 - 416.2 W. Held by
+  # `tests/test_thermal_rules.py`.
+  zone_radiator_t: 293.40
+  evaporator_duty_w: 984.8
   # The task volume D1 + D2 on tape at MET 0 (ADR 0003 item 7; `episode.objective`).
   recorder: 92160000
 
@@ -73,13 +74,13 @@ episode:
       margin: {at_least: 27.0}
       loss: {below: 26.5}
       unit: V
-      source: "09 §5; `power` components `csm_bus_a.v_band` [27.0, 30.5] lower edge; 26.5 V the loss in 09 §5"
+      source: "09 §5; `power` components `csm_bus_a.v_band` [27.0, 31.0] lower edge; 26.5 V the loss in 09 §5"
     bus_b_v:
       state: bus_b_v
       margin: {at_least: 27.0}
       loss: {below: 26.5}
       unit: V
-      source: "as bus_a_v; `csm_bus_b.v_band` [27.0, 30.5]"
+      source: "as bus_a_v; `csm_bus_b.v_band` [27.0, 31.0]"
     coldplate:
       state: zone_csm_avionics_t
       margin: {below_c: 50.0}
@@ -125,8 +126,9 @@ episode:
           this episode, which is 09 §5's B1 finding. Policies are separated by the deadline and
           by the loop, not by water.
 
-  # A shed or a trip has no rule (09 §4), so a value on these is an apparatus failure.
-  unmodelled: [load_shed_class, lcl_tripped]
+  # A trip has no rule (09 §4), so a value on it is an apparatus failure. `load_shed_class` left
+  # this list on 2026-10-17: it reports the crew's switches now (power lane, PR #43).
+  unmodelled: [lcl_tripped]
   # Held by scope (09 §4): the tick reports a gap on them and their value may not move. A move is
   # an apparatus failure ("a held state is written").
   held: [battery_charge_j]
