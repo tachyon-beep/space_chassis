@@ -6813,23 +6813,16 @@ def check_domain(
             # the vocabulary test for real: `load_burn`'s arguments are trajectory names against a
             # lifecycle enum, and `set_docking_latch` offers `engage` while the latch reports
             # `engaged`.
-            # **A `constant` is the value the command sets, so the arguments are the wrong thing to
-            # ask.** The test reads the verb's arguments, which is right for the identity and
-            # `maps` forms, where an argument's value becomes the state's. A constant is the other
-            # shape: `arm_event(event=…)` names *which* token and the value is the verb's own,
-            # `armed` — so its arguments can never reach `none/armed/expired/consumed`, and the test
-            # refused a command that writes exactly the value it declares. The constant is held to
-            # the vocabulary where it is declared (`command_value`, below), so this test steps aside
-            # for one and a constant the state cannot hold is still refused, once, by that rule.
-            constant = next(
-                (
-                    row.get("constant")
-                    for row in state.get("command_value") or []
-                    if isinstance(row, dict) and str(row.get("verb")) == name
-                ),
-                None,
+            # A `constant` effect sets its value whatever the arguments are (`start_burn engine=sps`
+            # opens `ignition`), so the value it names is what the verb expresses for this state.
+            offered.update(
+                str(row.get("constant"))
+                for row in state.get("command_value") or []
+                if isinstance(row, dict)
+                and str(row.get("verb")) == name
+                and row.get("constant") is not None
             )
-            if kind == "command" and values and constant is None and not (values & offered):
+            if kind == "command" and values and not (values & offered):
                 report.refuse(
                     f"{mwhere}",
                     f"names {name!r}, whose arguments can take {sorted(offered)}, and {sid} can take "

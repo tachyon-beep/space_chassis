@@ -183,9 +183,10 @@ def break_arm_constant(tmp_path: Path, replacement: str | None) -> str:
 
 def test_a_command_whose_constant_the_state_holds_is_not_refused_by_the_vocabulary_rule(tmp_path):
     """`arm_event`'s arguments name an event and can never reach `none/armed/expired/consumed`; the
-    value it writes is its constant. The mover rule asked the arguments, and refused the one command
-    on the vehicle that sets this state for the reason a trigger cannot — the unbroken copy shows
-    the constant is now what it asks."""
+    value it writes is its constant. The mover rule asked only the arguments, and refused the one
+    command on the vehicle that sets this state for the reason a trigger cannot — the unbroken copy
+    shows the constant now counts among what the verb can express (the fault-injection lane's form
+    of the same fix, adopted so the two branches agree)."""
     out = lint(copy_definition(tmp_path / "copy"))
     assert "arm_state.moved_by: names 'arm_event'" not in out
 
@@ -194,8 +195,6 @@ def test_a_constant_the_state_cannot_hold_is_refused_where_it_is_declared(tmp_pa
     out = break_arm_constant(tmp_path, "        constant: primed\n")
     assert "arm_state.command_value[arm_event].constant: is 'primed'" in out
     assert "cannot hold" in out
-    # Refused once, by the rule that owns the constant, not again by the mover rule.
-    assert "arm_state.moved_by: names 'arm_event'" not in out
 
 
 def test_without_the_constant_the_vocabulary_rule_refuses_the_mover_again(tmp_path):
