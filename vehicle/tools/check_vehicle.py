@@ -8209,8 +8209,15 @@ IDEAL_APERTURE_PRODUCT = 41253.0
 # the half-power beamwidth is the gain's own consequence, so a change to either re-derives the
 # other. `near_isotropic` means they are independent — a flush omni's 180 degrees is a nominal
 # coverage figure rather than a half-power width this close to isotropic — and the claim carries a
-# `pattern_note`, the way `state_order: independent` carries a `state_order_note`.
-ANTENNA_PATTERNS = {"aperture", "near_isotropic"}
+# `pattern_note`, the way `state_order: independent` carries a `state_order_note`. `measured` means
+# both figures are published for the real antenna, so neither is derived from the other: a real
+# aperture's illumination taper and losses put its gain *below* the ideal product's, never above it,
+# so the pair is held to the bound `G <= 41253 / theta^2` rather than to equality. The CSM S-band
+# HGA's 25.7 dB with a 4.4-degree beam (TN D-6723 Table I) is such a pair, at about 17 % of the
+# ideal product. Its provenance is `historical`, because the claim is that both numbers came from a
+# source and the bound alone would let a guess through; the source that names both is its reason,
+# so it needs no `pattern_note` beside it.
+ANTENNA_PATTERNS = {"aperture", "measured", "near_isotropic"}
 
 # How far a declared beamwidth may sit from the one a gain implies, in degrees. The corpus declares
 # beamwidths to one decimal place, so half a unit in the last place is the widest two figures can
@@ -8318,6 +8325,29 @@ def check_antenna_patterns(root: Path, vehicle: dict[str, Any], report: Report) 
                     "held to, and an exemption without a reason is how a rule stops being one — the "
                     "same discipline `state_order: independent` carries",
                 )
+            continue
+        if pattern == "measured":
+            basis = (antenna.get("provenance") or {}).get("basis")
+            if basis != "historical":
+                report.refuse(
+                    where,
+                    f"declares its pattern measured on a {basis!r} provenance. A measured pair is "
+                    "two published figures, so its basis is `historical`; anything else is a gain "
+                    "and a width held only to the bound `G <= 41253 / theta^2`, which a guess "
+                    "satisfies as easily as a measurement",
+                )
+            for label, gain, width in pairs:
+                derived = math.sqrt(IDEAL_APERTURE_PRODUCT / (10 ** (float(gain) / 10.0)))
+                if float(width) - derived > BEAMWIDTH_TOLERANCE_DEG:
+                    product = (10 ** (float(gain) / 10.0)) * float(width) * float(width)
+                    report.refuse(
+                        f"{where}{label}",
+                        f"declares {gain} dB with a {width}-degree beamwidth, wider than the "
+                        f"{derived:.2f} degrees an ideal aperture of that gain has (the declared "
+                        f"pair gives {product:,.0f} against 41,253). A measured pair may fall below "
+                        "the ideal product, never above it: that gain from that beam would need "
+                        "more directivity than the beam's solid angle allows",
+                    )
             continue
         for label, gain, width in pairs:
             fwhere = f"{where}{label}"
