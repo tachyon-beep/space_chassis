@@ -188,14 +188,22 @@ state:
       reason: "chamber pressure follows thrust with the chamber's own filling time; faster than the valve because the chamber is small. apollo_diode.md:135 publishes it at 10 Hz with a 0.1 % precision, which is a fast channel and needs a fast state behind it"
 
   - id: feed_pressure_pct
-    initial: UNCONFIGURED
-    initial_note: >-
-      the feed line's pressure at MET 0 as a percentage of nominal. Unlike the chamber it is
-      *not* zero: the propellant tanks are pressurized from before launch and the engine is in a
-      coast with its valves closed, so the starting figure is the regulator's locked-up pressure,
-      which nothing declares — `propulsion.components.yaml#pressurant_regulator` is a regulator
-      with no output pressure to its name. The search for one is recorded on
-      `pressurant_pressure_psi` below, and it answers both
+    initial: 100
+    initial_provenance:
+      basis: apollo
+      ref: "apollo_diode.md:138"
+      note: >-
+        the channel is a percentage of *nominal*, and apollo's row gives its expected range as
+        95-105 with no exception for a coasting engine: the chamber-pressure row two lines up says
+        "0 off; 95-105 firing", and this one does not, because a pressure-fed engine's tanks are
+        pressurized from before launch whether or not it burns. So 100 is the definition of the
+        unit at MET 0 rather than a figure chosen for it. **What it does not answer is the psia
+        behind the percentage**, and that is the question this entry's earlier note asked: the
+        regulator's locked-up pressure. It is owed on `pressurant_pressure_psi` below, which
+        carries the absolute pressure; this state carries the ratio, and the ratio is what
+        `feed_pressure_low` (`profiles.yaml`) compares against 90. Until this entry had a value
+        that interlock had nothing to read, and `start_burn` and `arm_engine state=armed` were
+        refused as unevaluated on it
     node: internal
     method: lag
     unit: "% nominal"
