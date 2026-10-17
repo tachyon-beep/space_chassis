@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:14 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 14:16 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -34,7 +34,7 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | 3 | Propulsion and propellant | [#50](https://github.com/tachyon-beep/space_chassis/pull/50) | draft | #45; primary sources (now reachable, D32) |
 | 4 | Structure states | [#51](https://github.com/tachyon-beep/space_chassis/pull/51) | draft; hatch starts *Latched* (`173216c`); `arm_state` waits on #47's seeding; configuration states move to device firing after #47; the interrupter edge goes to power if the states are power's | #45, #47 |
 | 7 | GNC and RCS lane | — | started 13:59; attitude as pointing modes, a rate-limited slew law behind `set_attitude_target` (D38) | the geometry lane (#44) |
-| 8 | Crew lane | [#54](https://github.com/tachyon-beep/space_chassis/pull/54) | draft; per-cabin crew count, location as a rule, potable water drains; next the crew day (sleep, meals, work as sourced activities; meals as water draws to tell from a leak); D-06 revision 1 (D38), dialogue per console (D39) | #45, #47 |
+| 8 | Crew lane | [#54](https://github.com/tachyon-beep/space_chassis/pull/54) | draft (`claude/vehicle-crew-bogej1`); per-cabin crew count, location as a rule, potable water drains; next the crew day (sleep, meals, work as sourced activities; meals as water draws to tell from a leak); D-06 revision 1 (D38), dialogue per console (D39) | #45, #47 |
 | 10 | Avionics FDIR | — | not started | last; needs lane 9's faults |
 | 9 | Instrument layer (after #47) | — | owned by the fault-injection lane (it lives in `plant.py`/`console.py`); its order after #47: instrument layer, then the delay at the window, then the fair-chance stamps, then the `fleet_class` and `acts` lints | #47 |
 
@@ -48,7 +48,14 @@ Burn sequencing and node-read interlocks change truth bytes; side effect, ECLSS
 `co2_absorber_low` becomes evaluable. The comms `measured` antenna pattern is on #47 at `2e9f79e`
 (bound G ≤ 41253/θ², `historical` provenance required). #46 also carries a state-level `preloaded:` in `advance()`/`_classify()`.
 
-Cross-lane follow-ups: propulsion takes the docked-burn requirement (9 of 12 latches) as an interlock
+Cross-lane follow-ups: power's shed ladder is cautions only (E-BUS-SHED and its tiers removed;
+regime rows dropped from E-BUS-GNC, E-BUS-COMM, E-BUS-RCS and E-BUS-INST; comms and GNC told). The
+ascent circuit interrupters wait for the LM power slice; structure holds a placeholder
+`lm_ascent_interrupter`. ECLSS routes each cryo tank's 166.7 W heater and fan to power as a periodic
+load (a confounder); the CRYO PRESS caution follows #46. Crew (#54) adds `csm_crew_count` and
+`lm_crew_count`, taking the README census from 152 to 156, so lanes adding states rewrite it from the
+tools on rebase (sprint rule 4). `fleet_class` has no vocabulary yet: lane 9 publishes it before its
+lint, and lanes add only `acts:` until then. Propulsion takes the docked-burn requirement (9 of 12 latches) as an interlock
 edge from structure; structure's tunnel volume is published (11.6 ft³, ODB Vol I Fig 4.2-8.1),
 correcting the repo's "unpublished" note. ECLSS takes the structural-leak drain edge into `cabin_leak_csm`/`lm` after
 #51 lands. Lane-map correction: cabin water vapour waits on crew, like CO2.
@@ -79,12 +86,12 @@ Answered by the coordinator under D33 at 13:50 (D35), each the lane's recommende
 | power a: bus tie | *apollo* (battery-to-main-bus tie, fuel cell 2 cross-feed, no A–B tie) | #43 |
 | power b: shed ladder | *crew* (cautions only; the crew sheds) | #43 |
 | power c: source converter | *retire* (with PWR-01) | #43 |
-| RCS: the CM jet | *owe* (thrust and Isp owed until the CSM data book is read) | #44 |
+| RCS: the CM jet | *owe* at 13:50; **reopened** at 14:13 with the RCS lane: the CSM Data Book (Table 4.4-1) gives the CM engine 96.0 lbf / 272.0 s against the SM's 102.8 lbf / 277.3 s, so one 445 N / 277.8 s for all 44 jets is wrong for the CM | #44, lane 7 |
 | comms: Earth-link delay | computed per tick from the orbit; 1.3 s constant retired; the window-side consumer raised separately | #48 |
 | thermal: pump speed | *fraction* of rated | #49 |
 | thermal: bay thermal masses | *chosen* C and G in a heat balance | #49 |
 | structure: `hatch_state` initial | *Latched* | #51 |
-| ECLSS: `o2_supply_pressure_psi` | from sources; *Relay* if unsettled | #46 |
+| ECLSS: `o2_supply_pressure_psi` | resolved from sources on #46 (`57c5db3`); six source choices recorded at the end of `sources/eclss.md` in the project's shared folder | #46 |
 | propulsion: in-burn monitors | leave `start_burn`'s admission list, become mainstage-gated monitors; pressurant from sources, 186 psia design value if primaries disagree | #50 |
 
 ## Fidelity ledger

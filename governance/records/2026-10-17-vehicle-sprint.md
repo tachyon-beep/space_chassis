@@ -157,3 +157,8 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
   to propulsion as an interlock edge.
 - 14:08 ECLSS models O2 supply pressure on the heater relay (865/935 psia) on #46; 21 of 25 ready.
 - 14:12 Draft #54 (crew). It merges after #47 with the rest. ECLSS writes its CO2 edges against it.
+- 14:06–14:13 Power removes the shed ladder (cautions only). Ascent interrupters deferred to the LM
+  power slice. ECLSS resolves O2 supply pressure on #46 (`57c5db3`) and routes the cryo heaters to
+  power as a periodic load. Crew's #54 takes the census to 156 states. `fleet_class` vocabulary owed
+  by lane 9. `sources/rcs.md` shows the CM jet differs from the SM's; the CM-jet answer is reopened
+  with the RCS lane.
