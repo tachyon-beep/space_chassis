@@ -192,3 +192,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 15:01 GNC + RCS #56 rebased on `e990b25` as `d50194c` (268 debts, 0 refusals): `gnc.sun_direction_body` from a fixed Apollo 13 TLI sun line, and `set_ptc_roll` (0.3 deg/s, as flown at three revolutions per hour). The PTC roll goes in the ledger as a decision.
 - 15:02 Research delivers the Apollo 13 MSFN network as flown (`sources/comms.md`); no as-flown rise/set table. D51: Vanguard and ARIA positions from the pre-flight press kit, labelled planned. Comms models handovers in its own PR after #48.
 - 15:03 Governance #55 merged as `7ad188f` (D41–D44, lane events to 14:30); the next batch carries D45–D51.
+- 15:23 D52: GNC navigation (`select_nav_source`) as a reduced Apollo-shaped covariance model, not the corpus's 15×15 EKF; recorded as a dated deviation in ADR 0005 on #56. ECLSS owes a vent state; GNC owns the edge into navigation.
