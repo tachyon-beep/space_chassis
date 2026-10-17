@@ -1675,9 +1675,20 @@ def resolve_interlock(world: World, name: str) -> tuple[Interlock | None, str | 
         )
     source = row.get("from")
     state = next((s for s in world.states if s.id == source), None)
-    if state is None:
+    # **A coupling node is a source too**, because a point may not name another domain's state and
+    # the linter requires the node for a cross-domain read (`prop.propellant_remaining_pct`, from
+    # `prop_main`). `point_reading` already reads one — by its evaluable derivation, or as the node's
+    # value where the units agree — so a threshold on such a point is refused only where neither holds.
+    node_unit = str((world.nodes.get(str(source)) or {}).get("unit") or "").strip().lower()
+    point_derivation = row.get("derivation")
+    node_readable = isinstance(source, str) and source in world.nodes and (
+        (isinstance(point_derivation, dict) and bool(point_derivation.get("expression")))
+        or node_unit == str((world.channels.get(point) or {}).get("unit") or "").strip().lower()
+    )
+    if state is None and not node_readable:
         return None, (
-            f"`{name}` watches `{point}`, read from `{source}`, which is not a state the plant advances"
+            f"`{name}` watches `{point}`, read from `{source}`, which is not a state the plant "
+            "advances, nor a coupling node the point has an evaluable derivation or a matching unit for"
         )
     # A threshold that is not a plain level on its channel says so, in the two fields the linter
     # reads as that statement (`check_vehicle.py`, the band check). `gated_by` is a condition on when
@@ -4123,6 +4134,21 @@ def _walk(
     return _merged(values, staged)
 
 
+def _stage(staged: dict[str, Any], entries: dict[str, Any]) -> None:
+    """One producer's entries into the walk's staged map, with the sentinel's sub-map merged.
+
+    `state_values` hands back a fresh `{"internal": {id: value}}` for a state on the sentinel, and a
+    bare `update` replaced the sub-map with it — so only the last sentinel state a walk advanced kept
+    its entry under `values["internal"]`, and every other one went stale there while its flat key
+    moved on. `state_level` reads the flat key first, so nothing published was wrong; the truth was
+    still two disagreeing copies of one value, and it is hashed and checkpointed whole.
+    """
+    inner = entries.get("internal")
+    if isinstance(inner, dict) and isinstance(staged.get("internal"), dict):
+        entries = {**entries, "internal": {**staged["internal"], **inner}}
+    staged.update(entries)
+
+
 def _advance_into(
     world: World,
     state: State,
@@ -4139,10 +4165,10 @@ def _advance_into(
     came to read unstaged values and stop early without either problem being visible.
     """
     try:
-        staged.update(advance(world, state, {**values, **staged}, horizon, ledger))
+        _stage(staged, advance(world, state, {**values, **staged}, horizon, ledger))
     except Unconfigured as exc:
         if ledger is not None and state.method == "stock":
-            staged.update(_book_unadvanced(world, state, {**values, **staged}, ledger))
+            _stage(staged, _book_unadvanced(world, state, {**values, **staged}, ledger))
         if gaps is not None:
             # `.where` and `.what`, not `args`: `Unconfigured.__init__` hands `Exception` the
             # formatted message as *one* argument, so `args[1]` is an IndexError and the tick dies
