@@ -262,6 +262,14 @@ def run_linter(directory: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def refusals(out: str) -> list[str]:
+    """The linter's refusal lines, from its `REFUSED` block."""
+    if "REFUSED" not in out:
+        return []
+    block = out[out.index("REFUSED") :].split("\n\n", 1)[0]
+    return [line.strip()[2:] for line in block.splitlines()[1:] if line.strip().startswith("- ")]
+
+
 def test_the_linter_composes_a_declared_onset(faulted):
     result = run_linter(faulted)
     assert result.returncode == 0, result.stdout[-2000:]
@@ -495,3 +503,91 @@ def test_every_sentinel_state_s_two_copies_agree_after_a_tick(world):
         s.id for s in sentinel if s.id in values and s.id in inner and inner[s.id] != values[s.id]
     ]
     assert not stale, stale
+
+
+BURN_MOVERS = """    moved_by:
+      - "command:arm_engine"
+      - "command:start_burn"
+      - "logic:the ignition sequence carries the engine to mainstage once its chamber has built"
+    ignition_to_mainstage_s: 0.1
+    command_value:
+      - verb: start_burn
+        argument: engine
+        constant: ignition
+        when: {engine: sps}
+        why: "a test fixture: the start command opens the sequence at ignition"
+"""
+SECOND_COMMAND_VALUE = "    command_value:\n      - verb: arm_engine\n"
+SEQUENCE_TIMER = """  - id: sps_sequence_elapsed_s
+    node: internal
+    method: dynamics
+    unit: s
+    initial: 0.0
+    initial_provenance: {basis: chosen, reason: "a test fixture: no sequence is running at MET 0"}
+    provenance: {basis: chosen, reason: "a test fixture: the time the engine has spent in ignition"}
+"""
+BURN_RULES = '''"""A test fixture: the SPS ignition-to-mainstage sequence."""
+
+
+def sps_state(inputs, params, dt):
+    held = inputs["sps_state"]
+    if held == "ignition" and inputs["sps_sequence_elapsed_s"] >= params["ignition_to_mainstage_s"]:
+        return "mainstage"
+    return held
+
+
+def sps_sequence_elapsed_s(inputs, params, dt):
+    if inputs["sps_state"] == "ignition":
+        return inputs["sps_sequence_elapsed_s"] + dt
+    return 0.0
+
+
+RULES = {"sps_state": sps_state, "sps_sequence_elapsed_s": sps_sequence_elapsed_s}
+'''
+
+
+def test_a_commanded_machine_with_a_rule_runs_a_timed_sequence_after_the_command(tmp_path):
+    """The propulsion lane's burn sequence, beside the fault path: the shape exists with no new engine.
+
+    A discrete state with `command:` movers *and* a `logic:` mover is not effect-owned, so it may
+    have a rule; the command writes the machine at its stamp, the rule carries it on from there,
+    and the seeding above gives the rule its starting position. `start_burn` opens ignition and the
+    rule moves to mainstage once the sequence timer has run, ticks later, in replay order.
+    """
+    copy = faulted_copy(tmp_path / "vehicle")
+    components = copy / "domains" / "propulsion" / "components.yaml"
+    text = components.read_text()
+    head, tail = text.split("  - id: sps_state\n", 1)
+    replace_once = '    moved_by:\n      - "command:arm_engine"\n'
+    assert tail.count(replace_once) >= 1
+    tail = tail.replace(replace_once, BURN_MOVERS, 1)
+    # The state's own `command_value` follows; its entries join the one above rather than a second key.
+    tail = tail.replace(SECOND_COMMAND_VALUE, "      - verb: arm_engine\n", 1)
+    components.write_text(head + SEQUENCE_TIMER + "  - id: sps_state\n" + tail)
+    replace(
+        components,
+        "internal_order: [dps_throttle_pct,",
+        "internal_order: [sps_sequence_elapsed_s, dps_throttle_pct,",
+    )
+    (copy / "domains" / "propulsion" / "rules.py").write_text(BURN_RULES)
+    out = run_linter(copy).stdout
+    # The one state added moves the README's state counts, which the fixture does not rewrite.
+    refused = refusals(out)
+    assert all(line.startswith("README.md:") for line in refused), refused
+
+    burning = plant.load_world(copy)
+    dt = plant.tick_seconds(burning)
+    values = plant.initial_values(burning)
+    assert values["sps_state"] == "off" and values["sps_sequence_elapsed_s"] == 0.0
+    start = [plant.Effect(offset_us=0, verb="start_burn", arguments={"engine": "sps"})]
+    seen = []
+    for tick in range(10):
+        values = plant.step(burning, values, dt, effects=start if tick == 1 else None)
+        seen.append(values["sps_state"])
+    assert seen[0] == "off" and seen[1] == "ignition"
+    assert "mainstage" in seen and seen[-1] == "mainstage"
+    # 0.1 s of ignition at 20 ms a tick: the sentinel timer runs after the machine in each tick, so
+    # the machine reads five ticks of it on the sixth.
+    assert seen.index("mainstage") - seen.index("ignition") == 5, seen
+    # Only the SPS: start_burn routes on `engine`, so the other machines did not move.
+    assert values["dps_state"] == "off" and values["aps_state"] == "off"

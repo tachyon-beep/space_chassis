@@ -6938,6 +6938,15 @@ def check_domain(
             # the vocabulary test for real: `load_burn`'s arguments are trajectory names against a
             # lifecycle enum, and `set_docking_latch` offers `engage` while the latch reports
             # `engaged`.
+            # A `constant` effect sets its value whatever the arguments are (`start_burn engine=sps`
+            # opens `ignition`), so the value it names is what the verb expresses for this state.
+            offered.update(
+                str(row.get("constant"))
+                for row in state.get("command_value") or []
+                if isinstance(row, dict)
+                and str(row.get("verb")) == name
+                and row.get("constant") is not None
+            )
             if kind == "command" and values and not (values & offered):
                 report.refuse(
                     f"{mwhere}",
@@ -7079,10 +7088,10 @@ def check_domain(
                         "from an argument's values, and an argument with no vocabulary has no "
                         "values to map from, unless it is an `integer` or `number` with a `range`",
                     )
-                # `when`: the entry applies only at these values of the verb's other arguments, so
-                # one verb can move one of several sibling states (`arm_engine engine=sps`). Each
-                # name is an enum argument of the verb, each value one it takes, and the carried
-                # argument cannot route itself.
+                # `when`: the entry applies only at these values of the verb's arguments, so one
+                # verb can move one of several sibling states (`arm_engine engine=sps`). Each name
+                # is an enum argument of the verb and each value one it takes; an argument whose
+                # value is carried cannot also route (a `constant` carries none).
                 when = entry.get("when")
                 if when is not None:
                     schema2 = spec2.get("argument_schema") or {}
@@ -7095,7 +7104,7 @@ def check_domain(
                     else:
                         for name, value in when.items():
                             routed = schema2.get(str(name))
-                            if str(name) == argument:
+                            if str(name) == argument and entry.get("constant") is None:
                                 report.refuse(
                                     f"{cwhere2}.when.{name}",
                                     f"routes on {argument!r}, the argument the entry carries; a "
