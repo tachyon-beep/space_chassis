@@ -38,9 +38,10 @@ writes: [fuel_cell, source_converter, bus_a, bus_b, battery_energy, bus_tie, loa
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [lcl_tripped, battery_thermal_state]
+internal_order: [source_enabled, lcl_tripped, battery_thermal_state]
 internal_order_note: >-
-  the trip state is a latch, and the battery's temperature is what the surviving load does to the
+  the source switches come first because `set_source` writes them before the tick and nothing on the
+  sentinel reads them; the trip state is a latch, and the battery's temperature is what the surviving load does to the
   pack — the same chain the power inventory's relationships describe, in the order they act. The
   load between them, `bus_a_load_w`, left the sentinel for the `fuel_cell` node, where the bus solve
   can read it in the same tick.
@@ -121,7 +122,8 @@ state:
     # 1 and 2 in parallel; the per-module terminal relation is `components.fc_[n]`'s, copied here
     # because a rule reads only its own state's declaration, and held to those components by
     # `tests/test_power_rules.py`.
-    cells_in_parallel: 2
+    # The modules that can feed this bus; the solve uses the ones `source_enabled` leaves on.
+    cells: [fc_1, fc_2]
     cell_open_circuit_v: 32.30
     cell_resistance_ohm: 0.1008
     cell_current_envelope_a: [12.903, 52.593]
@@ -132,7 +134,7 @@ state:
         the terminals of the modules feeding it. Per module V = E0 - R i with E0 32.30 V and R
         0.1008 ohm, `components.fc_1.open_circuit_intercept_v` and `source_resistance_ohm` (derived,
         WP02 E-2, the secant of the AOH p. 2.6-2 envelope). Two modules in parallel share the bus
-        current, so V = E0 - (R/2) I, and the rule solves P = V I for I at the bus load: the smaller
+        current, so V = E0 - (R/n) I for the n of them connected, and the rule solves P = V I for I at the bus load: the smaller
         root of (R/2) I^2 - E0 I + P = 0. The envelope is that secant's own range, 400 W / 31 V =
         12.903 A to 1,420 W / 27 V = 52.593 A per module; outside it the relation is an
         extrapolation and the rule returns no value, as it does for a load beyond E0^2 / (4 R/2)
@@ -157,7 +159,7 @@ state:
     method: algebraic
     node: bus_b
     unit: V
-    cells_in_parallel: 1
+    cells: [fc_3]
     cell_open_circuit_v: 32.30
     cell_resistance_ohm: 0.1008
     cell_current_envelope_a: [12.903, 52.593]
@@ -453,6 +455,54 @@ state:
       basis: chosen
       reason: "the ladder position is a mode, not a measurement, so it is latched; its band is the top tier's own band on power.dc_bus_a_v, which `band_on` names so the linter holds the two to the same volts"
 
+  # The connection of every source `set_source` names. Internal: power alone reads it.
+  - id: source_enabled
+    node: internal
+    method: discrete
+    unit: "map[source_id,enum[on,off]]"
+    initial:
+      fc_1: "on"
+      fc_2: "on"
+      fc_3: "on"
+      battery_csm_1: "off"
+      battery_csm_2: "off"
+      battery_csm_3: "off"
+      battery_lm_descent_1: "off"
+      battery_lm_descent_2: "off"
+      battery_lm_descent_3: "off"
+      battery_lm_descent_4: "off"
+      battery_lm_ascent_1: "off"
+      battery_lm_ascent_2: "off"
+    initial_provenance:
+      basis: historical
+      source: >-
+        TN D-7609 p. 5: "the normal configurations were with fuel cells 1 and 2 on main bus A and with
+        fuel cell 3 on main bus B", and the batteries off the main buses in coast (TN D-7609; Apollo 10
+        consumables analysis Table 8-I: two batteries in parallel only "during ascent and each SPS
+        maneuver"). The LM batteries are off because the LM is unpowered cargo in translunar coast
+      note: >-
+        the battery entries are positions `set_source` writes and no rule reads yet: the bus solve is
+        the fuel cells' alone, as `bus_a_v`'s note says. They are declared so the map is the verb's
+        whole argument space, and they become a reading when the batteries join the bus
+    moved_by: ["command:set_source"]
+    command_value:
+      - verb: set_source
+        argument: state
+        key: source
+        why: >-
+          identity: the verb's `state` argument is `on` or `off` and so is the element it writes, keyed
+          by the verb's `source` argument
+    note: >-
+      one position per source. A fuel cell set `off` is disconnected from its main bus: "one fuel cell
+      can be disconnected from the buses increasing the loads on the remaining fuel cells" (AOH
+      p. 2.6-28), and a module isolated after a malfunction is the AOH p. 2.6-23 case. The bus solve,
+      the module currents, the reactant draw and the bus A margin all follow it in the same tick,
+      because the command is applied before the tick walks the schedule (`plant.md` §9 step 1)
+    provenance:
+      basis: apollo
+      ref: "apollo_diode.md:237"
+      note: "apollo's `set_source` connects or disconnects a generating source; this is the position the verb writes, which until this state it wrote nowhere (`--apply`: 0 values changed)"
+
   # The two bus loads and the cells' current. On the `fuel_cell` node, in the order its
   # `state_order` declares, because the cells deliver what the buses draw and everything downstream
   # of the cells (the bus solves, the reactant draws, the waste heat) needs them this tick. They were
@@ -464,6 +514,8 @@ state:
     # The reference operating point, the reading the linter re-derives `fuel_cell_power_w` against:
     # every load below on and the transmitter on. The tick computes it from the switches.
     bus_a_load_w: 1148
+    # The bus is dead, and its loads draw nothing, when none of these modules is connected.
+    cells: [fc_1, fc_2]
     # The rule's parameters (`domains/power/rules.py`): the loads `loads[].bus` puts on main bus A,
     # with their `demand_w`, copied because a rule reads only its own state's declaration and held to
     # the inventory by `tests/test_power_rules.py`.
@@ -500,6 +552,7 @@ state:
     node: fuel_cell
     unit: W
     bus_b_load_w: 575
+    cells: [fc_3]
     loads_w:
       csm_suit_fan: 85
       csm_cabin_fan: 60
@@ -520,8 +573,8 @@ state:
     # 12.9-52.6 A envelope.
     fuel_cell_current_a: 56.686
     buses:
-      - {bus: csm_bus_a, load: bus_a_load_w, cells_in_parallel: 2}
-      - {bus: csm_bus_b, load: bus_b_load_w, cells_in_parallel: 1}
+      - {bus: csm_bus_a, load: bus_a_load_w, cells: [fc_1, fc_2]}
+      - {bus: csm_bus_b, load: bus_b_load_w, cells: [fc_3]}
     cell_open_circuit_v: 32.30
     cell_resistance_ohm: 0.1008
     cell_current_envelope_a: [12.903, 52.593]
@@ -534,9 +587,59 @@ state:
     provenance:
       basis: derived
       relation: >-
-        I = I_A + I_B, each the smaller root of (R/n) I^2 - E0 I + P = 0 for its bus's load P and its
-        n modules in parallel (`buses`). E0, R and the envelope are `components.fc_[n]`'s, copied as
+        I = I_A + I_B, each the smaller root of (R/n) I^2 - E0 I + P = 0 for its bus's load P and the
+        n of its modules (`buses`) that `source_enabled` leaves connected; a bus with none carries 0 A. E0, R and the envelope are `components.fc_[n]`'s, copied as
         `bus_a_v` copies them and held to them by `tests/test_power_rules.py`
+
+  # One module's own current, and the rated output bus A's connected modules can deliver. Both on the
+  # `fuel_cell` node, after the module current, because they are the same operating point read per
+  # module and per bus.
+  - id: fc_1_current_a
+    method: algebraic
+    node: fuel_cell
+    unit: A
+    # The reference operating point: bus A's 1,148 W on two modules is 37.767 A, half of it each.
+    fc_1_current_a: 18.884
+    cell: fc_1
+    buses:
+      - {bus: csm_bus_a, load: bus_a_load_w, cells: [fc_1, fc_2]}
+      - {bus: csm_bus_b, load: bus_b_load_w, cells: [fc_3]}
+    cell_open_circuit_v: 32.30
+    cell_resistance_ohm: 0.1008
+    cell_current_envelope_a: [12.903, 52.593]
+    note: >-
+      what fuel cell 1 itself delivers, which `power.source_1_current_a` publishes. Until this state
+      the channel was `fuel_cell_power_w / bus_a_v`, the three modules' watts over one bus's volts:
+      about 54 A at MET 0 for a module carrying 17.6 A, and a number that did not fall when the module
+      was taken off line. PWR-02's evidence is "one source current falls while the others rise", so
+      the channel has to be one module's. 0 A when the module is disconnected
+    provenance:
+      basis: derived
+      relation: >-
+        its bus's current (the same solve as `fuel_cell_current_a`, `rules.solve_bus`) divided equally
+        among the connected modules on that bus: identical modules in parallel at one terminal voltage
+        share the current equally under V = E0 - R i (`components.fc_[n]`, WP02 E-2). E0, R and the
+        envelope are copied as `bus_a_v` copies them and held to them by `tests/test_power_rules.py`
+  - id: bus_a_rated_w
+    method: algebraic
+    node: fuel_cell
+    unit: W
+    # Both bus A modules connected: 2 x 1,420 W.
+    bus_a_rated_w: 2840
+    cells: [fc_1, fc_2]
+    rated_w: {fc_1: 1420, fc_2: 1420}
+    note: >-
+      the rated output of the modules connected to main bus A, which `power.load_margin_w` subtracts
+      the bus's load from. The margin read the two modules' `rated_w` straight from the components
+      until this state, so a module taken off line left the margin where it was, the omission the
+      point's own provenance named ("a failed module (the routing is the normal one, not a switch
+      state)")
+    provenance:
+      basis: derived
+      relation: >-
+        the sum of `components.fc_[n].rated_w` (1,420 W, the top of the AOH p. 2.6-2 normal envelope,
+        WP02 E-1) over the bus A modules `source_enabled` leaves on. The quantity is still ADR 0004
+        operator item 1's (John, 2026-10-16): available generation on bus A less its load
 
   # The switch position of every load in the inventory below, and the state `set_load` moves. It is
   # on a coupling node, `load_shed_state` beside the ladder's class, rather than the sentinel, because

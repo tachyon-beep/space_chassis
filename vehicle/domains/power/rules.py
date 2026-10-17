@@ -9,11 +9,31 @@ A rule returns `None` when it cannot give an honest value, which the plant repor
 state: a switch map missing a load, a load beyond what the cells can deliver, or a module current
 outside the published normal envelope, where the linear terminal relation is an extrapolation
 (`components.fc_1.source_resistance_provenance`: "a rule must not use it there").
+
+Each fuel-cell module is connected or not (`source_enabled`, moved by `set_source`): "one fuel cell
+can be disconnected from the buses increasing the loads on the remaining fuel cells" (AOH p. 2.6-28).
+A bus is solved over the modules on it that are connected, and a bus with none is dead: its loads
+draw nothing and it reads 0 V, because in coast the batteries are off the main buses (TN D-7609).
 """
 
 from __future__ import annotations
 
 import math
+
+
+def _connected(inputs, params):
+    """The modules in this bus's `cells` that `source_enabled` leaves connected, in declared order.
+
+    A module missing from the switch map is a gap, not a disconnected module: the map is the whole
+    source inventory, so a missing key is a renamed or forgotten source."""
+    switches = inputs["source_enabled"]
+    connected = []
+    for cell in params["cells"]:
+        if cell not in switches:
+            return None
+        if switches[cell] == "on":
+            connected.append(cell)
+    return connected
 
 
 def _enabled_load_w(inputs, params):
@@ -23,6 +43,11 @@ def _enabled_load_w(inputs, params):
     switch: the amplifier's watts have one home, the load inventory, and the transmitter state says
     whether that load is drawing (ADR 0003 item 5). The transmitter is read only when it matters.
     """
+    connected = _connected(inputs, params)
+    if connected is None:
+        return None
+    if not connected:
+        return 0.0
     switches = inputs["load_enabled"]
     gated = set(params["transmitter_gated"])
     total = 0.0
@@ -69,16 +94,6 @@ def solve_bus(load_w, cells_in_parallel, open_circuit_v, resistance_ohm, envelop
     return current, e0 - r_bus * current
 
 
-def _bus(params, load_w):
-    return solve_bus(
-        load_w,
-        params["cells_in_parallel"],
-        params["cell_open_circuit_v"],
-        params["cell_resistance_ohm"],
-        params["cell_current_envelope_a"],
-    )
-
-
 def why_unsolved(load_w, cells_in_parallel, open_circuit_v, resistance_ohm, envelope_a):
     """The named gap behind `solve_bus`'s None: past the cells' maximum power, or a module current
     outside the published normal envelope (AOH p. 2.6-2: 400-1,420 W a module), where the secant is
@@ -105,13 +120,24 @@ def why_unsolved(load_w, cells_in_parallel, open_circuit_v, resistance_ohm, enve
     )
 
 
-def _bus_v(params, load_w):
-    solved = _bus(params, load_w)
+def _bus_v(inputs, params, load_w):
+    connected = _connected(inputs, params)
+    if connected is None:
+        return params.no_value("a module on this bus has no position in `source_enabled`")
+    if not connected:
+        return 0.0
+    solved = solve_bus(
+        load_w,
+        len(connected),
+        params["cell_open_circuit_v"],
+        params["cell_resistance_ohm"],
+        params["cell_current_envelope_a"],
+    )
     if solved is None:
         return params.no_value(
             why_unsolved(
                 load_w,
-                params["cells_in_parallel"],
+                len(connected),
                 params["cell_open_circuit_v"],
                 params["cell_resistance_ohm"],
                 params["cell_current_envelope_a"],
@@ -121,35 +147,74 @@ def _bus_v(params, load_w):
 
 
 def bus_a_v(inputs, params, dt):
-    return _bus_v(params, inputs["bus_a_load_w"])
+    return _bus_v(inputs, params, inputs["bus_a_load_w"])
 
 
 def bus_b_v(inputs, params, dt):
-    return _bus_v(params, inputs["bus_b_load_w"])
+    return _bus_v(inputs, params, inputs["bus_b_load_w"])
 
 
-def fuel_cell_current_a(inputs, params, dt):
-    """The three modules' summed current: each bus's solve, at the bus's own load, added."""
-    total = 0.0
-    for bus in params["buses"]:
-        solved = solve_bus(
-            inputs[str(bus["load"])],
-            bus["cells_in_parallel"],
+def _bus_current(inputs, params, bus):
+    """(bus current A, connected modules) for one entry of `buses`, or (None, why)."""
+    connected = _connected(inputs, bus)
+    if connected is None:
+        return None, f"{bus['load']}: a module on this bus has no position in `source_enabled`"
+    if not connected:
+        return 0.0, connected
+    load_w = inputs[str(bus["load"])]
+    solved = solve_bus(
+        load_w,
+        len(connected),
+        params["cell_open_circuit_v"],
+        params["cell_resistance_ohm"],
+        params["cell_current_envelope_a"],
+    )
+    if solved is None:
+        why = why_unsolved(
+            load_w,
+            len(connected),
             params["cell_open_circuit_v"],
             params["cell_resistance_ohm"],
             params["cell_current_envelope_a"],
         )
-        if solved is None:
-            why = why_unsolved(
-                inputs[str(bus["load"])],
-                bus["cells_in_parallel"],
-                params["cell_open_circuit_v"],
-                params["cell_resistance_ohm"],
-                params["cell_current_envelope_a"],
-            )
-            return params.no_value(f"{bus['load']}: {why}")
-        total += solved[0]
+        return None, f"{bus['load']}: {why}"
+    return solved[0], connected
+
+
+def fuel_cell_current_a(inputs, params, dt):
+    """The connected modules' summed current: each bus's solve, at the bus's own load, added."""
+    total = 0.0
+    for bus in params["buses"]:
+        current, why = _bus_current(inputs, params, bus)
+        if current is None:
+            return params.no_value(why)
+        total += current
     return total
+
+
+def fc_1_current_a(inputs, params, dt):
+    """One module's own current: its bus's current shared equally among the connected modules on
+    that bus (they are identical, `components.fc_[n]`), and 0 A when it is disconnected."""
+    cell = params["cell"]
+    for bus in params["buses"]:
+        if cell not in bus["cells"]:
+            continue
+        current, connected = _bus_current(inputs, params, bus)
+        if current is None:
+            return params.no_value(connected)
+        if cell not in connected:
+            return 0.0
+        return current / len(connected)
+    return params.no_value(f"{cell} is on no bus in `buses`")
+
+
+def bus_a_rated_w(inputs, params, dt):
+    """The rated output of the modules connected to main bus A: what `power.load_margin_w` is
+    measured against (ADR 0004 operator item 1), so a module taken off line leaves the margin."""
+    connected = _connected(inputs, params)
+    if connected is None:
+        return params.no_value("a module on bus A has no position in `source_enabled`")
+    return float(sum(params["rated_w"][cell] for cell in connected))
 
 
 RULES = {
@@ -158,4 +223,6 @@ RULES = {
     "bus_a_v": bus_a_v,
     "bus_b_v": bus_b_v,
     "fuel_cell_current_a": fuel_cell_current_a,
+    "fc_1_current_a": fc_1_current_a,
+    "bus_a_rated_w": bus_a_rated_w,
 }

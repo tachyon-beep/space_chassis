@@ -35,13 +35,9 @@ points:
       electrical_diode.md:251's 40 A continuous rating — the vehicle is apollo's, so the
       instrument must span apollo's range (conflict C-02).
   - channel: power.source_1_current_a
-    from: fuel_cell_power_w
+    from: fc_1_current_a
     layer: measurement
-    derivation:
-      expression: power_w / voltage_v
-      inputs:
-        power_w: fuel_cell_power_w
-        voltage_v: bus_a_v
+    derivation: "fuel cell 1's own current: its bus's solve shared among the connected modules on it"
     note: "an unexpected zero here is the fast signature of a source loss; an overload is the signature of a shorted load behind it"
   - channel: power.battery_soc_pct
     from: battery_charge_j
@@ -73,19 +69,18 @@ points:
     # margin's name, and nothing could evaluate `power.load_margin_low`. Bus A only, because the
     # interlock's inputs were bus A's; fuel cell 3's margin on bus B is not published.
     derivation:
-      expression: fc_1_w + fc_2_w - load_w
+      expression: rated_w - load_w
       inputs:
-        fc_1_w: domains/power/components.yaml:components.fc_1.rated_w
-        fc_2_w: domains/power/components.yaml:components.fc_2.rated_w
+        rated_w: bus_a_rated_w
         load_w: bus_a_load_w
     derivation_provenance:
       basis: chosen
       reason: >-
         the quantity is the operator's choice of what "available generation minus present demand"
         means (ADR 0004 operator item 1); every number in it is sourced: `rated_w` (AOH p. 2.6-2,
-        JEPS p. 2.6-2, 400-1,420 W normal) and the bus A routing (TN D-7609 p. 5). What it omits: a
-        module's capacity above its normal envelope, a failed module (the routing is the normal
-        one, not a switch state), and bus B
+        JEPS p. 2.6-2, 400-1,420 W normal) and the bus A routing (TN D-7609 p. 5), summed over the
+        modules `source_enabled` leaves connected (`bus_a_rated_w`). What it omits: a module's
+        capacity above its normal envelope, a degraded module's lost capacity, and bus B
     note: >-
       One of the three inferred quantities the spike exists to exercise (simulator-design.md
       §3.9). Its <100 W and negative events make it the channel an agent watches to decide

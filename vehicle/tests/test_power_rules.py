@@ -31,6 +31,9 @@ DT = 0.02
 LB = 0.45359237
 _COUNTER = itertools.count()
 
+# Every fuel-cell module connected, as at MET 0 (`source_enabled`).
+ALL_ON = {"fc_1": "on", "fc_2": "on", "fc_3": "on"}
+
 # The published per-module terminal line (WP02 E-2) and its envelope, written out by hand.
 E0 = 32.30
 R = 0.1008
@@ -122,15 +125,36 @@ def test_the_rule_parameters_are_the_inventory_and_the_cells_they_copy():
                 round(low_w / high_v, 3),
                 round(high_w / low_v, 3),
             ]
-    # The bus a cell feeds is the cell's `normal_bus`, and the count in parallel follows from it.
-    feeding = {"csm_bus_a": 0, "csm_bus_b": 0}
+    # The modules that can feed a bus are the cells whose `normal_bus` it is, in every copy.
+    feeding = {"csm_bus_a": [], "csm_bus_b": []}
+    for cid, cell in cells.items():
+        feeding[cell["normal_bus"]].append(cid)
+    assert feeding == {"csm_bus_a": ["fc_1", "fc_2"], "csm_bus_b": ["fc_3"]}
+    assert states["bus_a_v"]["cells"] == states["bus_a_load_w"]["cells"] == feeding["csm_bus_a"]
+    assert states["bus_b_v"]["cells"] == states["bus_b_load_w"]["cells"] == feeding["csm_bus_b"]
+    assert states["bus_a_rated_w"]["cells"] == feeding["csm_bus_a"]
+    assert states["bus_a_rated_w"]["rated_w"] == {
+        c: cells[c]["rated_w"] for c in feeding["csm_bus_a"]
+    }
+    for sid in ("fuel_cell_current_a", "fc_1_current_a"):
+        assert {b["bus"]: b["cells"] for b in states[sid]["buses"]} == feeding, sid
+        assert [b["load"] for b in states[sid]["buses"]] == ["bus_a_load_w", "bus_b_load_w"], sid
     for cell in cells.values():
-        feeding[cell["normal_bus"]] += 1
-    assert states["bus_a_v"]["cells_in_parallel"] == feeding["csm_bus_a"] == 2
-    assert states["bus_b_v"]["cells_in_parallel"] == feeding["csm_bus_b"] == 1
-    assert {b["bus"]: b["cells_in_parallel"] for b in states["fuel_cell_current_a"]["buses"]} == (
-        feeding
+        for field, key in (
+            ("cell_open_circuit_v", "open_circuit_intercept_v"),
+            ("cell_resistance_ohm", "source_resistance_ohm"),
+        ):
+            assert states["fc_1_current_a"][field] == cell[key]
+    assert (
+        states["fc_1_current_a"]["cell_current_envelope_a"]
+        == states["bus_a_v"]["cell_current_envelope_a"]
     )
+    # `source_enabled` is the whole of `set_source`'s argument space, every source in it a component.
+    commands = yaml.safe_load((VEHICLE / "domains" / "power" / "commands.yaml").read_text())
+    verb = next(c for c in commands["commands"] if c["verb"] == "set_source")
+    initial = states["source_enabled"]["initial"]
+    assert list(initial) == verb["argument_schema"]["source"]["values"]
+    assert {k for k, v in initial.items() if v == "on"} == set(cells)
     # Each bus load lists exactly the CSM loads `loads[].bus` puts on it, at their `demand_w`.
     for sid, bus in (("bus_a_load_w", "csm_bus_a"), ("bus_b_load_w", "csm_bus_b")):
         on_bus = {row["id"]: row["demand_w"] for row in doc["loads"] if row["bus"] == bus}
@@ -168,7 +192,9 @@ def test_bus_b_voltage_is_the_cells_terminal_line_at_two_currents(world, module_
     p_hand = v_hand * module_current_a
     rules = rules_module()
     spec = spec_of(world, "bus_b_v")
-    assert rules.bus_b_v({"bus_b_load_w": p_hand}, spec, DT) == pytest.approx(v_hand, abs=1e-9)
+    assert rules.bus_b_v({"bus_b_load_w": p_hand, "source_enabled": ALL_ON}, spec, DT) == (
+        pytest.approx(v_hand, abs=1e-9)
+    )
     current, volts = rules.solve_bus(p_hand, 1, E0, R, [12.903, 52.593])
     assert (current, volts) == pytest.approx((module_current_a, v_hand), abs=1e-9)
 
@@ -179,9 +205,8 @@ def test_bus_a_voltage_is_two_cells_in_parallel_at_two_currents(world, bus_curre
     v_hand = E0 - R * (bus_current_a / 2)  # 30.788 V at 30 A, 28.268 V at 80 A
     p_hand = v_hand * bus_current_a
     rules = rules_module()
-    assert rules.bus_a_v({"bus_a_load_w": p_hand}, spec_of(world, "bus_a_v"), DT) == (
-        pytest.approx(v_hand, abs=1e-9)
-    )
+    inputs = {"bus_a_load_w": p_hand, "source_enabled": ALL_ON}
+    assert rules.bus_a_v(inputs, spec_of(world, "bus_a_v"), DT) == (pytest.approx(v_hand, abs=1e-9))
 
 
 def test_the_solve_refuses_a_load_the_cells_cannot_deliver_or_an_extrapolation():
@@ -199,13 +224,17 @@ def test_a_bus_below_the_module_minimum_is_a_named_gap_not_a_bare_none(world):
     """The cell solve has no value under 400 W a module (AOH p. 2.6-2's normal minimum), so under
     800 W on two-module bus A and 400 W on bus B; the gap says that, rather than "no value"."""
     rules = rules_module()
-    for state, key, light, cells in (("bus_a_v", "bus_a_load_w", 780.0, 2), ("bus_b_v", "bus_b_load_w", 380.0, 1)):
+    for state, key, light, cells in (
+        ("bus_a_v", "bus_a_load_w", 780.0, 2),
+        ("bus_b_v", "bus_b_load_w", 380.0, 1),
+    ):
         params = plant.RuleParams(spec_of(world, state), f"state {state}")
-        assert getattr(rules, state)({key: light}, params, DT) is None
+        assert getattr(rules, state)({key: light, "source_enabled": ALL_ON}, params, DT) is None
         assert f"a load of {light:.0f} W puts each of {cells} module(s) at" in params.why_none
         assert "below the published normal envelope's 12.903 A" in params.why_none, params.why_none
         heavy = plant.RuleParams(spec_of(world, state), f"state {state}")
-        assert getattr(rules, state)({key: E0**2 / (4 * R / cells) + 1.0}, heavy, DT) is None
+        heavy_inputs = {key: E0**2 / (4 * R / cells) + 1.0, "source_enabled": ALL_ON}
+        assert getattr(rules, state)(heavy_inputs, heavy, DT) is None
         assert "more than" in heavy.why_none and "can deliver" in heavy.why_none, heavy.why_none
     # And the plant's gap carries the reason.
     values = dict(plant.initial_values(world), bus_a_load_w=780.0)
@@ -368,3 +397,54 @@ def test_the_source_converter_is_read_by_nothing_on_the_bus_path(world):
     assert "source_converter" not in text
     _, gaps = tick(world, plant.initial_values(world))
     assert "source_converter_v" in gaps and "bus_a_v" not in gaps and "bus_b_v" not in gaps
+
+
+# ------------------------------------------------------------------------------------------------
+# set_source: a module taken off line (AOH p. 2.6-28), through the real step loop.
+# ------------------------------------------------------------------------------------------------
+
+
+def test_fuel_cell_1_publishes_its_own_current_and_shares_bus_a_equally(world):
+    after, gaps = tick(world, plant.initial_values(world))
+    assert not {"fc_1_current_a", "bus_a_rated_w"} & set(gaps)
+    # MET 0: bus A carries 1,076 W on two modules, so each carries half the bus current.
+    i_bus = (E0 - math.sqrt(E0**2 - 4 * (R / 2) * 1076)) / (2 * (R / 2))
+    assert after["fc_1_current_a"] == pytest.approx(i_bus / 2, abs=1e-9)
+    assert after["bus_a_rated_w"] == 2840
+
+
+def test_taking_fuel_cell_1_off_line_puts_bus_a_on_one_module_in_the_same_tick(world):
+    values, _ = tick(world, plant.initial_values(world))
+    off = plant.Effect(0, "set_source", {"source": "fc_1", "state": "off"})
+    after, gaps = tick(world, values, [off])
+    assert after["source_enabled"]["fc_1"] == "off"
+    assert not {"bus_a_v", "fc_1_current_a", "fuel_cell_current_a"} & set(gaps)
+    # The load stays; fuel cell 2 carries all of it, by hand: one module, V = E0 - R I.
+    p = after["bus_a_load_w"]
+    assert p == values["bus_a_load_w"]
+    i_hand = (E0 - math.sqrt(E0**2 - 4 * R * p)) / (2 * R)
+    assert after["bus_a_v"] == pytest.approx(E0 - R * i_hand, abs=1e-9)
+    assert after["bus_a_v"] < values["bus_a_v"]
+    assert after["fc_1_current_a"] == 0.0
+    # The margin loses the module's 1,420 W, and bus B did not move.
+    assert after["bus_a_rated_w"] == 1420
+    assert after["bus_b_v"] == values["bus_b_v"]
+    # The reactant draw follows the summed current, which rises: one module at a lower voltage.
+    assert after["fuel_cell_current_a"] > values["fuel_cell_current_a"]
+    # And back on: the bus returns to the two-module operating point.
+    on = plant.Effect(0, "set_source", {"source": "fc_1", "state": "on"})
+    back, _ = tick(world, after, [on])
+    assert back["bus_a_v"] == pytest.approx(values["bus_a_v"], abs=1e-12)
+
+
+def test_a_bus_with_no_connected_module_is_dead(world):
+    """Fuel cell 3 off: in coast the batteries are off the main buses (TN D-7609), so bus B has no
+    source. Its loads draw nothing, it reads 0 V, and the generation and draw lose its share."""
+    values, _ = tick(world, plant.initial_values(world))
+    off = plant.Effect(0, "set_source", {"source": "fc_3", "state": "off"})
+    after, gaps = tick(world, values, [off])
+    assert not {"bus_b_v", "bus_b_load_w", "fuel_cell_current_a"} & set(gaps)
+    assert after["bus_b_load_w"] == 0.0 and after["bus_b_v"] == 0.0
+    assert after["fuel_cell_power_w"] == values["bus_a_load_w"]
+    assert after["fuel_cell_current_a"] == pytest.approx(after["bus_a_load_w"] / after["bus_a_v"])
+    assert after["bus_a_v"] == values["bus_a_v"]
