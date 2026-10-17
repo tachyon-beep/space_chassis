@@ -6305,7 +6305,8 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
     # environment's derivation is the hot hold's figure, `sun_hold_w` (ADR 0003 item 9).
     converted = {
         "environment_heat_w": "solar_flux_w_m2",
-        "cabin_o2_supply_csm_kg_s": "leak_kg_per_h",
+        # `cabin_o2_supply_csm_kg_s` left with the surge tank: a rule routes its demand by
+        # `o2_source`, and `check_metabolic_rules` still holds its `nominal_kg_s`.
         "cabin_o2_supply_lm_kg_s": "leak_kg_per_h",
         "co2_removal_csm_kg_s": "co2_kg_per_crew_day",
         "co2_removal_lm_kg_s": "co2_kg_per_crew_day",
@@ -6812,7 +6813,9 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     # equilibria, the radiator's equilibrium and rejection, the bus load, the coldplate), and a rule is
     # not also a derivation. `environment_heat_w`'s derivation computes the hot hold, `sun_hold_w`
     # (ADR 0003 item 9), where it computed the state's `total_w`.
-    assert len(declared) == 14, f"{len(declared)} declared arithmetics"
+    # 14 -> 13 with the surge tank: `cabin_o2_supply_csm_kg_s` is a rule that routes its demand by
+    # `o2_source`, so its derivation left for the same reason.
+    assert len(declared) == 13, f"{len(declared)} declared arithmetics"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
     assert subjects == [
@@ -8002,7 +8005,7 @@ def test_the_stock_integrator_reads_its_driver():
     pascals-per-kelvin to kilograms-per-hour and calling the result a mass is not an approximation;
     it is a dimension error wearing a number.
 
-    That stop is gone: a tick now walks all 160 states and records what it cannot advance, so the
+    That stop is gone: a tick now walks all 163 states and records what it cannot advance, so the
     integrator is reached by the order rather than only by a hand-written call. It still cannot be
     *exercised* from the live corpus, because every stock's driver is itself gapped — the tick
     reaches `lm_cabin_o2_kg` and gives up on it for a reason that belongs to the other state. The
@@ -8179,7 +8182,7 @@ def test_an_edge_says_which_state_it_advances(tmp_path):
 
     # The four gas masses of one compartment now have four different answers, where before they
     # had one list between them.
-    assert incoming("csm_cabin_o2_kg") == ["E-O2-ECLSS"]
+    assert incoming("csm_cabin_o2_kg") == ["E-O2-ECLSS", "E-O2-SURGE-ECLSS"]
     assert incoming("csm_cabin_co2_kg") == ["E-CREW-ATM"]
     assert incoming("csm_cabin_n2_kg") == [], (
         "nothing supplies nitrogen, and now nothing pretends to"
@@ -12608,7 +12611,8 @@ def test_every_stock_declares_where_it_starts():
     world = plant.load_world(VEHICLE)
     stocks = [s for s in world.states if s.method == "stock"]
     # 25 -> 26: comms `delivered_bits` (the recorder was already a stock).
-    assert len(stocks) == 26, f"{len(stocks)} stocks"
+    # 26 -> 27 with the CM's surge tank, `o2_surge_csm_kg`.
+    assert len(stocks) == 27, f"{len(stocks)} stocks"
 
     seeded = plant.initial_values(world)
     # **The map a tick starts from is no longer only what the integrators seed**, and this test is
@@ -12639,7 +12643,7 @@ def test_every_stock_declares_where_it_starts():
     # helium charge landed from the Operational Data Book's loading table (round 13), which is the
     # last stock in the corpus whose `initial` was owed to a document nobody had opened.
     # 25 -> 26: comms `delivered_bits` starts at zero.
-    assert len(declared) == 26, f"{len(declared)} stocks declare a numeric initial"
+    assert len(declared) == 27, f"{len(declared)} stocks declare a numeric initial"
     on_nodes = {k: v for k, v in seeded_integrators.items() if k != "internal"}
     # 10 -> 12 with `prop_main` and `prop_rcs`: the two stocks whose `initial` was owed because
     # nothing said which tanks the nodes were. Both carry their loads now. **The six cabin gases
@@ -12686,8 +12690,9 @@ def test_every_stock_declares_where_it_starts():
     # writes) under its own, and `environment_heat_w` — a held boundary since item 9 — under its
     # id and its single-state node's alias, `environment_heat`.
     # 89 -> 91 with ECLSS: `suit_fan` (the switch `set_suit_fan` moves) under its id, and
-    # `o2_tank_heaters`, a ruled discrete whose id and single-state node share one name.
-    assert len(on_nodes) == 91, f"{len(on_nodes)} node keys carry a value"
+    # `o2_tank_heaters`, a ruled discrete whose id and single-state node share one name. 94 with the
+    # surge tank: `o2_source` under its id, and `o2_surge_csm_kg` under its id and its node's alias.
+    assert len(on_nodes) == 94, f"{len(on_nodes)} node keys carry a value"
     # And the map a tick actually starts from is that seed plus the declared arithmetic, so the
     # resolved states are a strict superset and every one of them is `algebraic`.
     assert seeded_integrators.keys() < seeded.keys(), "the resolution added nothing to the seed"
@@ -12701,13 +12706,14 @@ def test_every_stock_declares_where_it_starts():
     # position now, so they join this sub-map as well as the ids beside it.
     # 18 -> 22 with ADR 0003's thermal rules: the amplifier's temperature and the three loop
     # switch maps (`coolant_pump`, `evaporator_feed`, `radiator_bypass`) are sentinel states.
-    # 22 -> 23 with ECLSS's `suit_fan`, the compressor switch, also on the sentinel.
-    assert len(seeded_integrators["internal"]) == 23, sorted(seeded_integrators["internal"])
+    # 22 -> 23 with ECLSS's `suit_fan`, the compressor switch, also on the sentinel, and 24 with
+    # `o2_source`, the store selection.
+    assert len(seeded_integrators["internal"]) == 24, sorted(seeded_integrators["internal"])
     # Five of the sentinel's `algebraic` states resolve at t=0 as well — the bay heat, the cabin
     # pressure differential and three more — so the sentinel's sub-map is the same map the tick
     # commits, merged rather than replaced. (Six until ADR 0003's power rules moved the bus load to
-    # the cells' node.) 28 with ECLSS's `suit_fan`.
-    assert len(seeded["internal"]) == 28, sorted(seeded["internal"])
+    # the cells' node.) 28 with ECLSS's `suit_fan`, 29 with `o2_source`.
+    assert len(seeded["internal"]) == 29, sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
     # six of the twenty-four declared values are the last of their key rather than a key of their
@@ -12760,6 +12766,7 @@ def test_every_stock_declares_where_it_starts():
         "impulse_total",
         "gyro_bias",
         "o2_supply_pressure_psi",
+        "o2_source",
         "suit_fan",
         "suit_loop_flow_cfm",
         "dps_throttle_pct",
@@ -12807,7 +12814,9 @@ def test_every_stock_declares_where_it_starts():
     # is the reason the value assertions below name their states rather than ranging over the map.
     # The four switch maps are maps, which a set cannot hold, so they are asserted by name below.
     switch_maps = {k for k, v in seeded_integrators["internal"].items() if isinstance(v, dict)}
-    assert switch_maps == {"coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan"}, (
+    assert switch_maps == {
+        "coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan", "o2_source",
+    }, (
         switch_maps
     )
     assert {v for k, v in seeded_integrators["internal"].items() if k not in switch_maps} == {
@@ -13052,9 +13061,10 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
     # `evaporator_feed` and `radiator_bypass`, each moved by its own verb.
     # 49 -> 51 with ECLSS: `suit_fan` (`set_suit_fan`) and `o2_tank_heaters`, the tanks' pressure
     # switch, moved by its logic.
-    assert states == 51, states
+    # 51 -> 52 with `o2_source` (`set_o2_source`).
+    assert states == 52, states
     # 23 -> 24 commands and 23 -> 24 logic movers with the same two.
-    assert (commands, triggers, events, logic) == (24, 5, 6, 24), (
+    assert (commands, triggers, events, logic) == (25, 5, 6, 24), (
         commands, triggers, events, logic,
     )
     # Two states still owe it, and they are the two the crew debt names.
@@ -14048,8 +14058,9 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
     # count it is part of is what this assertion exists to notice.
     # 59 -> 61 with ADR 0003: thermal's three keyed commands (`evaporator_feed`, `coolant_pump`,
     # `radiator_bypass`) are on the sentinel and declared in its order, and power's `bus_a_load_w`
-    # left it for `fuel_cell`. 62 with ECLSS's `suit_fan`, the compressor switch `set_suit_fan` moves.
-    assert sum(len(states) for _, states in declared) == 62, "the sentinel's state count moved"
+    # left it for `fuel_cell`. 62 with ECLSS's `suit_fan`, the compressor switch `set_suit_fan` moves,
+    # and 63 with `o2_source`, the store selection `set_o2_source` moves.
+    assert sum(len(states) for _, states in declared) == 63, "the sentinel's state count moved"
 
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
@@ -15737,7 +15748,8 @@ def test_a_command_value_says_which_argument_carries_the_value():
     # Five quantity states joined the eight mode ones this round, and one keyed state declares
     # nothing but its key. 17 -> 21 with ADR 0003: thermal's `coolant_pump`, `evaporator_feed` and
     # `radiator_bypass` and power's `load_enabled`, each keyed; 22 with ECLSS's `suit_fan`.
-    assert declared == 22, declared
+    # 22 -> 23 with `o2_source`, which `set_o2_source`'s `source` moves.
+    assert declared == 23, declared
     assert sorted(constants) == [
         "rcs.thruster_valve.isolate_rcs_manifold",
         "structure.pyro_fired.execute_event",
@@ -16180,7 +16192,8 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     # 14 -> 20 with ADR 0003: `set_coolant_pump`, `set_evaporator_feed`, `set_radiator_bypass`
     # (thermal), `set_load` (power), `set_power_amplifier` and `play_recorder` (comms); 21 with
     # `set_suit_fan` (ECLSS).
-    assert len(applied) == 21, applied
+    # 21 -> 22 with `set_o2_source`, which moves `o2_source` now.
+    assert len(applied) == 22, applied
     assert "select_antenna" in applied
     # 7 -> 5: `set_coolant_pump` and `set_power_amplifier` stopped owing (ADR 0003): the pump's speed
     # selects `coolant_pump` (thermal) and the amplifier's power selects `transmitter_on` (comms).
@@ -16507,9 +16520,10 @@ def test_a_commanded_state_is_guarded_by_a_dwell_and_the_executive_reads_it(tmp_
     # none, and that is the second exemption, written down here rather than left as a gap. 23 with
     # ECLSS's `suit_fan`, a keyed map that declares one anyway: a second's lock-out of the LM's switch
     # after a CSM command costs less than an undamped switch.
-    assert len(commanded) == 23, [s.id for s in commanded]
+    # 23 -> 24 with `o2_source`, which keeps a dwell like `suit_fan`'s.
+    assert len(commanded) == 24, [s.id for s in commanded]
     guarded = [s for s in commanded if s.spec.get("dwell")]
-    assert len(guarded) == 18, [s.id for s in commanded if not s.spec.get("dwell")]
+    assert len(guarded) == 19, [s.id for s in commanded if not s.spec.get("dwell")]
     # The one-way state is the first exemption; the four keyed maps are the second.
     assert sorted(s.id for s in commanded if not s.spec.get("dwell")) == [
         "coolant_pump", "evaporator_feed", "load_enabled", "pyro_fired", "radiator_bypass",
@@ -17424,7 +17438,7 @@ def test_the_linter_refuses_a_front_table_that_states_the_wrong_figures(tmp_path
             "while `METHODS` holds 7",
         ),
         ("cycles", "seven declared cycles", "six declared cycles", "while it declares 7"),
-        ("order", "the 64-node tick order", "the 39-node tick order", "while the linter derives 64"),
+        ("order", "the 66-node tick order", "the 39-node tick order", "while the linter derives 66"),
     ):
         definition = copy_definition(tmp_path / f"front-{name}")
         path = definition / "README.md"
@@ -17840,7 +17854,7 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     result = run_linter(other)
     assert result.returncode == 1, result.stdout[-900:]
     assert "states 'forty-eight states live on it'" in result.stdout, result.stdout[-900:]
-    assert "this vehicle has 62 states on the sentinel" in result.stdout, result.stdout[-900:]
+    assert "this vehicle has 63 states on the sentinel" in result.stdout, result.stdout[-900:]
 
     # A *digits* figure is read too, so the reader is not tied to the spelling the corpus happens
     # to use today.
@@ -17927,13 +17941,13 @@ def test_the_linter_refuses_a_node_count_three_files_state_differently(tmp_path)
     definition = copy_definition(fixture_dir(tmp_path, "stale-nodes-in-contract"))
     path = definition / "plant.md"
     text = path.read_text()
-    old = "The derived order is 64 nodes"
+    old = "The derived order is 66 nodes"
     assert old in text, "the fixture no longer matches plant.md's tick-order sentence"
     path.write_text(text.replace(old, "The derived order is 40 nodes", 1))
     result = run_linter(definition)
     assert result.returncode == 1
     assert "states '40 nodes'" in result.stdout, result.stdout[-900:]
-    assert "the schedule the linter derives for this vehicle is 64 nodes" in result.stdout
+    assert "the schedule the linter derives for this vehicle is 66 nodes" in result.stdout
 
     # A tool that is not the one the reader was written for, and the other spelling of the claim.
     other = copy_definition(fixture_dir(tmp_path, "stale-nodes-in-tool"))
@@ -17956,7 +17970,7 @@ def test_the_linter_refuses_a_node_count_three_files_state_differently(tmp_path)
     order = copy_definition(fixture_dir(tmp_path, "stale-node-tick-order"))
     path = order / "plant.md"
     text = path.read_text()
-    anchor = "The derived order is 64 nodes and `check_vehicle.py` reports its tail on every"
+    anchor = "The derived order is 66 nodes and `check_vehicle.py` reports its tail on every"
     assert anchor in text, "the fixture no longer matches plant.md's tick-order sentence"
     path.write_text(
         text.replace(anchor, "The derived order is a 40-node tick order and `check_vehicle.py`", 1)
@@ -18268,7 +18282,7 @@ def test_the_gate_s_own_prose_states_the_vehicle_it_tests():
 def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     """The status line's own sentence, held whole rather than in the three figures a test read.
 
-    The sentence is "148 channels, 160 states over 64 scheduled nodes, 142 thresholds, 59 verbs and
+    The sentence is "148 channels, 163 states over 66 scheduled nodes, 144 thresholds, 59 verbs and
     128 classified events". `test_the_readme_status_matches_the_tools` reads the first three; the
     last three were read by nothing, which is the same defect one clause further along in the same
     line. The fixture moves the threshold count by one, because that is the smallest change the
@@ -18277,7 +18291,7 @@ def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     definition = copy_definition(tmp_path / "status-line")
     path = definition / "README.md"
     text = path.read_text()
-    # The sentence is hard-wrapped between "142" and "thresholds", so the anchor is the half that
+    # The sentence is hard-wrapped between "144" and "thresholds", so the anchor is the half that
     # fits on one line. A fixture that matched the whole clause would fail on a reflow rather than
     # on the value it is about — the same distinction the reader itself makes.
     old = "thresholds, 59 verbs and 128 classified events"
@@ -19787,7 +19801,7 @@ def test_the_battery_s_smallest_flow_is_its_smallest_load_and_its_quantum_is_fin
 def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     """The lag integrator applies no conversion, and nothing said so — so both were dimensional errors.
 
-    A real tick advanced exactly two of the vehicle's 160 states, and both numbers were nonsense: `crew_workload`
+    A real tick advanced exactly two of the vehicle's 163 states, and both numbers were nonsense: `crew_workload`
     is an `enum-level` and was relaxed toward `water_potable`'s 14 kg of water; `thrust_main_n` is in
     newtons and was relaxed toward `prop_main`'s 18,508 kg of propellant. Neither is a crash — both
     are plausible numbers — which is why the rule has to exist rather than the values being watched.
@@ -20055,8 +20069,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
-    # 27 -> 28 with ECLSS's `suit_fan`.
-    assert len(values["internal"]) == 28, sorted(values["internal"])
+    # 27 -> 28 with ECLSS's `suit_fan`, and 29 with `o2_source`.
+    assert len(values["internal"]) == 29, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
@@ -20937,7 +20951,9 @@ def test_the_oxygen_supply_pressure_is_a_state_with_a_published_starting_value(t
     # It is on the sentinel, so its order is declared — and the declared order names every sentinel
     # state, which is the rule the linter holds.
     sentinel = [s["id"] for s in eclss["state"] if s.get("node") == "internal"]
-    assert sorted(sentinel) == ["o2_supply_pressure_psi", "suit_fan", "suit_loop_flow_cfm"], sentinel
+    assert sorted(sentinel) == [
+        "o2_source", "o2_supply_pressure_psi", "suit_fan", "suit_loop_flow_cfm",
+    ], sentinel
     assert sorted(eclss["internal_order"]) == sorted(sentinel)
     assert eclss["internal_order_note"]
 
