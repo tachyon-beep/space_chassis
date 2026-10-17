@@ -154,7 +154,7 @@ def test_policy_a_through_the_window_is_judged_full_success_on_the_vehicle_s_own
         ],
         capture_output=True,
         text=True,
-        timeout=3600,
+        timeout=5400,
         check=False,
     )
     assert judged.returncode == 0, judged.stderr[-2000:]

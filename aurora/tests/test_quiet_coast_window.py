@@ -441,7 +441,7 @@ def test_policy_d_through_the_window_loses_the_coolant_loop_after_a_sigkill(run_
 
 
 # Opt-in: skipped locally without QUIET_COAST_FULL=1; in CI the aurora job deselects it by its marker
-# (`-m 'not quiet_coast_full'`) and the `quiet-coast episode` job runs it.
+# (`-m 'not quiet_coast_full'`) and the `quiet-coast episode through the window` job runs it.
 @pytest.mark.quiet_coast_full
 @pytest.mark.skipif(not FULL, reason="the 120,000-tick window run is opt-in: QUIET_COAST_FULL=1")
 def test_policy_a_through_the_window_over_the_whole_episode(tmp_path_factory):

@@ -126,7 +126,7 @@ bare name imports from its own directory in the one merged run. `filterwarnings 
   without them rather than skipping; the two that skip are the vehicle reconciliation's PyYAML
   import and one vendored harness telemetry test. The 120,000-tick window run
   (`tests/test_quiet_coast_window.py`, marker `quiet_coast_full`) is opt-in: it skips locally
-  without `QUIET_COAST_FULL=1`, the CI aurora job deselects it, and the `quiet-coast episode` job runs it.
+  without `QUIET_COAST_FULL=1`, the CI aurora job deselects it, and the `quiet-coast episode through the window` job runs it.
 - `.scratch/` is the gitignored scratch directory; `volumes/` and `volume-images/` are runtime
   artefacts, never source. `tests/test_retired.py` holds the tree free of the runtime the port
   replaced.
