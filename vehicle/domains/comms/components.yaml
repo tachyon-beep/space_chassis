@@ -220,11 +220,11 @@ components:
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [blackout, comm_mode, antenna_selection, carrier_lock, telemetry_rate, recorder_play, frame_loss]
+internal_order: [blackout, light_time_s, comm_mode, antenna_selection, carrier_lock, telemetry_rate, recorder_play, frame_loss]
 internal_order_note: >-
-  the geometry, then the link chain: whether the Moon hides the Earth comes first because it is
-  read off this tick's orbit and nothing on the sentinel moves it, and a carrier cannot lock through
-  the Moon; then the mode selects the antenna, the antenna decides whether the carrier locks, the
+  the geometry, then the link chain: whether the Moon hides the Earth, and how long light takes
+  to cross the range, come first because both are read off this tick's orbit and nothing on the
+  sentinel moves them, and a carrier cannot lock through the Moon; then the mode selects the antenna, the antenna decides whether the carrier locks, the
   lock decides the rate, and the playback switch follows the rate it plays at; the frame-loss
   counter is what the chain costs, last because it counts the states above it. The recorder left the sentinel for `data_recorder` when playback made it a stock
   with an edge, because no edge can reach the sentinel.
@@ -585,6 +585,36 @@ state:
         transition is a geometric event with a soft edge: the link does not stop at an instant,
         it fades through the limb, and a state that flipped on the first dropped frame would
         report the antenna's noise as the Moon's shadow
+
+  - id: light_time_s
+    node: internal
+    method: algebraic
+    unit: s
+    moved_by:
+      - "logic:the vehicle's range from the Earth over the speed of light"
+    # The rule's parameter (`domains/comms/rules.py:light_time_s`).
+    speed_of_light_m_s: 299792458
+    parameter_provenance:
+      basis: historical
+      source: "the SI definition of the metre (17th CGPM, 1983): the speed of light in vacuum is 299,792,458 m/s exactly"
+    provenance:
+      basis: derived
+      relation: >-
+        |r| / c, with r the vehicle's Earth-centred position (`gnc.orbital_state.position_m`,
+        EARTH_J2000) this tick. On the declared trajectory that is 0.022 s at MET 0 (6,563 km),
+        0.058 s at the end of the quiet-coast episode (40 min, 17,335 km), 0.70 s at 24 h and
+        1.32 s at arrival (397,000 km)
+      note: >-
+        **This replaces `vehicle.yaml#environment.earth_moon_light_time_s`, a 1.3 s constant that
+        nothing read.** The constant is right only near the Moon: for the first day of the coast
+        the delay is a few hundredths to a few tenths of a second, and an experiment that applied
+        1.3 s there would hand the fleet a lunar-distance lag the vehicle does not have. Decided
+        by the coordinator under John's delegation of 2026-10-17 13:48Z ("preference more fidelity
+        where it doesn't start creating significant delivery risk"): the vehicle publishes the
+        computed delay (`comm.light_time_s`), and applying it to what crosses the window is the
+        window's change (`apollo_diode.md:526` makes the Earth-link delay "a simulation setting").
+        The ground end is the Earth's centre until the MSFN stations' coordinates are sourced; a
+        station on the surface moves the figure by at most 6,378 km, 0.021 s
 
   - id: recorder
     node: data_recorder

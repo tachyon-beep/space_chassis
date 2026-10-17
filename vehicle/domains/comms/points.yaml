@@ -130,6 +130,16 @@ points:
       that a silent vehicle behind the Moon is a vehicle that is working, which is the single
       most useful thing this domain publishes.
 
+  - channel: comm.light_time_s
+    from: light_time_s
+    layer: service
+    derivation: "the one-way light time to the ground, from the vehicle's range"
+    note: >-
+      what the ground's ranging tells mission control, stated as the delay rather than the
+      distance: how old the newest telemetry is when it lands, and how long a command takes to
+      arrive. It grows from hundredths of a second at MET 0 to 1.32 s at the Moon, so a fleet that
+      reads it knows how stale its view is, and the window has the figure to apply.
+
   - channel: comm.recorder_fill_pct
     from: recorder
     layer: estimate

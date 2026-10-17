@@ -85,10 +85,18 @@ def playback_rate(inputs, params, dt):
     return 0.0
 
 
+def light_time_s(inputs, params, dt):
+    """The one-way light time between the vehicle and the ground, from this tick's range: the
+    vehicle's distance from the Earth's centre over the speed of light."""
+    position = inputs["orbital_state"]["position_m"]
+    return math.sqrt(sum(x * x for x in position)) / float(params["speed_of_light_m_s"])
+
+
 RULES = {
     "tx_power": tx_power,
     "amp_dissipation_w": amp_dissipation_w,
     "link_ok": link_ok,
     "blackout": blackout,
+    "light_time_s": light_time_s,
     "playback_rate": playback_rate,
 }

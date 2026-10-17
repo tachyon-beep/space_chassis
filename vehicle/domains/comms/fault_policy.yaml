@@ -346,8 +346,8 @@ faults:
     seeding:
       coupled_to: "gnc.nav_position_sigma_m — the blackout's duration is a function of where the vehicle is, and so is its prediction"
       trigger: "the link does not return within the predicted blackout plus margin"
-    perturbs: [comm.blackout_state, comm.recorder_fill_pct, gnc.nav_position_sigma_m,
-               gnc.velocity_xyz_m_s]
+    perturbs: [comm.blackout_state, comm.light_time_s, comm.recorder_fill_pct,
+               gnc.nav_position_sigma_m, gnc.velocity_xyz_m_s]
     detection:
       evidence: >-
         a *late* return, which is the domain's most interesting observable because the evidence

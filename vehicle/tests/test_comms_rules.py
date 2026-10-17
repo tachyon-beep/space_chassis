@@ -331,3 +331,48 @@ def test_behind_the_moon_the_link_is_down_and_playback_stops(world, tmp_path):
 def test_inside_the_moon_s_radius_the_occultation_is_a_named_gap_not_a_value(world):
     rules = _comms_rules()
     assert rules.occulted([1.0, 0.0, 0.0], [0.0, 0.0, 0.0], _moon_radius_m(world)) is None
+
+
+# ------------------------------------------------------------------------------------------------
+# The one-way light time (`state light_time_s`, `comm.light_time_s`): the vehicle's range over c.
+# ------------------------------------------------------------------------------------------------
+
+C = 299_792_458.0
+
+
+def test_the_light_time_is_the_range_over_c_through_the_step_loop(world):
+    values = plant.initial_values(world)
+    for _ in range(3):
+        values = plant.step(world, values, DT)
+        r = values["orbital_state"]["position_m"]
+        assert values["light_time_s"] == pytest.approx(math.sqrt(sum(x * x for x in r)) / C)
+    # MET 0 is 6,563 km from the Earth's centre: hundredths of a second, not the 1.3 s constant
+    # this state replaced.
+    assert 0.021 < values["light_time_s"] < 0.023
+
+
+def test_the_light_time_grows_from_hundredths_of_a_second_to_1_32_s_at_arrival(world):
+    import trajectory
+
+    rules = _comms_rules()
+    vehicle, mission = trajectory.load(VEHICLE)
+    gravity = trajectory.Gravity.from_vehicle(vehicle)
+    r, v = trajectory.declared_start(mission)
+    mr, mv = trajectory.moon_at_met0(vehicle, mission)
+    params = {"speed_of_light_m_s": _state(world, "light_time_s").spec["speed_of_light_m_s"]}
+    samples = {}
+    t, step = 0.0, 60.0
+    while t <= 73 * 3600.0:
+        if t in (2400.0, 24 * 3600.0, 73 * 3600.0):
+            samples[t] = rules.light_time_s({"orbital_state": {"position_m": r}}, params, step)
+        r, v, mr, mv = trajectory.rk4(gravity, r, v, mr, mv, step)
+        t += step
+    assert samples[2400.0] == pytest.approx(0.058, abs=0.002)
+    assert samples[24 * 3600.0] == pytest.approx(0.70, abs=0.01)
+    assert samples[73 * 3600.0] == pytest.approx(1.32, abs=0.01)
+
+
+def test_the_light_time_is_published_and_the_unread_constant_is_gone(world):
+    assert world.points["comm.light_time_s"]["from"] == "light_time_s"
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    assert "earth_moon_light_time_s" not in {row["id"] for row in vehicle["environment"]}
