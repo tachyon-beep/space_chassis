@@ -341,7 +341,9 @@ state:
         the cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
         over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
         through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
-        shares of the four sum to the whole leak
+        shares of the four sum to the whole leak. Only three are taken: water vapour has no drain
+        edge, so the cabin loses its vapour share less than `leak_kg_per_h` while the regulator
+        replaces the whole figure as oxygen
       note: >-
         `leak_kg_per_h` is `vehicle.yaml#consumables.leak.csm_kg_per_h`, copied for the rule, with that
         entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
@@ -360,7 +362,9 @@ state:
         the cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
         over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
         through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
-        shares of the four sum to the whole leak
+        shares of the four sum to the whole leak. Only three are taken: water vapour has no drain
+        edge, so the cabin loses its vapour share less than `leak_kg_per_h` while the regulator
+        replaces the whole figure as oxygen
       note: >-
         `leak_kg_per_h` is `vehicle.yaml#consumables.leak.csm_kg_per_h`, copied for the rule, with that
         entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
@@ -379,7 +383,9 @@ state:
         the cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
         over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
         through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
-        shares of the four sum to the whole leak
+        shares of the four sum to the whole leak. Only three are taken: water vapour has no drain
+        edge, so the cabin loses its vapour share less than `leak_kg_per_h` while the regulator
+        replaces the whole figure as oxygen
       note: >-
         `leak_kg_per_h` is `vehicle.yaml#consumables.leak.csm_kg_per_h`, copied for the rule, with that
         entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
@@ -398,7 +404,9 @@ state:
         the LM cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
         over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
         through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
-        shares of the four sum to the whole leak
+        shares of the four sum to the whole leak. Only three are taken: water vapour has no drain
+        edge, so the cabin loses its vapour share less than `leak_kg_per_h` while the regulator
+        replaces the whole figure as oxygen
       note: >-
         `leak_kg_per_h` is `vehicle.yaml#consumables.leak.lm_kg_per_h`, copied for the rule, with that
         entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
@@ -417,7 +425,9 @@ state:
         the LM cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
         over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
         through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
-        shares of the four sum to the whole leak
+        shares of the four sum to the whole leak. Only three are taken: water vapour has no drain
+        edge, so the cabin loses its vapour share less than `leak_kg_per_h` while the regulator
+        replaces the whole figure as oxygen
       note: >-
         `leak_kg_per_h` is `vehicle.yaml#consumables.leak.lm_kg_per_h`, copied for the rule, with that
         entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
@@ -436,7 +446,9 @@ state:
         the LM cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
         over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
         through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
-        shares of the four sum to the whole leak
+        shares of the four sum to the whole leak. Only three are taken: water vapour has no drain
+        edge, so the cabin loses its vapour share less than `leak_kg_per_h` while the regulator
+        replaces the whole figure as oxygen
       note: >-
         `leak_kg_per_h` is `vehicle.yaml#consumables.leak.lm_kg_per_h`, copied for the rule, with that
         entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
@@ -578,7 +590,9 @@ state:
         `deenergize_psia`. It is declared as a `dwell` rather than a `hysteresis` because
         `check_band_on` holds every band on `eclss.o2_supply_pressure_psi` to one of that point's
         alarm thresholds (750/790, 5/2), and a control switch is not an alarm. The one-second dwell
-        each way is chosen, as the motor switch's transit. **Not modelled:** the manual mode, which
+        each way is chosen, as the motor switch's transit, and is a declaration only: the plant's
+        `command_dwell` guards commanded states, and this one moves by its logic, so the band in the
+        rule is the only anti-chatter that acts. **Not modelled:** the manual mode, which
         bypasses the switch from the MDC-2 heater and fan switches (p. 2.6-14; no verb carries them),
         and the thermal interlock that opens the heaters at a +90 F shell (same page; no shell
         temperature)

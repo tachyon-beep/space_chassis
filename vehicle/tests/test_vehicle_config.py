@@ -3290,8 +3290,9 @@ def test_the_linter_holds_a_domain_s_declared_reads(tmp_path):
     # 23 -> 24 with ADR 0003: thermal reads `load_shed_state` for the switch map its heat rates sum
     # over, a one-way read. `thermal->link` was the delayed half of a declared cycle and is carried
     # by `E-AMP-HEAT` now, so no read is left in that class. 24 -> 25: eclss reads `load_shed_state`
-    # for the suit compressor's switch, the same one-way read.
-    assert "25 cross-domain reads that no edge carries" in owed, owed
+    # for the suit compressor's switch, the same one-way read. 25 -> 26: eclss reads `fc_o2_draw`, the
+    # fuel cells' oxygen draw on the supply tanks, as their pressure rule's other draw.
+    assert "26 cross-domain reads that no edge carries" in owed, owed
     assert "8 of them return into a node the reading domain writes" in owed, owed
     assert "thermal->load_shed_state" in owed, owed
     assert "0 more are the delayed half of a loop" in owed, owed
@@ -3300,9 +3301,9 @@ def test_the_linter_holds_a_domain_s_declared_reads(tmp_path):
     definition = copy_definition(tmp_path / "domainreads")
     path = definition / "domains" / "power" / "components.yaml"
     text = path.read_text()
-    old = "reads: [o2_csm, h2_csm, coldplate_t, link, command_executive]"
+    old = "reads: [o2_csm, h2_csm, coldplate_t, link, command_executive, o2_tank_heaters]"
     assert old in text, "the fixture no longer matches the power domain's reads"
-    path.write_text(text.replace(old, "reads: [o2_csm, h2_csm, link, command_executive]", 1))
+    path.write_text(text.replace(old, "reads: [o2_csm, h2_csm, link, command_executive, o2_tank_heaters]", 1))
     out = run_linter(definition).stdout
     assert "does not declare 'coldplate_t'" in out, out[-1200:]
 
@@ -7998,7 +7999,7 @@ def test_the_stock_integrator_reads_its_driver():
     pascals-per-kelvin to kilograms-per-hour and calling the result a mass is not an approximation;
     it is a dimension error wearing a number.
 
-    That stop is gone: a tick now walks all 152 states and records what it cannot advance, so the
+    That stop is gone: a tick now walks all 160 states and records what it cannot advance, so the
     integrator is reached by the order rather than only by a hand-written call. It still cannot be
     *exercised* from the live corpus, because every stock's driver is itself gapped — the tick
     reaches `lm_cabin_o2_kg` and gives up on it for a reason that belongs to the other state. The
@@ -13046,8 +13047,11 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
     # comms' `transmitter_on` (`set_power_amplifier`) and `recorder_play` (`play_recorder`), power's
     # `load_enabled` (`set_load`), and thermal's three loop switch maps, `coolant_pump`,
     # `evaporator_feed` and `radiator_bypass`, each moved by its own verb.
-    assert states == 49, states
-    assert (commands, triggers, events, logic) == (23, 5, 6, 23), (
+    # 49 -> 51 with ECLSS: `suit_fan` (`set_suit_fan`) and `o2_tank_heaters`, the tanks' pressure
+    # switch, moved by its logic.
+    assert states == 51, states
+    # 23 -> 24 commands and 23 -> 24 logic movers with the same two.
+    assert (commands, triggers, events, logic) == (24, 5, 6, 24), (
         commands, triggers, events, logic,
     )
     # Two states still owe it, and they are the two the crew debt names.
@@ -15280,7 +15284,8 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
     # And the headline is the count of *declared* edges, which is the two forms together.
     scalar = [e for e in edges if e.sensitivity.get("value") not in (None, "UNCONFIGURED")]
     tables = [e for e in edges if e.sensitivity.get("regimes")]
-    assert len(tables) == 8, f"the regime edges changed: {[e.id for e in tables]}"
+    # 8 -> 10 with `E-O2-HTR-BUSA` and `-BUSB`, the O2 tank heaters' on/off load on each main bus.
+    assert len(tables) == 10, f"the regime edges changed: {[e.id for e in tables]}"
     # 69 -> 74: ADR 0003 quiet coast: the thermal, power and comms rules together (E-PUMP-COOL, E-RAD-THERM and E-AMP-HEAT among them).
     # A floor since lane 0 (`SENSITIVITY_FLOOR`); the tool's figure is held to this count below.
     assert len(scalar) + len(tables) >= SENSITIVITY_FLOOR, len(scalar) + len(tables)
@@ -15728,8 +15733,8 @@ def test_a_command_value_says_which_argument_carries_the_value():
                 targets[key] = str(source)
     # Five quantity states joined the eight mode ones this round, and one keyed state declares
     # nothing but its key. 17 -> 21 with ADR 0003: thermal's `coolant_pump`, `evaporator_feed` and
-    # `radiator_bypass` and power's `load_enabled`, each keyed.
-    assert declared == 21, declared
+    # `radiator_bypass` and power's `load_enabled`, each keyed; 22 with ECLSS's `suit_fan`.
+    assert declared == 22, declared
     assert sorted(constants) == [
         "rcs.thruster_valve.isolate_rcs_manifold",
         "structure.pyro_fired.execute_event",
@@ -16170,8 +16175,9 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     # stages it and leaves `link_snr` to the rule. The other five `computed` effects name
     # `UNCONFIGURED`, which is the honest answer for an input nobody has declared.
     # 14 -> 20 with ADR 0003: `set_coolant_pump`, `set_evaporator_feed`, `set_radiator_bypass`
-    # (thermal), `set_load` (power), `set_power_amplifier` and `play_recorder` (comms).
-    assert len(applied) == 20, applied
+    # (thermal), `set_load` (power), `set_power_amplifier` and `play_recorder` (comms); 21 with
+    # `set_suit_fan` (ECLSS).
+    assert len(applied) == 21, applied
     assert "select_antenna" in applied
     # 7 -> 5: `set_coolant_pump` and `set_power_amplifier` stopped owing (ADR 0003): the pump's speed
     # selects `coolant_pump` (thermal) and the amplifier's power selects `transmitter_on` (comms).
@@ -18259,7 +18265,7 @@ def test_the_gate_s_own_prose_states_the_vehicle_it_tests():
 def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     """The status line's own sentence, held whole rather than in the three figures a test read.
 
-    The sentence is "148 channels, 152 states over 61 scheduled nodes, 142 thresholds, 59 verbs and
+    The sentence is "148 channels, 160 states over 64 scheduled nodes, 142 thresholds, 59 verbs and
     128 classified events". `test_the_readme_status_matches_the_tools` reads the first three; the
     last three were read by nothing, which is the same defect one clause further along in the same
     line. The fixture moves the threshold count by one, because that is the smallest change the
@@ -19778,7 +19784,7 @@ def test_the_battery_s_smallest_flow_is_its_smallest_load_and_its_quantum_is_fin
 def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     """The lag integrator applies no conversion, and nothing said so — so both were dimensional errors.
 
-    A real tick advanced exactly two of the vehicle's 152 states, and both numbers were nonsense: `crew_workload`
+    A real tick advanced exactly two of the vehicle's 160 states, and both numbers were nonsense: `crew_workload`
     is an `enum-level` and was relaxed toward `water_potable`'s 14 kg of water; `thrust_main_n` is in
     newtons and was relaxed toward `prop_main`'s 18,508 kg of propellant. Neither is a crash — both
     are plausible numbers — which is why the rule has to exist rather than the values being watched.
@@ -20899,8 +20905,9 @@ def test_the_oxygen_supply_pressure_is_a_state_with_a_published_starting_value(t
 
     This test holds the two halves of that: the state's figure against the document's own words (the
     citation is in the field, so this is a reader for it), and the channel's value against the band
-    apollo's own threshold declares. What is *not* claimed is the dynamics — the state owes its time
-    constant and its driver, and the debt says so.
+    apollo's own threshold declares. The dynamics are the AOH's heater relay now (SM2A-03-BLOCK II-(1)
+    pp. 2.6-12/13, `domains/eclss/rules.py`), held by `tests/test_eclss_rules.py`; this test holds
+    that the state no longer owes them.
     """
     import sys as _sys
 
@@ -20918,15 +20925,16 @@ def test_the_oxygen_supply_pressure_is_a_state_with_a_published_starting_value(t
     # nobody can check, which is the whole reason the source law exists.
     assert "csm_ecs_study_guide.pdf" in source and "PDF p. 12" in source
     assert "900 psig" in source
-    # And what it owes is declared rather than implied: no time constant, no driver, and a provenance
-    # block whose searches are recorded.
-    assert state["tau_s"] == "UNCONFIGURED"
-    assert state["provenance"]["basis"] == "UNCONFIGURED"
-    assert "Searched:" in state["provenance"]["note"]
+    # It owed a time constant and a driver until the AOH's own law replaced the lag: it is a ruled
+    # `dynamics` state with a sourced provenance, and the heater relay it integrates over has a node.
+    assert state["method"] == "dynamics" and "tau_s" not in state
+    assert state["provenance"]["basis"] == "historical"
+    assert "595.87 Btu/hour" in state["provenance"]["source"]
+    assert state["heater_state"] == "o2_tank_heaters"
     # It is on the sentinel, so its order is declared — and the declared order names every sentinel
     # state, which is the rule the linter holds.
     sentinel = [s["id"] for s in eclss["state"] if s.get("node") == "internal"]
-    assert sorted(sentinel) == ["o2_supply_pressure_psi", "suit_loop_flow_cfm"], sentinel
+    assert sorted(sentinel) == ["o2_supply_pressure_psi", "suit_fan", "suit_loop_flow_cfm"], sentinel
     assert sorted(eclss["internal_order"]) == sorted(sentinel)
     assert eclss["internal_order_note"]
 

@@ -786,9 +786,10 @@ edges:
   # The cabin leak (ECLSS lane, 2026-10-17): the gas the leak takes leaves the cabin whole, one for
   # one, and each edge reads its own gas's share of the leak on the leak's node. Water vapour has no
   # drain yet: its source is the crew, and a vapour stock with only removals would dry the cabin.
-  # Tank 1's heaters and fans on main bus A: the relay closes both tanks' circuits at once, so the
-  # load arrives on both buses together. Power owns the load and its bus assignment; this edge is the
-  # coupling the scheduler orders by, asked for on #46 because #46 merges first.
+  # Tank 1's heaters on main bus A: the relay closes both tanks' circuits at once, so the load
+  # arrives on both buses together. The tank's fan motors are on A-C bus 1, which power carries in its
+  # AC distribution. Power owns the loads; this edge is the coupling the scheduler orders by, asked
+  # for on #46 because #46 merges first.
   - id: E-O2-HTR-BUSA
     from: o2_tank_heaters
     to: fuel_cell
@@ -800,18 +801,20 @@ edges:
       at: nominal
       source: >-
         AOH SM2A-03-BLOCK II-(1) Vol. 1, p. 2.6-13: "113.88 watt heaters supply 389.67 Btu, 52.8
-        watt fan motors supply 180.2 Btu" per O2 tank, net of line loss. Tank 1 on main bus A is
-        power's assignment, pending a source
+        watt fan motors supply 180.2 Btu" per O2 tank, net of line loss. AOH Fig 2.6-2 wires CRYOGENIC
+        O2 HTR-1 to CM MAIN DC BUS A and tank 1's CRYOGENIC FAN MOTORS, three-phase, to A-C BUS NO. 1
       regimes:
         - when: "on"
           response: >-
-            tank 1's heaters and fans draw 166.68 W (113.88 W + 52.8 W) on main bus A for as long as
-            the switch stays closed, a stroke of minutes repeating every half hour or so at a full tank
+            tank 1's heaters draw 113.88 W on main bus A for as long as the switch stays closed, a
+            stroke of minutes repeating every half hour or so at a full tank; its 52.8 W fan motors
+            are on A-C bus 1, not this edge
         - when: otherwise
-          response: "no heater or fan load on main bus A from tank 1"
-  # Tank 2's heaters and fans on main bus B: the relay closes both tanks' circuits at once, so the
-  # load arrives on both buses together. Power owns the load and its bus assignment; this edge is the
-  # coupling the scheduler orders by, asked for on #46 because #46 merges first.
+          response: "no heater load on main bus A from tank 1"
+  # Tank 2's heaters on main bus B: the relay closes both tanks' circuits at once, so the load
+  # arrives on both buses together. The tank's fan motors are on A-C bus 2, which power carries in its
+  # AC distribution. Power owns the loads; this edge is the coupling the scheduler orders by, asked
+  # for on #46 because #46 merges first.
   - id: E-O2-HTR-BUSB
     from: o2_tank_heaters
     to: fuel_cell
@@ -823,15 +826,16 @@ edges:
       at: nominal
       source: >-
         AOH SM2A-03-BLOCK II-(1) Vol. 1, p. 2.6-13: "113.88 watt heaters supply 389.67 Btu, 52.8
-        watt fan motors supply 180.2 Btu" per O2 tank, net of line loss. Tank 2 on main bus B is
-        power's assignment, pending a source
+        watt fan motors supply 180.2 Btu" per O2 tank, net of line loss. AOH Fig 2.6-2 wires CRYOGENIC
+        O2 HTR-2 to CM MAIN DC BUS B and tank 2's CRYOGENIC FAN MOTORS, three-phase, to A-C BUS NO. 2
       regimes:
         - when: "on"
           response: >-
-            tank 2's heaters and fans draw 166.68 W (113.88 W + 52.8 W) on main bus B for as long as
-            the switch stays closed, a stroke of minutes repeating every half hour or so at a full tank
+            tank 2's heaters draw 113.88 W on main bus B for as long as the switch stays closed, a
+            stroke of minutes repeating every half hour or so at a full tank; its 52.8 W fan motors
+            are on A-C bus 2, not this edge
         - when: otherwise
-          response: "no heater or fan load on main bus B from tank 2"
+          response: "no heater load on main bus B from tank 2"
   - id: E-ATM-LEAK-O2
     sensitivity:
       value: 1.0
