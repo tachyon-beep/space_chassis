@@ -48,6 +48,7 @@ thresholds:
 
   # --- apollo's feed-pressure band, both ends ----------------------------------------------
   - id: rcs_feed_low
+    acts: crew
     point: "rcs.quad_[a-d]_feed_pressure_pct"
     comparator: below
     assert: 90
@@ -69,6 +70,7 @@ thresholds:
         low quad pressure has a fact, not a fault
 
   - id: rcs_feed_high
+    acts: crew
     point: "rcs.quad_[a-d]_feed_pressure_pct"
     comparator: above
     assert: 105
@@ -90,6 +92,7 @@ thresholds:
 
   # --- apollo's propellant thresholds ------------------------------------------------------
   - id: rcs_propellant_advisory
+    acts: crew
     point: rcs.propellant_remaining_pct
     comparator: below
     assert: 25
@@ -108,6 +111,7 @@ thresholds:
         the crossing every frame
 
   - id: rcs_propellant_reserve
+    acts: crew
     point: rcs.propellant_remaining_pct
     comparator: below
     assert: 10
@@ -126,6 +130,7 @@ thresholds:
         no wheels to dump, so what is restricted is translation alone
 
   - id: rcs_impulse_rate_high
+    acts: crew
     point: rcs.total_impulse_ns
     comparator: above
     assert: UNCONFIGURED
@@ -152,6 +157,7 @@ thresholds:
 
   # --- the service's own health limits -----------------------------------------------------
   - id: rcs_propellant_uncertainty_high
+    acts: crew
     point: rcs.propellant_sigma_pct
     comparator: above
     assert: UNCONFIGURED
@@ -171,6 +177,7 @@ thresholds:
         to be, which is the mission's to make, so it is unset here and named
 
   - id: rcs_authority_margin_low
+    acts: crew
     point: rcs.control_authority_margin
     comparator: below
     assert: UNCONFIGURED
@@ -191,6 +198,7 @@ thresholds:
         nobody has
 
   - id: rcs_allocation_residual_high
+    acts: crew
     point: rcs.allocation_residual
     comparator: above
     assert: UNCONFIGURED
@@ -210,6 +218,7 @@ thresholds:
         derived from the other at runtime
 
   - id: rcs_uncommanded_rate
+    acts: automatic
     point: gnc.body_rate_xyz_deg_s
     comparator: above
     assert: UNCONFIGURED
@@ -233,6 +242,7 @@ thresholds:
 
   # --- the one interlock -------------------------------------------------------------------
   - id: rcs_authority_floor
+    acts: crew
     point: rcs.control_authority_margin
     comparator: below
     assert: UNCONFIGURED
@@ -254,6 +264,7 @@ thresholds:
         A3 — the service can say no.
 
   - id: attitude_error_out_of_band
+    acts: crew
     point: rcs.attitude_error_deg
     comparator: above
     assert: UNCONFIGURED

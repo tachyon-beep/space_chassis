@@ -79,7 +79,12 @@ natural_rate_hz: 50
 # `rcs_valves` — the last step of the control chain apollo_diode.md:792-796 describes, where the
 # allocator's commanded valve set arrives — so the claim was false in the one way a claim with no
 # reader can be, and it read as a statement of fact for as long as nobody counted.
-reads: [prop_rcs, nav_state, bus_a, command_executive, guidance]
+# `vehicle_dynamics` is the sixth, and it is read rather than edged: the slew law samples the attitude
+# and the rate the dynamics left last tick and fires against them (`rules.py`), which is the DAP
+# reading its IMU. `E-RCS-DYN` is the edge back. It is the truth, not the estimate, until
+# `gnc.nav_solution` lands, and that is an `open_debts` entry: the estimate is where a drifting
+# platform makes the service hold the wrong attitude while reporting the right one.
+reads: [prop_rcs, nav_state, bus_a, command_executive, guidance, vehicle_dynamics]
 writes: [rcs_valves, rcs_thrust]
 
 # --------------------------------------------------------------------------------------
@@ -211,7 +216,7 @@ capability:
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [mode, safety_state, authority_margin, attitude_error, deadband_latch, allocation_status, pulse_width, pulse_residual, impulse_total, propellant_estimate, feed_pressure]
+internal_order: [mode, attitude_target, target_frame, slew_rate_limit, roll_rate_command, control_profile, deadband_deg, held_target, safety_state, authority_margin, attitude_error, deadband_latch, allocation_status, pulse_width, pulse_residual, impulse_total, propellant_estimate, feed_pressure]
 internal_order_note: >-
   the control chain: the mode selects the authority, the authority bounds what the error may
   be, the error against the deadband decides whether a pulse is owed, the allocation decides
@@ -221,9 +226,361 @@ internal_order_note: >-
   the percentage is computed from it. It was the other way round until the linter learned to ask
   a derivation which tick its readings come from: the sentinel has no edges, so nothing but this
   list could ever have caught it, and the state would have reported last tick's impulse wearing
-  this tick's name.
+  this tick's name. The target comes before the error that is measured against it: the commanded
+  text, frame, rate and deadband are the effect path's, and `held_target` resolves them once per
+  change before anything reads it.
 
 state:
+
+  # ------------------------------------------------------------------------------------
+  # The slew law (ADR 0005). The commanded target, frame, rate and deadband are the effect
+  # path's; `held_target` resolves them; `control_torque` is the law; `thruster_thrust` and
+  # `thrust_total_n` are what it costs.
+  # ------------------------------------------------------------------------------------
+
+  - id: attitude_target
+    node: internal
+    method: discrete
+    unit: "text: a unit quaternion [w,x,y,z] as the command carried it, or `current`"
+    initial: "current"
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        hold where the vehicle is: `held_target.initial` is the attitude `gnc.attitude.initial`
+        names, and `current` is the text that means that attitude. No source says what the DAP was
+        last asked to hold at the cut
+    moved_by:
+      - "command:set_attitude_target"
+      - "command:set_ptc_roll"
+      - "command:abort_rcs_activity"
+    command_value:
+      - verb: set_attitude_target
+        # `frame`, the enum half of the request, because an entry names an argument with a
+        # vocabulary; the quaternion is the half this state holds once it can be carried.
+        argument: frame
+        computed: >-
+          the target is the quaternion, carried as the text the window sent. `held_target` reads it
+          once, when it changes, and refuses a text that is not four numbers within 1 % of unit
+          length by keeping the target it had (`status: unreadable`)
+        why: >-
+          declared and not yet carried: an array argument has no vocabulary to map and the engine
+          carries only numbers so far. The fault-injection lane carries arrays after #47
+          (`quaternion=0.7071,0,-0.7071,0`), and this entry becomes the carried argument then.
+          Until it does, a target reaches this state only through a scenario's initial value
+        selects: target_frame
+        note: >-
+          what the verb assigns today is the frame (`target_frame`) and the rate
+          (`slew_rate_limit`); the quaternion lands here once the window's array is carried, and
+          the entry then names `quaternion` and drops `computed` and `selects`
+      - verb: set_ptc_roll
+        argument: rate_deg_s
+        constant: "current"
+        why: >-
+          the roll starts and ends where the vehicle is: spinning up holds +X where it points now,
+          and spinning down holds the attitude the roll has reached rather than turning back
+          through it
+      - verb: abort_rcs_activity
+        argument: scope
+        constant: "current"
+        why: >-
+          a stopped slew holds where the vehicle is now. `scope` is not read: a translation is not
+          modelled yet, so stopping one changes no target, and stopping `slew` or `all` both mean
+          hold here
+    dwell:
+      min_on_s: 0
+      min_off_s: 0
+      provenance:
+        basis: chosen
+        reason: >-
+          a target is a request, not a mechanism, and `abort_rcs_activity` must reach it at once.
+          The DAP's own pacing is the slew rate, which is the law's, not a hold on the request
+    provenance:
+      basis: historical
+      source: "rcs_dode.md:365 and :96 — SET_ATTITUDE_TARGET(frame, quaternion, optional rate, tolerance profile)"
+      note: >-
+        the request half of the slew law. It is text because the window carries arguments as text
+        and a quaternion is four numbers; the effect path writes it whole and the rule parses it
+
+  - id: target_frame
+    node: internal
+    method: discrete
+    unit: "enum[BODY,LVLH,EARTH_J2000,MOON_J2000]"
+    initial: EARTH_J2000
+    initial_provenance:
+      basis: chosen
+      reason: "the frame `attitude.initial` is written in; with `attitude_target: current` the frame is not read"
+    moved_by:
+      - "command:set_attitude_target"
+    dwell:
+      min_on_s: 0
+      min_off_s: 0
+      provenance:
+        basis: chosen
+        reason: "as `attitude_target`: one request, written in two states"
+    provenance:
+      basis: historical
+      source: "rcs_dode.md:365; the frame ids are `vehicle.yaml#frames`"
+      note: >-
+        which frame the target quaternion is in. EARTH_J2000 and MOON_J2000 share axes, so both are
+        inertial targets; BODY is relative to the attitude when the target is set; LVLH is owed
+        with the orbit-referenced frame (`open_debts`)
+
+  - id: slew_rate_limit
+    node: internal
+    method: discrete
+    unit: "deg/s"
+    initial: 0.5
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        a mid DAP rate; the cut does not record the last V48 load. A11 flew docked closing at the
+        2-deg/sec rate (Mission Report printed p. 4-3), which is a choice for a different task
+    moved_by:
+      - "command:set_attitude_target"
+    command_value:
+      - verb: set_attitude_target
+        argument: rate_limit_deg_s
+        maps:
+          "0.05": 0.05
+          "0.2": 0.2
+          "0.5": 0.5
+          "2.0": 2.0
+        why: "the maneuver rate is the rate the slew is flown at, one for one: the DAP's selections, read as the number they name"
+    dwell:
+      min_on_s: 0
+      min_off_s: 0
+      provenance:
+        basis: chosen
+        reason: "as `attitude_target`"
+    provenance:
+      basis: historical
+      source: >-
+        GSOP R-577 Section 3 (Digital Autopilots) Rev. 3, s. 3.2.2.1, printed p. 3.2-6, Noun 46
+        "RATE: Rate Specification for RHC in HOLD or AUTO Mode and for KALCMANU-supervised Automatic
+        Maneuvers: 0 -- 0.05 deg/sec, 1 -- 0.2 deg/sec, 2 -- 0.5 deg/sec, 3 -- 4.0 deg/sec":
+        https://ibiblio.org/apollo/NARA-SW/R-577-sec3-rev3.pdf ; and Apollo 11 Mission Report,
+        printed p. 4-3, "using a 2-deg/sec rate and 0.5-degree deadband"
+      note: >-
+        the DAP's four rates, and the top one is the flown software's: COLOSSUS 1/1A (R-577 Rev. 3)
+        offered 4.0 deg/s and Apollo 11 flew 2 deg/s, so the vehicle offers 2.0 and records the
+        difference here. The rate is the slew's whole trade: the propellant a slew costs is
+        proportional to it (spin up, spin down) and the time is inversely so
+
+  - id: roll_rate_command
+    node: internal
+    method: discrete
+    unit: deg/s
+    initial: 0.0
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        the vehicle starts at rest in the PTC attitude (`gnc.attitude.initial`), holding: the roll
+        is the fleet's to start, and whether to start it is the first trade the coast offers
+    moved_by:
+      - "command:set_ptc_roll"
+      - "command:set_attitude_target"
+      - "command:abort_rcs_activity"
+    command_value:
+      - verb: set_ptc_roll
+        argument: rate_deg_s
+        maps:
+          "0.0": 0.0
+          "0.3": 0.3
+        why: "the roll rate the service spins the vehicle up to about +X, read as the number it names"
+      - verb: set_attitude_target
+        argument: frame
+        constant: 0.0
+        why: >-
+          a new target ends the roll: the service steers to the target and stops the spin on the
+          way, which is what leaving PTC for a burn attitude costs
+      - verb: abort_rcs_activity
+        argument: scope
+        constant: 0.0
+        why: "a stopped slew stops the roll too; `scope` is not read, as for `attitude_target`"
+    dwell:
+      min_on_s: 0
+      min_off_s: 0
+      provenance:
+        basis: chosen
+        reason: "as `attitude_target`: a request, paced by the law and not by a hold on the request"
+    provenance:
+      basis: historical
+      source: >-
+        Apollo 11 Mission Report (MSC-00171), passive thermal control: a 0.3 deg/s roll about +X
+        with +X toward the ecliptic north pole in translunar coast (south in transearth), after
+        which all sixteen SM auto RCS switches were turned off:
+        https://www.nasa.gov/wp-content/uploads/static/apollo50th/pdf/A11_MissionReport.pdf
+      note: >-
+        the thermal roll's half of the pointing modes. It is a rate, not a mode, because Apollo's
+        PTC was the autopilot flying a rate about one axis and then nobody flying at all: the
+        spin-up costs propellant, the free drift costs none and cones, and leaving it for a burn
+        or a comms hold costs the spin-down. The fleet chooses when each of those happens
+
+  - id: control_profile
+    node: internal
+    method: discrete
+    unit: "enum[conservative,nominal,tight,safe_vector]"
+    initial: nominal
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        the narrow deadband, which the Apollo 11 crew flew the docked maneuvers in (Mission Report
+        printed p. 4-3). The cut does not record the last V48 load
+    moved_by:
+      - "command:set_deadband"
+    dwell:
+      min_on_s: 0
+      min_off_s: 0
+      provenance:
+        basis: chosen
+        reason: "a DAP load takes effect at once; R-577 s. 3.2.2.3 has the programs zero the error before collapsing the deadband, which the law's own hold does"
+    provenance:
+      basis: historical
+      source: "rcs_dode.md:377 SET_CONTROL_PROFILE; the four profiles are `domains/rcs/profiles.yaml#profile_selection`"
+      note: >-
+        the profile the fleet selected, which is a choice and not a number: `tight` and `nominal`
+        hold the same deadband and differ in their threshold factors, so the state that records
+        the choice is the profile, and `deadband_deg` is what the profile means to the controller
+
+  - id: deadband_deg
+    node: internal
+    method: algebraic
+    unit: deg
+    # What each profile means to the DAP. Its deadband is a V48 load with two settings, so every
+    # profile lands on one of the two.
+    by_profile_deg:
+      conservative: 5.0
+      nominal: 0.5
+      tight: 0.5
+      safe_vector: 5.0
+    by_profile_provenance:
+      basis: chosen
+      reason: >-
+        the DAP offers two angular deadbands and the verb four profiles. `conservative` is the
+        wide one and `nominal` the narrow one. `tight` is the narrow one too, because the flight
+        software had nothing narrower and the vehicle cannot hold less with a 14 ms minimum pulse;
+        what makes it a different choice from `nominal` is its threshold factors
+        (domains/rcs/profiles.yaml, 0.6 on a ceiling), so it buys earlier warnings and not finer
+        pointing. `safe_vector` is the wide one: the safe-hold rung is the posture that has
+        stopped spending propellant on pointing, and the minimum-impulse limit cycle costs a
+        tenth as much at 5 deg. No Apollo document ties a deadband to a profile name
+    provenance:
+      basis: historical
+      source: >-
+        GSOP R-577 Section 3 Rev. 3, s. 3.2.2.1, printed p. 3.2-6: "DB: Angular Deadband for
+        Attitude Hold and Automatic Maneuvers 0 -- +/- 0.5 deg, 1 -- +/- 5.0 deg"; s. 3.2.3, printed
+        p. 3.2-27, the minimum-impulse limit cycle: https://ibiblio.org/apollo/NARA-SW/R-577-sec3-rev3.pdf
+      note: >-
+        the half-width the hold is allowed to wander in, and the hold's whole price: the
+        minimum-impulse limit cycle pulses once per crossing of the band, so the wide deadband
+        costs a tenth of the narrow one. That is the decision this state carries: propellant held
+        against pointing held
+
+  - id: held_target
+    node: internal
+    method: dynamics
+    unit: "record{source,frame,roll,q,status}"
+    initial:
+      source: "current"
+      frame: EARTH_J2000
+      roll: 0.0
+      q: [0.7071067811865476, 0.0, -0.6487577877061355, -0.2812709243605549]
+      status: held
+    initial_provenance:
+      basis: derived
+      relation: "the target is the attitude the vehicle starts at (`gnc.attitude.initial`), held"
+      source: domains/gnc/components.yaml:state.attitude.initial
+    inertial_frames: [EARTH_J2000, MOON_J2000]
+    provenance:
+      basis: derived
+      relation: >-
+        `rules.py`: resolves `attitude_target` in `target_frame` into an EARTH_J2000 quaternion when
+        either changes. EARTH_J2000 and MOON_J2000 are the commanded quaternion; BODY is the
+        attitude at the change times the commanded rotation; `current` is the attitude at the
+        change; LVLH is recorded as `frame_owed` and the target is not moved
+      note: >-
+        a state with memory because a BODY target is relative to the moment it was asked for: read
+        every tick it would turn with the vehicle and never be reached
+
+  - id: control_torque
+    node: rcs_thrust
+    method: algebraic
+    unit: "N*m"
+    # The DAP's couple geometry. Copies of `geometry.rcs_sm` on PR #44 and of the Data Book's
+    # per-jet radii; `same_as` joins them once #44 is on `main`.
+    pitch_yaw_radius_in: 82.36
+    roll_radius_in: 83.0
+    cant_deg: 10.0
+    quad_offset_deg: -7.25
+    thrust_n: 445
+    ixx_kg_m2: 80081.1
+    iyy_kg_m2: 760263.3
+    izz_kg_m2: 767311.8
+    pxy_kg_m2: -14932.2
+    pxz_kg_m2: -6371.9
+    pyz_kg_m2: 1638.5
+    same_as:
+      thrust_n: "domains/rcs/components.yaml:components.thruster_100lbf.thrust_n"
+      ixx_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.ixx.value"
+      iyy_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.iyy.value"
+      izz_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.izz.value"
+      pxy_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.pxy.value"
+      pxz_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.pxz.value"
+      pyz_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.pyz.value"
+    geometry_provenance:
+      basis: historical
+      source: >-
+        CSM/LM Spacecraft Operational Data Book Vol. III, SNA-8-D-027(III) Rev 2, Figure 2-5
+        (printed p. 2-6): pitch and yaw thrust lines meet at 82.36 in from the X axis and the roll
+        thrust lines at 83.00 in, every engine canted 10 deg; read from the rendered drawing by the
+        research thread (`/mnt/project-files/sources/rcs.md` Q2). GSOP R-577 Section 6 Rev. 1, s.
+        6.4.1.3, OFFSET 7.25 deg "by a negative rotation about the +X axis" and CANT 10.0 deg:
+        https://www.ibiblio.org/apollo/NARA-SW/R-577-sec6-rev1.pdf
+      note: >-
+        PR #44 lands the averaged 82.68 in (the mean of the two radii) as the quad radius; this
+        state uses each couple's own radius. The roll jets' +/-0.94 in axial offsets give each roll
+        firing a pitch or yaw torque of about 1 % of its roll torque and are left out
+    rate_floor_deg_s: 0.0013
+    rate_floor_provenance:
+      basis: derived
+      relation: >-
+        the rate one minimum-impulse couple pulse gives the stiffest axis: 2 x 4.2 N s x 83.00 in x
+        0.0254 x cos 10 deg / 760,263.3 kg m2 (pitch) = 2.29e-5 rad/s = 0.0013 deg/s. Below it the
+        DAP cannot correct a rate, so inside the deadband it does not try
+    provenance:
+      basis: derived
+      relation: >-
+        `rules.py`: the eigenaxis rotation to `held_target`, flown at the smaller of the loaded rate
+        and `sqrt(2 alpha theta)`, with the torque that closes the rate error in one tick plus the
+        gyroscopic term `w x I w`, scaled until no control axis exceeds its couple, `2 F r cos(cant)`
+      note: >-
+        the slew law the arc review asked for (decision 5), built behind `set_attitude_target`
+        rather than as a mode enum: a mode is which target is held. Averaged over the tick, so the
+        allocator's per-pulse widths, the 100 Hz frame and the deadband wander are not here; they
+        are 6-DOF's, and what a fleet can act on is the slew's time, its propellant and its axis
+
+  - id: thrust_total_n
+    node: rcs_thrust
+    method: algebraic
+    unit: N
+    isp_s: 277.8
+    g0_m_s2: 9.80665
+    pulse_impulse_ns: 4.2
+    pulse_propellant_kg: 0.002472
+    same_as:
+      isp_s: "domains/rcs/components.yaml:components.thruster_100lbf.isp_s"
+      pulse_impulse_ns: "domains/rcs/components.yaml:state.thruster_thrust.pulse_impulse_ns"
+      pulse_propellant_kg: "domains/rcs/components.yaml:state.thruster_thrust.pulse_propellant_kg"
+    provenance:
+      basis: derived
+      relation: >-
+        the sum of `thruster_thrust`, and in the hold that sum times the pulse's propellant price
+        relative to steady firing, 0.002472 kg x 277.8 s x 9.80665 / 4.2 N s = 1.603: what
+        `E-RCSP-RCS` multiplies by 1/(Isp g0) to drain `consumables.prop_rcs_kg`
+      note: >-
+        the scalar the tank's drain reads, because a drain multiplies a number and the per-jet map is
+        not one. It is the propellant's thrust, not the impulse's: `impulse_total` books what the
+        jets delivered and this books what they burned, and the two part company only in the hold
 
   - id: thruster_valve
     node: rcs_valves
@@ -279,8 +636,68 @@ state:
     node: rcs_thrust
     method: dynamics
     unit: "map[thruster_id,N]"
+    # The rule is `domains/rcs/rules.py` (ADR 0005): each SM jet's thrust averaged over the tick,
+    # from the couple the slew law fires per control axis, or from the hold's limit cycle. The rise
+    # and tailoff constants below are not applied: averaged over a tick they move a slew's impulse by
+    # under a per cent, and the pulse's own shape is what `pulse_impulse_ns` prices.
     tau_rise_s: 0.04
     tau_fall_s: 0.05
+    thrust_n: 445
+    isp_s: 277.8
+    same_as:
+      thrust_n: "domains/rcs/components.yaml:components.thruster_100lbf.thrust_n"
+      isp_s: "domains/rcs/components.yaml:components.thruster_100lbf.isp_s"
+      pitch_yaw_radius_in: "domains/rcs/components.yaml:state.control_torque.pitch_yaw_radius_in"
+      roll_radius_in: "domains/rcs/components.yaml:state.control_torque.roll_radius_in"
+      cant_deg: "domains/rcs/components.yaml:state.control_torque.cant_deg"
+      quad_offset_deg: "domains/rcs/components.yaml:state.control_torque.quad_offset_deg"
+      ixx_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.ixx.value"
+      iyy_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.iyy.value"
+      izz_kg_m2: "vehicle.yaml:mass_properties.configurations.csm_lm_docked.inertia_kg_m2.izz.value"
+    pitch_yaw_radius_in: 82.36
+    roll_radius_in: 83.0
+    cant_deg: 10.0
+    quad_offset_deg: -7.25
+    ixx_kg_m2: 80081.1
+    iyy_kg_m2: 760263.3
+    izz_kg_m2: 767311.8
+    # The DAP's two-jet couples per control axis and sign (R-577 s. 3, Tables 3.2-III to 3.2-X, the
+    # rows with every quad up). Roll is flown on the AC roll jets, 13-16: `couples_note`.
+    couples:
+      "+pitch": [1, 3]
+      "-pitch": [2, 4]
+      "+yaw": [5, 7]
+      "-yaw": [6, 8]
+      "+roll": [13, 15]
+      "-roll": [14, 16]
+    couples_note: >-
+      which roll pair the DAP uses is a crew choice (Noun 46 register 2, "AC Roll: 1 -- Use AC Roll,
+      0 -- Use BD Roll", R-577 s. 3.2.2.1, printed p. 3.2-6), and the cut does not record it: AC is
+      chosen until the roll selection is a command. Both pairs have the same arm, so the choice moves
+      which jets age and which quad's propellant goes, and nothing about the torque. The jet
+      numbers are the DAP's (WP03 G-2, `geometry.rcs_sm.jets` on PR #44): +pitch is jets 1 (quad C,
+      +X) and 3 (quad A, -X), and so on, each pair a pure couple
+    # The minimum-impulse pulse the hold's limit cycle is made of.
+    pulse_impulse_ns: 4.2
+    pulse_propellant_kg: 0.002472
+    pulse_provenance:
+      basis: historical
+      source: >-
+        CSM/LM Spacecraft Operational Data Book Vol. I, SNA-8-D-027(I) Rev 3: Figure 4.3-3 "Service
+        Module RCS Engine Vacuum Total Impulse Versus Electrical ON Time", printed p. 4.3-32, read at
+        15 ms as 0.95 lbf s nominal (0.81-1.12), 4.2 N s; and s. 4.3.4.1, printed p. 4.3-4:
+        "Service module RCS propellant consumption is at the rate of 0.00545 pound per pulse for
+        PGNCS minimum impulse control (pulse width = 14 ms)", 0.00545 x 0.45359237 = 0.002472 kg.
+        Read from rendered pages by the research thread, `/mnt/project-files/sources/rcs.md` Q3:
+        https://www.ibiblio.org/apollo/Documents/HSI-41539.pdf
+      note: >-
+        two figures for one pulse, and their ratio is the point: 4.2 N s from 2.472 g is an
+        effective 173 s, against 277.8 s steady. A hold made of minimum pulses spends propellant 1.6
+        times faster than its delivered impulse says, so the impulse-derived gauge
+        (`propellant_estimate`) reads high against the ledger for as long as the vehicle holds. That
+        is a real Apollo disagreement between two gauges, and a fleet that reads it as a leak has
+        read a true observation wrongly. The 14 ms is the PGNCS's own floor (R-577 s. 3.2.3,
+        printed p. 3.2-27: "the firing time can never be less than 14 ms")
     provenance:
       basis: historical
       source: >-
@@ -350,13 +767,14 @@ state:
 
   - id: impulse_total
     node: internal
-    method: stock
+    # A sum the rule keeps (`rules.py`), not a stock the plant integrates: a stock is driven by
+    # edges, and the sentinel has none, so as a stock this state could never have moved (ADR 0005).
+    method: dynamics
     unit: N*s
     initial: 0
     initial_provenance:
       basis: chosen
       reason: "the accumulator starts empty and nothing in the mission pre-loads it. It is the *residue* of a fixed-point integration rather than an inventory, so its only honest starting value is zero — and saying so is what separates it from the tanks, whose initial amount is a fact about the pad"
-    quantum: 0.000445
     provenance:
       basis: apollo
       ref: "apollo_diode.md:152"
@@ -422,6 +840,8 @@ state:
     node: internal
     method: algebraic
     unit: deg
+    # The rule is `rules.py`: the angle between the attitude and `held_target`. It reads the truth
+    # until `gnc.nav_solution` lands (`reads:` above).
     provenance:
       basis: derived
       relation: "q_e = q_target^-1 (x) q_est; e_theta = 2*sign(q_e,w)*q_e,v (rcs_dode.md:625-631), reduced to the rotation angle"
@@ -668,10 +1088,14 @@ components:
 # What is still owed, in the domain's own words rather than the linter's.
 # --------------------------------------------------------------------------------------
 open_debts:
+  - "**The slew law reads the truth.** `control_torque`, `held_target` and `attitude_error` read `vehicle_dynamics` until `gnc.nav_solution` produces an estimate. On the estimate, a drifted platform makes the service hold the wrong attitude while `rcs.attitude_error_deg` reads zero, which is the confounder GNC-01 exists for (ADR 0005)."
+  - "**LVLH targets are recorded and not flown.** `held_target` resolves EARTH_J2000, MOON_J2000 and BODY. An LVLH target needs the orbit-referenced axes and which body the vehicle is referenced to (`vehicle.yaml#frames`: Earth while Earth-referenced, Moon while lunar), which needs the phase; until then it records `status: frame_owed` and keeps the previous target."
+  - "**Only the docked stack is flown.** The law and `gnc.body_rate` carry the docked stack's inertia tensor (`same_as` to `vehicle.yaml#mass_properties`); CSM-alone, LM and the separated configurations are owed there by name and here by consequence. The SM jets fly the stack; the CM's and the LM's jets do not fire."
+  - "**The deadband wander is not simulated.** The hold sits on its target and pays the minimum-impulse limit cycle's propellant; the vehicle's attitude does not wander across the +/-0.5 or +/-5 deg band. A body-fixed sensor or antenna would see that wander, and the comms pointing is gimballed, so the cost is small until a consumer reads it."
   - "**A string is not a thruster.** `thruster_valve` is keyed by `thruster_id` and `set_rcs_quad` names a `group` — `sm_primary`, `sm_secondary`, `cm`, `lm` — so the key declaration says which argument selects the elements and the argument cannot name them. `rcs_string_sm_primary` and its siblings carry a `thrusters: 8` count and a `vehicle_keys` link; what none of them declares is *membership*, which is the same list the allocator needs for its wrench matrix. `isolate_rcs_manifold` is the other half: `branch` names a feed branch, and which thrusters a branch feeds is owed with the thruster geometry."
 
   - "The per-thruster minimum command-ON floor is owed until each thruster has SM, CM or LM membership and the controller path is named. Group enable/inhibit has a chosen zero policy dwell in both directions so inhibit and deliberate re-enable remain available; it is not an injector-pulse qualification. LM pulse-mode 10 ms and SM automatic-controller earliest OFF 12 ms are separately sourced under `capability.minimum_command_on_s`; CM hardware command timing remains unpublished in the sources reached. None is a delivered impulse bit or a universal qualification. The maximum ON time and duty cycle remain owed."
   - "Thrust rise and tailoff time constants. The asymmetry between them is what a total-impulse gauge misreads, and no source gives either."
-  - "Inertia tensor and centre of mass, owed by `vehicle.yaml` and owed *to* this domain before the deadband, the allocator's wrench matrix and E-RCS-DYN can exist. Three of this domain's twelve states are waiting on it. **The docked stack's tensor landed in round 9** (`vehicle.yaml#mass_properties`) and four configurations' are still owed there by name; what this domain still cannot build is the wrench matrix, which needs the thrusters' own lever arms rather than the vehicle's tensor."
+  - "The other configurations' inertia tensors, owed by `vehicle.yaml` by name. **The docked stack's is flown** (ADR 0005): `control_torque` and `gnc.body_rate` carry it, `E-RCS-DYN` is closed on it, and the deadband is the DAP's own two settings. What this domain still cannot build is the general wrench matrix for all forty-four jets; the slew law fires the SM's sixteen through the DAP's couples, from the radii and cant PR #44 sources."
   - "Thruster geometry: the unit thrust direction and lever arm of each of the 44 thrusters. Without it the allocator has no B matrix (rcs_dode.md:685-693)."
   - "The mission's RCS propellant allocation. `rcs.total_impulse_ns` can be checked against the load (capability.impulse_capacity) but the mission declares no RCS budget, so the three systems still carry the linter's 'no mission burn' note while their loads are flown by attitude control, which no budget line can price."

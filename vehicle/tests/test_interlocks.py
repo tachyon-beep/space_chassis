@@ -269,6 +269,12 @@ def test_an_operator_s_closed_interlock_still_wins(world, tmp_path):
 # direction it guards, so in the default world the recovery is taken while the guard is tripped.
 DEFAULT_WORLD_SAFING = [
     (
+        "estimator_divergence",
+        {"nav_position_sigma": 5000.0},
+        "select_nav_source source=ground_uplink",
+        "select_nav_source source=imu_only",
+    ),
+    (
         "cabin_pressure_emergency",
         {"csm_cabin_pressure_pa": 20000.0},  # 2.9 psia, past the 3.5 psia assert
         "set_cabin_regulator vehicle=csm mode=emergency",
@@ -339,8 +345,9 @@ def test_outside_a_scenario_the_safing_direction_is_taken_while_tripped(
 
 def test_every_readable_interlock_names_its_direction_or_is_whole_on_purpose(world):
     """A verb with a readable interlock declares `interlocks_when`, except the three ADR 0004 lists as
-    guarded whole because no argument value is plainly the recovery."""
-    whole = {"request_translation", "start_burn", "select_nav_source"}
+    guarded whole because no argument value is plainly the recovery (`select_nav_source` left the
+    list when ADR 0005 gave it a recovery)."""
+    whole = {"request_translation", "start_burn"}
     for verb, spec in world.verbs.items():
         readable = [
             name
