@@ -9,6 +9,8 @@ below is arbitrary.
 
 from __future__ import annotations
 
+import importlib.util
+import math
 import sys
 from pathlib import Path
 
@@ -197,3 +199,135 @@ def test_delivered_bits_is_on_no_published_channel(world):
     assert "comm.delivered_bits" in {row["channel"] for row in not_published}
     # The frame's `values` are built from this registry (`presentation.yaml`), so a state no
     # point reads is a state no frame carries.
+
+
+# ------------------------------------------------------------------------------------------------
+# The occultation (`state blackout`, `rules.py:occulted`): computed from the orbit the plant already
+# propagates, and the term `link_ok` gates playback on.
+# ------------------------------------------------------------------------------------------------
+
+
+def _comms_rules():
+    spec = importlib.util.spec_from_file_location(
+        "comms_rules_under_test", VEHICLE / "domains/comms/rules.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _state(world, state_id):
+    return next(s for s in world.states if s.id == state_id)
+
+
+def _moon_radius_m(world) -> float:
+    return float(_state(world, "blackout").spec["moon_radius_m"])
+
+
+def test_the_moon_radius_the_occultation_uses_is_the_one_the_trajectory_uses(world):
+    """Four declarations of one radius: the two rule parameters, the environment row the
+    trajectory's flyby check reads, and the figure `mission.yaml#comms_blackout` derives its
+    half-angle from. A rule parameter is a literal on its state, so this is what joins it."""
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    environment = {row["id"]: row["value"] for row in vehicle["environment"]}
+    expected = float(environment["moon_mean_radius_km"]) * 1e3
+    assert _moon_radius_m(world) == expected
+    assert float(_state(world, "link_ok").spec["moon_radius_m"]) == expected
+    assert float(mission["comms_blackout"]["moon_radius_km"]) * 1e3 == expected
+
+
+def test_blackout_is_a_registered_rule_and_reads_clear_near_the_earth(world):
+    assert "blackout" in world.rules
+    values = plant.initial_values(world)
+    for _ in range(5):
+        gaps: list = []
+        values = plant.step(world, values, DT, gaps=gaps)
+        assert values["blackout"] == "clear"
+        assert not [g for g in gaps if g.state.id in {"blackout", "link_ok"}]
+
+
+def test_the_free_return_passes_behind_the_moon_for_the_last_half_hour_of_the_coast(world):
+    """The declared start flown under both bodies' gravity, sampled every 30 s through the rule's
+    own geometry: exactly one occultation on the way out, at closest approach (MET 72.78-73.23 h,
+    27 minutes), which is where Apollo's lunar-orbit insertion burns were made, out of contact.
+
+    It is also a disagreement the round records rather than resolves: `mission.yaml#comms_blackout`
+    lists `translunar_coast` as not affected, and the arrival is in that phase (it ends at 73.0 h).
+    That block budgets a circular 100 km orbit per phase, which cannot see a flyby."""
+    import trajectory
+
+    rules = _comms_rules()
+    vehicle, mission = trajectory.load(VEHICLE)
+    gravity = trajectory.Gravity.from_vehicle(vehicle)
+    r, v = trajectory.declared_start(mission)
+    mr, mv = trajectory.moon_at_met0(vehicle, mission)
+    radius = _moon_radius_m(world)
+    step = 30.0
+    t, previous, edges = 0.0, False, []
+    while t < 80 * 3600.0:
+        hidden = rules.occulted(r, mr, radius)
+        assert hidden is not None
+        if hidden != previous:
+            edges.append(t)
+            previous = hidden
+        r, v, mr, mv = trajectory.rk4(gravity, r, v, mr, mv, step)
+        t += step
+    assert len(edges) == 2, [e / 3600 for e in edges]
+    loss, acquisition = edges
+    assert 72.5 * 3600 < loss < 73.0 * 3600
+    assert 73.0 * 3600 < acquisition < 73.5 * 3600
+    assert 25 * 60 <= acquisition - loss <= 30 * 60
+
+
+def test_a_100_km_circular_lunar_orbit_is_occulted_for_the_fraction_mission_yaml_derives(world):
+    """`mission.yaml#comms_blackout` derives 39.5 % of a revolution from `arcsin(R / r)` with the
+    Earth at infinity. The rule puts the Earth at its real distance, which narrows the shadow by the
+    angle the orbit subtends from the Earth; at 100 km that is under a tenth of a percent."""
+    rules = _comms_rules()
+    mission = yaml.safe_load((VEHICLE / "mission.yaml").read_text())
+    block = mission["comms_blackout"]
+    radius = _moon_radius_m(world)
+    orbit = radius + float(block["orbit"]["altitude_km"]) * 1e3
+    moon = [384_400e3, 0.0, 0.0]
+    samples = 36_000
+    hidden = 0
+    for k in range(samples):
+        angle = 2 * math.pi * k / samples
+        position = [moon[0] + orbit * math.cos(angle), orbit * math.sin(angle), 0.0]
+        hidden += bool(rules.occulted(position, moon, radius))
+    fraction = hidden / samples
+    assert fraction == pytest.approx(float(block["fraction_of_revolution"]), abs=0.002)
+    half_angle = math.degrees(math.asin(radius / orbit))
+    assert half_angle == pytest.approx(float(block["half_angle_deg"]), abs=0.05)
+
+
+def _behind_the_moon(world) -> dict:
+    """An `orbital_state` 100 km above the Moon's far side, on the Earth-Moon line."""
+    start = plant.initial_values(world)["orbital_state"]
+    moon = list(start["moon_position_m"])
+    distance = math.sqrt(sum(x * x for x in moon))
+    outward = [x / distance for x in moon]
+    altitude = _moon_radius_m(world) + 100e3
+    return {
+        **start,
+        "position_m": [moon[i] + altitude * outward[i] for i in range(3)],
+        "velocity_m_s": list(start["moon_velocity_m_s"]),
+    }
+
+
+def test_behind_the_moon_the_link_is_down_and_playback_stops(world, tmp_path):
+    """The crew-facing consequence: a vehicle whose link is otherwise configured and playing loses
+    the ground at occultation, and the recorder keeps what it could not send."""
+    script = [*link_up_at(0), (1, "play_recorder", {"state": "on"})]
+    scen = scenario(world, tmp_path, script, initial={"orbital_state": _behind_the_moon(world)})
+    final, trace = run(world, scen, 20)
+    assert all(row["link_ok"] is False for row in trace)
+    assert all(row["rate"] == 0.0 for row in trace)
+    assert final["blackout"] == "occulted"
+    assert final["recorder"] == VOLUME and final["delivered_bits"] == 0
+
+
+def test_inside_the_moon_s_radius_the_occultation_is_a_named_gap_not_a_value(world):
+    rules = _comms_rules()
+    assert rules.occulted([1.0, 0.0, 0.0], [0.0, 0.0, 0.0], _moon_radius_m(world)) is None

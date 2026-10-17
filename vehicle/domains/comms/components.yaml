@@ -220,12 +220,13 @@ components:
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [comm_mode, antenna_selection, carrier_lock, telemetry_rate, recorder_play, blackout, frame_loss]
+internal_order: [blackout, comm_mode, antenna_selection, carrier_lock, telemetry_rate, recorder_play, frame_loss]
 internal_order_note: >-
-  the link chain: the mode selects the antenna, the antenna decides whether the carrier locks,
-  the lock decides the rate, and the playback switch follows the rate it plays at; the blackout
-  state and the frame-loss counter are what the chain costs, last because they count the states
-  above them. The recorder left the sentinel for `data_recorder` when playback made it a stock
+  the geometry, then the link chain: whether the Moon hides the Earth comes first because it is
+  read off this tick's orbit and nothing on the sentinel moves it, and a carrier cannot lock through
+  the Moon; then the mode selects the antenna, the antenna decides whether the carrier locks, the
+  lock decides the rate, and the playback switch follows the rate it plays at; the frame-loss
+  counter is what the chain costs, last because it counts the states above it. The recorder left the sentinel for `data_recorder` when playback made it a stock
   with an edge, because no edge can reach the sentinel.
 
 state:
@@ -555,10 +556,22 @@ state:
     method: discrete
     unit: "enum[clear,occulted]"
     moved_by:
-      - "logic:the geometric occultation, computed from the orbit and the Earth's disc"
-    dwell:
-      min_on_s: 60
-      min_off_s: 60
+      - "logic:the geometric occultation, computed from the orbit and the Moon's radius"
+    # The rule's parameter (`domains/comms/rules.py:blackout`).
+    moon_radius_m: 1737400
+    parameter_provenance:
+      basis: historical
+      source: "vehicle.yaml#environment.moon_mean_radius_km (1,737.4 km), the radius the trajectory's own flyby check uses; `mission.yaml#comms_blackout.moon_radius_km` carries the same figure, and so does `link_ok`, which evaluates the same occultation. `tests/test_comms_rules.py` holds the four equal"
+    # A geometric fact rather than a latch, so neither a band nor a floor: the state is a function
+    # of where the vehicle and the Moon are this tick, and it changes twice a revolution.
+    non_latching: true
+    non_latching_reason: >-
+      the sixty-second dwell this state carried was argued from the link fading through the limb
+      ("a state that flipped on the first dropped frame would report the antenna's noise as the
+      Moon's shadow"). That argument is about a state *inferred from frames*, and this one is
+      computed from the orbit: no frame is read, so there is no noise to debounce, and a dwell would
+      only move loss and acquisition of signal sixty seconds off the geometry. The fade through the
+      limb belongs to the signal-to-noise ratio, which is where a soft edge has a quantity to act on
     provenance:
       basis: derived
       relation: "the Moon occults the Earth when the angle between the vehicle->Moon-centre and vehicle->Earth directions is less than arcsin(R_moon / r_orbit). At a 100 km circular lunar orbit that is arcsin(1737.4/1837.4) = 71.0 deg half-angle, so 39.5 % of each revolution; over a 117.8 min period that is 46.5 min"
@@ -636,10 +649,16 @@ state:
     moved_by:
       - "logic:the episode's link predicate over the commanded link configuration"
     high_rate_bps: 51200
+    moon_radius_m: 1737400
     parameter_provenance:
       basis: apollo
       ref: "apollo_diode.md:165"
-      note: "the high telemetry profile's 51,200 bit/s, `vehicle.yaml#comms.rates.high`"
+      note: >-
+        `high_rate_bps` is the high telemetry profile's 51,200 bit/s, `vehicle.yaml#comms.rates.high`.
+        `moon_radius_m` is `blackout`'s own parameter, `vehicle.yaml#environment.moon_mean_radius_km`:
+        this predicate evaluates the occultation itself (`rules.py:occulted`, the one function both
+        states call) rather than reading `blackout`, because `blackout` is on the sentinel, which
+        advances after `ground_received`, and a logic-moved state on it has no value at tick 0
     provenance:
       basis: chosen
       reason: >-
@@ -647,9 +666,12 @@ state:
         the link budget's constant terms are owed (`open_debts`), so the episode declares it as a
         boundary. True exactly when `antenna_selection` is `high_gain`, `comm_mode` is
         `sband_high`, `telemetry_rate` is the high profile's 51,200 bit/s and `transmitter_on` is
-        `on` (`domains/comms/rules.py:link_ok`). `blackout` is not read: translunar coast is
-        outside `mission.yaml#comms_blackout.phases_affected`, and its rule is owed. Private
-        truth, published nowhere
+        `on` (`domains/comms/rules.py:link_ok`) — and the Moon is not between the vehicle and
+        the Earth, the occultation `blackout` publishes, evaluated from this tick's orbit. That
+        term is what makes the recorder's job real outside the quiet coast: playback stops at loss
+        of signal and resumes at acquisition, so a crew that wants a dump to finish has to start it
+        with a contact period left. The quiet-coast episode is near the Earth and never occulted,
+        so the term changes none of its runs. Private truth, published nowhere
 
   - id: playback_rate
     node: ground_received
@@ -697,6 +719,7 @@ state:
 # --------------------------------------------------------------------------------------
 open_debts:
 
+  - "**The occultation the phase table says cannot happen.** `blackout` is computed from the orbit, and on the declared free return it is `occulted` from MET 72.78 h to 73.23 h — 27 minutes at closest approach, which is where Apollo flew its lunar-orbit insertion burns, out of contact (`tests/test_comms_rules.py`). `translunar_coast` ends at 73.0 h, and `mission.yaml#comms_blackout.not_affected` lists it. The block budgets a circular 100 km orbit per phase (`plant.py --blackout`), so it cannot see a flyby, and adding the phase to `phases_affected` would budget 73 hours of revolutions that are not flown. What is owed is the LOI timing against the arrival: whether the coast ends before, at or after loss of signal is the ladder's choice, and the burn that ends it is the propulsion lane's."
   - "Recorder capacity in bits (`components[recorder].capacity_bit`), the figure `comm.recorder_fill_pct` is a percentage of. Not published for either spacecraft in the sources reached, and it is the bound on how long a blackout can last before the vehicle chooses what to forget."
   - "Gimbal range and slew rate. Both owed, and both needed to separate a pointing error the gimbal can still fix from one it cannot — which is the difference between `point_hga` being a control action and being a message nobody can act on."
   - "`E-BUS-COMM`'s dB per volt, and `E-PLATE-COMM`'s dB per kelvin. Both need the amplifier's gain-versus-supply and gain-versus-temperature curves, which are not published. They stay UNCONFIGURED and they are the two edges that make the flagship cycle quantitative rather than qualitative."
