@@ -203,3 +203,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 16:12 The engine lane allows prose-only edits in `check_vehicle.py` and `plant.py` on a lane's own PR when its data change makes the prose stale; logic still goes through the engine lane.
 - 16:15 Crew #54 at `e26945e` with #47's branch merged in. D55: a workload driver (`crew_workload_index`) and CRW-01 split per person.
 - 16:18 D54 verdicts: #57 clear after its merge (one wording fix: the post-#45 figure convention holds fully only after #58, fixed on #59); #59 clear (#46's draft state fixed); #46 clear with follow-ups. The review finds the cryo O2 fans are AC loads and the heaters 113.88 W DC per tank, so power splits its 166.7 W figure.
+- 17:07 GNC + RCS #56 at `312c89c` (24 census-pin fixes): `select_nav_source` now acts, with a divergence alarm whose timing depends on when the ground was last used.
