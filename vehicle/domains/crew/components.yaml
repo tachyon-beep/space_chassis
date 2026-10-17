@@ -54,10 +54,13 @@ writes: [crew_state, alert_state]
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [crew_destination, switch_panel, breaker_panel]
+internal_order: [crew_destination, crew_roused, switch_panel, breaker_panel]
 internal_order_note: >-
-  where each person has been sent first, because it is a command's record and the panels do not
-  read it; then the two panels a crew position can throw: switches before breakers, because a
+  where each person has been sent and whether they have been roused first, because they are a
+  command's record and the panels do not read them. Both sit here rather than on `crew_state`
+  because a command reaches a coupling node only through an `E-CMD-*` edge and the crew have none:
+  the sentinel is the one place a verb's write lands with no edge, and the crew-day rules on
+  `crew_state` read them a tick later, which is the latency of a person being woken. Then the two panels a crew position can throw: switches before breakers, because a
   breaker is opened in response to what a switch did.
 
 state:
@@ -173,6 +176,205 @@ state:
         straight into `crew_location` would put the CM pilot in the LM's left seat while the LM is
         on the surface, and the rule could not tell where she had been. Private truth, published
         nowhere: what a fleet sees is where the person is, `crew.location_[id]`
+  - id: crew_clock_us
+    node: crew_state
+    method: discrete
+    unit: us
+    initial: 0
+    initial_provenance:
+      basis: derived
+      relation: "the crew's flight-plan clock is MET, and MET is zero at the epoch (`mission.yaml#met_epoch_utc`)"
+      source: mission.yaml:met_epoch_utc
+    moved_by:
+      - "logic:the tick's horizon, in whole microseconds"
+    # A clock is a counter, not a latch: nothing compares it to a threshold, so it has no dwell.
+    non_latching: true
+    provenance:
+      basis: derived
+      relation: >-
+        MET, kept by the crew domain because a rule reads its snapshot and nothing else, and the
+        snapshot carries no clock: the flight plan the crew keep is a table in mission time, so the
+        rule that reads it needs one. Whole microseconds, as `plant.md` §6 counts time, so a long
+        coast does not drift by float accumulation. Private truth, published nowhere — the fleet
+        has `mission.met_s`
+  - id: crew_scheduled
+    node: crew_state
+    method: discrete
+    unit: "map[when,enum[sleep,meal,work]]"
+    initial:
+      previous: work
+      now: work
+    initial_provenance:
+      basis: derived
+      relation: "the flight plan's first scheduled period after MET 0 is the GET 7:30 meal (FP11 p3-8), so at MET 0 the crew are working, and were at the tick before"
+      source: domains/crew/components.yaml:state.crew_scheduled.flight_plan
+    moved_by:
+      - "logic:the flight plan's period at this MET, and the one at the tick before"
+    # **The crew day, from the Apollo 11 Final Flight Plan (1 July 1969).** "The crew will eat and
+    # sleep simultaneously throughout the mission. Eat periods will be normally 1-hour duration ...
+    # Sleep periods will normally be 8 to 10 hour duration" (FP11 printed p1-13). Each row is a GET
+    # from the plan's detailed timeline (section 3; the printed row, to ten minutes) and the phase
+    # it is anchored to; `anchors_get_h` places each phase's Apollo 11 event at this mission's
+    # start of that phase. Extracted in `/mnt/project-files/sources/crew.md` §1.2.
+    flight_plan:
+      - {anchor: translunar_coast, activity: meal, get_h: [7.5, 8.5]}
+      - {anchor: translunar_coast, activity: meal, get_h: [12.5, 13.5]}
+      - {anchor: translunar_coast, activity: sleep, get_h: [13.5, 22.0]}
+      - {anchor: translunar_coast, activity: meal, get_h: [23.0, 24.0]}
+      - {anchor: translunar_coast, activity: meal, get_h: [28.5, 29.5]}
+      - {anchor: translunar_coast, activity: meal, get_h: [36.0, 37.0]}
+      - {anchor: translunar_coast, activity: sleep, get_h: [37.0, 47.0]}
+      - {anchor: translunar_coast, activity: meal, get_h: [47.5, 48.5]}
+      - {anchor: translunar_coast, activity: meal, get_h: [52.5, 53.5]}
+      - {anchor: translunar_coast, activity: meal, get_h: [59.5, 60.5]}
+      - {anchor: translunar_coast, activity: sleep, get_h: [61.0, 69.0]}
+      - {anchor: translunar_coast, activity: meal, get_h: [69.5, 70.5]}
+      - {anchor: lunar_orbit, activity: meal, get_h: [78.0, 79.0]}
+      - {anchor: lunar_orbit, activity: meal, get_h: [84.0, 85.0]}
+      - {anchor: lunar_orbit, activity: sleep, get_h: [85.0, 94.0]}
+      - {anchor: lunar_orbit, activity: meal, get_h: [94.0, 95.0]}
+      - {anchor: transearth_coast, activity: meal, get_h: [136.0, 137.0]}
+      - {anchor: transearth_coast, activity: sleep, get_h: [137.0, 147.0]}
+      - {anchor: transearth_coast, activity: meal, get_h: [147.5, 148.5]}
+      - {anchor: transearth_coast, activity: meal, get_h: [153.5, 154.5]}
+      - {anchor: transearth_coast, activity: meal, get_h: [159.0, 160.0]}
+      - {anchor: transearth_coast, activity: sleep, get_h: [160.0, 170.0]}
+      - {anchor: transearth_coast, activity: meal, get_h: [170.0, 171.0]}
+      - {anchor: transearth_coast, activity: meal, get_h: [175.5, 176.5]}
+      - {anchor: transearth_coast, activity: meal, get_h: [181.5, 182.5]}
+      - {anchor: transearth_coast, activity: sleep, get_h: [182.5, 189.5]}
+      - {anchor: transearth_coast, activity: meal, get_h: [189.5, 190.5]}
+    flight_plan_provenance:
+      basis: historical
+      source: >-
+        Apollo 11 Flight Plan, AS-506/CSM-107/LM-5, Final, 1 July 1969 (re-formatted edition,
+        https://apollojournals.org/alsj/a11/a11fltpln_final_reformat.pdf), detailed timeline printed
+        pp. 3-6 to 3-129: the EAT PERIOD and REST PERIOD rows. Two rows are moved to the half hour
+        where the printed row and the plan's own note disagree: the first rest period begins at
+        GET 13:30 (printed p1-16, "starting with the First sleep period (GET 13:30)"), so the meal
+        printed at 13:00 is the hour before it; and the third, printed "~60:00/61:00-69:00", is
+        taken from 61:00 after the 59:30 meal
+      note: >-
+        **The descent, the surface and the ascent have no rows**, so the crew work through them: the
+        plan has "two 4 to 5 hour sleep periods while the LM is on the lunar surface" (p1-13), and
+        their GETs are not extracted yet. That is owed rather than invented (`open_debts`). The
+        three activities are the ones the plan schedules for everyone at once; suiting, the
+        tunnel and EVA are where a person is (`crew_location`), not what they are doing
+    # Each anchored phase's Apollo 11 event, as the GET this mission's phase start stands for:
+    # MET = GET - anchor.
+    anchors_get_h:
+      translunar_coast: 4.2833
+      lunar_orbit: 2.8306
+      transearth_coast: 2.8950
+    anchors_provenance:
+      basis: derived
+      relation: >-
+        MET = GET - (Apollo 11 GET of the phase's opening event - this mission's `starts_at_h` for
+        the phase). `translunar_coast` opens at spacecraft ejection, GET 4:17 (MR11 Fig. 3-1), at
+        MET 0; `lunar_orbit` opens at LOI-1 ignition, GET 75:49:50 (MR11 Table 3-I), at MET 73.0;
+        `transearth_coast` opens at TEI ignition, GET 135:23:42 (MR11 Table 3-I), at MET 132.5. The
+        three differ because this mission's coast is 73 h by design rather than Apollo 11's
+        71.5 h, so each phase's rows keep their place relative to the event that starts it
+      source: mission.yaml:phases
+    # A projection of the clock through a table, not a comparator: it changes when the table says
+    # and at no other time, so there is nothing for a dwell to debounce.
+    non_latching: true
+    provenance:
+      basis: historical
+      source: >-
+        the flight plan above, read against `crew_clock_us`. It keeps the last tick's period beside
+        this one (`previous`, `now`) because the start and the end of a rest period are what clear
+        a question's hold on a person (`crew_roused`), and a rule reads only its snapshot
+        (`domains/crew/rules.py:crew_scheduled`). Private truth: the fleet is given the flight plan
+        in its brief, not on a channel
+  - id: crew_roused
+    node: internal
+    method: discrete
+    unit: "map[crew_id,bool]"
+    initial:
+      commander: false
+      lm_pilot: false
+      csm_pilot: false
+    initial_provenance:
+      basis: derived
+      relation: "nobody has been asked anything before MET 0"
+      source: domains/crew/commands.yaml:commands.ask_crew
+    moved_by:
+      - "command:ask_crew"
+      - "logic:cleared when a scheduled rest period begins or ends"
+    command_value:
+      - verb: ask_crew
+        argument: crew_id
+        constant: true
+        key: crew_id
+        why: >-
+          a question reaches the person it names, whatever they are doing. Asked in a rest period,
+          they are awake for the rest of it, and the rest they lose is owed (`crew_rest_owed_s`).
+          Asked while awake, the flag changes nothing until the next rest period begins, which
+          clears it
+    # Set by a question and cleared by the flight plan; neither is a reading that could chatter.
+    non_latching: true
+    provenance:
+      basis: chosen
+      reason: >-
+        the cost of asking a sleeping person, made a state so it lasts beyond the question. Apollo 11
+        flew simultaneous rest with one man in the left couch (FP11 p1-13, p3-11), and the ground
+        let the crew sleep on rather than wake them (AFJ11, GET 47:41: "the Flight Director ...
+        decided to let the crew remain asleep"). A question at night is the ground's choice to
+        spend that. Private truth: the fleet sees `crew.available`
+  - id: crew_rest_owed_s
+    node: crew_state
+    method: discrete
+    unit: "map[crew_id,s]"
+    initial:
+      commander: 0.0
+      lm_pilot: 0.0
+      csm_pilot: 0.0
+    initial_provenance:
+      basis: derived
+      relation: "no rest period has begun before MET 0, so none can have been cut short"
+      source: mission.yaml:met_epoch_utc
+    moved_by:
+      - "logic:grows while a person is kept awake through a scheduled rest period, and is repaid as sleep after one ends"
+    # An accumulator of seconds, not a latch.
+    non_latching: true
+    provenance:
+      basis: chosen
+      reason: >-
+        the delayed half of waking someone: rest lost at night is taken when the rest period ends,
+        so the person is asleep, and does not answer, at the start of the next working day. It is
+        bookkeeping of hours, not a model of a person (`apollo_diode.md:754`): no fatigue, no error
+        rate, just time not spent awake. Apollo did move rest periods on the ground's word — the
+        third Apollo 11 rest period ran about two hours long when a midcourse correction was
+        deleted (AFJ11, GET 68:28) — so the hours are the real currency. Private truth
+  - id: crew_activity
+    node: crew_state
+    method: discrete
+    unit: "map[crew_id,enum[sleep,meal,work]]"
+    initial:
+      commander: work
+      lm_pilot: work
+      csm_pilot: work
+    initial_provenance:
+      basis: derived
+      relation: "`crew_scheduled.initial`: nobody has been roused and no rest is owed at MET 0, so each person does what the flight plan has scheduled"
+      source: domains/crew/components.yaml:state.crew_scheduled.initial
+    moved_by:
+      - "logic:the flight plan's period at this MET, unless a question has kept a person awake through a rest period or rest is owed"
+    # It changes at the flight plan's boundaries, at a question, and when owed rest is repaid: each is
+    # an event, not a reading crossing a limit, so there is nothing to debounce.
+    non_latching: true
+    provenance:
+      basis: historical
+      source: >-
+        the Apollo 11 flight plan's simultaneous eat and rest periods, above. Three activities and
+        no more, because each one changes something a fleet can see: a rest period takes all three
+        off the panels and lowers the cabin's CO2 production, and a meal draws the potable tank in
+        steps that look, for an hour, like a leak (John, 2026-10-17 13:59Z: meals are worth
+        modelling because they make events and noise the team must deal with that are not mission
+        events). **The rule is `domains/crew/rules.py:crew_activity`**: the scheduled period at
+        this MET (`crew_scheduled`), except that a person roused by a question stays awake through a rest period,
+        and a person owed rest sleeps until it is repaid
   - id: crew_location
     node: crew_state
     method: discrete
@@ -259,6 +461,38 @@ state:
         (`crew_destination`) is there while it is reachable, and in their own seat otherwise, so a
         separation that strands a destination returns the person to the vehicle they are in rather
         than leaving them in a tunnel that no longer exists.
+  - id: crew_availability
+    node: crew_state
+    method: discrete
+    unit: "map[crew_id,enum[available,resting,suit,incapacitated]]"
+    initial:
+      commander: available
+      lm_pilot: available
+      csm_pilot: available
+    initial_provenance:
+      basis: derived
+      relation: >-
+        MET 0 is after LM ejection, and the Apollo 11 flight plan's
+        first rest period begins at GET 13:30 (FP11 p1-16), about nine hours later; so all three are
+        awake, unsuited (FP11 p3-6 doffs the suits at GET 5:10, before any question can be asked)
+        and able to answer; the flight plan's period at MET 0 is work (`crew_scheduled.initial`)
+      source: domains/crew/components.yaml:state.crew_scheduled.initial
+    moved_by:
+      - "logic:resting while the person's activity is sleep, on suit while they are on the surface, available otherwise; incapacitated holds once a fault has made it so"
+    dwell:
+      min_on_s: 60
+      min_off_s: 60
+    provenance:
+      basis: apollo
+      ref: "apollo_diode.md:226"
+      note: >-
+        apollo publishes `crew.available` as a boolean with a Sim marker, and a coarse workload
+        state, with the explicit warning to avoid synthetic psychology. The four values here are
+        the minimum that lets a question go unanswered for a reason: a crew member who is
+        resting, on suit, or incapacitated are three different silences. **The rule is
+        `domains/crew/rules.py:crew_availability`**, and `incapacitated` is the one value it never
+        writes: what puts a person there is CRW-01, whose onset names a person, and which person is
+        a scenario's choice rather than this file's (`open_debts`).
   - id: csm_crew_count
     node: crew_state
     method: algebraic
@@ -295,38 +529,96 @@ state:
         surface breathes the suit's loop, not the cabin's, so an EVA takes its crew out of the LM
         cabin's CO2 and oxygen budget for as long as it lasts — which is `E-LM-CREW-ATM`'s driver
         (ECLSS's edge, ECLSS's to point here with `reads: lm_crew_count`)
+  - id: csm_metabolic_crew
+    node: crew_state
+    method: algebraic
+    unit: crew
+    moved_by:
+      - "logic:the CSM cabin's people, each weighted by the metabolic rate of what they are doing"
+    cabin_stations: [csm_commander, csm_navigator, csm_lower_equipment_bay, tunnel]
+    # Awake-equivalents: the edges' rates are "per crew member, awake", so a working or eating
+    # person is 1.
+    metabolic_factor:
+      sleep: 0.7
+      meal: 1.0
+      work: 1.0
+    metabolic_factor_provenance:
+      basis: chosen
+      reason: >-
+        coordinator under John's delegation, 2026-10-17 14:27Z. No Apollo document found gives a
+        sleep or intravehicular rate: the CSM handbook gives a daily average, 11,200 Btu per man-day
+        (AOH SM2A-03-SC014 p2.7-27, 467 Btu/h), and SP-368 gives EVA rates (200-300 kcal/h).
+        Asleep at about 330 Btu/h against about 470 awake is the inference 0.7 rests on. Not
+        renormalised: over a day these awake-equivalents run below the planning totals by the
+        sleeping hours' 30 %, which is recorded as a known approximation rather than hidden in a
+        scale factor. What would close it: the CSM/LM Spacecraft Operational Data Book
+        (SNA-8-D-027) consumables tables
+    provenance:
+      basis: derived
+      relation: >-
+        the sum over `crew_location` entries in `cabin_stations` of `metabolic_factor` for that
+        person's `crew_activity` (`domains/crew/rules.py:csm_metabolic_crew`). Offered to ECLSS
+        as the driver of `E-CREW-ATM` in place of `csm_crew_count`: a cabin whose CO2 rise slows at
+        bedtime and quickens at wake is one where a better-working absorber and a sleeping crew look
+        alike, which is the confounder this state exists to carry. Apollo 11 saw the other
+        direction: the LM pilot's exercise raised cabin pCO2 about 0.6 mmHg (MR11 p12-3)
+  - id: lm_metabolic_crew
+    node: crew_state
+    method: algebraic
+    unit: crew
+    moved_by:
+      - "logic:the LM cabin's people, each weighted by the metabolic rate of what they are doing"
+    cabin_stations: [lm_commander, lm_pilot]
+    metabolic_factor:
+      sleep: 0.7
+      meal: 1.0
+      work: 1.0
+    metabolic_factor_provenance:
+      basis: derived
+      relation: "csm_metabolic_crew.metabolic_factor: one crew, one rate, whichever cabin they breathe"
+      source: domains/crew/components.yaml:state.csm_metabolic_crew.metabolic_factor
+    provenance:
+      basis: derived
+      relation: >-
+        as `csm_metabolic_crew`, over the LM's two stations (`domains/crew/rules.py:lm_metabolic_crew`);
+        the LM's own offer for `E-LM-CREW-ATM`. A person on the surface is on the suit's loop and
+        counts in neither cabin
   - id: csm_water_draw_crew
     node: crew_state
     method: algebraic
     unit: crew
     moved_by:
-      - "logic:the number of people drawing on the CSM's potable water, each at the planning rate"
+      - "logic:the CSM's people drawing potable water, weighted by when in the day they draw it"
+    cabin_stations: [csm_commander, csm_navigator, csm_lower_equipment_bay, tunnel]
+    # Crew-equivalents at `E-CREW-WATER`'s planning rate (2.27 kg per crew-day / 24 h): half of a
+    # person's day of water in the three one-hour meals, the other half over the waking hours
+    # outside them, none asleep.
+    draw_weight:
+      sleep: 0.0
+      meal: 4.0
+      work: 0.9863
+    draw_weight_provenance:
+      basis: chosen
+      reason: >-
+        coordinator under John's delegation, 2026-10-17 14:27Z: half of each person's daily water in
+        the three meal hours, the rest across waking work hours, nothing asleep. What is sourced:
+        the food preparation unit meters 1-oz aliquots (AOH SM2A-03-BLOCK II p2.12-78), hot water
+        recovers at about 10 oz per 30 minutes (p2.7-16), beverages are 8-oz servings (TN D-7720
+        p17), Apollo 17 crews drank 2.1-2.7 L a day (SP-368 p297), and meals were 1 h and
+        simultaneous (FP11 p1-13). No per-meal rehydration volume was found. The weights follow:
+        a meal hour carries half the day over three hours, 0.5 x 24 / 3 = 4.0; a waking hour
+        carries the other half over the TLC flight plan's mean 12.167 waking non-meal hours a day
+        (24 - 3 - 8.833 h of rest), 0.5 x 24 / 12.167 = 0.9863. The test file re-derives both from
+        `crew_activity.flight_plan`
     provenance:
       basis: derived
       relation: >-
-        `csm_crew_count`, because the potable tank is the command module's and a person in the LM
-        drinks the LM's water (`domains/crew/rules.py:csm_water_draw_crew`). It is `E-CREW-WATER`'s
-        driver, and it is its own state rather than the count because the draw is a *crew-day*
-        rate today and a draw at meal times is the refinement it exists to carry: the rate per
-        person is constant, and *when* a person drinks is not
-  - id: crew_availability
-    node: crew_state
-    method: discrete
-    unit: "map[crew_id,enum[available,resting,suit,incapacitated]]"
-    moved_by: UNCONFIGURED
-    moved_by_note: >-
-      no verb writes it and no event moves it, which is the debt `domains/crew/components.yaml` records
-    dwell:
-      min_on_s: 60
-      min_off_s: 60
-    provenance:
-      basis: apollo
-      ref: "apollo_diode.md:226"
-      note: >-
-        apollo publishes `crew.available` as a boolean with a Sim marker, and a coarse workload
-        state, with the explicit warning to avoid synthetic psychology. The four values here are
-        the minimum that lets a question go unanswered for a reason: a crew member who is
-        resting, on suit, or incapacitated are three different silences.
+        the sum over `crew_location` entries in `cabin_stations` of `draw_weight` for that person's
+        `crew_activity` (`domains/crew/rules.py:csm_water_draw_crew`), because the potable tank is
+        the command module's and a person in the LM drinks the LM's water. It is `E-CREW-WATER`'s
+        driver. The potable quantity therefore drops by about 1.1 kg in each meal hour
+        for three people and is flat through the night, against a fuel-cell fill that is steady:
+        for an hour after every meal, the tank looks the way a leak or a failing fuel cell would
   - id: crew_workload
     node: crew_state
     method: lag
@@ -637,7 +929,8 @@ open_debts:
   - "**The crew count is a state now, and two of the three couplings that need it still read the node.** `E-CREW-ATM`, `E-LM-CREW-ATM` and `E-CREW-WATER` declare `kg/h per crew`, and a coupling edge reads a **value**: `crew_state` carries several states, so it publishes none, and the two cabin CO2 stocks and the potable-water tank were blocked on every tick. Of the two repairs round 65 named, this domain took the one that is a domain edit: `csm_crew_count` and `lm_crew_count` are quantities on `crew_state`, projections of `crew_location`, and an edge names the one it means with `reads:` (the field the plant has had since round 70). `E-CREW-WATER` lands on this node, so it is this domain's and reads `csm_water_draw_crew`. **What is owed is the other two edges' one line each**: `E-CREW-ATM` `reads: csm_crew_count` and `E-LM-CREW-ATM` `reads: lm_crew_count`. Those edges land on the cabins, so they are ECLSS's to write, and a tick with both lines added advances both CO2 stocks."
   - "**The display mode has no state.** `set_display_mode` changes what a station's panel is showing — the four modes are `crew_diode.md:352-370`'s widget types, and its own provenance says implementing them as a *display* command rather than as a perception change is the point D-06 turns on — and the vehicle records that nowhere. It was linked to `switch_panel`, which is the crew's switches: a surface whose own note here and whose channel's note in `points.yaml` both say agents observe it and cannot move it, and whose key was a switch id while the verb's `position` argument takes crew stations. That link is what this round removed. What closes this is a state per station holding one of the four modes, on a node the executive reaches — a new state and a new coupling node rather than a value, which is why it is here and not in a field."
   - "The displayed precisions are authored. They are the *inverse* of the channel registry's published precisions — a panel is coarser than the instrument behind it — and the mapping from one to the other is a display-design choice with no source. What is not a choice is that they must be coarser: a crew member reading a digital channel exactly would be a better instrument than the sensor."
-  - "Reading times are not modelled. A real crew member takes seconds to find and read a gauge, and `ask_crew` currently answers instantly — which understates the cost of the crew as a sensor. It belongs with the allowance machinery rather than here."
+  - "Reading times are not modelled. A real crew member takes seconds to find and read a gauge, and `ask_crew` currently answers instantly — which understates the cost of the crew as a sensor. It belongs with the allowance machinery rather than here. What *is* modelled is the larger cost: a question at night wakes the person it names, and the rest they lose is repaid as sleep at the start of the next working day (`crew_roused`, `crew_rest_owed_s`)."
+  - "**The perception function has no caller.** `tools/crew_perception.py:perceive` is `(frame, crew_id, location, availability, display_contract, seed, ask_index) -> perceived + audit`, the lookup this file's header asks for, and nothing calls it: answering an `ask_crew` is the executive's and the console's (`tools/console.py`), which is engine code another lane owns. Per console (D-07): the answer goes to the asking console alone, and each crew member's count of exchanges is the vehicle's record of the conversation."
 
 # Found by asking whether a fleet can pursue each of `mission.yaml`'s outcome objectives, which is
 # a question no check in this folder had asked. Two of the three have a clear verb path —
@@ -660,20 +953,8 @@ open_debts:
 # running; ingress is gated on the hatch closing; the 30-second dwell on the state is already the
 # transit time; and `apollo_diode.md:754` bounds the whole thing — crew physiology is "preferably
 # omitted", so the rule may not grow a model of a person.
-  - "Nothing declares what moves the crew. `crew_location` can take `surface_eva` and
-    `crew_availability` can take `suit`, and no verb writes either: the four crew verbs are
-    `ack_alarm`, `ask_crew`, `set_alert_overlay` and `set_display_mode`, and none of them moves
-    anybody. The hardware half of an EVA *is* declared — `set_hatch_valve` is available in all
-    eight phases, and `domains/structure/components.yaml#one_way_events` carries
-    `hatch_open_surface` with its consequence spelled out (the LM cabin atmosphere is lost to
-    vacuum unless the crew are on suit loop) and its three observables — and `apollo_diode.md:238`
-    fixes the vocabulary, because Apollo has no EVA verb: depressurisation is `set_vent_valve` and
-    the suit circuit is `set_suit_loop`. What is missing is the crew half, and
-    `mission.yaml#objectives.surface_mission` — an EVA completed on the surface — is scorable
-    only because a state machine that is not written down happens to move them. The rule has a
-    shape, and stating it is what keeps whatever writes it from inventing one: egress is gated on
-    the phase being `surface`, the hatch being open and the suit loop running; ingress on the
-    hatch closing; the 30-second `dwell` on the state is already the transit time; and
-    `apollo_diode.md:754` bounds the whole thing, because crew physiology is preferably omitted
-    and the rule may not grow a model of a person."
+  - "**What moves the crew is declared now, and three of the egress rule's gates are not reachable from it.** `crew_location` is a rule (`domains/crew/rules.py`): a person is where `ask_crew` last sent them while the station is reachable in `structure.configuration`, and in their own seat in the vehicle the configuration puts them in otherwise. The shape the earlier debt fixed — egress gated on the phase being `surface`, the hatch open and the suit loop running; ingress on the hatch closing — is only half reachable: a rule reads its snapshot, and the phase is in no state, while `hatch_state` and `suit_loop_flow_cfm` are on the structure and ECLSS sentinels, which no other domain's rule can read. So `surface_eva` is reachable from the LM whenever it is `undocked`, in orbit as well as on the surface, and the hatch and the suit are the structure and ECLSS lanes' to enforce on their own side. What closes it: the hatch position and the suit-loop flow on coupling nodes the crew can declare in `reads:`, and the mission phase as a state."
+  - "**The surface has no flight plan rows.** `crew_scheduled.flight_plan` carries the Apollo 11 plan's translunar, lunar-orbit and transearth eat and rest periods; the plan's surface stay has \"two 4 to 5 hour sleep periods while the LM is on the lunar surface\" (FP11 printed p1-13), and their GETs, and the CM pilot's matching rest in orbit (MR11: \"timed to coincide with that of the lunar module crew so that radio silence could be observed\"), are not extracted. Until they are, the crew work through the descent, the surface and the ascent. What closes it: the FP11 detailed timeline pages for GET ~100-130, anchored to `descent`, `surface` and `ascent_rendezvous`."
+  - "**CRW-01 has no onset, because its onset names a person.** `crew_availability` holds `incapacitated` once written and its rule never writes it, so the fault is the only way there; a `fault_value` row with `becomes: incapacitated` needs a `key`, and which crew member a scenario incapacitates is the scenario's choice. What closes it: a `fault_value` row per crew id (three faults, or a fault the scheduler parameterises by person)."
+  - "**`crew_workload` has no driver.** It is a `lag` in an `enum-level` and nothing drives it: `E-CREW-WATER` did, by declaring no `advances`, which made a drink of water the workload's input. The activity is the obvious input (rest low, a meal or work medium, the surface high) and no source states the mapping or the starting level; and a lag is the plant's integrator, so an activity-driven workload is either an edge from a quantity or a rule on a different class. Owed as a design choice; it adds the separation between a busy crew member and an incapacitated one that CRW-01's own `false_positive_risk` asks for."
   - "Crew physiology is out of scope by design (`apollo_diode.md:754`: metabolic rates are an input, not a model of a person). `incapacitated` is therefore a state with a cause the vehicle does not model."

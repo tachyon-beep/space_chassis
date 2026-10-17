@@ -220,7 +220,7 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 156 states over 61 scheduled nodes, 142
+**All eleven domains have landed** — 148 channels, 163 states over 61 scheduled nodes, 142
 thresholds, 59 verbs and 128 classified events across the eleven directories, with every debt
 named. Those are the corpus's declarations, and the linter holds each of them against the files
 (`check_readme_figures`); they move when a domain adds a channel, a state or a verb, not when one
@@ -423,7 +423,7 @@ wrench through `B = [Fᵢdᵢ ; rᵢ × Fᵢdᵢ]`, so what that edge needs is f
 lever arms plus the inertia tensor — one artifact, and the same one `E-RCS-DYN` is waiting on.
 
 `domains/crew/` is the one that decides what the experiment actually
-measures. It carries no physics at all: 11 states, 10 points, 9 thresholds, 4 verbs, 7 faults.
+measures. It carries no physics at all: 18 states, 10 points, 9 thresholds, 4 verbs, 7 faults.
 What it carries is the **display contract** — the third argument of
 `review-findings.md` #4's perception function, `(full_truth, crew_position, display_contract) →
 perceivable_subset`, which the design claimed `crew_diode.md` supplied and which that document
@@ -19605,6 +19605,41 @@ view of exit 4) is the chassis's, after this merges.
 | figure | before | after |
 |---|---:|---:|
 | referee tests | 537 | **564** |
+
+## The crew had places and no way to be in them, and a count three couplings could not read
+
+`crew_state` carried three modes (where each person is, whether they can answer, how busy they are)
+and so published no value, and the three couplings that need a number of people read it:
+`E-CREW-ATM` and `E-LM-CREW-ATM` (the two cabins' CO2) and `E-CREW-WATER` (the potable tank). All
+three had a `None` driver on every tick. Nothing moved anybody either: `crew_location` and
+`crew_availability` were `moved_by: UNCONFIGURED`.
+
+| what | before | after |
+|---|---|---|
+| a number of people per cabin | none; the node publishes no value | `csm_crew_count`, `lm_crew_count`, projections of `crew_location`; the tunnel counts with the CSM, a person on the surface with neither |
+| `E-CREW-WATER` | reads the crowded node; advances every state on it, workload included | `reads:` and `advances:` `csm_water_draw_crew`; the tank advances |
+| where a person is | nothing moves it | `ask_crew`'s `position` sends a person (`crew_destination`); the rule keeps them there while the station is reachable in `structure.configuration`, and in their own seat otherwise |
+| what the crew are doing | nothing | the Apollo 11 Final Flight Plan's simultaneous eat and rest periods, anchored to each phase's opening event (`crew_scheduled`, `crew_activity`) |
+| a question at night | free | it wakes the person it names; the rest lost is repaid as sleep after the period ends (`crew_roused`, `crew_rest_owed_s`) |
+| what a person could say | a contract with no caller | `tools/crew_perception.py:perceive`, the lookup the contract was written for |
+
+**The crew day is noise the fleet has to tell from a fault, which is why it is modelled.** A meal
+draws about 1.1 kg from the potable tank in an hour and the night draws none, against a fuel-cell
+fill that is steady; for an hour after every meal the tank looks like a leak. Asleep, the crew
+breathe at 0.7 of the awake rate (`csm_metabolic_crew`, `chosen`: no Apollo document found states a
+sleep rate), so cabin CO2 bends at bedtime the way it would if an absorber improved. Both values
+are the coordinator's, under John's delegation, and are recorded as chosen with what would close
+them.
+
+**Two of the three couplings still read the node.** `E-CREW-ATM` and `E-LM-CREW-ATM` land on the
+cabins, so they are ECLSS's, and each needs one line, `reads: csm_crew_count` (or
+`csm_metabolic_crew`) and its LM twin. A tick with both lines added advances both CO2 stocks.
+
+What went wrong first: the destination state offered a `home` value, and the linter refused a
+station the crew-position bound does not describe; a person's starting seat is the destination
+instead. And `lm_pilot` is both a person and a station, so `ask_crew` writing a station needed its
+identity `maps` declared, because which argument carries the value could not be read off the
+vocabulary.
 
 ## The invariants, and which of them are enforced
 

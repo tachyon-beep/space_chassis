@@ -41,6 +41,7 @@ faults:
       false_positive_risk: >-
         a crew member who is simply busy produces the same silence. `crew.workload` is the
         separation, which is why a coarse workload state is worth having at all
+    fleet_class: onboard
     response:
       kind: service
       note: >-
@@ -74,6 +75,7 @@ faults:
         this hard
       latency: "one question, then a comparison"
       false_positive_risk: "total, against a truthful report of a real anomaly. The comparison with the channel is the only separation"
+    fleet_class: precursor
     response:
       kind: advisory
       note: >-
@@ -103,6 +105,7 @@ faults:
       false_positive_risk: >-
         a correctly attributed report of a genuine problem is the same sentence. This is the fault
         that punishes a fleet for accepting an observation without asking where it was made from
+    fleet_class: precursor
     response:
       kind: advisory
       note: "ask a second crew member at a different position whether they can see the same thing, which is what the geometry of the display contract makes possible"
@@ -125,6 +128,7 @@ faults:
         puts first — and a fleet that only ever asks for specific numbers will never ask it
       latency: "however long it takes somebody to ask the open question, or never"
       false_positive_risk: "none: the observation is real and the only question is whether it is ever elicited"
+    fleet_class: precursor
     response:
       kind: advisory
     provenance:
@@ -150,6 +154,9 @@ faults:
         because the alternative — a GM that answers anyway — is the leak D-06 exists to prevent
       latency: "immediate"
       false_positive_risk: "none, and there must not be any: this is the control case that proves the perception bound is exact"
+    fleet_class: onboard
+    fleet_class_note: >-
+      the vehicle's own answer comes first and is correct: "there is no readout for that here" is returned at once, and what the fleet is held to is the next question, asked of somebody in the right place
     response:
       kind: advisory
       note: "ask somebody who is in the right place, which costs mission time and relocates the sensor"
@@ -177,6 +184,9 @@ faults:
         kind of statement from every other alert on the vehicle
       latency: "immediate, and the consequence is a slow response rather than a failure"
       false_positive_risk: "none: the storm is real"
+    fleet_class: onboard
+    fleet_class_note: >-
+      the storm is the consequence of other faults, annunciated at once by the caution and warning system; the fleet is held to the triage after it, not to preventing it
     response:
       kind: advisory
       note: >-
@@ -215,6 +225,7 @@ faults:
         a person in a draught. simulator-design.md:383-385 says explicitly that this is a
         different epistemic class from SUSPECT quality and must be modelled as its own thing — so
         it is: nothing attaches a quality code to a crew report, ever
+    fleet_class: precursor
     response:
       kind: advisory
     provenance:
