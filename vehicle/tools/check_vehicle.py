@@ -13271,6 +13271,153 @@ def _named_as_a_rate(field: str) -> bool:
     return any(field.endswith(token) or f"{token}_" in field for token in _RATE_IN_NAME)
 
 
+RCS_AXES = {
+    "+X": (1.0, 0.0, 0.0),
+    "-X": (-1.0, 0.0, 0.0),
+    "+Y": (0.0, 1.0, 0.0),
+    "-Y": (0.0, -1.0, 0.0),
+    "+Z": (0.0, 0.0, 1.0),
+    "-Z": (0.0, 0.0, -1.0),
+}
+# Each SM quad's angle from +Y_c towards +Z_c in the DAP's control axes (R-577 s. 3.2).
+RCS_SM_QUAD_ANGLE_DEG = {"B": 0.0, "C": 90.0, "D": 180.0, "A": 270.0}
+
+
+def rcs_sm_jet_vector(jet: dict[str, Any], cant_deg: float) -> tuple[float, float, float]:
+    """A SM jet's unit thrust in control axes: its nominal axis tilted inward by the cant.
+
+    The exhaust is "directed away from the spacecraft surface" (R-577 s. 6.4.1.3), so the thrust
+    leans towards the X axis by `cant_deg` in the plane of the nominal axis and the quad's radius.
+    """
+    angle = math.radians(RCS_SM_QUAD_ANGLE_DEG[jet["quad"]])
+    radial = (0.0, math.cos(angle), math.sin(angle))
+    nominal = RCS_AXES[jet["axis"]]
+    cos_c, sin_c = math.cos(math.radians(cant_deg)), math.sin(math.radians(cant_deg))
+    return tuple(cos_c * n - sin_c * r for n, r in zip(nominal, radial, strict=True))  # type: ignore[return-value]
+
+
+def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
+    """The RCS jet tables must reproduce the sources that cross-check them.
+
+    `domains/rcs/components.yaml#geometry` lands two jet tables (`docs/evidence/
+    wp03-rcs-geometry.md`). Each was transcribed by hand from an OCR text layer, so each carries
+    a relation it must satisfy, and a transcription error breaks it:
+
+      - **SM.** The table is the CSM digital autopilot's selection tables (R-577 s. 3,
+        Tables 3.2-III to 3.2-X) placed on quads. Every jet's declared torque and translation is
+        re-derived from tau = r x F at its quad's centreline intersection, and a jet whose geometry
+        would turn or push the vehicle the other way is refused. Four jets per quad, two
+        rotational and two roll, sixteen in all.
+      - **LM.** The simulator's positions must reproduce the Operational Data Book's three
+        flight-hardware dimensions (254.0 in cluster plane, 66.1 and 61.5 in effective moment
+        arms) to their printed tenth of an inch, and every jet must exhaust away from its own
+        cluster's centre, which is the rule that decides jet 4's unread sign.
+    """
+    raw_rcs = documents.get("domains/rcs/components.yaml")
+    rcs = raw_rcs if isinstance(raw_rcs, dict) else {}
+    geometry = rcs.get("geometry")
+    where = "domains/rcs/components.yaml:geometry"
+    if not isinstance(geometry, dict):
+        report.refuse(where, "is absent; the SM and LM jet tables live here")
+        return
+
+    sm = geometry.get("rcs_sm")
+    sm_where = f"{where}.rcs_sm"
+    sm_jets = sm.get("jets") if isinstance(sm, dict) else None
+    if not isinstance(sm_jets, list) or [j.get("id") for j in sm_jets if isinstance(j, dict)] != list(
+        range(1, 17)
+    ):
+        report.refuse(sm_where, "must list the DAP's jets 1 to 16 in order")
+    else:
+        cant = float(sm.get("cant_deg", 0.0))
+        radius = float(sm.get("quad_radius_in", 0.0))
+        per_quad: dict[str, list[int]] = {}
+        for jet in sm_jets:
+            jid = jet["id"]
+            if jet.get("quad") not in RCS_SM_QUAD_ANGLE_DEG or jet.get("axis") not in RCS_AXES:
+                report.refuse(f"{sm_where}.jets.{jid}", "names no quad A-D or no signed axis")
+                continue
+            per_quad.setdefault(jet["quad"], []).append(jid)
+            angle = math.radians(RCS_SM_QUAD_ANGLE_DEG[jet["quad"]])
+            r = (0.0, radius * math.cos(angle), radius * math.sin(angle))
+            f = rcs_sm_jet_vector(jet, cant)
+            tau = (
+                r[1] * f[2] - r[2] * f[1],
+                r[2] * f[0] - r[0] * f[2],
+                r[0] * f[1] - r[1] * f[0],
+            )
+            index = {"roll": 0, "pitch": 1, "yaw": 2}
+            torque = str(jet.get("torque", ""))
+            if torque[1:] not in index or (tau[index[torque[1:]]] > 0) != (torque[0] == "+"):
+                report.refuse(
+                    f"{sm_where}.jets.{jid}",
+                    f"declares {torque!r} and its geometry turns the vehicle the other way: at "
+                    f"quad {jet['quad']} a thrust along {jet['axis']} gives tau = "
+                    f"({tau[0]:.1f}, {tau[1]:.1f}, {tau[2]:.1f}) in per unit thrust",
+                )
+            translation = str(jet.get("translation", ""))
+            if translation != jet["axis"]:
+                report.refuse(
+                    f"{sm_where}.jets.{jid}",
+                    f"translates {translation!r} with its thrust along {jet['axis']}",
+                )
+        if sorted(per_quad) != ["A", "B", "C", "D"] or any(len(v) != 4 for v in per_quad.values()):
+            report.refuse(
+                sm_where,
+                f"must put four jets on each of quads A-D; it declares {per_quad}",
+            )
+
+    lm = geometry.get("rcs_lm")
+    lm_where = f"{where}.rcs_lm"
+    lm_jets = lm.get("jets") if isinstance(lm, dict) else None
+    odb = lm.get("odb_check_in") if isinstance(lm, dict) else None
+    if not isinstance(lm_jets, list) or len(lm_jets) != 16 or not isinstance(odb, dict):
+        report.refuse(lm_where, "must list sixteen jets and the ODB figure's check dimensions")
+        return
+    in_per_m = 1 / 0.0254
+    clusters: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    for jet in lm_jets:
+        position = jet.get("position_m")
+        if not isinstance(position, list) or len(position) != 3 or jet.get("force_axis") not in RCS_AXES:
+            report.refuse(f"{lm_where}.jets.{jet.get('id')}", "needs a 3-vector position and a signed axis")
+            return
+        clusters.setdefault((position[1] > 0, position[2] > 0), []).append(jet)
+    if len(clusters) != 4 or any(len(group) != 4 for group in clusters.values()):
+        report.refuse(lm_where, "must place four jets in each of the four Y-Z quadrants")
+        return
+    for group in clusters.values():
+        centre = [sum(j["position_m"][i] for j in group) / 4 for i in range(3)]
+        for jet in group:
+            p, axis = jet["position_m"], RCS_AXES[jet["force_axis"]]
+            if axis[0]:
+                arm = (abs(p[1]) * in_per_m, abs(p[2]) * in_per_m)
+                if round(arm[0], 1) != odb.get("up_down_arm") or round(arm[1], 1) != odb.get("up_down_arm"):
+                    report.refuse(
+                        f"{lm_where}.jets.{jet['id']}",
+                        f"sits at Y, Z = {arm[0]:.2f}, {arm[1]:.2f} in; the ODB's pitch and roll "
+                        f"jets' effective moment arm is {odb.get('up_down_arm')} in",
+                    )
+            else:
+                lateral = abs(p[2] if axis[1] else p[1]) * in_per_m
+                if round(p[0] * in_per_m, 1) != odb.get("cluster_plane_xe") or round(lateral, 1) != odb.get(
+                    "fore_side_arm"
+                ):
+                    report.refuse(
+                        f"{lm_where}.jets.{jet['id']}",
+                        f"sits at XE {p[0] * in_per_m:.2f} in with a {lateral:.2f} in arm; the ODB "
+                        f"gives the cluster plane at {odb.get('cluster_plane_xe')} and the yaw "
+                        f"jets' arm as {odb.get('fore_side_arm')} in",
+                    )
+            offset = [p[i] - centre[i] for i in range(3)]
+            if sum(o * a for o, a in zip(offset, axis, strict=True)) >= 0:
+                report.refuse(
+                    f"{lm_where}.jets.{jet['id']}",
+                    f"pushes along {jet['force_axis']}, towards its own cluster's outside, so it "
+                    "would exhaust into the cluster. A jet's force points back across its "
+                    "cluster's centre",
+                )
+
+
 def check_provenance_derivations(
     root: Path, documents: dict[str, Any], schedule: list[str], report: Report
 ) -> None:
@@ -19343,6 +19490,7 @@ def main(argv: list[str] | None = None) -> int:
     # beside the other whole-document walks because a `same_as` may point from any file to any other.
     check_same_as(documents, report)
     check_rcs_command_on_scope(documents, report)
+    check_rcs_geometry(documents, report)
     # And the claims that a figure is not to be had, which are the folder's most productive defect
     # and the only kind of declaration that can be false without naming anything.
     check_unavailability_claims(documents, report)

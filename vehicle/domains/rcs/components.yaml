@@ -205,6 +205,130 @@ capability:
         side rather than on this domain's unsourced 290 s
 
 # --------------------------------------------------------------------------------------
+# Geometry. Where each jet is and which way it pushes, for the SM and LM systems; the CM's
+# is still owed. The research record is `docs/evidence/wp03-rcs-geometry.md`; this block is
+# the canonical home of every value it lands, and `check_rcs_geometry` holds it together.
+# --------------------------------------------------------------------------------------
+geometry:
+
+  # The SM's sixteen jets, as the CSM digital autopilot selects them. Positions are the
+  # GSOP simulator's averaged model (all four jets of a quad act at one centreline
+  # intersection); each figure it uses is corroborated by a flight-hardware document, which
+  # is what lets a verification-simulator number stand here (see the evidence record, G-1).
+  rcs_sm:
+    frame: APOLLO_XA
+    quad_station_xa_in: 958.97
+    quad_radius_in: 82.68
+    quad_offset_deg: -7.25
+    cant_deg: 10.0
+    provenance:
+      basis: historical
+      source: >-
+        GSOP R-577 Section 6 (Control Data) Rev. 1, Dec 1968, COLOSSUS 1/1A, s. 6.4.1.3 "RCS
+        Quad Location and Jet Orientation": RCRX 958.97 in, RCRAD 82.68 in ("average distance
+        from X axis to RCS jet centerline intersection"), OFFSET 7.25 deg "by a negative rotation
+        about the +X axis", CANT 10.0 deg, exhaust "directed away from the spacecraft surface":
+        https://www.ibiblio.org/apollo/NARA-SW/R-577-sec6-rev1.pdf
+        Corroborated by SNA-8-D-027(III) Rev 2, Figure 2-10 (printed p. 2-11) "XA = 958.97
+        SM/RCS QUAD" and Figure 2-5 (printed p. 2-6), radii 82.36 in (8) and 83.00 in (*), whose
+        mean is 82.68; and AOH SM2A-03-BLOCK II-(1) s. 2.5, printed p. 2.5-1, "offset from the
+        S/C Y and Z axis by 7 degrees 15 minutes" and "canted approximately 10 degrees away from
+        the panel structure"
+      note: >-
+        Block II CSM. Figure 2-5's two radii, its 3.125 in "pitch and yaw thrust line
+        intersection" and 6.750 in dimensions are graphical: which jets each applies to is not
+        in the text layer, so the per-jet offsets from the averaged point stay owed (G-5)
+    # Control axes are the APOLLO_XA axes rotated by `quad_offset_deg` about +X: quad B on
+    # +Y_c, C on +Z_c, D on -Y_c, A on -Z_c. `axis` is the jet's nominal thrust direction in
+    # control axes before the cant; the cant tilts it by `cant_deg` towards the X axis (the
+    # exhaust leans outward, so the thrust leans inward). `torque` and `translation` are the
+    # DAP tables' own entries, so the linter can re-derive each from r x F and refuse a jet
+    # whose geometry would fire the wrong way.
+    jets:
+      - {id: 1,  quad: C, axis: "+X", torque: "+pitch", translation: "+X"}
+      - {id: 2,  quad: A, axis: "+X", torque: "-pitch", translation: "+X"}
+      - {id: 3,  quad: A, axis: "-X", torque: "+pitch", translation: "-X"}
+      - {id: 4,  quad: C, axis: "-X", torque: "-pitch", translation: "-X"}
+      - {id: 5,  quad: D, axis: "+X", torque: "+yaw",   translation: "+X"}
+      - {id: 6,  quad: B, axis: "+X", torque: "-yaw",   translation: "+X"}
+      - {id: 7,  quad: B, axis: "-X", torque: "+yaw",   translation: "-X"}
+      - {id: 8,  quad: D, axis: "-X", torque: "-yaw",   translation: "-X"}
+      - {id: 9,  quad: B, axis: "+Z", torque: "+roll",  translation: "+Z"}
+      - {id: 10, quad: D, axis: "+Z", torque: "-roll",  translation: "+Z"}
+      - {id: 11, quad: D, axis: "-Z", torque: "+roll",  translation: "-Z"}
+      - {id: 12, quad: B, axis: "-Z", torque: "-roll",  translation: "-Z"}
+      - {id: 13, quad: A, axis: "+Y", torque: "+roll",  translation: "+Y"}
+      - {id: 14, quad: C, axis: "+Y", torque: "-roll",  translation: "+Y"}
+      - {id: 15, quad: C, axis: "-Y", torque: "+roll",  translation: "-Y"}
+      - {id: 16, quad: A, axis: "-Y", torque: "-roll",  translation: "-Y"}
+    jets_provenance:
+      basis: derived
+      source: >-
+        GSOP R-577 Section 3 (Digital Autopilots) Rev. 3, Dec 1968, COLOSSUS 1/1A, Tables
+        3.2-III to 3.2-X, printed pp. 3.2-33 to 3.2-35 (jet selection for pitch, yaw, roll AC,
+        roll BD and X, Y, Z translation, each with quad-fail rows), and p. 3.2-28 / footnote p.
+        3.2-1 ("Quads A and C are aligned with the yaw-control (Z) axis", "Quads B and D ... the
+        pitch-control (Y) axis", control axes rotated -7.25 deg from the navigation base axes):
+        https://ibiblio.org/apollo/NARA-SW/R-577-sec3-rev3.pdf
+      relation: >-
+        quad membership from the quad-fail rows (a jet still selected with quad A failed is not
+        on A); force sign from the translation tables; which end of each axis a quad sits on
+        from the torque sign, by tau = r x F with right-handed pitch, yaw and roll about the
+        control Y, Z and X axes. The result (A on -Z_c, B on +Y_c, C on +Z_c, D on -Y_c) is the
+        one assignment under which all eight tables agree
+      note: >-
+        flight software, not a simulator: the DAP that flew from Apollo 8. The pitch and yaw
+        jets are the AOH's "pitch and yaw engines" and 9-16 its roll engines (AOH p. 2.5-1, two
+        roll engines per quad). Jet numbers are the DAP's; the AOH's quad-letter engine names
+        (A1 to D4) map to them through AOH Figure 2.3-14, which is graphical and owed (G-5)
+
+  # The LM's sixteen jets, from the LUMINARY simulator's control data, whose three printed
+  # dimensions the Operational Data Book's flight-hardware figure states independently.
+  rcs_lm:
+    frame: LM_XE
+    unit: "m, N"
+    thrust_n: 444.82
+    jets:
+      - {id: 1,  name: IV-U,  position_m: [6.57352,  1.67894,  1.67894], force_axis: "-X"}
+      - {id: 2,  name: IV-D,  position_m: [6.31698,  1.67894,  1.67894], force_axis: "+X"}
+      - {id: 3,  name: IV-F,  position_m: [6.4516,   1.5621,   1.68529], force_axis: "-Z"}
+      - {id: 4,  name: IV-S,  position_m: [6.4516,   1.68529,  1.5621],  force_axis: "-Y"}
+      - {id: 5,  name: III-U, position_m: [6.57352,  1.67894, -1.67894], force_axis: "-X"}
+      - {id: 6,  name: III-D, position_m: [6.31698,  1.67894, -1.67894], force_axis: "+X"}
+      - {id: 7,  name: III-F, position_m: [6.4516,   1.5621,  -1.68529], force_axis: "+Z"}
+      - {id: 8,  name: III-S, position_m: [6.4516,   1.68529, -1.5621],  force_axis: "-Y"}
+      - {id: 9,  name: II-U,  position_m: [6.57352, -1.67894, -1.67894], force_axis: "-X"}
+      - {id: 10, name: II-D,  position_m: [6.31698, -1.67894, -1.67894], force_axis: "+X"}
+      - {id: 11, name: II-F,  position_m: [6.4516,  -1.5621,  -1.68529], force_axis: "+Z"}
+      - {id: 12, name: II-S,  position_m: [6.4516,  -1.68529, -1.5621],  force_axis: "+Y"}
+      - {id: 13, name: I-U,   position_m: [6.57352, -1.67894,  1.67894], force_axis: "-X"}
+      - {id: 14, name: I-D,   position_m: [6.31698, -1.67894,  1.67894], force_axis: "+X"}
+      - {id: 15, name: I-F,   position_m: [6.4516,  -1.5621,   1.68529], force_axis: "-Z"}
+      - {id: 16, name: I-S,   position_m: [6.4516,  -1.68529,  1.5621],  force_axis: "+Y"}
+    odb_check_in:
+      cluster_plane_xe: 254.0
+      up_down_arm: 66.1
+      fore_side_arm: 61.5
+    provenance:
+      basis: historical
+      source: >-
+        GSOP R-567 Section 6 (Control Data), Nov 1968, LUMINARY, LM-6 digital simulator,
+        s. 6.4.1 (origin "254 inches (6.4516 meters) below the RCS reference plane"), s. 6.4.1.4
+        jet positions, s. 6.4.5.2 force vectors (printed pp. 6-22, 6-23, "444,82" N each):
+        https://ibiblio.org/apollo/NARA-SW/R-567-sec6.pdf
+        Corroborated by SNA-8-D-027(III) Rev 2, Figure 2-12 (printed p. 2-13), "RCS PITCH AND
+        ROLL JETS ZE AND YE = +/-66.1" and "RCS YAW JETS ZE AND YE = +/-61.5" (effective
+        geometric moment arms), and Figure 2-13 (printed p. 2-14), "XE = 254.0"
+      note: >-
+        `odb_check_in` holds the flight-hardware figure's three dimensions, which
+        `check_rcs_geometry` requires the simulator positions to reproduce to their printed
+        precision. **Jet 4's force axis is derived, not read**: its printed entry is "+444,82" on
+        Y, which would exhaust into its own cluster and leave the side jets no torque-free -Y
+        pair; the mirror of jet 8 and the outward-exhaust rule both give -Y, and the scan
+        reading that would confirm it is owed (G-4). The tildes on jets 1 and 13 are read as
+        minus, as jets 5 and 9 print it
+
+# --------------------------------------------------------------------------------------
 # State. Twelve, of which only two advance a coupling node — the rest are the service.
 # --------------------------------------------------------------------------------------
 # The order these states advance in. **Nothing on the sentinel advances today** — no edge
@@ -668,10 +792,10 @@ components:
 # What is still owed, in the domain's own words rather than the linter's.
 # --------------------------------------------------------------------------------------
 open_debts:
-  - "**A string is not a thruster.** `thruster_valve` is keyed by `thruster_id` and `set_rcs_quad` names a `group` — `sm_primary`, `sm_secondary`, `cm`, `lm` — so the key declaration says which argument selects the elements and the argument cannot name them. `rcs_string_sm_primary` and its siblings carry a `thrusters: 8` count and a `vehicle_keys` link; what none of them declares is *membership*, which is the same list the allocator needs for its wrench matrix. `isolate_rcs_manifold` is the other half: `branch` names a feed branch, and which thrusters a branch feeds is owed with the thruster geometry."
+  - "**A string is not a thruster.** `thruster_valve` is keyed by `thruster_id` and `set_rcs_quad` names a `group` — `sm_primary`, `sm_secondary`, `cm`, `lm` — so the key declaration says which argument selects the elements and the argument cannot name them. `rcs_string_sm_primary` and its siblings carry a `thrusters: 8` count and a `vehicle_keys` link; what none of them declares is *membership*, which is the same list the allocator needs for its wrench matrix. `isolate_rcs_manifold` is the other half: `branch` names a feed branch, and which thrusters a branch feeds is owed with the thruster geometry. **Quad membership is now declared** (`geometry.rcs_sm.jets[].quad`, four jets on each of A-D) and it does not fit the two eight-jet SM strings: the SM flew four independent quads (TN D-7151 p. 3, \"four independent assemblies, each of which was composed of a four-engine cluster\"), so the strings are a model decision for the RCS lane, not a transcription."
 
   - "The per-thruster minimum command-ON floor is owed until each thruster has SM, CM or LM membership and the controller path is named. Group enable/inhibit has a chosen zero policy dwell in both directions so inhibit and deliberate re-enable remain available; it is not an injector-pulse qualification. LM pulse-mode 10 ms and SM automatic-controller earliest OFF 12 ms are separately sourced under `capability.minimum_command_on_s`; CM hardware command timing remains unpublished in the sources reached. None is a delivered impulse bit or a universal qualification. The maximum ON time and duty cycle remain owed."
   - "Thrust rise and tailoff time constants. The asymmetry between them is what a total-impulse gauge misreads, and no source gives either."
   - "Inertia tensor and centre of mass, owed by `vehicle.yaml` and owed *to* this domain before the deadband, the allocator's wrench matrix and E-RCS-DYN can exist. Three of this domain's twelve states are waiting on it. **The docked stack's tensor landed in round 9** (`vehicle.yaml#mass_properties`) and four configurations' are still owed there by name; what this domain still cannot build is the wrench matrix, which needs the thrusters' own lever arms rather than the vehicle's tensor."
-  - "Thruster geometry: the unit thrust direction and lever arm of each of the 44 thrusters. Without it the allocator has no B matrix (rcs_dode.md:685-693)."
+  - "Thruster geometry, CM half and refinements. **The SM and LM tables have landed** (`geometry`, WP03 G-1 to G-4: SM jets 1-16 on quads A-D at their averaged centreline intersection with the 10 deg cant, LM jets 1-16 at the simulator positions the ODB corroborates), so the allocator can build `B = [F_i d_i ; r_i x F_i d_i]` (rcs_dode.md:685-693) for both. Still owed: the CM's twelve directions and four sign-ambiguous positions (G-6); the SM's per-jet offsets from the averaged point and the A1-D4 engine-name map, both graphical in ODB Figure 2-5 and AOH Figure 2.3-14 (G-5); and a scan reading of LM jet 4's sign (G-4)."
   - "The mission's RCS propellant allocation. `rcs.total_impulse_ns` can be checked against the load (capability.impulse_capacity) but the mission declares no RCS budget, so the three systems still carry the linter's 'no mission burn' note while their loads are flown by attitude control, which no budget line can price."
