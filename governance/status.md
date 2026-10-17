@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 13:48 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 13:52 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -26,13 +26,13 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 |---|---|---|---|---|
 | 0 | Unpin vehicle test figures | [#45](https://github.com/tachyon-beep/space_chassis/pull/45) | ready for review | its `required` check; merges first |
 | 6 | ECLSS states | [#46](https://github.com/tachyon-beep/space_chassis/pull/46) | draft (engine helper: two-argument interlock condition) | #45 |
-| 9 | Fault injection into the step loop | [#47](https://github.com/tachyon-beep/space_chassis/pull/47) | draft (also ruled-discrete seeding for structure and comms) | #45, #46 |
-| 1 | Burn down power subsystem | [#43](https://github.com/tachyon-beep/space_chassis/pull/43) | draft; per-cell fuel cells and PWR-02 pushed; standby pump *off* | #45; John's a, b, c; #47 before the PWR-02 `fault:` row |
-| — | Source RCS thruster geometry | [#44](https://github.com/tachyon-beep/space_chassis/pull/44) | draft; SM and LM jets sourced; CM jets, SM offsets, minimum impulse bit owed | #45; John's CM-jet answer; primary sources (now reachable, D32) |
-| 5 | Comms remainder | [#48](https://github.com/tachyon-beep/space_chassis/pull/48) | draft; occultation from the orbit; `carrier_lock` waits on #47's seeding | #45, #47; John's Earth-link delay |
-| 2 | Finish thermal | [#49](https://github.com/tachyon-beep/space_chassis/pull/49) | draft; bays and pump speed advance; re-deriving MET-0 at 1,401 W; `heater_bank_duty` held | #45; the numeric-argument engine change (lane 9); John's two cards |
+| 9 | Fault injection into the step loop | [#47](https://github.com/tachyon-beep/space_chassis/pull/47) | draft; carries six engine fixes for other lanes, including ruled-discrete seeding | #45, #46 |
+| 1 | Burn down power subsystem | [#43](https://github.com/tachyon-beep/space_chassis/pull/43) | draft; per-cell fuel cells and PWR-02 pushed; standby pump *off* | #45; #47 before the PWR-02 `fault:` row |
+| — | Source RCS thruster geometry | [#44](https://github.com/tachyon-beep/space_chassis/pull/44) | draft; SM and LM jets sourced; CM jets, SM offsets, minimum impulse bit owed | #45; primary sources (now reachable, D32) |
+| 5 | Comms remainder | [#48](https://github.com/tachyon-beep/space_chassis/pull/48) | draft; occultation from the orbit; `carrier_lock` waits on #47's seeding | #45, #47 |
+| 2 | Finish thermal | [#49](https://github.com/tachyon-beep/space_chassis/pull/49) | draft; bays and pump speed advance; re-deriving MET-0 at 1,401 W; `heater_bank_duty` held | #45; the numeric-argument engine change (lane 9) |
 | 3 | Propulsion and propellant | [#50](https://github.com/tachyon-beep/space_chassis/pull/50) | draft | #45; primary sources (now reachable, D32) |
-| 4 | Structure states | [#51](https://github.com/tachyon-beep/space_chassis/pull/51) | draft; `arm_state` waits on #47's seeding; configuration states move to device firing after #47 | #45, #47; John's `hatch_state` initial card |
+| 4 | Structure states | [#51](https://github.com/tachyon-beep/space_chassis/pull/51) | draft; `arm_state` waits on #47's seeding; configuration states move to device firing after #47 | #45, #47 |
 | 7 | GNC + RCS | — | not started | the geometry lane (#44); John's pointing-modes answer |
 | 8 | Crew | — | not started | John: design item D-06 |
 | 10 | Avionics FDIR | — | not started | last; needs lane 9's faults |
@@ -53,37 +53,40 @@ which thermal cherry-picks onto power's branch. Power has applied *off* on #43 (
 
 ## Waiting on John
 
-One word each. Lanes carry on with the recommended option where they can.
-
-| item | options (recommended first) | asked in |
+| item | options | asked in |
 |---|---|---|
-| power a: bus tie (lane building *apollo*) | apollo / keep | Burn down power subsystem, 12:57 |
-| power b: shed ladder (lane building *crew*) | crew / auto | same |
-| power c: source converter (lane building *retire*) | retire / keep | same |
-| RCS: the CM jet | keep / split / owe | Source RCS thruster geometry, 13:18 |
-| comms: Earth-link delay at the window | geometric / constant / none | Comms remainder, 13:31 (card) |
-| thermal: pump speed | fraction / rpm / unset (lane building *fraction*) | Finish thermal, 13:19 (card) |
-| thermal: bay thermal masses | chosen / hold / out (lane building *chosen*) | same |
 | the arc report's eleven decisions, including attitude as pointing modes (lane 7) and D-06 (lane 8) | in the report | Whole-vehicle arc assessment |
-| structure: `hatch_state` initial | on the card | Structure states (card) |
-| ECLSS: `o2_supply_pressure_psi` | relay recommended; on the card | ECLSS states (card) |
 | D22 pilot credentials for the 10-minute smoke | — | Vehicle to smoke-ready |
 | archive `space_vehicle` (D21) | a repository setting; safe since PR #35 | `records/2026-10-15-space-vehicle-archive-check.md` |
 
-Answered today: power d, standby pump, read as *off* from D29 (13:35); allowed domains, any domain
-read-only (D32, 13:46). Values owed for blocked hosts (RCS CM jets and offsets, propulsion's
-regulator and throttle law, comms link budget, ECLSS cryo tanks, structure's hatch and tunnel) can
-now be sourced; the "Primary source research for the lanes" thread fetches them for older lanes.
+## Answered for John, his to override
+
+Answered by John today: power d / standby pump *off* (D29, 13:35); any domain, read-only (D32, 13:46).
+
+Answered by the coordinator under D33 at 13:50 (D35), each the lane's recommended option:
+
+| item | answer | lane |
+|---|---|---|
+| power a: bus tie | *apollo* (battery-to-main-bus tie, fuel cell 2 cross-feed, no A–B tie) | #43 |
+| power b: shed ladder | *crew* (cautions only; the crew sheds) | #43 |
+| power c: source converter | *retire* (with PWR-01) | #43 |
+| RCS: the CM jet | *owe* (thrust and Isp owed until the CSM data book is read) | #44 |
+| comms: Earth-link delay | computed per tick from the orbit; 1.3 s constant retired; the window-side consumer raised separately | #48 |
+| thermal: pump speed | *fraction* of rated | #49 |
+| thermal: bay thermal masses | *chosen* C and G in a heat balance | #49 |
+| structure: `hatch_state` initial | *Latched* | #51 |
+| ECLSS: `o2_supply_pressure_psi` | from sources; *Relay* if unsettled | #46 |
+| propulsion: in-burn monitors | leave `start_burn`'s admission list, become mainstage-gated monitors; pressurant from sources, 186 psia design value if primaries disagree | #50 |
 
 ## Fidelity ledger
 
-Design for more fidelity, not less, except where it creates project risk (D31). One line per lane:
+"Preference more fidelity where it doesn't start creating significant delivery risk" (D34, D31). One line per lane:
 the fidelity it builds to, and any approximation it deliberately keeps. Filled from what lanes report
 to the coordinator; *not reported* means the lane has not said yet.
 
 | lane | builds to | approximations kept |
 |---|---|---|
-| power (#43) | Apollo EPS as flown: each fuel cell a module (AOH 2.6); building the recommended a, b, c: battery-to-main-bus tie plus fuel cell 2 cross-feed, no automatic shed ladder (cautions only, the crew sheds), source converter retired | for lack of a text source: fuel-cell terminal a linear secant of the AOH envelope, not the polarization curve (graphical only, A14DB), extrapolated below 400 W per module; no feeder or motor-switch drop (0–1 V, WP02 E-2); no AC buses or inverters, so the glycol pumps (AC, likely tens of watts) are 250 W DC loads; load draws mostly `chosen`, constant-power, no inrush; battery derate, temperature and internal resistance unsourced (AOH 0.234 Ω and JEPS 0.364 Ω disagree; JEPS taken for J-mission effectivity unless John says otherwise); charger output current graphical only |
+| power (#43) | Apollo EPS as flown: each fuel cell a module (AOH 2.6); a, b, c as answered (D35): battery-to-main-bus tie plus fuel cell 2 cross-feed, no automatic shed ladder (cautions only, the crew sheds), source converter retired | for lack of a text source: fuel-cell terminal a linear secant of the AOH envelope, not the polarization curve (graphical only, A14DB), extrapolated below 400 W per module; no feeder or motor-switch drop (0–1 V, WP02 E-2); no AC buses or inverters, so the glycol pumps (AC, likely tens of watts) are 250 W DC loads; load draws mostly `chosen`, constant-power, no inrush; battery derate, temperature and internal resistance unsourced (AOH 0.234 Ω and JEPS 0.364 Ω disagree; JEPS taken for J-mission effectivity unless John says otherwise); charger output current graphical only |
 | thermal (#49) | the loop as heat balances; bays `C dT/dt = Q − G(T − T_coolant)` | bay C and G are `chosen`, bounded by limits (ADR 0003 item 11); pump speed as a fraction of rated (no rated rpm found) |
 | comms (#48) | blackout as exact sphere geometry per tick from the propagated orbit, Moon at real distance; link budget designed in full; light time `range/c`, 0.02–1.32 s, for the window to apply | ground end is Earth's centre, not MSFN stations (no station coordinates; stations would change `link_ok` in the episode, so only as a deliberate change); no link-budget constant sourced (TN D-6723 and the USB tables are behind blocked `ntrs.nasa.gov`); `carrier_lock` a discrete with a numeric acquisition timer once #47 is on `main` |
 | propulsion (#50) | thrust a first-order lag to rated; chamber pressure proportional to thrust | DPS thrust and chamber pressure left as gaps (throttle-to-thrust law unsourced, `main_propulsion_diode.md:36` refuses it); feed pressure held at 100 % of nominal with no regulator or line loss; regulator lock-up, bottle blowdown and helium displacement wait on reachable sources; no start transient (none published) |

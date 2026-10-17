@@ -124,3 +124,8 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 13:46 John opens the cloud environment to any domain, read-only (D32). A "Primary source research
   for the lanes" thread fetches documents for lanes started earlier, into `sources/<lane>.md` in the
   project's shared folder.
+- 13:48 John delegates obvious scope answers to the coordinator (D33) and gives the canonical
+  fidelity wording (D34).
+- 13:50 The coordinator answers ten lane questions under D33 (D35); only the arc report's eleven,
+  the D22 credentials and the `space_vehicle` archive still wait on John. #47 carries six engine
+  fixes for other lanes.

@@ -64,7 +64,9 @@ Only these, because they spend money, change a setting only he can change, or ac
 - a change to the vehicle's objective (eleven domains, 192 hours, 50 Hz) or its evidence standard.
 
 Everything else a stream may decide, recording it in its `decisions.md` as *coordinator* or
-*governance*, open to his revision.
+*governance*, open to his revision. A blocked lane's scope question with an obvious answer is the
+coordinator's to answer and list to John (`decisions.md` D33); only a question without one waits on
+him.
 
 ## Where work runs
 
@@ -92,7 +94,8 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   (#51) and possibly propulsion (#50): each lane adds its own dated, verb-named section and rebases
   over the others, never editing another lane's section.
 - **The quiet-coast episode must stay green; its numbers may move** (D29).
-- **Fidelity**: design for more fidelity, not less, except where it creates project risk (D31). Each
+- **Fidelity**: "preference more fidelity where it doesn't start creating significant delivery
+  risk" (John, D34; D31). Each
   lane tells the coordinator the fidelity it builds to and any approximation it keeps; the
   coordinator evens the lanes out, and the governance thread writes the ledger in `status.md`.
 - **Sources**: any domain may be read (D32). Lanes started before 13:46 on 2026-10-17 get primary
