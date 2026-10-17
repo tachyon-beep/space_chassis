@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:20 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 14:21 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -25,7 +25,7 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | # | lane | PR | state | waits on |
 |---|---|---|---|---|
 | 0 | Unpin vehicle test figures | [#45](https://github.com/tachyon-beep/space_chassis/pull/45) | ready for review | its `required` check; merges first |
-| 6 | ECLSS states | [#46](https://github.com/tachyon-beep/space_chassis/pull/46) | draft (engine helper: two-argument interlock condition); 21 of 25 ready; CO2 and humidity wait on crew | #45 |
+| 6 | ECLSS states | [#46](https://github.com/tachyon-beep/space_chassis/pull/46) | draft (engine helper: two-argument interlock condition); 21 of 25 ready; `fleet_class` on all 21 faults (12 onboard, 9 precursor), 261 debts on its branch; CO2 and humidity wait on crew | #45 |
 | 9 | Fault injection into the step loop | [#47](https://github.com/tachyon-beep/space_chassis/pull/47) | draft; carries the engine work for other lanes (list below); per-tick hashes differ from `main` (nothing pins them) | #45, #46 |
 | 1 | Burn down power subsystem | [#43](https://github.com/tachyon-beep/space_chassis/pull/43) | draft at `a9c27d5`; per-cell fuel cells, PWR-02, battery tie; standby pump *off* | #45; #47 before the PWR-02 `fault:` row |
 | — | Source RCS thruster geometry | [#44](https://github.com/tachyon-beep/space_chassis/pull/44) | draft; SM and LM jets sourced; CM jets, SM offsets, minimum impulse bit owed | #45; primary sources (now reachable, D32) |
@@ -53,7 +53,9 @@ Cross-lane follow-ups: power's shed ladder is cautions only (E-BUS-SHED and its 
 regime rows dropped from E-BUS-GNC, E-BUS-COMM, E-BUS-RCS and E-BUS-INST; comms and GNC told). The
 ascent circuit interrupters wait for the LM power slice; structure holds a placeholder
 `lm_ascent_interrupter`. ECLSS routes each cryo tank's 166.7 W heater and fan to power as a periodic
-load (a confounder); the CRYO PRESS caution follows #46. Crew (#54) adds `csm_crew_count` and
+load (a confounder): power cannot read `o2_tank_heaters` on node `internal` (`plant.md` §2 sentinel
+rule), so ECLSS moves it onto a coupling node with the node-to-fuel-cell edge on #46, and power then
+adds two 166.7 W gated loads (tank 1 on main A, tank 2 on main B, `chosen` pending a source); the CRYO PRESS caution follows #46. Crew (#54) adds `csm_crew_count` and
 `lm_crew_count`, taking the README census from 152 to 156, so lanes adding states rewrite it from the
 tools on rebase (sprint rule 4). `fleet_class` vocabulary is published (14:15; the project's shared folder,
 `vehicle-status/fault-injection-lane/fleet-class-vocabulary.md`): `precursor | onboard |
