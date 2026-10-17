@@ -46,7 +46,7 @@ writes: [structure_config]
 # advanced by the effect path (the commanded ones) and by `domains/structure/rules.py` (the rest),
 # and the order is declared so the frozen lexicographic tiebreak is not what decides. See
 # `internal_order_note`.
-internal_order: [relief_valve_state, hatch_state, latch_drive, docking_latch_state, latches_engaged, arm_age_s, arm_state, cabin_dp_psi, structural_leak_g_s]
+internal_order: [relief_valve_state, hatch_state, latch_drive, docking_latch_state, latches_engaged, docking_talkback, arm_age_s, arm_state, cabin_dp_psi, structural_leak_g_s]
 internal_order_note: >-
   the mechanisms before the quantities they explain: a valve, a hatch and a latch each change
   what the cabin's differential pressure and leak are, and each latch follows the drive that
@@ -510,6 +510,48 @@ state:
         p. 87), not the docking-system talkbacks, which read a subset of latch switches and can
         disagree with the hooks either way (Apollo 17, latch 9); the talkback is a separate signal
         and is owed with its switch-to-latch wiring
+  - id: docking_talkback
+    node: internal
+    method: discrete
+    unit: "map[talkback_id,enum[gray,barber_pole]]"
+    # **The panel's view of the ring, which is not the ring.** The two probe EXTD/RETR talkbacks on
+    # panel 2 read gray, "docking latches activated", only when every latch switch in their system has
+    # opened; six of the twelve latches carry a switch and six carry none. So a gray pair says that
+    # latches 1, 3, 5, 7, 9 and 11 have triggered and nothing about the other six, nor about whether
+    # any hook is drawn down — which is why the crew inspects the ring through the tunnel, and why
+    # the count the guards read is `latches_engaged` and not this.
+    moved_by:
+      - "logic:a system reads gray when every switched latch it carries has been actuated, and barber pole otherwise"
+    switches:
+      system_a: [latch_01, latch_05, latch_09]
+      system_b: [latch_03, latch_07, latch_11]
+    switches_provenance:
+      basis: historical
+      source: >-
+        NASA TN D-6854, *Apollo Experience Report — The Docking System*, Fig. A-7(b) "Probe electrical schematic", PDF p. 35, printed p. 27: the upper switch box, labelled 1, 5 and 9, is drawn with "Docking probe MNA 10A PNL 8
+        CB76", probe retract relays A-1/A-2 and talkback "Probe EXTD/RETR A"; the lower, labelled 3,
+        7 and 11, with MNB CB77, relays B-1/B-2 and talkback B. Note (3): "Switches open when
+        automatic docking latches are actuated (docking rings approximately 0.1 inch apart)"; note
+        (6): the RETRACT talkback reads "GRAY … Docking latches activated" (read from rendered pages
+        and recorded in /mnt/project-files/sources/structure.md, 2026-10-17)
+      note: >-
+        the three switches of a system are drawn in parallel, so the circuit stays closed — barber
+        pole — while any one of them is: that is the drawing's reading and not a sentence in it, and
+        it is the reading Apollo 17's mission report bears out ("the no. 9 docking latch switch did
+        not open as evidenced by a barberpole indication", printed p. 7-1; system A, latch 9). The
+        latch numbers are this model's `latch_01` … `latch_12` read as the sources' 1 … 12. A switch
+        that sticks is the fault path's to model, after the fault-injection lane's engine change
+    provenance:
+      basis: historical
+      source: >-
+        NASA TN D-6854, *Apollo Experience Report — The Docking System*, Fig. A-7(b) "Probe electrical schematic", PDF p. 35, printed p. 27; and the CSM Apollo Operations Handbook, SM2A-03-BLOCK II-(1), §2.9.4.10, printed
+        p. 2.9-36: retraction is armed only while "the latch indicating switches in the docking ring
+        latches are closed (system A and/or B as required)"
+      note: >-
+        a signal and a confounder at once: a stuck switch shows barber pole over an engaged latch,
+        and an unswitched latch that fails never shows on the panel at all (Apollo 16's latch 10 was
+        found by eye). What follows from either is a crew decision — inspect, re-cock, or leave the
+        latch and plan around it
   - id: latch_drive
     node: internal
     method: discrete

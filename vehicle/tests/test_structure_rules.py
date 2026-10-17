@@ -277,3 +277,21 @@ def test_the_seal_count_is_one_figure_in_two_places(world):
     spec = state(world, "latches_engaged").spec
     assert spec["seal_threshold"] == state(world, "structural_leak_g_s").spec["seal_min_engaged"] == 3
     assert spec["burn_threshold"] == 9
+
+
+def test_the_talkbacks_read_the_switched_latches_only(world, tmp_path):
+    """Both systems gray on the hard-docked ring; both barber pole once the crew cock the ring for
+    undocking, because the switches close again; gray once it is re-engaged."""
+    script = [
+        (1, "set_docking_latch", {"interface": "docking_interface", "latch": "all", "state": "release"}),
+        (5, "set_docking_latch", {"interface": "docking_interface", "latch": "all", "state": "engage"}),
+    ]
+    trace = run(world, tmp_path, script, 9, ["docking_talkback"])
+    gray = {"system_a": "gray", "system_b": "gray"}
+    assert trace[0]["docking_talkback"] == gray
+    assert trace[3]["docking_talkback"] == {"system_a": "barber_pole", "system_b": "barber_pole"}
+    assert trace[-1]["docking_talkback"] == gray
+    switched = state(world, "docking_talkback").spec["switches"]
+    assert sorted(switched["system_a"] + switched["system_b"]) == [
+        f"latch_{n:02d}" for n in (1, 3, 5, 7, 9, 11)
+    ]
