@@ -384,6 +384,64 @@ def test_a_numeric_argument_is_carried_as_its_number_and_refused_outside_its_ran
             )
 
 
+THROTTLE = "      throttle_pct: {type: number, minimum: 10.5, maximum: 92.5}\n"
+THROTTLE_BAND = (
+    "      throttle_pct:\n"
+    "        type: number\n"
+    "        minimum: 10.5\n"
+    "        maximum: 92.5\n"
+    "        refused_bands:\n"
+    "          - {at_or_above: 65, below: 92.5, note: the descent engine is not run here}\n"
+)
+
+
+def test_a_refused_band_is_a_hole_in_a_numeric_argument_s_range(tmp_path):
+    """The propulsion lane's ask: `set_throttle` refuses 65 % up to, not including, 92.5 %.
+
+    92.5 % is the descent engine's full-throttle position, so the band's upper edge is open, and
+    the band names its edges rather than leaving a reader to know a convention. The verb's own
+    `minimum` and `maximum` are held too: they were declared and nothing read them.
+    """
+    declared = {
+        "type": "number",
+        "minimum": 10.5,
+        "maximum": 92.5,
+        "refused_bands": [{"at_or_above": 65, "below": 92.5, "note": "the descent engine is not run here"}],
+    }
+    for good in ("10.5", "64.9", "92.5"):
+        assert plant.numeric_argument("set_throttle", "throttle_pct", good, declared) == float(good)
+    for bad, why in (
+        ("65", r"inside its refused band \[65, 92\.5\) \(the descent engine is not run here\)"),
+        ("92.4", "inside its refused band"),
+        ("5", r"outside its declared range \[10\.5, 92\.5\]"),
+        ("93", "outside its declared range"),
+    ):
+        with pytest.raises(plant.EffectRefused, match=why):
+            plant.numeric_argument("set_throttle", "throttle_pct", bad, declared)
+    # A one-sided bound bounds one side.
+    with pytest.raises(plant.EffectRefused, match=r"\[0, inf\]"):
+        plant.numeric_argument("set_floor", "floor", "-1", {"type": "number", "minimum": 0})
+
+    copy = faulted_copy(tmp_path / "declared")
+    replace(copy / "domains" / "propulsion" / "commands.yaml", THROTTLE, THROTTLE_BAND)
+    out = run_linter(copy).stdout
+    assert "COMPOSES" in out and "refused_bands" not in out, out[-3000:]
+    broken = faulted_copy(tmp_path / "broken")
+    replace(
+        broken / "domains" / "propulsion" / "commands.yaml",
+        THROTTLE,
+        THROTTLE_BAND.replace("below: 92.5, ", "below: 95, ").replace("at_or_above: 65, ", ""),
+    )
+    replace(
+        broken / "domains" / "thermal" / "commands.yaml",
+        '      duty: {type: integer, range: [0, 100], unit: "%"}\n',
+        '      duty: {type: integer, range: [0, 100], unit: "%", refused_bands: [{above: 90, at_or_below: 110}]}\n',
+    )
+    out = run_linter(broken).stdout
+    assert "a band names exactly one lower edge" in out, out[-3000:]
+    assert "is (90, 110], which reaches past 'duty'" in out, out[-3000:]
+
+
 def test_a_command_value_with_when_moves_only_the_state_its_call_names(tmp_path):
     """The propulsion lane's bug, beside the fault path: `arm_engine engine=sps` armed all three."""
     copy = faulted_copy(tmp_path / "vehicle")

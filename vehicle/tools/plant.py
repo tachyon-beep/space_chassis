@@ -79,11 +79,14 @@ from check_vehicle import (  # noqa: E402  (a sibling tool, not a package)
     INTEGRATOR_METHODS,
     PREFIX_DOMAIN,
     Report,
+    band_holds,
+    band_text,
     command_only_movers,
     derivation_value,
     derive_schedule,
     effect_owned_movers,
     lag_driver_basis,
+    numeric_bounds,
     stock_flux_basis,
 )
 
@@ -4398,12 +4401,20 @@ def numeric_argument(verb: str, argument: str, raw: Any, declared: dict[str, Any
         ) from None
     if isinstance(value, float) and not math.isfinite(value):
         raise EffectRefused(f"plant.py:verb {verb}: {argument}={raw!r} is not finite")
-    low, high = (declared.get("range") or [None, None])[:2]
-    if low is not None and high is not None and not low <= value <= high:
+    low, high = numeric_bounds(declared)
+    if (low is not None and value < low) or (high is not None and value > high):
         raise EffectRefused(
             f"plant.py:verb {verb}: {argument}={raw!r} is outside its declared range "
-            f"[{low}, {high}], so it is refused rather than clamped"
+            f"[{'-inf' if low is None else low}, {'inf' if high is None else high}], so it is "
+            "refused rather than clamped"
         )
+    for band in declared.get("refused_bands") or []:
+        if band_holds(band, value):
+            reason = f" ({band['note']})" if band.get("note") else ""
+            raise EffectRefused(
+                f"plant.py:verb {verb}: {argument}={raw!r} is inside its refused band "
+                f"{band_text(band)}{reason}"
+            )
     return value
 
 
