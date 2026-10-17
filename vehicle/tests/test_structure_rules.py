@@ -249,6 +249,63 @@ def test_an_open_tunnel_hatch_is_sealed_by_the_ring_and_unsealed_without_it(worl
     assert "hatch_tunnel_csm" in owed and "unseated ring seal" in owed
 
 
+def leak(world, hatches, csm_psi, lm_psi, engaged=12, separation="docked"):
+    """The leak rule on a hand-built snapshot: four hatch positions, two cabins and the ring."""
+    spec = state(world, "structural_leak_g_s").spec
+    per_psi = spec["pascals_per_psi"]
+    latches = sorted(LATCHES)
+    inputs = {
+        "hatch_state": hatches,
+        "docking_latch_state": {
+            latch: ("engaged" if n < engaged else "released") for n, latch in enumerate(latches)
+        },
+        "lm_separation_state": separation,
+        "csm_cabin_pressure_pa": csm_psi * per_psi,
+        "lm_cabin_pressure_pa": lm_psi * per_psi,
+    }
+    params = plant.RuleParams(spec, "structural_leak_g_s")
+    value = world.rules["structural_leak_g_s"].function(inputs, params, 0.02)
+    return value, params.why_none
+
+
+def test_both_tunnel_hatches_open_join_the_cabins_and_a_vented_lm_s_open_hatch_vents_the_csm(world):
+    """The CSM pressurised, the LM dumped and its forward hatch open: with both tunnel hatches open on
+    a sealed ring the CSM's gas reaches that hatch, so the leak is the hatch's owed vent rate and not
+    zero. Shut either tunnel hatch and the two cabins are apart again: the LM's empty cabin is behind
+    its open hatch and nothing is lost."""
+    joined = {"hatch_crew_csm": "latched", "hatch_crew_lm": "open",
+              "hatch_tunnel_csm": "open", "hatch_tunnel_lm": "open"}
+    value, owed = leak(world, joined, 5.0, 0.0)
+    assert value is None
+    assert "hatch_crew_lm" in owed and "joined through the open tunnel" in owed
+    apart = dict(joined, hatch_tunnel_lm="latched")
+    assert leak(world, apart, 5.0, 0.0) == (0.0, None)
+
+
+def tunnel_vent(world, separation, engaged, csm_psi=5.0, lm_psi=4.8):
+    spec = state(world, "tunnel_vent_dp_psi").spec
+    per_psi = spec["pascals_per_psi"]
+    inputs = {
+        "lm_separation_state": separation,
+        "latches_engaged": engaged,
+        "csm_cabin_pressure_pa": csm_psi * per_psi,
+        "lm_cabin_pressure_pa": lm_psi * per_psi,
+    }
+    params = plant.RuleParams(spec, "tunnel_vent_dp_psi")
+    return world.rules["tunnel_vent_dp_psi"].function(inputs, params, 0.02)
+
+
+def test_the_tunnel_hatch_guard_reads_zero_on_a_sealed_ring_and_the_cabin_once_the_tunnel_is_open(world):
+    """Docked on a sealed ring the tunnel is a closed volume, so the guard is quiet and crew transfer
+    is not refused here. Undocked, or with the ring cocked, the tunnel is space and the reading is the
+    higher cabin's pressure."""
+    assert tunnel_vent(world, "docked", 12) == 0.0
+    assert tunnel_vent(world, "docked", 3) == 0.0
+    assert tunnel_vent(world, "docked", 2) == pytest.approx(5.0)
+    assert tunnel_vent(world, "undocked", 12) == pytest.approx(5.0)
+    assert tunnel_vent(world, "undocked", 0, csm_psi=0.0, lm_psi=4.8) == pytest.approx(4.8)
+
+
 def test_after_undocking_an_open_tunnel_hatch_faces_space(world, tmp_path):
     script = [(1, "execute_event", {"event": "lm_undocking", "arm_token": "x"}),
               hatch(4, "lm", "hatch_tunnel_lm", "open")]
@@ -273,9 +330,10 @@ def test_the_engaged_count_is_a_reading_the_docking_latches_point_can_give(world
     assert plant.point_reading(world, "structure.docking_latches", after) == 12
 
 
-def test_the_seal_count_is_one_figure_in_two_places(world):
+def test_the_seal_count_is_one_figure_in_three_places(world):
     spec = state(world, "latches_engaged").spec
     assert spec["seal_threshold"] == state(world, "structural_leak_g_s").spec["seal_min_engaged"] == 3
+    assert state(world, "tunnel_vent_dp_psi").spec["seal_min_engaged"] == 3
     assert spec["burn_threshold"] == 9
 
 
@@ -343,13 +401,12 @@ def test_each_hatch_s_guard_applies_only_to_opening_that_hatch(world):
     for hatch, guard in (
         ("hatch_crew_csm", "hatch_csm_open_with_pressure"),
         ("hatch_crew_lm", "hatch_lm_open_with_pressure"),
+        ("hatch_tunnel_csm", "hatch_tunnel_open_to_space_with_pressure"),
+        ("hatch_tunnel_lm", "hatch_tunnel_open_to_space_with_pressure"),
     ):
         assert plant.guarding_interlocks(spec, {"hatch": hatch, "state": "open"}) == [guard]
         for safe in ("closed", "latched"):
             assert plant.guarding_interlocks(spec, {"hatch": hatch, "state": safe}) == []
-    # The tunnel hatches face the tunnel, whose pressure the vehicle does not carry yet: unguarded.
-    for hatch in ("hatch_tunnel_csm", "hatch_tunnel_lm"):
-        assert plant.guarding_interlocks(spec, {"hatch": hatch, "state": "open"}) == []
 
 
 def test_engaging_the_ring_is_never_guarded_and_releasing_it_is(world):
@@ -361,32 +418,48 @@ def test_engaging_the_ring_is_never_guarded_and_releasing_it_is(world):
     }
 
 
-def test_both_hatch_guards_read(world):
+def test_every_hatch_guard_reads(world):
     for name, point in (
         ("hatch_csm_open_with_pressure", "structure.cabin_dp_psi"),
         ("hatch_lm_open_with_pressure", "eclss.lm_cabin_pressure_psia"),
+        ("hatch_tunnel_open_to_space_with_pressure", "structure.tunnel_vent_dp_psi"),
     ):
         interlock, problem = plant.resolve_interlock(world, name)
         assert interlock is not None, problem
         assert interlock.point == point and interlock.assert_value == 0.5
 
 
+# The tunnel hatches' reading is a rule's, so it has no value until the first tick has run; the case
+# gives it the reading of a tunnel open to space with a pressurised cabin behind it.
+OPEN_TO_SPACE = {"tunnel_vent_dp_psi": 5.0}
+
+
 @pytest.mark.parametrize(
-    ("guard", "opening", "safing"),
+    ("guard", "opening", "safing", "reading"),
     [
         (
             "hatch_csm_open_with_pressure",
             "set_hatch_valve vehicle=csm hatch=hatch_crew_csm state=open",
             "set_hatch_valve vehicle=csm hatch=hatch_crew_csm state=latched",
+            {},
         ),
         (
             "hatch_lm_open_with_pressure",
             "set_hatch_valve vehicle=lm hatch=hatch_crew_lm state=open",
             "set_hatch_valve vehicle=lm hatch=hatch_crew_lm state=latched",
+            {},
+        ),
+        (
+            "hatch_tunnel_open_to_space_with_pressure",
+            "set_hatch_valve vehicle=csm hatch=hatch_tunnel_csm state=open",
+            "set_hatch_valve vehicle=csm hatch=hatch_tunnel_csm state=latched",
+            OPEN_TO_SPACE,
         ),
     ],
 )
-def test_a_hatch_will_not_open_against_its_cabin_and_always_latches(world, tmp_path, guard, opening, safing):
+def test_a_hatch_will_not_open_against_its_cabin_and_always_latches(
+    world, tmp_path, guard, opening, safing, reading
+):
     import console  # noqa: PLC0415
     from test_interlocks import run as command
     from test_interlocks import trip
@@ -394,6 +467,8 @@ def test_a_hatch_will_not_open_against_its_cabin_and_always_latches(world, tmp_p
     built = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
     built.attach("alpha")
     try:
+        built.truth = {**built.truth, **reading,
+                       "internal": {**(built.truth.get("internal") or {}), **reading}}
         trip(world, built, {}, guard)
         refused = command(built, tmp_path, opening)
         trip(world, built, {}, guard)

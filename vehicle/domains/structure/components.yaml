@@ -46,7 +46,7 @@ writes: [structure_config]
 # advanced by the effect path (the commanded ones) and by `domains/structure/rules.py` (the rest),
 # and the order is declared so the frozen lexicographic tiebreak is not what decides. See
 # `internal_order_note`.
-internal_order: [relief_valve_state, hatch_state, latch_drive, docking_latch_state, latches_engaged, docking_talkback, arm_age_s, arm_state, cabin_dp_psi, structural_leak_g_s]
+internal_order: [relief_valve_state, hatch_state, latch_drive, docking_latch_state, latches_engaged, docking_talkback, arm_age_s, arm_state, cabin_dp_psi, structural_leak_g_s, tunnel_vent_dp_psi]
 internal_order_note: >-
   the mechanisms before the quantities they explain: a valve, a hatch and a latch each change
   what the cabin's differential pressure and leak are, and each latch follows the drive that
@@ -712,6 +712,34 @@ state:
         different faults with different fixes, and the sum cannot tell them apart. Computed by
         `domains/structure/rules.py` as the excess over the nominal cabin leak; see the comment
         above for why the nominal share is not this state's to carry.
+  - id: tunnel_vent_dp_psi
+    node: internal
+    method: algebraic
+    unit: psi
+    # **An interim guard's reading, until the tunnel is a pressure.** Docked on a sealed ring the
+    # tunnel is a closed volume and a tunnel hatch opens against the tunnel's own pressure, which this
+    # vehicle does not yet carry (`vehicle-status/structure-lane/tunnel-pressure-design.md`). Undocked,
+    # or with the ring cocked, the tunnel is open to space and a tunnel hatch opens against the whole
+    # cabin behind it. This state is zero in the first case and the higher of the two cabins' pressure
+    # in the second, so `hatch_tunnel_open_to_space_with_pressure` refuses the second and leaves the
+    # crew transfer through a docked tunnel to the tunnel-pressure work. The higher cabin rather than
+    # each hatch's own because one scalar is what a guard reads; the cost is a refusal to open a tunnel
+    # hatch on a vented cabin while the other vehicle's cabin is pressurised, which is the safe
+    # direction and a case no Apollo procedure flies.
+    seal_min_engaged: 3
+    seal_min_engaged_provenance:
+      basis: derived
+      relation: "structural_leak_g_s.seal_min_engaged: the same three latches that seal the ring for the leak rule close the tunnel for this one"
+      source: domains/structure/components.yaml:structural_leak_g_s.seal_min_engaged
+    pascals_per_psi: 6894.757293168361
+    provenance:
+      basis: chosen
+      reason: >-
+        an interim stand-in for the tunnel's own pressure (the tunnel-pressure design's
+        `tunnel_pressure_psia`), so that a command to open a tunnel hatch onto space is refused
+        rather than admitted. It is replaced when the tunnel's gas is a stock and its guard reads the
+        cabin-to-tunnel differential, which covers this case because a tunnel open to space is a
+        tunnel at vacuum
 
 # --------------------------------------------------------------------------------------
 # Components. Passive hardware is an observable object with no command interface
@@ -939,7 +967,7 @@ one_way_events:
 open_debts:
   - "**One event still names no devices.** `pyro_fired.fires_pyro_fire` is unset: `pyro_fire` cannot name a device because `execute_event` has no device argument, so it is a gap on the tick the event is executed and nowhere else. Undocking was the other until the News Reference's p. 88 settled it as no pyro at all (`fires_lm_undocking: []`)."
   - "The hatch seal leak rates and the vent rate through an open hatch or an unseated ring seal are unpublished and declared unset above (the research of 2026-10-17 searched for both and found neither; /mnt/project-files/sources/structure.md, 'Not found'). Without them an unsealed hatch or ring with pressure behind it is a gap in `structural_leak_g_s` rather than a vent rate. The tunnel volume is no longer among them (`tunnel.volume_m3`, ODB Vol. I)."
-  - "**The tunnel's own pressure is not a state.** A tunnel hatch is opened after the crew equalises the tunnel through the hatch's valve (News Reference p. 87), so the differential across a tunnel hatch is cabin minus tunnel, and the vehicle carries the tunnel's volume and not its pressure. The figures to build it are held — the volume, and the ODB Vol. I curves for the hatch's equalization valve and the CM's LM-tunnel vent valve (Figs 4.2-17, 4.2-19 and 4.2-19.1) — and what is owed is the state, the valve's verb and the cabin edge, which is ECLSS's. Until then, `set_hatch_valve` guards the two crew hatches against pressure and not the tunnel hatches, and an open tunnel hatch on a sealed ring is treated as joining the tunnel to its cabin with no loss."
+  - "**The tunnel's own pressure is not a state.** A tunnel hatch is opened after the crew equalises the tunnel through the hatch's valve (News Reference p. 87), so the differential across a tunnel hatch is cabin minus tunnel, and the vehicle carries the tunnel's volume and not its pressure. The figures to build it are held — the volume, and the ODB Vol. I curves for the hatch's equalization valve and the CM's LM-tunnel vent valve (Figs 4.2-17, 4.2-19 and 4.2-19.1) — and what is owed is the state, the valve's verb and the cabin edge, which is ECLSS's. Until then, `set_hatch_valve` guards a tunnel hatch only while the tunnel is open to space (`tunnel_vent_dp_psi`, an interim reading the tunnel's pressure replaces), so opening one into a docked tunnel at any pressure is admitted; an open tunnel hatch on a sealed ring is treated as joining the tunnel to its cabin with no loss, and with both open the two cabins as one volume."
   - "**Working a single latch is owed.** `set_docking_latch` takes `latch: one`, and nothing says whether a crew in the tunnel can re-cock a failed ring latch or with what chance; the `one` drive is recorded and acts on nothing until the fault path can fail a latch, and what it does then is this debt."
   - "The pressure vessel's proof and burst pressures are unset, and deliberately: apollo_diode.md:753 puts finite-element structural mechanics out of scope, so a vessel failure model is not wanted — but the *differential limit* that a relief valve protects is, and it is owed."
   - "Micrometeoroid and debris damage is not modelled. It is the one structural hazard that is genuinely stochastic on a lunar mission, and it belongs in the scenario layer rather than in the domain."

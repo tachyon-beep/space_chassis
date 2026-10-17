@@ -2596,9 +2596,9 @@ def test_the_linter_refuses_a_cadence_class_that_disagrees_with_the_registry(tmp
     definition = copy_definition(tmp_path / "vehicle")
     path = definition / "presentation.yaml"
     text = path.read_text()
-    anchor = "members: 86,"
+    anchor = "members: 87,"
     assert anchor in text, "the fixture no longer matches presentation.yaml"
-    path.write_text(text.replace(anchor, "members: 85,", 1))
+    path.write_text(text.replace(anchor, "members: 86,", 1))
 
     result = run_linter(definition)
     assert result.returncode == 1
@@ -2968,8 +2968,8 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     path.write_text(without_block(path.read_text(), "coverage"))
     result = run_linter(definition)
     assert result.returncode == 0, result.stdout[-900:]
-    assert "declares 149 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
-    assert "derived here as 20 unperturbed, 15 of them `service`" in result.stdout
+    assert "declares 150 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
+    assert "derived here as 21 unperturbed, 15 of them `service`" in result.stdout
     # One block deleted is one debt added, so the ablation is the corpus's own count plus one.
     assert f"COMPOSES, with {corpus_debts() + 1} declared debt(s)." in result.stdout
 
@@ -20213,8 +20213,10 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
     # 27 -> 28 with ECLSS's `suit_fan`; 28 -> 32 with the structure lane: `latches_engaged` and
     # `docking_talkback`, both computed from the latch positions on the sentinel, and the arm
-    # token's `arm_state` and `arm_age_s`, seeded since ruled discrete states are.
-    assert len(values["internal"]) == 32, sorted(values["internal"])
+    # token's `arm_state` and `arm_age_s`, seeded since ruled discrete states are. 32 -> 37 on #47's
+    # tick, which now carries the sentinel's ruled states into the sub-map: the four latch and leak
+    # readings and the interim tunnel-hatch reading, `tunnel_vent_dp_psi`.
+    assert len(values["internal"]) == 37, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
@@ -20298,7 +20300,7 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
     # And the debt states both figures, because a number in prose with no reader is the next round's
     # finding — this is that reader.
     entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
-    assert "143 published points" in entry and "71 are *derived*" in entry
+    assert "144 published points" in entry and "71 are *derived*" in entry
 
 
 def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
@@ -20353,9 +20355,10 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     # 64/71 -> 63/72 with the comms quiet-coast model (7b22cd7), which moved the docstring too.
     # 63/72 -> 65/71 with the structure lane: `structure.docking_latches` reads `latches_engaged`, a
     # count in its own unit, and `structure.docking_talkbacks` is a new channel that is its state.
-    assert counts["same"] == 65, counts
+    # 65 -> 66 with `structure.tunnel_vent_dp_psi`, the interim tunnel-hatch reading, also its state.
+    assert counts["same"] == 66, counts
     assert counts["derived"] == 71, counts
-    assert counts["total"] == 136, counts
+    assert counts["total"] == 137, counts
     assert not [r for r in report.refusals if "channels read from a state" in r], report.refusals
     doc = _cv.CHANNEL_DERIVATION_FIGURES.search(_cv.inspect.getdoc(_cv.check_channel_derivations) or "")
     assert doc is not None, "the docstring no longer states the figures this check computes"
@@ -20397,12 +20400,12 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     total_fixture = copy_definition(fixture_dir(tmp_path, "total-count"))
     path = total_fixture / "presentation.yaml"
     text = path.read_text()
-    assert "of the 136 channels read from a state" in text
-    path.write_text(text.replace("of the 136 channels read from a state", "of the 135 channels read from a state", 1))
+    assert "of the 137 channels read from a state" in text
+    path.write_text(text.replace("of the 137 channels read from a state", "of the 136 channels read from a state", 1))
     result = run_linter(total_fixture)
     assert result.returncode == 1, result.stdout[-900:]
     assert (
-        "states that 135 channels read from a state, and the registry now has 136" in result.stdout
+        "states that 136 channels read from a state, and the registry now has 137" in result.stdout
     ), result.stdout[-900:]
 
     # And the corpus's own sentence carries all the figures, which is what makes it a declaration.
@@ -20411,9 +20414,10 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     # 63 -> 64 in round 32: `eclss.o2_supply_pressure_psi` moved from the node-sourced set to the
     # state-sourced one, where its unit is its source's. 134 -> 135 in round 61, when the total was
     # given a reader and the sentence it was read from turned out to be the stale copy. 63/135 ->
-    # 65/136 with the structure lane's latch count and talkback channels.
-    assert "only 65 have the state's own unit" in entry
-    assert "of the 136 channels read from a state" in entry
+    # 65/136 with the structure lane's latch count and talkback channels, 66/137 with its interim
+    # tunnel-hatch reading.
+    assert "only 66 have the state's own unit" in entry
+    assert "of the 137 channels read from a state" in entry
     assert "The other 71 are *derived*" in entry
     assert "15 of the 71 now carry an evaluable `derivation`" in entry
 

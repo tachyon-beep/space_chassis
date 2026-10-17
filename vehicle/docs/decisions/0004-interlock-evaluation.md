@@ -261,9 +261,16 @@ losing gas through it, and a command to one hatch does not touch the other compa
 hatch's guard is what makes the cabin dump come before an EVA. `set_vent_valve` keeps
 `hatch_open_with_pressure` unconditional and unreadable, as declared above.
 
-The two tunnel hatches (`hatch_tunnel_csm`, `hatch_tunnel_lm`) are not guarded. The differential
-across a tunnel hatch is cabin minus tunnel, and the vehicle does not yet carry the tunnel's
-pressure (`domains/structure/components.yaml#open_debts`).
+The two tunnel hatches (`hatch_tunnel_csm`, `hatch_tunnel_lm`) are guarded only while the tunnel is
+open to space. The differential across a tunnel hatch is cabin minus tunnel, and the vehicle does
+not yet carry the tunnel's pressure (`domains/structure/components.yaml#open_debts`). What it can
+tell is when the tunnel is vacuum: undocked, or docked with fewer ring latches engaged than seal
+it. `hatch_tunnel_open_to_space_with_pressure` refuses opening either tunnel hatch then with more
+than 0.5 psid in the cabins, reading `structure.tunnel_vent_dp_psi`, an interim channel that is the
+higher cabin's pressure in that case and zero on a sealed docked tunnel. So crew transfer through a
+docked tunnel is admitted here, and the tunnel pressure state replaces this reading with the
+cabin-to-tunnel differential. Being a rule's value, the reading has none before the first tick, so
+on tick 0 the guard is unevaluated and opening a tunnel hatch is refused.
 
 `set_docking_latch` guards only `release`. Engaging re-seats the interface, which is the remedy for
 a latch disagreement and for a leaking tunnel alike. Releasing is still refused UNEVALUATED, and
@@ -273,7 +280,9 @@ procedure needs is the tunnel's pressure against the cabin (the LM/CM ΔP meter 
 arrives with the tunnel pressure state, not before.
 
 Acceptance: `tests/test_structure_rules.py` asserts that each crew-hatch guard applies only to
-opening its own hatch and that the tunnel hatches are unguarded; that both guards are readable;
+opening its own hatch, and the tunnel hatches' guard only to opening a tunnel hatch; that the three
+guards are readable; that the tunnel reading is zero on a sealed docked ring and the cabin's
+pressure undocked or with the ring cocked;
 that, through the executive, a hatch whose guard is tripped is refused `open` by name and is
 admitted `latched`; and that `set_docking_latch engage` names no guard while `release` names the
 two unreadable ones.

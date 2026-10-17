@@ -78,7 +78,10 @@ def structural_leak_g_s(inputs, params, dt):
 
     A crew hatch faces space. A tunnel hatch faces the tunnel, which is itself open to space only
     when the vehicles are not docked or the ring holds fewer latches than seal it; on a sealed ring
-    an open tunnel hatch joins the tunnel to its cabin and loses nothing."""
+    an open tunnel hatch joins the tunnel to its cabin and loses nothing. With both tunnel hatches
+    open on a sealed ring the two cabins are one volume, so the pressure behind either crew hatch is
+    the higher of the two: a pressurised CSM vents through an open LM forward hatch however empty
+    the LM cabin reads."""
     floor = params["pressure_floor_psid"]
     per_psi = params["pascals_per_psi"]
     hatches = inputs["hatch_state"]
@@ -86,18 +89,23 @@ def structural_leak_g_s(inputs, params, dt):
     engaged = sum(1 for position in inputs["docking_latch_state"].values() if position == "engaged")
     docked = inputs["lm_separation_state"] == "docked"
     tunnel_sealed = docked and engaged >= params["seal_min_engaged"]
+    pressure = {cabin: inputs[cabin] for cabin in set(params["hatch_cabin"].values())}
+    joined = tunnel_sealed and all(hatches.get(hatch) not in (None, "latched") for hatch in tunnel_hatches)
+    if joined:
+        pressure = dict.fromkeys(pressure, max(pressure.values()))
     for hatch, cabin in sorted(params["hatch_cabin"].items()):
         position = hatches.get(hatch)
         if position is None:
             return params.no_value(f"{hatch} has no position; `hatch_state.initial` is owed")
         if position == "latched" or (hatch in tunnel_hatches and tunnel_sealed):
             continue
-        dp = inputs[cabin] / per_psi
+        dp = pressure[cabin] / per_psi
         if dp <= floor:
             continue
         if hatch not in tunnel_hatches:
+            through = ", the two cabins joined through the open tunnel" if joined else ""
             return params.no_value(
-                f"{hatch} is {position} with {dp:.2f} psid behind it; its vent rate is owed "
+                f"{hatch} is {position} with {dp:.2f} psid behind it{through}; its vent rate is owed "
                 f"(`{hatch}.seal_leak_g_s`)"
             )
         if docked:
@@ -113,6 +121,17 @@ def structural_leak_g_s(inputs, params, dt):
     return 0.0
 
 
+def tunnel_vent_dp_psi(inputs, params, dt):
+    """The pressure a tunnel hatch would open against once the tunnel is open to space: the higher
+    cabin's, in psi, while the vehicles are undocked or the ring holds fewer latches than seal it,
+    and zero while the tunnel is a sealed volume. Until the tunnel's own pressure is a state this is
+    the one number that tells a guard a tunnel hatch faces vacuum."""
+    if inputs["lm_separation_state"] == "docked" and inputs["latches_engaged"] >= params["seal_min_engaged"]:
+        return 0.0
+    cabins = (inputs["csm_cabin_pressure_pa"], inputs["lm_cabin_pressure_pa"])
+    return max(cabins) / params["pascals_per_psi"]
+
+
 RULES = {
     "arm_age_s": arm_age_s,
     "arm_state": arm_state,
@@ -121,4 +140,5 @@ RULES = {
     "latches_engaged": latches_engaged,
     "docking_talkback": docking_talkback,
     "structural_leak_g_s": structural_leak_g_s,
+    "tunnel_vent_dp_psi": tunnel_vent_dp_psi,
 }

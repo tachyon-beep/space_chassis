@@ -366,7 +366,10 @@ faults:
 coverage:
   note: >-
     Every structure channel is perturbed by at least one fault above except the two arm/commit
-    service channels, which are the executive's state rather than the structure's.
-  unperturbed: ["structure.arm_state_[event]", "structure.event_count_[event]"]
+    service channels, which are the executive's state rather than the structure's, and the interim
+    tunnel-vent reading, which no fault writes because it is computed from the cabins and the ring
+    that the faults above do move.
+  unperturbed: ["structure.arm_state_[event]", "structure.event_count_[event]", structure.tunnel_vent_dp_psi]
   unperturbed_reason: >-
-    a commanded state: the crew or an agent sets it and no fault writes it
+    a commanded state: the crew or an agent sets it and no fault writes it; and a reading of other
+    states, which a fault moves only through them

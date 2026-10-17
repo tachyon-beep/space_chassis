@@ -165,6 +165,28 @@ thresholds:
         be opened against pressure in any case; what the guard refuses is the command, which is
         the vehicle stating the interlock rather than relying on the hinge
 
+  # The tunnel hatches' guard while the tunnel is open to space. Docked on a sealed ring a tunnel
+  # hatch opens onto the tunnel, whose pressure is the tunnel-pressure work's; this guard covers only
+  # the case where the tunnel is vacuum, which `structure.tunnel_vent_dp_psi` reads as zero otherwise.
+  - id: hatch_tunnel_open_to_space_with_pressure
+    acts: crew
+    point: structure.tunnel_vent_dp_psi
+    comparator: above
+    assert: 0.5
+    clear: 0.5
+    dwell_assert_ms: 0
+    dwell_clear_s: 0
+    latched: false
+    interlock: true
+    severity: EMERGENCY
+    point_units: "psi, the cabin behind a tunnel hatch while the tunnel is open to space"
+    provenance:
+      basis: derived
+      relation: >-
+        `hatch_open_with_pressure`'s 0.5 psid (apollo_diode.md:207, "incompatible with pressure"),
+        read on a tunnel hatch whose far side is space: undocked, or docked with fewer ring latches
+        engaged than seal the tunnel
+
   # --- pyro and relief ----------------------------------------------------------------------
   - id: pyro_continuity_loss
     acts: crew

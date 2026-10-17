@@ -119,7 +119,8 @@ commands:
     # and so was never read, and `cabin_dp_low`, which refused every hatch command once the CSM
     # cabin fell below 3.5 psid — including the open that an EVA, with its cabin dumped to zero,
     # exists to make, and the close that is the remedy for a cabin losing gas through a hatch.
-    interlocks: [hatch_csm_open_with_pressure, hatch_lm_open_with_pressure]
+    interlocks: [hatch_csm_open_with_pressure, hatch_lm_open_with_pressure,
+                 hatch_tunnel_open_to_space_with_pressure]
     interlocks_when:
       - interlocks: [hatch_csm_open_with_pressure]
         argument: [hatch, state]
@@ -134,6 +135,13 @@ commands:
         why: >-
           as the CSM's, on the LM cabin and its forward hatch: an EVA opens it after the cabin is
           dumped, and the guard is what makes the dump come first
+      - interlocks: [hatch_tunnel_open_to_space_with_pressure]
+        argument: [hatch, state]
+        values: [[hatch_tunnel_csm, open], [hatch_tunnel_lm, open]]
+        why: >-
+          opening a tunnel hatch while the tunnel is open to space puts its cabin onto vacuum; the
+          guard reads zero on a sealed docked tunnel, so crew transfer is not refused here, and
+          closing or latching a tunnel hatch is never refused
     conflict_domain: structure.<hatch>
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]

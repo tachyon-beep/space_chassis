@@ -53,6 +53,14 @@ points:
       The elimination is lossy and the channel says so by being an estimate: what an agent gets
       is a total and a structural share, and the residual between them is an unattributed leak —
       which is a real state and one worth being able to notice.
+  - channel: structure.tunnel_vent_dp_psi
+    from: tunnel_vent_dp_psi
+    layer: estimate
+    derivation: "the pressure a tunnel hatch would open against while the tunnel is open to space: the higher cabin's, undocked or on an unsealed ring, and zero on a sealed ring"
+    note: >-
+      Not an Apollo meter. It is the reading the interim tunnel-hatch guard compares, published
+      because an interlock compares a channel, and it is replaced by the LM/CM differential meter
+      when the tunnel's pressure is a state.
   - channel: structure.accel_xyz_g
     from: cabin_dp_psi
     layer: measurement
