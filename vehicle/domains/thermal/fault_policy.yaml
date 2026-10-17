@@ -22,7 +22,7 @@ faults:
     seeding:
       on_demand_p: 1.0e-4
       trigger: "any bus voltage below the contactor hold threshold"
-    perturbs: ["thermal.pump_[n]_speed_rpm", thermal.primary_flow_l_min, thermal.pump_1_current_a,
+    perturbs: ["thermal.pump_[n]_speed", thermal.primary_flow_l_min, thermal.pump_1_current_a,
                thermal.coolant_return_c, thermal.avionics_plate_c, thermal.comm_amp_c]
     detection:
       evidence: >-
@@ -46,7 +46,7 @@ faults:
       hazard: 2.0e-5
       unit: per_h
       condition: "x2 while running above its rated duty"
-    perturbs: ["thermal.pump_[n]_speed_rpm", thermal.primary_flow_l_min, thermal.pump_1_current_a,
+    perturbs: ["thermal.pump_[n]_speed", thermal.primary_flow_l_min, thermal.pump_1_current_a,
                thermal.coolant_return_c, thermal.avionics_plate_c]
     detection:
       evidence: "speed falling with an unchanged command, and current rising with a falling speed — a disagreement between three channels that were previously consistent"
@@ -233,7 +233,7 @@ faults:
       hazard: 2.0e-4
       unit: per_h
     perturbs: [thermal.primary_flow_l_min, thermal.loop_transport_c, thermal.coolant_return_c,
-               "thermal.pump_[n]_speed_rpm"]
+               "thermal.pump_[n]_speed"]
     detection:
       evidence: "flow falling with the pump at speed and current *rising* — the pump is working harder to move less. The current-versus-flow disagreement is the whole diagnosis"
       latency: "tens of minutes"

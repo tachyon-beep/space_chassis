@@ -1,5 +1,5 @@
 """The thermal domain's rules (D5): heat rates over enabled loads, the loop balance, the radiator
-at the loop's temperature, the evaporator, the pump as flow and the two node balances.
+at the loop's temperature, the evaporator, the pump as flow and the four node balances.
 
 Every parameter is read from the state's own declaration in `components.yaml`, where its provenance
 is. Each function is `rule(inputs, params, dt) -> value`. ADR 0003 (items 4, 5, 9-11) is the
@@ -70,6 +70,19 @@ def _coolant_flow(inputs, params, dt):
     target = fraction * float(params["rated_flow_kg_s"])
     current = float(inputs["coolant_flow_kg_s"])
     return target + (current - target) * math.exp(-dt / float(params["tau_s"]))
+
+
+def _pump_speed(inputs, params, dt):
+    """The shaft speed as a fraction of rated, relaxing as the flow does: 1 while the pump is
+    commanded on and powered, 0 otherwise."""
+    pump = params["pump"]
+    fraction = flow_fraction(
+        {pump: inputs[params["pump_state"]][pump]},
+        inputs["load_enabled"],
+        {pump: params["pump_load"]},
+    )
+    current = float(inputs["pump_1_speed_frac"])
+    return fraction + (current - fraction) * math.exp(-dt / float(params["tau_s"]))
 
 
 def flow_share(inputs, params):
@@ -170,7 +183,7 @@ def _coolant_loop(inputs, params, dt):
 
 
 # --------------------------------------------------------------------------------------------
-# The two lumped nodes that sit on the loop.
+# The four lumped nodes that sit on the loops.
 # --------------------------------------------------------------------------------------------
 
 
@@ -184,6 +197,26 @@ def _coldplate(inputs, params, dt):
     conductance = float(params["conductance_w_per_k"]) * max(fraction, 0.0)
     coolant = float(inputs[params["coolant_state"]])
     net = float(inputs[params["heat_state"]]) - conductance * (temperature - coolant)
+    return temperature + dt * net / _node_capacity(params)
+
+
+def _service_bay(inputs, params, dt):
+    """The coldplate's balance with the loop's supply as the sink: the bay's heat is part of the
+    loop's collected load, so the coolant is what carries it away."""
+    temperature = float(inputs["zone_csm_service_t"])
+    conductance = float(params["conductance_w_per_k"]) * flow_share(inputs, params)
+    coolant = float(inputs[params["coolant_state"]])
+    net = float(inputs[params["heat_state"]]) - conductance * (temperature - coolant)
+    return temperature + dt * net / _node_capacity(params)
+
+
+def _descent_bay(inputs, params, dt):
+    """As the service bay, over a loop with no temperature or flow state: its declared supply, and
+    a flow that is the LM pump's commanded state."""
+    temperature = float(inputs["zone_lm_descent_t"])
+    flowing = inputs[params["pump_state"]][params["pump"]] == "on"
+    conductance = float(params["conductance_w_per_k"]) if flowing else 0.0
+    net = float(inputs[params["heat_state"]]) - conductance * (temperature - float(params["supply_k"]))
     return temperature + dt * net / _node_capacity(params)
 
 
@@ -215,10 +248,13 @@ RULES = {
     "cabin_eq_csm_k": _cabin_eq_on_loop,
     "cabin_eq_lm_k": _cabin_eq_on_declared_supply,
     "coolant_flow_kg_s": _coolant_flow,
+    "pump_1_speed_frac": _pump_speed,
     "radiator_eq_t": _radiator_eq,
     "radiator_rejection_w": _radiator_rejection,
     "evaporator_duty_w": _evaporator_duty,
     "coolant_loop_t": _coolant_loop,
     "zone_csm_avionics_t": _coldplate,
+    "zone_csm_service_t": _service_bay,
+    "zone_lm_descent_t": _descent_bay,
     "comm_amp_t": _comm_amp,
 }

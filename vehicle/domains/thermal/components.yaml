@@ -376,34 +376,53 @@ state:
       relation: "200 lb/hr x 0.45359237 / 3600 = 0.0252 kg/s, `vehicle.yaml#thermal.loops.loop_primary.nominal_flow_lb_per_h`; the same figure `coolant_flow_kg_s.initial` derives"
     note: "apollo_diode.md:97: electronics were directly cooled by coldplates, so the coldplate and its boxes are one lump"
   - id: zone_csm_service_t
-    initial: UNCONFIGURED
-    initial_note: >-
-      the CSM service bay's temperature at the model's MET 0 is owed. A CSM thermal analysis
-      with the same configuration and epoch must establish it separately from the effective
-      thermal mass; neither is published by `thermal_diode.md:965`
-    # `G = C/tau` with chosen `tau` makes the edge evaluable when a mass is sourced; the resulting
-    # `G` remains a model consequence until a CSM heat-transfer path is independently checked.
-    method: lag
+    # **A heat balance on the loop, as the coldplate (ADR 0003 items 10-11).** It was a `lag` driven
+    # by `E-BAY-HEAT-CSM` in K per W, which relaxes toward `Q x tau / (m x c_p)` measured from 0 K:
+    # with the tonnes of propellant and structure its old reason named, 630 W put the bay near 1 K,
+    # and only a mass of about 17 kg would have put it inside its own band. The bay's heat is part
+    # of `loop_primary_load_w` (it names `loop_primary` in `cooled_by`), so its sink is the coolant:
+    # `C dT/dt = Q_bay - G * f * (T - T_coolant)`, with `f` the loop's flow as a fraction of the
+    # published 200 lb/hr and `T_coolant` the loop's supply, `coolant_loop_t`. The supply is read as
+    # the schedule leaves it (this tick's or the last), an explicit Euler step like the loop's own.
+    method: dynamics
     node: service_bay_zone_t
-    # A mass would make the chosen `tau` relation arithmetically evaluable. It would not validate
-    # the actual thermal conductance of the bay, which needs a CSM heat-transfer path model.
-    lumped_mass_kg: UNCONFIGURED
-    specific_heat_j_per_kg_k: 900
     unit: K
-    tau_s: 7200
+    initial: 293.15
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        chosen, pending operator, ADR 0003 item 11: the middle of the bay's declared [-20, 60] C
+        limits (`vehicle.yaml#thermal.zones.csm_service_bay.limit_c`), 20 C = 293.15 K, the one
+        point the band alone singles out. No source gives a MET-0 service-bay temperature (T1). It
+        is the rule's own fixed point at MET 0 by construction, because `conductance_w_per_k` is
+        derived from it, and `tests/test_thermal_rules.py` holds it there
+    heat_state: service_bay_heat_w
+    coolant_state: coolant_loop_t
+    flow_state: coolant_flow_kg_s
+    rated_flow_kg_s: 0.025199576111111112
+    lumped_mass_kg: 393.75
+    specific_heat_j_per_kg_k: 900
+    conductance_w_per_k: 49.21875
     provenance:
       basis: chosen
       reason: >-
-        the service bay is unregulated and its mass is dominated by propellant and structure, which
-        is a much larger lump than the cabin; twice the cabin's time constant because the propellant
-        is the mass and the tank wall is the path
+        chosen, pending operator, ADR 0003 item 11. No source reached gives the bay's node capacity
+        or its conductance to the loop (T1). G is the bay's MET-0 heat over its rise above the
+        supply at the chosen start: 630 W / (293.15 - 280.35) K = 49.21875 W/K. C is G times the
+        7,200 s time constant this zone carried as a lag (chosen: twice the cabin's, because the
+        propellant is the mass and the tank wall is the path), 354,375 J/K, which is 393.75 kg at
+        the domain's 900 J/kg-K. The steady rejection equals the collected load whatever C and G
+        are, so the flown coast rejection of 1,170-1,470 W (SP-368 p. 525) cannot move them; what
+        bounds G is the temperature it implies, inside the band
+      bound: "G >= 630 / (333.15 - 280.35) = 11.93 W/K: the steady bay rise Q_bay/G over 7.2 C coolant must hold the bay under its 60 C limit; C/G = 7,200 s; only the transient depends on C"
       note: >-
         the chosen time constant and specific heat do not establish a historical CSM bay mass or
         heat-transfer conductance. The archive index lists TIR 580-S-7159, "Apollo Service Module
         Thermal Model Handbook (Block 2)", dated 5 October 1967. Only the catalog entry was
         examined; the handbook's scan and applicability to the Apollo 11 CSM configuration
         have not been verified. A usable value needs the CSM node
-        capacities, connection conductances and an explicit reduction to this service-bay zone
+        capacities, connection conductances and an explicit reduction to this service-bay zone.
+        Searched again 2026-10-17 (web search for the handbook and its number): nothing new
       source_audit:
         modeled_vehicle: CSM
         candidate_document: TIR 580-S-7159
@@ -411,6 +430,9 @@ state:
         candidate_effectivity: Block 2 CSM; Apollo 11 applicability unverified
         evidence_status: index_only
         missing: CSM node capacities and connection conductances mapped to the service-bay zone
+    rated_flow_provenance:
+      basis: derived
+      relation: "200 lb/hr x 0.45359237 / 3600 = 0.0252 kg/s, `vehicle.yaml#thermal.loops.loop_primary.nominal_flow_lb_per_h`; the same figure `coolant_flow_kg_s.initial` derives"
   - id: zone_lm_cabin_t
     method: lag
     node: lm_cabin_zone_t
@@ -436,39 +458,59 @@ state:
         either figure. The two compartments are the same construction in two spacecraft, which is
         why the second one is a copy of the first and says so
   - id: zone_lm_descent_t
-    initial: UNCONFIGURED
-    initial_note: >-
-      the LM-5 descent stage's temperature at the model's MET 0 is owed separately from its
-      effective thermal mass. The LM-3 temperature history in LM0-510-1070 has a different
-      vehicle and mission epoch and cannot supply this starting value directly
-    # `G = C/tau` with chosen `tau` makes the edge evaluable when a mass is sourced; the resulting
-    # `G` remains a model consequence until an LM-5 heat-transfer path is independently checked.
-    method: lag
+    # **A heat balance on the LM's loop, as the service bay's.** `C dT/dt = Q_bay - G * f *
+    # (T - T_coolant)`. The LM loop has no temperature or flow state (the LM is unpowered cargo in
+    # this episode), so `T_coolant` is the loop's declared supply, as `cabin_eq_lm_k` reads it, and
+    # `f` is 1 while the LM's pump is commanded on (`coolant_pump`) and 0 otherwise. The LM's pump
+    # declares no power load, so there is no switch to read. At MET 0 the pump is off and every LM
+    # load is off, so the stage holds its starting temperature: nothing in this model heats it, and
+    # it has no path to anything colder.
+    method: dynamics
     node: descent_bay_zone_t
-    lumped_mass_kg: UNCONFIGURED
-    specific_heat_j_per_kg_k: 900
     unit: K
-    tau_s: 10800
+    initial: 283.15
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        chosen, pending operator, ADR 0003 item 11: the middle of the bay's declared [-30, 50] C
+        limits (`vehicle.yaml#thermal.zones.lm_descent_bay.limit_c`), 10 C = 283.15 K. The LM-5
+        descent stage's temperature at the model's MET 0 is not published. The LM-3 temperature
+        history in LM0-510-1070 has a different vehicle and mission epoch and cannot supply this
+        starting value directly
+    heat_state: descent_bay_heat_w
+    supply_k: 280.35
+    pump_state: coolant_pump
+    pump: pump_lm
+    lumped_mass_kg: 768
+    specific_heat_j_per_kg_k: 900
+    conductance_w_per_k: 64
     provenance:
       basis: chosen
       reason: >-
-        an exposed, unregulated stage whose mass is mostly propellant and structure with a poor path
-        to the loop; the longest constant in the vehicle, and the one that makes the frozen-line
-        chain slow enough to be diagnosable
+        chosen, pending operator, ADR 0003 item 11. No source reached gives the stage's node
+        capacity or its conductance to the LM loop (T1). G is the stage's declared 180 W over its
+        rise above the 280.35 K supply at the chosen start, 180 / 2.8 = 64.3 W/K, rounded to 64 W/K
+        (the powered equilibrium is then 283.16 K). C is G times the 10,800 s time constant this
+        zone carried as a lag (chosen: an exposed, unregulated stage whose mass is mostly propellant
+        and structure with a poor path to the loop), 691,200 J/K, which is 768 kg at 900 J/kg-K
+      bound: "G >= 180 / (323.15 - 280.35) = 4.21 W/K: the steady rise Q_bay/G over the 7.2 C supply must hold the stage under its 50 C limit; C/G = 10,800 s; only the transient depends on C"
       note: >-
-        `E-BAY-HEAT-LM` would evaluate `tau / (m x 900)` K per W once an effective mass is known,
-        but the chosen tau does not validate a physical conductance. LM0-510-1070 (31 January
+        the chosen time constant does not validate a physical conductance. LM0-510-1070 (31 January
         1969), reference 5, cites LM0-510-1036, "Revised Thermal Nodal Diagrams for LM-3"
         (17 December 1968). That separate document has not been examined. Its title establishes
         LM-3 nodal scope, not the presence of capacity data or applicability to Apollo 11 LM-5.
         A usable LM-5 zone needs capacity and coupling data for its descent stage plus a stated
-        aggregation of those nodes
+        aggregation of those nodes. Searched again 2026-10-17 (web search for an LM descent-stage
+        nodal model): nothing that carries capacities
       source_audit:
         modeled_vehicle: LM-5
         candidate_document: LM0-510-1036
         candidate_effectivity: LM-3 only; LM-5 applicability unverified
         evidence_status: citation_only
         missing: LM-5 descent node capacities and conductances mapped to the descent-bay zone
+    supply_provenance:
+      basis: chosen
+      reason: "`vehicle.yaml#thermal.loops.loop_lm.supply_c`, 7.2 C = 280.35 K, itself `chosen`; the figure `cabin_eq_lm_k.supply_k` copies"
   - id: radiator_eq_t
     node: radiator_eq
     method: algebraic
@@ -644,55 +686,55 @@ state:
         the rule. The pumps are 200 V 3-phase ac machines (AOH SM2A-03 Vol. 1 p. 2.7-24), so the dc
         bus voltage does not set their speed: `E-BUS-PUMP`'s volts-to-flow gain is not read by
         this rule
-  - id: pump_1_speed_rpm
-    initial: UNCONFIGURED
-    initial_note: >-
-      the pump's speed at MET 0, which is the rated speed this state's own `command_value`
-      mapping already owes: `on` is UNCONFIGURED for exactly this figure, and the channel's
-      0-12,000 rpm is a `range_kind: band` rather than a rating. A pump that begins *off* would
-      close the mapping and make the mission's first minutes a spin-up the thermal chain has to
-      survive, which is a decision about the scenario rather than a value. What would close it:
-      a pump curve or a rated rpm for the CSM's coolant pump
-    method: lag
+  - id: pump_1_speed_frac
+    # **The pump's speed as a fraction of its rated speed (ADR 0003 item 4).** It was
+    # `pump_1_speed_rpm`, a lag that owed the rated rpm three times over: its `initial`, its `on`
+    # mapping and `E-CMD-PUMP`'s sensitivity. No source reached gives the rpm or a pump curve
+    # (WP02 T2: TN D-6718 pp. 3, 11; SM2A-03 Vol. 1 pp. 2.7-17 to 2.7-24, whose design-data table
+    # is illegible; the CSM News Reference p. 122), and ADR 0003 item 4 already moved the loop's
+    # flow to a fraction of the published 200 lb/hr. The speed follows the same way: 1 while the
+    # pump is commanded on and its load is powered, 0 otherwise, relaxing with the spin-up constant
+    # `coolant_flow_kg_s` uses. The rated speed is the unit, so no figure is owed. The state stays
+    # separate from the flow because the two together are the diagnosis
+    # (`thermal.pump_[n]_speed`): a restricted loop loads the pump without slowing it, and a
+    # failing pump slows with the flow. In a healthy loop they move together.
+    method: dynamics
     node: coolant_flow
-    unit: rpm
+    unit: normalized
+    initial: 1.0
+    initial_provenance:
+      basis: derived
+      relation: >-
+        pump 1 is commanded on at MET 0 (`coolant_pump.initial`) and its load,
+        `csm_coolant_pump_1`, is on (power's MET-0 positions), so it runs at its rated speed, which
+        is 1 in this state's unit; the same start `coolant_flow_kg_s.initial` takes at the published
+        flow
+    pump_state: coolant_pump
+    pump: pump_1
+    pump_load: csm_coolant_pump_1
     tau_s: 8
-    # `moved_by` on a lag, which the field's check only *requires* of discrete states: this one's
-    # driver is external — a verb — and saying so is what lets `check_command_reach` hold the edge
-    # that carries it. It is optional here and load-bearing where it is written.
     moved_by:
       - "command:set_coolant_pump"
-    # **ADR 0003 item 4: the pump's command moves flow, not this speed.** `set_coolant_pump` writes
-    # `coolant_pump`, which `coolant_flow_kg_s` reads; this state stays declared, and owed, because
-    # the speed and the flow together are the diagnosis (`thermal.pump_[n]_speed_rpm`). Until this
-    # mapping's `on` was owed, the verb was refused outright.
+    # **ADR 0003 item 4: the pump's command moves `coolant_pump`, and this state follows it.**
+    # `set_coolant_pump` writes `coolant_pump`, which this state's rule reads, as
+    # `coolant_flow_kg_s`'s does.
     command_value:
       - verb: set_coolant_pump
         argument: state
-        computed: "the shaft speed follows the pump's commanded state; the rated speed is owed"
+        computed: "the shaft speed follows the pump's commanded state: 1 (rated) while on and powered, 0 while off"
         selects: coolant_pump
         why: >-
-          a commanded-off pump coasts to zero, so `off` is the only value the corpus can supply.
-          `on` relaxes toward the pump's rated speed, which is published nowhere: the channel's own
-          0-12,000 rpm is a `range_kind: band` — an acceptable operating region rather than a rating
-          — and `coupling.yaml`'s `E-CMD-PUMP` owes the same figure
-        note: >-
-          the rated speed is one scalar, and it closes this mapping, that edge and
-          `pump_1_speed_rpm`'s own driver. What it would take is a pump curve or a rated rpm for the
-          CSM's coolant pump, which no source in the corpus reached gives. **Searched in WP02
-          (2026-10-15), and none gives it:** NASA TN D-6718 (March 1972) pp. 3, 11 (a centrifugal
-          pump moving 200 lb/hr; Table II lists a "Pump" power whose OCR column cannot be aligned);
-          SM2A-03 Block II Vol. 1 §2.7 (ibiblio `aoh-v1-2-07-ecs.pdf`), whose pp. 2.7-17/18 give the
-          33/167 lb/hr split and p. 2.7-24 says the larger motors take 200 V 3-phase ac, while its
-          performance-and-design-data table (pp. 2.7-24 to 2.7-34) is illegible in the scan; the CSM
-          News Reference ECS section (ALSJ `CSM14_Environmental_Control_Subsystem_pp117-136.pdf`)
-          p. 122, "three centrifugal-type pumps" in one housing, with no speed. A 400 Hz motor's
-          synchronous speeds are a fact about motors rather than about this pump, so they do not
-          close it. The question for John is whether the pump's state should be a flow fraction of
-          the published 200 lb/hr instead of an rpm (`docs/evidence/wp02-thermal-eclss-consumables.md`)
+          a commanded-off pump coasts to zero and a commanded-on one spins up to its rated speed,
+          which is the unit of this state. The rated rpm is published nowhere reached, which is why
+          the unit is the rating rather than an rpm (ADR 0003 item 4)
     provenance:
       basis: chosen
-      reason: "as coolant_flow_kg_s; the pump has its own speed state because a blocked loop and a slowing pump produce the same flow with different speeds, and that difference is the diagnosis"
+      reason: >-
+        as `coolant_flow_kg_s`: the pump has its own speed state because a blocked loop and a
+        slowing pump produce the same flow with different speeds, and that difference is the
+        diagnosis. `tau_s` is the flow's 8 s spin-up constant, copied for the rule and held equal by
+        `tests/test_thermal_rules.py`. `pump_load` is `components.pump_1.power_load`, copied for
+        the rule
   - id: loop_transport_t
     initial: 280.35
     initial_derivation:

@@ -808,23 +808,24 @@ thermal:
     provenance:
       basis: chosen
       reason: "thermal_diode.md:191-207 makes heater banks the TCS's main actuation and its :765-772 hard-limit table includes 'do not blindly command heating and cooling simultaneously'. Neither is checkable without a commanded-duty channel"
-  - id: "thermal.pump_[n]_speed_rpm"
-    unit: rpm
+  - id: "thermal.pump_[n]_speed"
+    unit: normalized
     layer: measurement
-    precision: 10
+    precision: 0.01
     rate_hz: 2
     priority: P3
-    range: [0, 12000]
+    range: [0, 1]
     # `band` is an acceptable operating region and every alarm fires outside it; `scale` is the
     # quantity's full span, and a reserve alarm inside it is normal. The two are indistinguishable
-    # from the numbers alone, which is why this is declared rather than inferred.
-    range_kind: band
+    # from the numbers alone, which is why this is declared rather than inferred. The span is the
+    # pump's rated speed, so it is a scale: 0 is stopped and 1 is rated.
+    range_kind: scale
     events: ["commanded on and speed zero", "speed falling with constant command"]
     event_class: realised_by
     event_thresholds: [flow_low, pump_no_flow]
     provenance:
       basis: chosen
-      reason: "the pump's spin-up lag is one of the two first-order lags on the flagship cycle, and a flow channel alone cannot distinguish a pump that is slowing from a loop that is blocked"
+      reason: "the pump's spin-up lag is one of the two first-order lags on the flagship cycle, and a flow channel alone cannot distinguish a pump that is slowing from a loop that is blocked. A fraction of rated speed rather than rpm because the rated rpm is published nowhere reached (ADR 0003 item 4; WP02 T2); it was `thermal.pump_[n]_speed_rpm` with a 0-12,000 rpm band until 2026-10-17"
 
 gnc:
 
@@ -2650,7 +2651,7 @@ open_debts:
   - "**`service` covers two things a fault treats differently.** The layer holds both a *decision* (`rcs.mode`, `power.load_shed_class`, `controls.switches`: something the crew or an agent set, which no physical mechanism writes) and a *conclusion* (`avionics.sensor_health_[class]`, `avionics.redundancy_disagreement`, `avionics.computer_mode`: something the vehicle computed, which a fault moves immediately), and the split across the fault line is what shows it: **most of the registry's `service` channels are perturbed and a quarter of them are not.** The counts are `coverage` above rather than here, because they were here and two of the three were wrong. The epistemic mapping is right that both are \"an A with a different subject\" for the contract's purposes, and the contract is not where the difference bites; fault injection is. What would separate them is a field — `origin: commanded | derived` — and until it exists the only way to say a channel is untouchable by any fault is to list it in a `coverage.unperturbed`, which is what all eleven domains now do."
   - "**Half of the LM's atmosphere registry gap is closed; the other half is now a question rather than a list.** `eclss.lm_absorber_capacity_pct` exists as of round 42, because the vehicle turned out to have two absorbers sharing one counter and the LM's was unobservable — the counter split (`coupling.yaml:absorber_capacity_lm`) and the channel followed it. `lm_cabin_regulator_state` still does not exist, and the reason has changed. It is no longer that the registry has no room: it is that the corpus publishes ONE `cabin_regulator_state` (apollo_diode.md:95) with no vehicle qualifier and says nothing about how the LM's pressure control is built — a two-position regulator like the CSM's, a relief valve, or a continuous bleed. ECL-13, ECL-14 and ECL-19 are injectable without it, because their effect on pressure and ppO2 is observable; what is missing is the easy diagnosis, so on the LM a regulator fault has to be inferred from its signature where the CSM reads a mode. Adding the channel now would mean inventing the mechanism; the question that closes it is which of the three the LM's cabin pressure control is."
   - "**`range_kind` is declared and the check it enables is written; what remains is the judgement
-    inside it.** 58 channels carry the field — 43 `band`, 15 `scale` — and the values were
+    inside it.** 58 channels carry the field — 42 `band`, 16 `scale` — and the values were
     assigned by evidence rather than by taste: a range with an alarm strictly inside it cannot be a
     band, so it is a scale. **That rule reads the alarms; a second one reads the values**, and round
     33 found the case that passed the first and failed the second: `prop.dps_throttle_pct` declared

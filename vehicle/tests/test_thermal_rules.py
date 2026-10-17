@@ -41,6 +41,8 @@ LATENT_J_PER_KG = 2.45e6  # E-WATER-RAD's 1 / 2.45e6
 # --------------------------------------------------------------------------------------------
 _VEHICLE_DOC = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
 _LOOP = next(x for x in _VEHICLE_DOC["thermal"]["loops"] if x["id"] == "loop_primary")
+_LM_LOOP = next(x for x in _VEHICLE_DOC["thermal"]["loops"] if x["id"] == "loop_lm")
+_ZONES = {z["id"]: z for z in _VEHICLE_DOC["thermal"]["zones"]}
 _THERMAL = yaml.safe_load((VEHICLE / "domains/thermal/components.yaml").read_text())
 _POWER = yaml.safe_load((VEHICLE / "domains/power/components.yaml").read_text())
 _RAD = _THERMAL["radiator_model"]["csm"]
@@ -183,6 +185,9 @@ RULED = {
     "coolant_loop_t",
     "zone_csm_avionics_t",
     "comm_amp_t",
+    "zone_csm_service_t",
+    "zone_lm_descent_t",
+    "pump_1_speed_frac",
 }
 
 
@@ -245,8 +250,11 @@ def test_the_rules_copies_of_the_loop_and_radiator_constants_agree_with_their_ho
         "radiator_eq_t",
         "evaporator_duty_w",
         "zone_csm_avionics_t",
+        "zone_csm_service_t",
     ):
         assert STATES[name]["rated_flow_kg_s"] == pytest.approx(RATED_FLOW, rel=1e-15)
+    assert STATES["zone_lm_descent_t"]["supply_k"] == pytest.approx(_LM_LOOP["supply_c"] + 273.15)
+    assert STATES["pump_1_speed_frac"]["tau_s"] == STATES["coolant_flow_kg_s"]["tau_s"]
     assert STATES["coolant_loop_t"]["heat_capacity_j_per_k"] == pytest.approx(C_LOOP, rel=1e-12)
     assert STATES["evaporator_duty_w"]["capacity_w"] == EVAPORATOR_W
     assert STATES["evaporator_duty_w"]["outlet_setpoint_k"] == pytest.approx(SUPPLY_K)
@@ -267,13 +275,18 @@ def test_the_rules_copies_of_the_loop_and_radiator_constants_agree_with_their_ho
         c["id"]: c.get("power_load") for c in _THERMAL["components"] if c.get("class") == "pump"
     }
     assert STATES["coolant_flow_kg_s"]["pump_loads"] == {k: pumps[k] for k in ("pump_1", "pump_2")}
+    assert STATES["pump_1_speed_frac"]["pump_load"] == pumps["pump_1"]
 
 
 def test_every_chosen_value_carries_the_adr_0003_item_11_label():
-    for name in ("zone_csm_avionics_t", "comm_amp_t"):
+    for name in ("zone_csm_avionics_t", "comm_amp_t", "zone_csm_service_t", "zone_lm_descent_t"):
         provenance = STATES[name]["provenance"]
         assert provenance["basis"] == "chosen"
         assert "chosen, pending operator, ADR 0003 item 11" in provenance["reason"]
+    for name in ("zone_csm_service_t", "zone_lm_descent_t"):
+        assert "chosen, pending operator, ADR 0003 item 11" in (
+            STATES[name]["initial_provenance"]["reason"]
+        )
 
 
 # --------------------------------------------------------------------------------------------
@@ -464,6 +477,122 @@ def test_pump_off_raises_the_loop_temperature_through_the_real_step_loop(world):
     assert rise == pytest.approx(q * (300 - 8) / C_LOOP, rel=0.02)
     assert values["evaporator_duty_w"] < 1.0
     assert values["zone_csm_avionics_t"] > STATES["zone_csm_avionics_t"]["initial"] + 1.0
+
+
+# --------------------------------------------------------------------------------------------
+# 6b. The pump's speed, as a fraction of its rated speed (ADR 0003 item 4).
+# --------------------------------------------------------------------------------------------
+
+
+def test_pump_1_speed_follows_its_own_pump_and_not_the_loop_s_flow(world):
+    """Stopping pump 1 spins its shaft down with the 8 s constant; starting pump 2 restores the
+    flow and leaves pump 1's speed at zero. That separation is what the speed channel is for."""
+    values = episode_start(world)
+    assert values["pump_1_speed_frac"] == 1.0
+    off = run(
+        world,
+        values,
+        1,
+        {0: [effect("set_coolant_pump", loop="loop_primary", pump="pump_1", state="off")]},
+    )
+    off = run(world, off, 2000)  # 40 s
+    assert off["pump_1_speed_frac"] == pytest.approx(math.exp(-40.02 / 8), rel=1e-6)
+    on = run(
+        world,
+        off,
+        1,
+        {0: [effect("set_coolant_pump", loop="loop_primary", pump="pump_2", state="on")]},
+    )
+    on = run(world, on, 3000)
+    assert on["coolant_flow_kg_s"] == pytest.approx(RATED_FLOW, rel=1e-3)
+    assert on["pump_1_speed_frac"] < 1e-5
+
+
+def test_a_shed_pump_load_stops_the_shaft_with_the_command_still_on(world):
+    values = episode_start(world)
+    values = run(world, values, 1, {0: [effect("set_load", load="csm_coolant_pump_1", state="off")]})
+    values = run(world, values, 400)  # 8 s more, one constant
+    assert values["coolant_pump"]["pump_1"] == "on"
+    assert values["pump_1_speed_frac"] == pytest.approx(math.exp(-8.02 / 8), rel=1e-6)
+
+
+# --------------------------------------------------------------------------------------------
+# 6c. The two bays: heat balances on their loops (ADR 0003 items 10-11).
+# --------------------------------------------------------------------------------------------
+
+
+def _band_middle_k(zone):
+    low, high = _ZONES[zone]["limit_c"]
+    return (low + high) / 2 + 273.15
+
+
+def test_each_bay_starts_in_the_middle_of_its_band_and_its_g_holds_it_under_its_limit():
+    for state, zone, heat_w, supply_k in (
+        ("zone_csm_service_t", "csm_service_bay", met0_service_bay_w(), SUPPLY_K),
+        ("zone_lm_descent_t", "lm_descent_bay", 180.0, _LM_LOOP["supply_c"] + 273.15),
+    ):
+        spec = STATES[state]
+        assert spec["initial"] == pytest.approx(_band_middle_k(zone))
+        # The powered equilibrium, supply + Q/G, sits inside the band and under the upper limit.
+        equilibrium = supply_k + heat_w / spec["conductance_w_per_k"]
+        assert abs(equilibrium - spec["initial"]) < 0.05, state
+        assert equilibrium < _ZONES[zone]["limit_c"][1] + 273.15
+    # C/G is the time constant each zone carried as a lag.
+    for state, tau in (("zone_csm_service_t", 7200), ("zone_lm_descent_t", 10800)):
+        spec = STATES[state]
+        capacity = spec["lumped_mass_kg"] * spec["specific_heat_j_per_kg_k"]
+        assert capacity / spec["conductance_w_per_k"] == pytest.approx(tau)
+
+
+def met0_service_bay_w() -> float:
+    return float(sum(DEMAND[load] for load in _THERMAL["heat_inputs"]["csm_service_bay"]["loads"]))
+
+
+def test_the_service_bay_relaxes_to_its_equilibrium_with_its_own_time_constant(world):
+    """Displaced 10 K, the bay returns as `exp(-t/tau)` with `tau = C/G`, over coolant the loop
+    holds at its supply. Hand solution in closed form; the rule steps it explicitly."""
+    spec = STATES["zone_csm_service_t"]
+    tau = spec["lumped_mass_kg"] * spec["specific_heat_j_per_kg_k"] / spec["conductance_w_per_k"]
+    values = dict(episode_start(world))
+    assert values["zone_csm_service_t"] == pytest.approx(spec["initial"])
+    values["zone_csm_service_t"] = spec["initial"] + 10.0
+    values = run(world, values, 3600, dt=1.0)
+    equilibrium = values["coolant_loop_t"] + met0_service_bay_w() / spec["conductance_w_per_k"]
+    assert values["zone_csm_service_t"] == pytest.approx(
+        equilibrium + 10.0 * math.exp(-3600 / tau), abs=0.05
+    )
+
+
+def test_the_service_bay_warms_while_the_loop_is_stopped(world):
+    values = episode_start(world)
+    start = values["zone_csm_service_t"]
+    pump_off = {0: [effect("set_coolant_pump", loop="loop_primary", pump="pump_1", state="off")]}
+    values = run(world, values, 300, pump_off, dt=1.0)
+    assert values["zone_csm_service_t"] > start + 0.3
+
+
+def test_the_descent_stage_holds_unpowered_and_warms_at_q_over_c_with_its_radar_on(world):
+    """At MET 0 the LM is unpowered and its pump off: nothing heats the stage and nothing cools it.
+    The landing radar on with the pump still off warms it at exactly `Q / C`."""
+    spec = STATES["zone_lm_descent_t"]
+    capacity = spec["lumped_mass_kg"] * spec["specific_heat_j_per_kg_k"]
+    values = episode_start(world)
+    held = run(world, values, 600, dt=1.0)
+    assert held["zone_lm_descent_t"] == spec["initial"]
+    radar = {0: [effect("set_load", load="lm_landing_radar", state="on")]}
+    warmed = run(world, values, 3600, radar, dt=1.0)
+    rise = DEMAND["lm_landing_radar"] * 3600 / capacity
+    assert warmed["zone_lm_descent_t"] - spec["initial"] == pytest.approx(rise, rel=1e-3)
+
+
+def test_the_descent_stage_cools_toward_the_lm_supply_with_the_lm_pump_on(world):
+    spec = STATES["zone_lm_descent_t"]
+    tau = spec["lumped_mass_kg"] * spec["specific_heat_j_per_kg_k"] / spec["conductance_w_per_k"]
+    supply = _LM_LOOP["supply_c"] + 273.15
+    pump_on = {0: [effect("set_coolant_pump", loop="loop_lm", pump="pump_lm", state="on")]}
+    values = run(world, episode_start(world), 7200, pump_on, dt=1.0)
+    expected = supply + (spec["initial"] - supply) * math.exp(-7200 / tau)
+    assert values["zone_lm_descent_t"] == pytest.approx(expected, abs=1e-3)
 
 
 # --------------------------------------------------------------------------------------------
