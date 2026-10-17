@@ -1695,6 +1695,19 @@ def interlock_conditions(spec: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def condition_holds(condition: dict[str, Any], arguments: dict[str, Any]) -> bool:
+    """Whether a command's arguments meet one `interlocks_when` condition. `argument` names one enum
+    argument and `values` the values it applies to; or `argument` lists several and each of `values`
+    is a combination of theirs, in the same order, so a guard whose hazard depends on two arguments
+    together (`set_o2_source`'s `source` and `flow`) names the pairs it applies to."""
+    argument = condition.get("argument")
+    values = condition.get("values") or []
+    if isinstance(argument, list):
+        combination = [str(arguments.get(str(a))) for a in argument]
+        return any(isinstance(v, list) and [str(x) for x in v] == combination for v in values)
+    return str(arguments.get(str(argument))) in [str(v) for v in values]
+
+
 def guarding_interlocks(spec: dict[str, Any], arguments: dict[str, Any]) -> list[str]:
     """The declared interlocks that guard this command, given its arguments (ADR 0004 §Direction).
 
@@ -1706,7 +1719,8 @@ def guarding_interlocks(spec: dict[str, Any], arguments: dict[str, Any]) -> list
     entry with `interlocks` and no `argument` is unconditional: it says, explicitly, that those guards
     have no safing direction this record can name, and they guard every command (the linter refuses a
     list that leaves a guard covered by no entry). An interlock no condition covers — the single-mapping
-    form's absence, or a verb with no `interlocks_when` — guards every command of the verb."""
+    form's absence, or a verb with no `interlocks_when` — guards every command of the verb. A condition
+    may name several arguments, and then its values are their combinations (`condition_holds`)."""
     declared = spec.get("interlocks") if isinstance(spec, dict) else None
     names = [str(i) for i in declared] if isinstance(declared, list) else []
     covered: dict[str, list[dict[str, Any]]] = {}
@@ -1717,11 +1731,7 @@ def guarding_interlocks(spec: dict[str, Any], arguments: dict[str, Any]) -> list
     guarding = []
     for name in names:
         conditions = covered.get(name)
-        if not conditions or any(
-            "argument" not in c
-            or str(arguments.get(str(c.get("argument")))) in [str(v) for v in c.get("values") or []]
-            for c in conditions
-        ):
+        if not conditions or any("argument" not in c or condition_holds(c, arguments) for c in conditions):
             guarding.append(name)
     return guarding
 

@@ -15564,6 +15564,54 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
     )
 
 
+def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
+    """ADR 0004 §Direction, amended 2026-10-17: `set_o2_source`'s hazard is its `source` and its `flow`
+    together. A cabin losing pressure is fed by cutting its oxygen (an isolated source, or a flow of
+    `off`), and the service module's reserve is spent only by a flow drawn from `primary`, so neither
+    guard can name its direction with one argument. A condition may list its arguments and name the
+    combinations it applies to; the linter reads each combination as it reads a single value, and HELP
+    prints them."""
+    o2 = yaml.safe_load((VEHICLE / "domains" / "consumables" / "commands.yaml").read_text())
+    verb = next(v for v in o2["commands"] if v["verb"] == "set_o2_source")
+    caution, reserve = verb["interlocks_when"]
+    assert caution["argument"] == reserve["argument"] == ["source", "flow"]
+    assert ["primary", "nominal"] not in caution["values"] and ["isolated", "high"] in caution["values"]
+    assert reserve["values"] == [["primary", "low"], ["primary", "nominal"], ["primary", "high"]]
+
+    generated = subprocess.run(
+        [sys.executable, str(VEHICLE / "tools" / "generate_help.py"), "--dir", str(VEHICLE)],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    assert "`o2_reserve_10` — only when (`source`, `flow`) is one of (`primary`, `low`)" in generated, generated[-800:]
+
+    block = "        values:\n          - [primary, low]\n          - [primary, nominal]\n          - [primary, high]\n"
+
+    def refusal(name: str, old: str, new: str, needle: str) -> None:
+        definition = copy_definition(fixture_dir(tmp_path, name))
+        path = definition / "domains" / "consumables" / "commands.yaml"
+        text = path.read_text()
+        assert old in text, f"the fixture no longer matches {old!r}"
+        path.write_text(text.replace(old, new, 1))
+        out = run_linter(definition).stdout
+        assert needle in out, out[-1400:]
+
+    refusal("o2-one", block, block.replace("[primary, low]", "[primary]"), "not a list of 2 values")
+    refusal("o2-bad", block, block.replace("[primary, low]", "[primary, max]"), "which those arguments cannot take")
+    refusal("o2-twice", block, block.replace("[primary, nominal]", "[primary, low]"), "name each combination once")
+    every = "        values:\n" + "".join(
+        f"          - [{s}, {f}]\n" for s in ("primary", "surge", "isolated") for f in ('"off"', "low", "nominal", "high")
+    )
+    refusal("o2-every", block, every, "names every combination of ['source', 'flow']")
+    refusal(
+        "o2-argument",
+        "        argument: [source, flow]\n        values:\n          - [primary, low]",
+        "        argument: [source, vehicle_note]\n        values:\n          - [primary, low]",
+        "which is not an enum argument of this verb",
+    )
+
+
 def test_a_command_value_says_which_argument_carries_the_value():
     """The rule proved the verb could say *a* value, and nothing said what each value becomes.
 

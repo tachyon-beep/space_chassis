@@ -4663,6 +4663,77 @@ def check_initial_values(where: str, components: dict[str, Any], report: Report)
 
 
 
+def check_combination_condition(report: Report, where: str, schema: dict, condition: dict) -> None:
+    """An `interlocks_when` condition over several arguments: `argument` lists them and each entry of
+    `values` is one combination of their values, in the same order (ADR 0004 §Direction, amended for
+    `set_o2_source`, whose hazard is the source and the flow together). The same refusals as the one-
+    argument form, read per combination: each argument an enum of the verb, each member one its
+    argument can take, and not every combination there is, which is the guard declared whole."""
+    if not str(condition.get("why") or "").strip():
+        report.refuse(
+            f"{where}.why",
+            "is empty. A conditional guard says the vehicle refuses some combinations of a command's "
+            "arguments and permits the rest, which is a claim about the vehicle",
+        )
+    arguments = [str(a) for a in condition.get("argument") or []]
+    allowed: list[list[str]] = []
+    if len(arguments) < 2 or len(set(arguments)) != len(arguments):
+        report.refuse(
+            f"{where}.argument",
+            f"is {arguments!r}. A list names two or more distinct arguments whose values decide the "
+            "guard together; one argument is the plain form, `argument: <name>`",
+        )
+        return
+    for argument in arguments:
+        spec = schema.get(argument)
+        if not isinstance(spec, dict) or spec.get("type") != "enum":
+            report.refuse(
+                f"{where}.argument",
+                f"names {argument!r}, which is not an enum argument of this verb (it has "
+                f"{sorted(schema)}). A guard that depends on an argument depends on one of its "
+                "values, and a free-form argument has none to name",
+            )
+            return
+        allowed.append([str(v) for v in spec.get("values") or []])
+    values = condition.get("values")
+    if not isinstance(values, list) or not values:
+        report.refuse(
+            f"{where}.values",
+            f"is {values!r}, which names no combination. A condition that holds for none is a guard "
+            "that is never evaluated",
+        )
+        return
+    seen: set[tuple[str, ...]] = set()
+    for position, combination in enumerate(values):
+        if not isinstance(combination, list) or len(combination) != len(arguments):
+            report.refuse(
+                f"{where}.values[{position}]",
+                f"is {combination!r}, not a list of {len(arguments)} values, one for each of "
+                f"{arguments}, in that order",
+            )
+            return
+        named = tuple(str(v) for v in combination)
+        unknown = [f"{a}={v}" for a, v, ok in zip(arguments, named, allowed, strict=True) if v not in ok]
+        if unknown:
+            report.refuse(
+                f"{where}.values[{position}]",
+                f"names {unknown}, which those arguments cannot take; they take "
+                f"{dict(zip(arguments, allowed, strict=True))}",
+            )
+            return
+        if named in seen:
+            report.refuse(f"{where}.values[{position}]", f"repeats {list(named)}; name each combination once")
+            return
+        seen.add(named)
+    if len(seen) == math.prod(len(ok) for ok in allowed):
+        report.refuse(
+            f"{where}.values",
+            f"names every combination of {arguments}. A guard that applies whatever the arguments are "
+            "has no condition; declare it in `interlocks` alone",
+        )
+
+
+
 
 def check_domain(
     path: Path,
@@ -5355,6 +5426,8 @@ def check_domain(
                     f"{interlocks!r}. A conditional guard list with no guards in it reads as a "
                     "guard and evaluates as none",
                 )
+            elif isinstance(condition.get("argument"), list):
+                check_combination_condition(report, cwhere2, verb.get("argument_schema") or {}, condition)
             else:
                 schema = verb.get("argument_schema") or {}
                 argument = str(condition.get("argument"))

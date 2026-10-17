@@ -114,6 +114,39 @@ commands:
     authority: A2
     gate: {kind: preference, variable: o2_<vehicle>_<source>_enable}
     interlocks: [eclss.cabin_pressure_caution, o2_reserve_10]
+    # Two arguments together (ADR 0004 §Direction, amended 2026-10-17): which way a command moves
+    # each hazard depends on the source *and* the flow, so each guard names the combinations it
+    # applies to. Owned by the ECLSS lane, which owns this verb's interlocks.
+    interlocks_when:
+      - interlocks: [eclss.cabin_pressure_caution]
+        argument: [source, flow]
+        values:
+          - [isolated, "off"]
+          - [isolated, low]
+          - [isolated, nominal]
+          - [isolated, high]
+          - [primary, "off"]
+          - [surge, "off"]
+        why: >-
+          a cabin below its 4.5 psia caution is losing gas, and what makes it worse is cutting its
+          oxygen: an isolated supply, whatever the flow, or a flow of `off`, whatever the source.
+          Any flow from `primary` or `surge` admits oxygen and is the recovery, so it is never
+          refused by this guard; the emergency regulator's published job is exactly that, holding
+          the cabin above 3.5 psia for as long as the supply lasts (`apollo_diode.md:84`)
+      - interlocks: [o2_reserve_10]
+        argument: [source, flow]
+        values:
+          - [primary, low]
+          - [primary, nominal]
+          - [primary, high]
+        why: >-
+          the reserve this guard watches is the service module's cryogenic oxygen (`o2_csm`, through
+          `res.o2_remaining_kg`), and only a flow drawn from `primary` spends it. `csm_ecs_study_guide.pdf`
+          PDF p. 12 (printed p. 2-1, §2.1-2.2.1) places the two cryogenic tanks in the S/M and the
+          3.7 lb surge tank in the command module's LH equipment bay, fed in parallel downstream of
+          the S/M shut-off valve, so `surge` draws a different store and `isolated` draws none.
+          `primary` at `off`, `surge` and `isolated` are the recovery, and the surge tank's own
+          floor is not this guard's to hold
     conflict_domain: res.<vehicle>.o2_source
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
