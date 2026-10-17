@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:05 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 14:07 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -32,7 +32,7 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | 5 | Comms remainder | [#48](https://github.com/tachyon-beep/space_chassis/pull/48) | draft; occultation from the orbit; `carrier_lock` waits on #47's seeding | #45, #47 |
 | 2 | Finish thermal | [#49](https://github.com/tachyon-beep/space_chassis/pull/49) | draft; bays and pump speed advance; re-deriving MET-0 at 1,401 W; `heater_bank_duty` held | #45; the numeric-argument engine change (lane 9) |
 | 3 | Propulsion and propellant | [#50](https://github.com/tachyon-beep/space_chassis/pull/50) | draft | #45; primary sources (now reachable, D32) |
-| 4 | Structure states | [#51](https://github.com/tachyon-beep/space_chassis/pull/51) | draft; `arm_state` waits on #47's seeding; configuration states move to device firing after #47 | #45, #47 |
+| 4 | Structure states | [#51](https://github.com/tachyon-beep/space_chassis/pull/51) | draft; hatch starts *Latched* (`173216c`); `arm_state` waits on #47's seeding; configuration states move to device firing after #47; the interrupter edge goes to power if the states are power's | #45, #47 |
 | 7 | GNC and RCS lane | — | started 13:59; attitude as pointing modes, a rate-limited slew law behind `set_attitude_target` (D38) | the geometry lane (#44) |
 | 8 | Crew lane | — | started 13:59 on D-06 revision 1 (D38); crew dialogue per console (D39) | — |
 | 10 | Avionics FDIR | — | not started | last; needs lane 9's faults |
@@ -90,7 +90,8 @@ Answered by the coordinator under D33 at 13:50 (D35), each the lane's recommende
 "Preference more fidelity where it doesn't start creating significant delivery risk" (D34, D31). Added fidelity must add an interesting option for a scenario, behaviour, decision or challenge,
 not a single forced move (D37). "What option it adds" is classed **signal** (a new signal to debug),
 **confounder** (first- or second-order effects on another reading), **event/noise** (barks and
-non-mission events the team must triage) or **none** (D40). One line per lane: the fidelity it builds
+non-mission events the team must triage), **decision** (a choice the crew or fleet faces) or
+**none** (D37, D40). One line per lane: the fidelity it builds
 to, the option it adds, and any approximation it deliberately keeps. Filled from what lanes report
 to the coordinator; *not reported* means the lane has not said yet.
 
@@ -102,7 +103,7 @@ to the coordinator; *not reported* means the lane has not said yet.
 | propulsion (#50) | thrust a first-order lag to rated; chamber pressure proportional to thrust | not reported | DPS thrust and chamber pressure left as gaps (throttle-to-thrust law unsourced, `main_propulsion_diode.md:36` refuses it); feed pressure held at 100 % of nominal with no regulator or line loss; regulator lock-up, bottle blowdown and helium displacement wait on reachable sources; no start transient (none published) |
 | RCS geometry (#44) | per-jet SM and LM geometry from primary sources, linter-checked | not reported | all 44 jets treated as one article; CM jets owed |
 | fault injection (#47) | onset as a step change on the moved state, same tick | not reported | a ramp is a domain rule's job, not the plant's |
-| structure (#51) | latches, hatch and pyro as discrete devices; after #47: `pyro_health` fail-to-fire, descent stage separates only when all five staging devices fire, jettison only when the ring charge fires, `leak_sources_g_s` summed by the leak rule | not reported | latches move instantly to the drive (1 s dwell only; actuation time unsourced); the `one` scope is recorded and acts on nothing (re-cocking a failed latch unsourced); leak with an unlatched hatch or unseated ring above 0.5 psid is a named gap (aperture, seal, tunnel volume unsourced); configuration states still flip on the event until #47; `hatch_open_with_pressure` unevaluable (prose `gated_by`) |
+| structure (#51) | two tunnel hatches (CM forward, LM overhead) in `hatch_state`, so the ring seal matters only with a tunnel hatch open; undocking fires no pyro (CSM News Reference p. 88); staging also fires two ascent circuit interrupters (Grumman study guide p. 93); latches, hatch and pyro as discrete devices; after #47: `pyro_health` fail-to-fire, descent stage separates only when all five staging devices fire, jettison only when the ring charge fires, `leak_sources_g_s` summed by the leak rule | **decision** (close the tunnel before latch release) and **confounder** (tunnel versus cabin leak) | latches move instantly to the drive (1 s dwell only; actuation time unsourced); the `one` scope is recorded and acts on nothing (re-cocking a failed latch unsourced); leak with an unlatched hatch or unseated ring above 0.5 psid is a named gap (aperture, seal, tunnel volume unsourced); configuration states still flip on the event until #47; `hatch_open_with_pressure` unevaluable (prose `gated_by`) |
 | ECLSS (#46, 18 of 24 states) | cabin leak per gas (bulk-flow shares); `set_o2_source` partly guarded through a general two-argument interlock condition (ADR 0004 amended; lane 7 can use it for its two verbs); suit loop on its compressor at 35 cfm, switched by `set_suit_fan` | not reported | cabin H2O waits on crew production (D-06), like CO2, since a removal-only vapour stock would dry the cabin; crew O2 uptake waits on `crew_state`, so cabin O2 still rises by the metabolic term; `o2_supply_pressure_psi` on a card to John (cryo tank sources on blocked hosts) |
 | unpin (#45) | — (test figures, no model) | — | — |
 | GNC + RCS | attitude as pointing modes: a rate-limited slew law behind `set_attitude_target` (D38) | not reported | 6-DOF deferred; it would replace only the law |
