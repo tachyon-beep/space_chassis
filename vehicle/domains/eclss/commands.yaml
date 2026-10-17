@@ -34,6 +34,12 @@ commands:
       variable: o2_flow_<vehicle>_enable
     interlocks: [cabin_pressure_high, o2_supply_low, ppo2_fire_risk, lm_ppo2_fire_risk,
                  eclss.cabin_pressure_caution, eclss.lm_cabin_pressure_caution]
+    # `o2_reserve_10` is not on this verb, on purpose. Re-opening the CSM's band spends the S/M
+    # tanks only while `eclss.o2_source` has the CSM on `primary`, and a condition over this verb's
+    # arguments cannot see that: guarding every CSM flow-on would refuse the surge tank, the
+    # recovery on a leak with a low reserve. It lands with the fault-injection lane's state
+    # condition on `interlocks_when` ({state: o2_source, key: vehicle, values: [primary]}), its
+    # third PR after #47; until then the reserve is guarded at `set_o2_source`.
     interlocks_when:
       - interlocks: [cabin_pressure_high, o2_supply_low, ppo2_fire_risk]
         argument: [vehicle, flow]
