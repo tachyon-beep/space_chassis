@@ -11883,10 +11883,11 @@ def test_the_coolants_specific_heat_is_arithmetic_from_the_loops_own_figures(tmp
         state_revision=1,
     )
     inlet = frame["values"]["thermal.radiator_inlet_c"]
-    # 1,651 W since ADR 0003: the loop's load is summed over the loads `load_enabled` has on, and
-    # the 72 W amplifier starts off (its 60.8 W dissipation arrives with the transmitter).
-    assert inlet == pytest.approx(7.2 + 1651.0 / (0.025199576111111112 * cp), rel=1e-6)
-    assert inlet == pytest.approx(25.27, abs=0.01)
+    # 1,401 W since the standby pump 2 left the MET-0 load (2026-10-17; 1,651 W from ADR 0003): the
+    # loop's load is summed over the loads `load_enabled` has on, and the 72 W amplifier starts off
+    # (its 60.8 W dissipation arrives with the transmitter).
+    assert inlet == pytest.approx(7.2 + 1401.0 / (0.025199576111111112 * cp), rel=1e-6)
+    assert inlet == pytest.approx(22.53, abs=0.01)
     # Inside the channel's own range and below its event, which is what makes it a reading.
     channels = yaml.safe_load((VEHICLE / "channels.yaml").read_text())
     row = next(r for rows in channels.values() if isinstance(rows, list)
@@ -19896,7 +19897,7 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     assert values["cabin_eq_csm"] == pytest.approx(285.638, abs=5e-4)
     # The default vehicle's passive-thermal-control load, held; the 2,477.02 W sun-on-radiator
     # hold is the quiet-coast scenario's (ADR 0003 item 9, "Hold in episode only").
-    assert values["environment_heat"] == pytest.approx(1086.9, abs=5e-3)
+    assert values["environment_heat"] == pytest.approx(1285.5, abs=5e-3)
     # And the two cabin lags relaxed toward those equilibria in the same tick, which is the point of
     # evaluating the relation rather than refusing it.
     assert "zone_csm_cabin_t" in advanced and "zone_lm_cabin_t" in advanced
@@ -19959,7 +19960,7 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     assert len(values["internal"]) == 27, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
-    assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
+    assert values["loop_primary_load_w"] == 1401.0 and values["loop_lm_load_w"] == 0.0
 
 
 def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes():
@@ -21242,12 +21243,12 @@ def test_the_mechanical_conversions_land_on_the_declarations_that_sized_them():
     # t=0 gives the load a value before the tick, and the two channels follow: 7.199 C against the
     # supply's 7.200 and the radiator inlet's 26.06, which are the loop's own rise and the
     # radiator's own law rather than the supply's number wearing their names.
-    # ADR 0003 moved both figures: the inlet is the supply plus the MET-0 collected load (1,651 W,
-    # the amplifier's transmitter off) over the stream's capacity, and the return is the panel's own
-    # outlet in passive thermal control (item 9, `environment_heat_w`'s 1,086.9 W) — 7.202 C, inside
+    # ADR 0003 moved both figures: the inlet is the supply plus the MET-0 collected load (1,401 W,
+    # the amplifier's transmitter and the standby pump 2 off) over the stream's capacity, and the return is the panel's own
+    # outlet in passive thermal control (item 9, `environment_heat_w`'s 1,285.5 W) — 7.199 C, inside
     # the 5-15 C band the default vehicle starts in. The episode's hot hold is the scenario's.
-    assert frame["thermal.coolant_return_c"] == pytest.approx(7.201921, abs=1e-5)
-    assert frame["thermal.radiator_inlet_c"] == pytest.approx(25.268166, abs=1e-5)
+    assert frame["thermal.coolant_return_c"] == pytest.approx(7.198685, abs=1e-5)
+    assert frame["thermal.radiator_inlet_c"] == pytest.approx(22.532223, abs=1e-5)
     assert frame["thermal.coolant_return_c"] != frame["thermal.coolant_supply_c"]
     # And a channel whose derivation is still prose is omitted rather than filled with its source's
     # number, which is the property those two used to demonstrate.

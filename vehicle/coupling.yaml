@@ -387,7 +387,7 @@ nodes:
     note: >-
       the heat the environment puts *into* the radiator, which is the quantity `E-RAD-THERM` rejects
       against and which had no node until round 71. It is a held boundary (`environment_heat_w`,
-      ADR 0003 item 9): the default vehicle's passive-thermal-control load, 1,086.9 W, or the
+      ADR 0003 item 9): the default vehicle's passive-thermal-control load, 1,285.5 W, or the
       quiet-coast episode's sun-on-radiator hold. `radiator_model.environment` declares the hold —
       1361 W/m2 of solar flux, 0.2 absorptivity, 9.1 m2 presented at a bad attitude = 2,477 W,
       comparable to the radiator's own 2,588 W capacity — so attitude alone can cancel the vehicle's

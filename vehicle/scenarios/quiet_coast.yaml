@@ -19,10 +19,11 @@ initial:
   # environment hold (owned by the integrator): 1,361 W/m2 x 0.2 x 9.1 m2, 09 §2
   environment_heat_w: 2477.02
   # The MET-0 equilibrium under the hold (ADR 0003 item 10, B5): the panel's fixed point at
-  # 2,477.02 W with the loop at its 280.35 K supply and the 1,651 W MET-0 collected load, and the
-  # evaporator carrying the rest, 1,651 - 505.8 W. Held by `tests/test_thermal_rules.py`.
-  zone_radiator_t: 295.65
-  evaporator_duty_w: 1145.2
+  # 2,477.02 W with the loop at its 280.35 K supply and the 1,401 W MET-0 collected load (the
+  # standby pump 2 off), and the evaporator carrying the rest, 1,401 - 416.2 W. Held by
+  # `tests/test_thermal_rules.py`.
+  zone_radiator_t: 293.40
+  evaporator_duty_w: 984.8
   # The task volume D1 + D2 on tape at MET 0 (ADR 0003 item 7; `episode.objective`).
   recorder: 92160000
 

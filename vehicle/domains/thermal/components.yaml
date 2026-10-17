@@ -177,7 +177,7 @@ state:
     # `scenarios/quiet_coast.yaml` replaces it with the sun-on-radiator hold, `sun_hold_w`.
     method: dynamics
     unit: W
-    initial: 1086.9
+    initial: 1285.5
     initial_provenance:
       basis: chosen
       reason: >-
@@ -186,17 +186,17 @@ state:
         control absorbed load was searched for once (AOH SM2A-03 §2.7 ECS, the Apollo mission
         reports, SP-368 p. 525) and not found as a figure. It is the value that puts the MET-0
         operating point at an equilibrium with the radiator alone carrying the loop: the supply at
-        280.35 K (`coolant_loop_t.initial`), the collected load Q = 1,651 W
-        (`loop_primary_load_w` at MET 0) and the published flow, m_dot c_p = 0.0251996 x 3,626.1 =
-        91.376 W/K, put the radiator inlet at 280.35 + 1,651 / 91.376 = 298.418 K and the panel's
-        mean glycol temperature, where it rejects all of Q, at T_m = 280.35 + Q / (2 m_dot c_p) =
-        289.384 K. The absorbed load is then eps sigma A T_m^4 - Q = 0.85 x 5.670374419e-8 x 8.1 x
-        289.384^4 - 1,651 = 1,086.88 W, rounded to 1,086.9 W. The radiator's outlet is then the
+        280.35 K (`coolant_loop_t.initial`), the collected load Q = 1,401 W
+        (`loop_primary_load_w` at MET 0, the standby pump 2 off) and the published flow, m_dot c_p =
+        0.0251996 x 3,626.1 = 91.376 W/K, put the radiator inlet at 280.35 + 1,401 / 91.376 =
+        295.682 K and the panel's mean glycol temperature, where it rejects all of Q, at T_m =
+        280.35 + Q / (2 m_dot c_p) = 288.016 K. The absorbed load is then eps sigma A T_m^4 - Q =
+        0.85 x 5.670374419e-8 x 8.1 x 288.016^4 - 1,401 = 1,285.48 W, rounded to 1,285.5 W. The radiator's outlet is then the
         280.35 K supply (7.2 C), inside Apollo's 5–15 C `radiator_outlet_c` band and under the
         283 K ceiling, and the evaporator's inlet sits below its 282.55 K actuation, so it spends no
-        water in coast, as flown. The panel's 1,651 W is above the flown 1,170–1,470 W because the
-        model's collected load is (the load inventory's, not the environment's); the absorbed load
-        is 44 % of the hot hold, the share a rolling vehicle presents against a panel held normal to
+        water in coast, as flown. The panel's 1,401 W is inside the flown 1,170–1,470 W. It was 1,651 W,
+        above that band, until the standby pump 2's 250 W left the MET-0 load (2026-10-17); the
+        absorbed load is 52 % of the hot hold, the share a rolling vehicle presents against a panel held normal to
         the sun. `tests/test_quiet_coast_scenario.py` holds this derivation and the outlet band
     initial_note: >-
       what would replace the choice: a published passive-thermal-control absorbed (or net) radiator
@@ -513,7 +513,7 @@ state:
     method: lag
     node: radiator_reject
     unit: K
-    initial: 289.38
+    initial: 288.02
     initial_provenance:
       basis: chosen
       reason: >-
@@ -522,10 +522,10 @@ state:
         cannot be an `initial_derivation`; it is computed by `radiator_eq_t`'s rule and held to
         0.01 K by `tests/test_quiet_coast_scenario.py`: `radiator_eq_t`'s fixed point with the loop
         at its 280.35 K supply, 0.0252 kg/s of flow, the default vehicle's passive-thermal-control
-        absorbed load (`environment_heat_w.initial`, 1,086.9 W) and the MET-0 collected load of
-        1,651 W (every CSM load on, the power amplifier's transmitter off, so its 72 W is not
-        dissipated). There the panel carries the whole load and the evaporator is off. The
-        quiet-coast episode's hot hold starts it at 295.65 K instead
+        absorbed load (`environment_heat_w.initial`, 1,285.5 W) and the MET-0 collected load of
+        1,401 W (every CSM load on but the standby pump 2, the power amplifier's transmitter off, so
+        its 72 W is not dissipated). There the panel carries the whole load and the evaporator is off. The
+        quiet-coast episode's hot hold starts it at 293.40 K instead
         (`scenarios/quiet_coast.yaml`, held by `tests/test_thermal_rules.py`). It was 322.06 K
         until ADR 0003, the temperature at which the panel *alone* carries the whole load against
         the hot hold, which is not where a panel with a working evaporator settles
@@ -779,7 +779,7 @@ state:
         equilibrium in passive thermal control, where the panel at `zone_radiator_t.initial`
         carries the whole collected load and the evaporator's inlet is the 280.35 K supply, below
         its 282.55 K actuation: nothing. The quiet-coast episode's hot hold starts it at
-        1,651 - 505.8 = 1,145.2 W (`scenarios/quiet_coast.yaml`). Both are held to the rules'
+        1,401 - 416.2 = 984.8 W (`scenarios/quiet_coast.yaml`). Both are held to the rules'
         fixed points (`tests/test_quiet_coast_scenario.py`, `tests/test_thermal_rules.py`)
     feed_state: evaporator_feed
     vehicle: csm

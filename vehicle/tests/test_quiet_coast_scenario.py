@@ -84,24 +84,24 @@ def test_the_scenario_overlay_produces_the_hot_hold_and_the_default_does_not(wor
     episode = plant.initial_values(world, scenario)
     default = plant.initial_values(world)
     assert episode["environment_heat_w"] == pytest.approx(2477.02)
-    assert default["environment_heat_w"] == pytest.approx(1086.9)
-    assert episode["zone_radiator_t"] == 295.65 and default["zone_radiator_t"] == 289.38
+    assert default["environment_heat_w"] == pytest.approx(1285.5)
+    assert episode["zone_radiator_t"] == 293.40 and default["zone_radiator_t"] == 288.02
 
     # A boundary is *held*: a minute of ticks moves neither, and the plant never re-derives the
     # default over the scenario's value.
     episode = run(world, episode, 3000)
     default = run(world, default, 3000)
     assert episode["environment_heat_w"] == pytest.approx(2477.02, abs=1e-12)
-    assert default["environment_heat_w"] == pytest.approx(1086.9, abs=1e-12)
+    assert default["environment_heat_w"] == pytest.approx(1285.5, abs=1e-12)
     # And the hold is what the episode's radiator rejects against: under it the evaporator works.
-    assert episode["evaporator_duty_w"] > 1000.0
+    assert episode["evaporator_duty_w"] > 900.0
     assert default["evaporator_duty_w"] == 0.0
 
 
 def test_the_passive_thermal_control_load_is_the_met0_equilibrium_it_says_it_is():
     """`environment_heat_w.initial`'s stated derivation, by hand: the radiator alone carries the
     MET-0 collected load with the loop at its supply, so its outlet is the supply."""
-    load_w = 1651.0
+    load_w = 1401.0
     inlet_k = SUPPLY_K + load_w / CAPACITY
     panel_k = SUPPLY_K + load_w / (2 * CAPACITY)
     absorbed = EPS_SIGMA_A * panel_k**4 - load_w
@@ -117,7 +117,7 @@ def test_the_passive_thermal_control_load_is_the_met0_equilibrium_it_says_it_is(
 
 
 def test_the_default_met0_radiator_outlet_sits_inside_apollo_s_band(world, scenario):
-    """The reason for the split: under the hot hold at MET 0 the outlet is 19.7 C, outside
+    """The reason for the split: under the hot hold at MET 0 the outlet is 18.0 C, outside
     `radiator_outlet_c` [5, 15]; in passive thermal control it is inside, and under 283 K."""
     low, high = OUTLET_BAND_C
     default = plant.initial_values(world)
