@@ -47,10 +47,13 @@ natural_rate_hz: 1
 # `command_executive` is what `E-CMD-ATM` drives the cabin regulator with, and it is the only read
 # here that is a signal rather than a quantity. It was missing while the *other* command edges were
 # declared by their domains, which is what a list nothing counts looks like.
+#
+# `load_shed_state` carries power's `load_enabled`, which says whether the suit compressor's load is
+# on; the suit circuit's flow rule reads it, with no edge, as thermal's zone heat rates do.
 reads: [o2_csm, o2_lm, absorber_capacity_csm, absorber_capacity_lm, crew_state,
-        cabin_zone_t, lm_cabin_zone_t, command_executive]
+        cabin_zone_t, lm_cabin_zone_t, command_executive, load_shed_state]
 writes: [cabin_atm, lm_cabin_atm, cabin_regulator, cabin_o2_supply_csm,
-         cabin_o2_supply_lm, co2_removal_csm, co2_removal_lm]
+         cabin_o2_supply_lm, co2_removal_csm, co2_removal_lm, cabin_leak_csm, cabin_leak_lm]
 
 # Two states on the `internal` sentinel, so their order is a declaration rather than the alphabet's:
 # both are published and neither drives the other, and the sentinel is advanced after every node.
@@ -113,6 +116,12 @@ state:
     method: stock
     unit: kg
     initial: 0.0
+    # Nothing aboard adds diluent, so the stock's only flow is its share of the leak (`E-ATM-LEAK-N2`).
+    preloaded: >-
+      the pad's nitrogen is purged before the mission (`initial_provenance`) and no flight source
+      adds any: the cabin regulator meters oxygen, and the repressurisation package and surge tank
+      hold oxygen (`csm_ecs_study_guide.pdf` PDF p. 12). The stock is drained by the leak and filled
+      only by a fault that adds the wrong gas
     initial_derivation:
       expression: "(partial_pressure_mmhg * mmhg_to_pa) * volume_m3 / (gas_constant * temperature_k) * molar_mass_kg_per_mol"
       inputs:
@@ -284,6 +293,9 @@ state:
     method: stock
     unit: kg
     initial: 0.0
+    preloaded: >-
+      as `csm_cabin_n2_kg`: the LM's ECS "stores, in gaseous form, all oxygen required"
+      (`lm_ecs_study_guide.pdf`), so no flight source adds diluent and the leak is the only flow
     initial_derivation:
       expression: "(partial_pressure_mmhg * mmhg_to_pa) * volume_m3 / (gas_constant * temperature_k) * molar_mass_kg_per_mol"
       inputs:
@@ -309,6 +321,122 @@ state:
     provenance:
       basis: derived
       relation: "as the CSM compartment"
+  # The cabin leak by gas (ECLSS lane, 2026-10-17): what each cabin stock loses through its seals.
+  # Without these the regulator's leak term entered the cabin and nothing left it.
+  - id: csm_leak_o2_kg_s
+    node: cabin_leak_csm
+    method: algebraic
+    unit: "kg O2/s"
+    leak_kg_per_h: 0.023
+    gas_stock: csm_cabin_o2_kg
+    cabin_stocks: [csm_cabin_o2_kg, csm_cabin_n2_kg, csm_cabin_co2_kg, csm_cabin_h2o_kg]
+    provenance:
+      basis: derived
+      relation: >-
+        the cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
+        over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
+        through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
+        shares of the four sum to the whole leak
+      note: >-
+        `leak_kg_per_h` is `vehicle.yaml#consumables.leak.csm_kg_per_h`, copied for the rule, with that
+        entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
+        figure is the leak term of `cabin_o2_supply_csm_kg_s`, so the regulator replaces what this
+        takes. Water vapour's share has no state yet: its drain lands with the crew's vapour source
+  - id: csm_leak_n2_kg_s
+    node: cabin_leak_csm
+    method: algebraic
+    unit: "kg N2/s"
+    leak_kg_per_h: 0.023
+    gas_stock: csm_cabin_n2_kg
+    cabin_stocks: [csm_cabin_o2_kg, csm_cabin_n2_kg, csm_cabin_co2_kg, csm_cabin_h2o_kg]
+    provenance:
+      basis: derived
+      relation: >-
+        the cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
+        over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
+        through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
+        shares of the four sum to the whole leak
+      note: >-
+        `leak_kg_per_h` is `vehicle.yaml#consumables.leak.csm_kg_per_h`, copied for the rule, with that
+        entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
+        figure is the leak term of `cabin_o2_supply_csm_kg_s`, so the regulator replaces what this
+        takes. Water vapour's share has no state yet: its drain lands with the crew's vapour source
+  - id: csm_leak_co2_kg_s
+    node: cabin_leak_csm
+    method: algebraic
+    unit: "kg CO2/s"
+    leak_kg_per_h: 0.023
+    gas_stock: csm_cabin_co2_kg
+    cabin_stocks: [csm_cabin_o2_kg, csm_cabin_n2_kg, csm_cabin_co2_kg, csm_cabin_h2o_kg]
+    provenance:
+      basis: derived
+      relation: >-
+        the cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
+        over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
+        through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
+        shares of the four sum to the whole leak
+      note: >-
+        `leak_kg_per_h` is `vehicle.yaml#consumables.leak.csm_kg_per_h`, copied for the rule, with that
+        entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
+        figure is the leak term of `cabin_o2_supply_csm_kg_s`, so the regulator replaces what this
+        takes. Water vapour's share has no state yet: its drain lands with the crew's vapour source
+  - id: lm_leak_o2_kg_s
+    node: cabin_leak_lm
+    method: algebraic
+    unit: "kg O2/s"
+    leak_kg_per_h: 0.0226796
+    gas_stock: lm_cabin_o2_kg
+    cabin_stocks: [lm_cabin_o2_kg, lm_cabin_n2_kg, lm_cabin_co2_kg, lm_cabin_h2o_kg]
+    provenance:
+      basis: derived
+      relation: >-
+        the LM cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
+        over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
+        through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
+        shares of the four sum to the whole leak
+      note: >-
+        `leak_kg_per_h` is `vehicle.yaml#consumables.leak.lm_kg_per_h`, copied for the rule, with that
+        entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
+        figure is the leak term of `cabin_o2_supply_lm_kg_s`, so the regulator replaces what this
+        takes. Water vapour's share has no state yet: its drain lands with the crew's vapour source
+  - id: lm_leak_n2_kg_s
+    node: cabin_leak_lm
+    method: algebraic
+    unit: "kg N2/s"
+    leak_kg_per_h: 0.0226796
+    gas_stock: lm_cabin_n2_kg
+    cabin_stocks: [lm_cabin_o2_kg, lm_cabin_n2_kg, lm_cabin_co2_kg, lm_cabin_h2o_kg]
+    provenance:
+      basis: derived
+      relation: >-
+        the LM cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
+        over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
+        through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
+        shares of the four sum to the whole leak
+      note: >-
+        `leak_kg_per_h` is `vehicle.yaml#consumables.leak.lm_kg_per_h`, copied for the rule, with that
+        entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
+        figure is the leak term of `cabin_o2_supply_lm_kg_s`, so the regulator replaces what this
+        takes. Water vapour's share has no state yet: its drain lands with the crew's vapour source
+  - id: lm_leak_co2_kg_s
+    node: cabin_leak_lm
+    method: algebraic
+    unit: "kg CO2/s"
+    leak_kg_per_h: 0.0226796
+    gas_stock: lm_cabin_co2_kg
+    cabin_stocks: [lm_cabin_o2_kg, lm_cabin_n2_kg, lm_cabin_co2_kg, lm_cabin_h2o_kg]
+    provenance:
+      basis: derived
+      relation: >-
+        the LM cabin leak's share of this gas: `leak_kg_per_h` / 3600 times the gas's mass
+        over the sum of the cabin's four gas masses (`domains/eclss/rules.py`). A leak is bulk flow
+        through a seal, so it takes each gas in proportion to its share of the cabin's mass, and the
+        shares of the four sum to the whole leak
+      note: >-
+        `leak_kg_per_h` is `vehicle.yaml#consumables.leak.lm_kg_per_h`, copied for the rule, with that
+        entry's provenance (A11's LM cabin leak; the CSM's is borrowed and the debt says so). The same
+        figure is the leak term of `cabin_o2_supply_lm_kg_s`, so the regulator replaces what this
+        takes. Water vapour's share has no state yet: its drain lands with the crew's vapour source
   - id: cabin_o2_supply_csm_kg_s
     node: cabin_o2_supply_csm
     method: algebraic
@@ -463,8 +591,11 @@ state:
         two-tank system before the post-Apollo 13 redesign, which is the Apollo 11 CSM's
         configuration, but does not name CSM-107; Forester's strokes are Apollo 12 and 14 flight data
   - id: suit_loop_flow_cfm
+    # **The compressor as flow** (`domains/eclss/rules.py`). The rule relaxes the flow toward
+    # `rated_flow_cfm` while the CSM suit compressor's load is on (`power.load_enabled`) and toward
+    # zero while it is off, with `tau_s`. It was a lag with no driver, which no tick could advance.
     node: internal
-    method: lag
+    method: dynamics
     unit: ft3/min
     initial: 35
     initial_provenance:
@@ -477,9 +608,18 @@ state:
         34.5 cubic feet per minute suit gas at a pressure rise of 6.9 inches of water". The circuit
         circulates continuously — it is what the crew breathe through before and after launch — so
         MET 0 is the normal-space delivery, and the compressor is the only thing that drives it
+    rated_flow_cfm: 35
+    compressor_load: csm_suit_fan
     tau_s: 5
     provenance:
       basis: chosen
+      note: >-
+        `rated_flow_cfm` is the guide's normal-space delivery, the same quotation as `initial`; the
+        34.5 cfm emergency delivery is not modelled because nothing on this vehicle selects the
+        emergency operating condition. `compressor_load` is power's `csm_suit_fan` (85 W,
+        `domains/power/components.yaml`), the one compressor load on the CSM bus: the guide's two
+        compressors are a running unit and its standby, and the load inventory carries one. The
+        channel is the CSM's circuit; the LM's suit loop (`lm_suit_fan`) has no state of its own
       reason: >-
         the suit loop is a compressor-driven circuit, so it spins up in seconds. apollo's `<20` event
         is what the time constant has to be short against — five seconds is long enough that a fan

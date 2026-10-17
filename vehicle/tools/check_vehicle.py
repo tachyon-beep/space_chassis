@@ -2493,7 +2493,7 @@ def check_coupling(
     # An edge that drives a state has to say *which* state, whenever the node carries more than one
     # it could drive.
     #
-    # Eleven of the vehicle's 61 nodes hold more than one state, and the plant resolves a state's
+    # Eleven of the vehicle's 63 nodes hold more than one state, and the plant resolves a state's
     # drivers by node — so on `cabin_atm`, which holds four gas masses, `csm_cabin_o2_kg`,
     # `csm_cabin_n2_kg`, `csm_cabin_co2_kg` and `csm_cabin_h2o_kg` were all handed the same three
     # edges: the oxygen supply, the crew's CO2 production and a pressure/temperature relation. Every

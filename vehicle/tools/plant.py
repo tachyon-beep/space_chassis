@@ -19,7 +19,7 @@ Why that is worth writing rather than asserting
 "Ready to implement" is a claim, and a claim about a 34-file configuration is worth exactly as
 much as the evidence behind it. The evidence here is mechanical:
 
-  - **the schedule is derivable** — 61 nodes, from `coupling.yaml`'s edges minus its declared
+  - **the schedule is derivable** — 63 nodes, from `coupling.yaml`'s edges minus its declared
     back-edges, with `check_vehicle.derive_schedule` doing the derivation so the plant and the
     linter cannot disagree about the order;
   - **the states are instantiable** — each with a method, a unit and the parameters its method
@@ -2628,7 +2628,9 @@ def advance(
     # `preloaded:`. Without this exemption the plant refuses `water_cooling`, `o2_lm`, `prop_rcs` and
     # `pressurant_he` — four stocks that are correctly declared and simply drain, which is the same
     # distinction the linter's undriven-node check draws for the same reason.
-    preloaded = (world.nodes.get(state.node) or {}).get("preloaded")
+    # A stock on a shared node says it for itself (`csm_cabin_n2_kg`: the diluent nothing aboard
+    # adds, beside an oxygen the regulator fills), so the state's own `preloaded:` counts too.
+    preloaded = (world.nodes.get(state.node) or {}).get("preloaded") or state.spec.get("preloaded")
     # **A `dynamics` state may name its driver instead of being reached by an edge.** The sentinel
     # is not a coupling node, so no edge can land on it, and `dv/dt` needs a thrust that is a
     # scheduled state rather than a graph neighbour. The name is the same declaration a derivation
@@ -3200,7 +3202,7 @@ def driver_nodes(world: World, state: State) -> list[str]:
 def state_values(world: World, state: State, value: Any) -> dict[str, Any]:
     """The map entries one state's new value belongs under.
 
-    **The value space was keyed by node, and thirteen nodes carry more than one state.** `cabin_atm`
+    **The value space was keyed by node, and fifteen nodes carry more than one state.** `cabin_atm`
     carries four gas masses and a pressure, so `values["cabin_atm"]` held whichever the loader wrote
     last — and the first tick after the plant learned to evaluate derivations set `csm_cabin_o2_kg` to
     the *water vapour's* mass, and `lm_cabin_o2_kg` to the nitrogen's. Two plausible numbers of
@@ -3271,10 +3273,10 @@ def _refuse_shared_node(world: World, state: State, where: str) -> None:
     """Refuse a state whose node carries another state, because the value map cannot hold both.
 
     The map is keyed by node, so two states on one node overwrite each other and whichever advanced
-    first reads the other's number on the next tick. Thirteen nodes carry more than one state — ten
+    first reads the other's number on the next tick. Fifteen nodes carry more than one state — ten
     after round 70 took the source regulator off the fuel cell's node, then `load_enabled` joined
     `load_shed_state`, the quiet-coast task model's `ground_received` joined, and the bus loads and
-    module current joined `fuel_cell`;
+    module current joined `fuel_cell`, and the two cabin leaks carry three outflows each;
     `cabin_atm` and `lm_cabin_atm` carry five each. The fix is a key-space change and the reason this
     is a refusal rather than a repair: a value of the wrong quantity is indistinguishable from a
     right one on a panel.
@@ -4400,7 +4402,7 @@ def _classify(world: World, state: State) -> str:
     # them. Reporting them as owing a coupling sent an implementer to the wrong file for
     # thirteen states.
     # ------------------------------------------------------------------------------
-    preloaded = (world.nodes.get(state.node) or {}).get("preloaded")
+    preloaded = (world.nodes.get(state.node) or {}).get("preloaded") or state.spec.get("preloaded")
     # **Declared arithmetic first, sentinel or not.** This test used to sit below the
     # sentinel routing, and the routing `continue`s — so the one rule that asks "is the
     # rule already in the configuration?" was unreachable for every state on the sentinel.

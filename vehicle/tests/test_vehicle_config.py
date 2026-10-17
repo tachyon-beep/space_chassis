@@ -3258,8 +3258,9 @@ def test_the_linter_holds_a_domain_s_declared_reads(tmp_path):
     owed = report.debts[0]
     # 23 -> 24 with ADR 0003: thermal reads `load_shed_state` for the switch map its heat rates sum
     # over, a one-way read. `thermal->link` was the delayed half of a declared cycle and is carried
-    # by `E-AMP-HEAT` now, so no read is left in that class.
-    assert "24 cross-domain reads that no edge carries" in owed, owed
+    # by `E-AMP-HEAT` now, so no read is left in that class. 24 -> 25: eclss reads `load_shed_state`
+    # for the suit compressor's switch, the same one-way read.
+    assert "25 cross-domain reads that no edge carries" in owed, owed
     assert "8 of them return into a node the reading domain writes" in owed, owed
     assert "thermal->load_shed_state" in owed, owed
     assert "0 more are the delayed half of a loop" in owed, owed

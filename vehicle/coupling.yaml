@@ -267,6 +267,25 @@ nodes:
     kind: flow
     unit: kg CO2/s
     note: "the LM cartridge's, a separate absorber in a separate compartment"
+  # The cabin leak, one node per compartment. A leak is bulk flow through a seal, so it takes each
+  # gas in proportion to its share of the cabin's mass; the node carries one outflow per gas, and
+  # each drain edge below names its own with `reads:`.
+  cabin_leak_csm:
+    domain: eclss
+    kind: flow
+    unit: kg/s
+    state_order: independent
+    state_order_note: >-
+      three outflows of one leak, each a share of the same total computed from the same four stocks;
+      none reads another, so there is no order to get wrong
+    note: "the CSM cabin's leak to space, by gas"
+  cabin_leak_lm:
+    domain: eclss
+    kind: flow
+    unit: kg/s
+    state_order: independent
+    state_order_note: "as `cabin_leak_csm`: three shares of one leak, none reading another"
+    note: "the LM cabin's leak to space, by gas"
   # The battery's *usable* energy, as against its stored charge. A cold pack gives up less than it
   # holds, so the derating is a property of the capacity rather than a flux into the charge — and
   # `E-PLATE-BAT` carried `0.0 J per K` into `battery_energy`, which is a capacity relation landing
@@ -756,6 +775,93 @@ edges:
     to: co2_removal_lm
     kind: rate
     drains: lm_cabin_co2_kg
+  # The cabin leak (ECLSS lane, 2026-10-17): the gas the leak takes leaves the cabin whole, one for
+  # one, and each edge reads its own gas's share of the leak on the leak's node. Water vapour has no
+  # drain yet: its source is the crew, and a vapour stock with only removals would dry the cabin.
+  - id: E-ATM-LEAK-O2
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "kg per kg"
+      basis: derived
+      relation: "the oxygen the leak takes leaves the cabin: one unit out of the cabin per unit through the seal"
+      at: "cabin leak"
+    from: cabin_atm
+    to: cabin_leak_csm
+    kind: rate
+    drains: csm_cabin_o2_kg
+    reads: csm_leak_o2_kg_s
+    advances: csm_leak_o2_kg_s
+  - id: E-ATM-LEAK-N2
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "kg per kg"
+      basis: derived
+      relation: "as E-ATM-LEAK-O2, for the diluent"
+      at: "cabin leak"
+    from: cabin_atm
+    to: cabin_leak_csm
+    kind: rate
+    drains: csm_cabin_n2_kg
+    reads: csm_leak_n2_kg_s
+    advances: csm_leak_n2_kg_s
+  - id: E-ATM-LEAK-CO2
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "kg per kg"
+      basis: derived
+      relation: "as E-ATM-LEAK-O2, for the carbon dioxide"
+      at: "cabin leak"
+    from: cabin_atm
+    to: cabin_leak_csm
+    kind: rate
+    drains: csm_cabin_co2_kg
+    reads: csm_leak_co2_kg_s
+    advances: csm_leak_co2_kg_s
+  - id: E-LM-ATM-LEAK-O2
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "kg per kg"
+      basis: derived
+      relation: "as E-ATM-LEAK-O2, through the LM's seals"
+      at: "cabin leak"
+    from: lm_cabin_atm
+    to: cabin_leak_lm
+    kind: rate
+    drains: lm_cabin_o2_kg
+    reads: lm_leak_o2_kg_s
+    advances: lm_leak_o2_kg_s
+  - id: E-LM-ATM-LEAK-N2
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "kg per kg"
+      basis: derived
+      relation: "as E-ATM-LEAK-N2, through the LM's seals"
+      at: "cabin leak"
+    from: lm_cabin_atm
+    to: cabin_leak_lm
+    kind: rate
+    drains: lm_cabin_n2_kg
+    reads: lm_leak_n2_kg_s
+    advances: lm_leak_n2_kg_s
+  - id: E-LM-ATM-LEAK-CO2
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "kg per kg"
+      basis: derived
+      relation: "as E-ATM-LEAK-CO2, through the LM's seals"
+      at: "cabin leak"
+    from: lm_cabin_atm
+    to: cabin_leak_lm
+    kind: rate
+    drains: lm_cabin_co2_kg
+    reads: lm_leak_co2_kg_s
+    advances: lm_leak_co2_kg_s
   - id: E-O2-SUPPLY-CSM
     sensitivity:
       value: 1.0

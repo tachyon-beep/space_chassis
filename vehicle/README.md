@@ -28,11 +28,11 @@ interpreted afterwards. Nothing here reads across the boundary: the corpus is *c
 | `plant.md` | The core contract: what `step()` is, the seven integrator classes, determinism, the event queue, and what the plant may never do. |
 | `vehicle.yaml` | Globals: the frame registry and the four scalar conventions, environment, configurations and their mass closure, propulsion, consumable loads, thermal zones, antennas. |
 | `mission.yaml` | The profile: eight phases summing to 192.0 h, the ten-posture execution machine, the freshness manifest, the derived lunar occultation, MET epoch, crew, the Δv budget, objectives, the three scenario postures. |
-| `coupling.yaml` | apollo's coupling graph as data, with typed edges, crisis-point sensitivities, seven declared cycles and the fifteen failure chains. The linter derives the 61-node tick order from it. |
+| `coupling.yaml` | apollo's coupling graph as data, with typed edges, crisis-point sensitivities, seven declared cycles and the fifteen failure chains. The linter derives the 63-node tick order from it. |
 | `presentation.yaml` | The vehicle's side of the frozen window: the epistemic mapping, the six files, the frame envelope, the mirror and its bound, the ring's cadence classes, and which of `diode_probe.py`'s twelve checks the configuration satisfies. |
 | `channels.yaml` | The point dictionary: 148 canonical channels with units, precision, rate, priority, events **and an event class**, a derived maximum decision age and the crew perception bound, plus the registry's own `coverage` block. |
 | `domains/<name>/` | One landed subsystem: `components` · `points` · `profiles` · `commands` · `fault_policy`. |
-| `tools/check_vehicle.py` | The linter. `--order` prints the derived 61-node tick order with the states at each node; `--phases` prints the verb-by-phase view derived from the registries. |
+| `tools/check_vehicle.py` | The linter. `--order` prints the derived 63-node tick order with the states at each node; `--phases` prints the verb-by-phase view derived from the registries. |
 | `tools/generate_help.py` | Emits the vehicle's `HELP.md` from the command registries — §8's only place a verb name may appear, so it is generated rather than written. |
 | `tools/plant.py` | A **reference plant**: loads the world from the configuration, builds the tick order, emits a frame, and runs until it reaches something it cannot compute — where it names what is missing instead of guessing. `--readiness` prints the build order. |
 
@@ -219,10 +219,10 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 152 states over 61 scheduled nodes, 142
+**All eleven domains have landed** — 148 channels, 158 states over 63 scheduled nodes, 142
 thresholds, 59 verbs and 128 classified events across the eleven directories, with 265 declared debts
-and every one of them named. **124 of the 152 states are fully configured and 28 carry a debt**, and
-a real tick advances **74** of the 152 states, and the build order's **74** ready are that same set
+and every one of them named. **130 of the 158 states are fully configured and 28 carry a debt**, and
+a real tick advances **83** of the 158 states, and the build order's **83** ready are that same set
 — the second of those figures is the objective's own second completion criterion, and both
 are read out of `tools/plant.py`'s output by `test_the_readme_status_matches_the_tools`. Since round
 58 the first line of `--build-order` *is* a tick's own gap list rather than a second opinion about
@@ -302,7 +302,7 @@ are the vehicle's only two-step verbs (C-16: a burn is interruptible, so requiri
 one adds a delay rather than a safety).
 
 `domains/eclss/` is the one where a fault has minutes rather than hours.
-It declares 17 states, 20 thresholds, 6 verbs, 21 faults — four conserved gases in each of
+It declares 23 states, 20 thresholds, 6 verbs, 21 faults — four conserved gases in each of
 **two** compartments. Three things in it are worth reading:
 
 - **The atmosphere is modelled as gas masses, not as a pressure.** Pressure is `nRT/V`, so a
@@ -1632,7 +1632,7 @@ The reference plant's `advance()` implements two of `plant.md` §3's seven integ
 this was written, and the split is worth stating plainly: **`algebraic`, `discrete` and `dynamics`
 are rules the configuration deliberately does not carry** — `delay` *is* carried, as a `delay_s` and
 a ring, and the vehicle's one delay state is in *ready now* — and counting them together with the
-states a tick cannot reach because a coupling is missing, so 40 of the 152 states need code.
+states a tick cannot reach because a coupling is missing, so 39 of the 158 states need code.
 (This said *before the plant can walk a whole tick*, which was true when it was written and is not
 now: a tick walks all 139 of them and records what it cannot advance. See *The tick stopped at its
 first debt* below.)
@@ -1829,12 +1829,12 @@ debt and 24 of them are in this bucket — the four that differ are debts a tick
 the distinction between a value nobody has written down and a state nothing can reach.
 
 ```
-152 states, by what blocks them:
+158 states, by what blocks them:
 
-    74   49 %  ready now — the states a real tick advances
-    24   16 %  owes a value — the cheapest to close, and the debt count already tracks them
-    14    9 %  owes an edge — a coupling with no sensitivity, or a state nothing drives
-    40   26 %  owes a rule — `algebraic`, `discrete`, `dynamics` or `hazard`: domain code
+    83   53 %  ready now — the states a real tick advances
+    24   15 %  owes a value — the cheapest to close, and the debt count already tracks them
+    12    8 %  owes an edge — a coupling with no sensitivity, or a state nothing drives
+    39   25 %  owes a rule — `algebraic`, `discrete`, `dynamics` or `hazard`: domain code
 ```
 
 **A quarter of the vehicle still owes a rule, and that is by construction.** `plant.md` §3's four rule classes are
