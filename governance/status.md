@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:23 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 14:24 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -36,17 +36,19 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | 7 | GNC and RCS lane | — | started 13:59; attitude as pointing modes, a rate-limited slew law behind `set_attitude_target` (D38) | the geometry lane (#44) |
 | 8 | Crew lane | [#54](https://github.com/tachyon-beep/space_chassis/pull/54) | draft (`claude/vehicle-crew-bogej1`); per-cabin crew count, location as a rule, potable water drains; next the crew day (sleep, meals, work as sourced activities; meals as water draws to tell from a leak); D-06 revision 1 (D38), dialogue per console (D39) | #45, #47 |
 | 10 | Avionics FDIR | — | not started | last; needs lane 9's faults |
-| 9 | Instrument layer (after #47) | — | owned by the fault-injection lane (it lives in `plant.py`/`console.py`); its order after #47: instrument layer, then the delay at the window, then the fair-chance stamps, then the `fleet_class` and `acts` lints | #47 |
+| 9 | Instrument layer (after #47) | — | owned by the fault-injection lane (it lives in `plant.py`/`console.py`); its order after #47: `gated_by` on state conditions, the instrument layer, the decision-age delay at the window, the fair-chance stamps, then the `fleet_class` and `acts` lints | #47 |
 
-Engine work on #47 for other lanes: the fault hook (`becomes`, `scale`, `becomes_from: magnitude`);
+Engine work on #47 (at `4a531df`) for other lanes: `refused_bands` on numeric arguments, and
+`minimum`/`maximum` now enforced everywhere (they were declared and read by nothing; all lanes told); the fault hook (`becomes`, `scale`, `becomes_from: magnitude`);
 ruled-discrete seeding (structure, comms); the `arm_event` effect; numeric carried arguments,
 refused not clamped (thermal); per-argument command routing `when:`; burn sequencing as a discrete
 machine with command and logic movers (propulsion); node-read interlocks (propulsion's
 `resolve_interlock` from a coupling node); the ECLSS sentinel fix (`_walk` overwrote
 `values["internal"]`). Held: `gated_by`, waiting on the in-burn-guard answer's application (D35).
 Burn sequencing and node-read interlocks change truth bytes; side effect, ECLSS
-`co2_absorber_low` becomes evaluable. Queued for lane 9 after #47: an argument check for `set_throttle` (`dps_throttle_band`) and
-`gated_by` on a state condition (propulsion). The comms `measured` antenna pattern is on #47 at `2e9f79e`
+`co2_absorber_low` becomes evaluable. Queued for lane 9 after #47: an argument check for `set_throttle` (`dps_throttle_band`; may be
+covered by `refused_bands`) and `gated_by` on a state condition (propulsion). The "61 nodes" prose
+count goes in lane 9's rebase over #46; the linter's derived line becomes the only figure. The comms `measured` antenna pattern is on #47 at `2e9f79e`
 (bound G ≤ 41253/θ², `historical` provenance required). #46 also carries a state-level `preloaded:` in `advance()`/`_classify()`.
 
 Cross-lane follow-ups: power's shed ladder is cautions only (E-BUS-SHED and its tiers removed;
