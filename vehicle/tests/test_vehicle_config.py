@@ -3310,7 +3310,10 @@ def test_the_linter_holds_a_domain_s_declared_reads(tmp_path):
     # A node the reading domain writes itself is not a cross-domain read: `E-O2-FC` carries
     # `fc_o2_draw` back into `fuel_cell` and both are power's, so the unbroken corpus above is the
     # evidence that this case is silent rather than a fixture that would pass either way.
-    assert "fc_o2_draw" not in report.debts[0], "an internal read was counted as cross-domain"
+    # ECLSS's tank rule reads `fc_o2_draw` across domains, which is a real read, so the check names
+    # the reading domain.
+    assert "power->fc_o2_draw" not in report.debts[0], "an internal read was counted as cross-domain"
+    assert "eclss->fc_o2_draw" in report.debts[0], report.debts[0]
 
 
 def test_the_linter_holds_every_draw_on_a_stock(tmp_path):
