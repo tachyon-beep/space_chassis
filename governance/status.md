@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 13:43 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 13:48 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -28,10 +28,10 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | 6 | ECLSS states | [#46](https://github.com/tachyon-beep/space_chassis/pull/46) | draft (engine helper: two-argument interlock condition) | #45 |
 | 9 | Fault injection into the step loop | [#47](https://github.com/tachyon-beep/space_chassis/pull/47) | draft (also ruled-discrete seeding for structure and comms) | #45, #46 |
 | 1 | Burn down power subsystem | [#43](https://github.com/tachyon-beep/space_chassis/pull/43) | draft; per-cell fuel cells and PWR-02 pushed; standby pump *off* | #45; John's a, b, c; #47 before the PWR-02 `fault:` row |
-| — | Source RCS thruster geometry | [#44](https://github.com/tachyon-beep/space_chassis/pull/44) | draft; SM and LM jets sourced; CM jets, SM offsets, minimum impulse bit owed | #45; John's CM-jet answer; allowed domains |
+| — | Source RCS thruster geometry | [#44](https://github.com/tachyon-beep/space_chassis/pull/44) | draft; SM and LM jets sourced; CM jets, SM offsets, minimum impulse bit owed | #45; John's CM-jet answer; primary sources (now reachable, D32) |
 | 5 | Comms remainder | [#48](https://github.com/tachyon-beep/space_chassis/pull/48) | draft; occultation from the orbit; `carrier_lock` waits on #47's seeding | #45, #47; John's Earth-link delay |
 | 2 | Finish thermal | [#49](https://github.com/tachyon-beep/space_chassis/pull/49) | draft; bays and pump speed advance; re-deriving MET-0 at 1,401 W; `heater_bank_duty` held | #45; the numeric-argument engine change (lane 9); John's two cards |
-| 3 | Propulsion and propellant | [#50](https://github.com/tachyon-beep/space_chassis/pull/50) | draft | #45; allowed domains for primary sources |
+| 3 | Propulsion and propellant | [#50](https://github.com/tachyon-beep/space_chassis/pull/50) | draft | #45; primary sources (now reachable, D32) |
 | 4 | Structure states | [#51](https://github.com/tachyon-beep/space_chassis/pull/51) | draft; `arm_state` waits on #47's seeding; configuration states move to device firing after #47 | #45, #47; John's `hatch_state` initial card |
 | 7 | GNC + RCS | — | not started | the geometry lane (#44); John's pointing-modes answer |
 | 8 | Crew | — | not started | John: design item D-06 |
@@ -65,13 +65,15 @@ One word each. Lanes carry on with the recommended option where they can.
 | thermal: pump speed | fraction / rpm / unset (lane building *fraction*) | Finish thermal, 13:19 (card) |
 | thermal: bay thermal masses | chosen / hold / out (lane building *chosen*) | same |
 | the arc report's eleven decisions, including attitude as pointing modes (lane 7) and D-06 (lane 8) | in the report | Whole-vehicle arc assessment |
-| allowed domains `ibiblio.org`, `ntrs.nasa.gov`, `www.nasa.gov` in the cloud environment | a setting only John can change | project chat, 13:35 |
 | structure: `hatch_state` initial | on the card | Structure states (card) |
 | ECLSS: `o2_supply_pressure_psi` | relay recommended; on the card | ECLSS states (card) |
 | D22 pilot credentials for the 10-minute smoke | — | Vehicle to smoke-ready |
 | archive `space_vehicle` (D21) | a repository setting; safe since PR #35 | `records/2026-10-15-space-vehicle-archive-check.md` |
 
-Answered today: power d, standby pump, read as *off* from D29 (13:35).
+Answered today: power d, standby pump, read as *off* from D29 (13:35); allowed domains, any domain
+read-only (D32, 13:46). Values owed for blocked hosts (RCS CM jets and offsets, propulsion's
+regulator and throttle law, comms link budget, ECLSS cryo tanks, structure's hatch and tunnel) can
+now be sourced; the "Primary source research for the lanes" thread fetches them for older lanes.
 
 ## Fidelity ledger
 

@@ -121,3 +121,6 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
   Engine bug in `_walk` (`values["internal"]` overwritten) reported to lane 9. #46's shared pins
   (README status line, build-order block, "24 states", "63 nodes", "25 cross-domain reads") are
   rewritten from the tools at its rebase onto #45.
+- 13:46 John opens the cloud environment to any domain, read-only (D32). A "Primary source research
+  for the lanes" thread fetches documents for lanes started earlier, into `sources/<lane>.md` in the
+  project's shared folder.

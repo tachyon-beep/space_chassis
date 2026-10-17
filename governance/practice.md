@@ -49,6 +49,8 @@ These are safety and hygiene rules, not permissions, and D1 does not lift them:
   input with a plausible number to unblock a state.
 - No `git stash` and no broad `git add` (both hide or sweep up another session's work); no rewriting
   history on a branch someone else has cited.
+- Nothing on the internet is changed: research reads any domain, but no post, upload, sign-up or
+  other write outside this project and repository (`decisions.md` D32).
 - No root, mount or volume-image action on John's host, and no `prepare_host.sh` against his real tree.
 
 ## Still John's
@@ -93,6 +95,9 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
 - **Fidelity**: design for more fidelity, not less, except where it creates project risk (D31). Each
   lane tells the coordinator the fidelity it builds to and any approximation it keeps; the
   coordinator evens the lanes out, and the governance thread writes the ledger in `status.md`.
+- **Sources**: any domain may be read (D32). Lanes started before 13:46 on 2026-10-17 get primary
+  documents through the "Primary source research for the lanes" thread, as cited excerpts in the
+  project's shared folder (`sources/<lane>.md`); values from them carry the document and page.
 - **Reporting**: lanes report to the coordinator; the governance thread is the only writer of
   `governance/` outside `vehicle/` and `chassis/` for the sprint (D30).
 
