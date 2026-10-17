@@ -4587,8 +4587,8 @@ def test_a_keyed_state_says_which_article_it_is_about(tmp_path):
     is refused — it is publishing a value the vehicle cannot hold. A channel that publishes
     *something about* a keyed state, with no placeholder in its own name to instantiate the key,
     gets a note instead: `cw.active_lights` is a list of which systems are lit, and
-    `structure.docking_latches` is a count of `docking_latch_state`'s members whose own debt
-    carries what it owes.
+    `structure.docking_latches` was a count of `docking_latch_state`'s members and now reads its own
+    count state, `latches_engaged`.
     """
     structure = "domains/structure/components.yaml"
     channels = "channels.yaml"

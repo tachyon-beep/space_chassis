@@ -56,6 +56,11 @@ def docking_latch_state(inputs, params, dt):
     return dict.fromkeys(params["latches"], target)
 
 
+def latches_engaged(inputs, params, dt):
+    """How many ring latches are drawn down and locked: the count the guards and the crew read."""
+    return sum(1 for position in inputs["docking_latch_state"].values() if position == "engaged")
+
+
 def structural_leak_g_s(inputs, params, dt):
     """The structure's leak in excess of the nominal cabin leak: zero while every path with pressure
     behind it is sealed, and no value while one is not, because the vent rate of an open hatch or an
@@ -103,5 +108,6 @@ RULES = {
     "arm_state": arm_state,
     "pyro_fired": pyro_fired,
     "docking_latch_state": docking_latch_state,
+    "latches_engaged": latches_engaged,
     "structural_leak_g_s": structural_leak_g_s,
 }
