@@ -115,7 +115,7 @@ thresholds:
     latched: false
     interlock: true
     severity: ADVISORY
-    point_units: "% remaining, checked at burn start"
+    point_units: "%, remaining, checked at burn start"
     provenance:
       basis: apollo
       ref: "apollo_diode.md:140"
