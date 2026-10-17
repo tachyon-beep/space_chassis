@@ -19943,12 +19943,16 @@ def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     # test is about are still among the refusals.** The claim being asserted is about *these two*,
     # not about the tick's total: whatever else the plant learns to advance, a driver in the wrong
     # quantity must stay refused.
+    # **`thrust_main_n` left the pair when the propulsion lane made it a rule** on which engine is
+    # firing (`domains/propulsion/rules.py`): its driver was never `E-PROP-ENG`, which is the tank's
+    # drain, so it advances without reading that edge at all. `crew_workload` still has the wrong
+    # driver and is still refused for it.
     reasons = {g.state.id: (g.where, g.owed) for g in gaps}
-    assert "crew_workload" in reasons and "thrust_main_n" in reasons, sorted(reasons)[:8]
+    assert "crew_workload" in reasons, sorted(reasons)[:8]
+    assert "thrust_main_n" not in reasons, reasons.get("thrust_main_n")
     assert "coupling.yaml:edge E-CREW-WATER" in reasons["crew_workload"][0], reasons["crew_workload"]
-    assert "coupling.yaml:edge E-PROP-ENG" in reasons["thrust_main_n"][0], reasons["thrust_main_n"]
-    for state_id in ("crew_workload", "thrust_main_n"):
-        assert "driver" in reasons[state_id][1] or "quantity" in reasons[state_id][1], reasons[state_id]
+    owed = reasons["crew_workload"][1]
+    assert "driver" in owed or "quantity" in owed, reasons["crew_workload"]
 
 
 def test_every_domain_that_uses_the_sentinel_declares_the_order_it_advances_in():
@@ -20141,7 +20145,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
     # 27 -> 28 with ECLSS's `suit_fan`.
-    assert len(values["internal"]) == 28, sorted(values["internal"])
+    # 28 -> 30 with the SPS pressurization rules: `pressurant_pressure_psi` and `feed_pressure_pct`.
+    assert len(values["internal"]) == 30, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
