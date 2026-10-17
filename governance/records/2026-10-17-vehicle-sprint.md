@@ -134,3 +134,9 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
   D-06 first.
 - 13:50–13:51 John: fidelity has to add an interesting option, not a forced move (D37). The
   fidelity ledger gains a "what option it adds" column, filled as lanes report.
+- 13:47–13:48 #47 triaged: it carries all engine work for other lanes (`status.md`); `gated_by`
+  held; truth bytes change, so per-tick hashes differ from `main`. Merge order unchanged. Comms
+  raises the high-gain antenna to TN D-6723 Table I (pointing becomes a crew trade); a `measured`
+  pattern linter change goes to lane 9. Thermal's bays and pump speed stay below sourced fidelity
+  until the research thread reads its documents. The research thread drops ECLSS and SPS (those
+  lanes fetch their own); RCS pages first.
