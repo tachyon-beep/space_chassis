@@ -8205,9 +8205,9 @@ def check_propulsion_bindings(root: Path, vehicle: dict[str, Any], report: Repor
 
     The link is declared rather than inferred for the same reason `domain_group` is: the two files
     name one engine differently (`lm_dps` against `dps`), and one component stands for three
-    vehicle entries where the article is identical — `thruster_100lbf` is all forty-four, because
-    its own note says forty-four near-identical entries would be forty-four places for the
-    arithmetic to differ.
+    vehicle entries where the article is identical — `thruster_100lbf` is the thirty-two SM and LM
+    thrusters, because its own note says thirty-two near-identical entries would be thirty-two
+    places for the arithmetic to differ.
 
     Three closures, and the third is arithmetic rather than equality: an engine's `isp_s` and
     thrust figures are the vehicle entry's; a thruster's `count` is the sum of the `thrusters` its

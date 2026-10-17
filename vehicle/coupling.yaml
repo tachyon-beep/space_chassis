@@ -113,8 +113,8 @@ nodes:
     preloaded: "RCS propellant is loaded at the pad and nothing in the mission refills it. The RCS load is 4.9 % of the LM's ascent budget at the tightest point, so this is the tank whose margin a crew spends first"
     note: >-
       all three systems at one node, and that is the right lump rather than a convenience: the RCS
-      domain models **all forty-four thrusters as one article** (`thruster_100lbf`, with
-      `vehicle_keys: [rcs_sm, rcs_cm, rcs_lm]`), so the service the allocator commands is one
+      domain models the forty-four thrusters as two articles (`thruster_100lbf` for the SM and LM,
+      `thruster_cm` for the CM, whose Isp is 2 % lower), so the service the allocator commands is one
       service, and a fleet that has spent the SM's propellant has spent the vehicle's
   pressurant_he:
     domain: consumables
@@ -1532,11 +1532,12 @@ edges:
     kind: rate
     sensitivity:
       value: 0.0003670684711943586
-      # The article, not a system: all forty-four thrusters are `thruster_100lbf`, whose Isp is
+      # The article, not a system: the SM and LM thrusters are `thruster_100lbf`, whose Isp is
       # declared **once** in `domains/rcs/components.yaml`, while `vehicle.yaml#propulsion` carries
-      # it three times — once per system that flies it. Binding the single declaration is the
-      # honest choice for a node (`prop_rcs`) that all three draw from, and round 106's join holds
-      # the domain's copy and the three vehicle entries equal in both directions either way.
+      # it twice — once per system that flies it. Binding the single declaration is the honest
+      # choice for the SM and LM, and round 106's join holds the domain's copy and the two vehicle
+      # entries equal in both directions. The CM's twelve engines draw from the same node at
+      # `thruster_cm`'s 272.0 s, 2 % more propellant per newton, which this one edge does not carry.
       derivation:
         expression: "1 / (isp_s * 9.80665)"
         inputs:

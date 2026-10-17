@@ -165,7 +165,7 @@ therefore one that a flight-hardware document states independently, and the YAML
   and the thrust's fall with altitude during entry (same table), both for the CM article's lane.
 - **Home.** `geometry.rcs_cm`.
 
-## G-7 The CM jet is not the SM jet (decided: split)
+## G-7 The CM jet is not the SM jet (decided and landed: split)
 
 - **What the vehicle says.** `components.thruster_100lbf`: one component for all forty-four
   because they are the same article; `vehicle.yaml#propulsion.rcs_cm` takes 445 N and 277.8 s
@@ -181,8 +181,12 @@ therefore one that a flight-hardware document states independently, and the YAML
   questions, because the article's flight figures had not been found and the only figures to hand
   were R577-6's simulator constants. With DB1's flight-hardware figures in hand the answer is
   **split**: the CM engine becomes its own article at 96.0 lb (427.0 N) and 272.0 s, a
-  declaration only. The model change moves pinned figures (the CM's impulse capacity and the
-  debt count), so it lands after the test-figure unpin.
+  declaration only. It landed after the test-figure unpin as `components.thruster_cm`, with
+  `vehicle.yaml#propulsion.rcs_cm` at 427 N and 272.0 s and `thruster_100lbf` reduced to the
+  thirty-two SM and LM thrusters. The CM's `capability.impulse_capacity` moved from 305,120 to
+  298,750 N·s. The shared `prop_rcs` node and its one drain edge `E-RCSP-RCS` still price every
+  newton at the SM and LM article's 277.8 s, so a CM firing draws 2 % less propellant there than
+  its engine does; that is the coupling's to carry, and the edge's comment says so.
 - **Not changed.** The SM article stays at C-26's 445 N and 277.8 s: DB1's 102.8 lb and 277.3 s
   are inside its published tolerance of D-7151's 100 lb rating and the Isp agrees to 0.2 %. A
   change there is a number, not a decision, and C-26 is the operator's.
