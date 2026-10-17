@@ -247,8 +247,8 @@ state:
     reference_range_m: 398180000
     power_amplifier_off_db: -20.0
     required_carrier_dbm:
-      1600: -120.0
-      51200: -109.0
+      "1600": -120.0
+      "51200": -109.0
     required_snr_db: 12.5
     hga_beamwidth_deg: 9.4
     pattern_loss_db_at_beamwidth: 12

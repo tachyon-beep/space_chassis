@@ -134,11 +134,13 @@ def link_snr(inputs, params, dt):
         error = float(inputs["antenna_pointing"])
         ratio = error / float(params["hga_beamwidth_deg"])
         received -= float(params["pattern_loss_db_at_beamwidth"]) * ratio * ratio
+    # Keyed by the rate as a string: a mapping key is a name, and the linter walks names as text.
     required = params["required_carrier_dbm"]
     rate = inputs["telemetry_rate"]
-    if rate not in required:
+    key = str(int(rate)) if isinstance(rate, (int, float)) else str(rate)
+    if key not in required:
         return params.no_value(f"no required carrier power is declared for {rate} bit/s")
-    return float(params["required_snr_db"]) + received - float(required[rate])
+    return float(params["required_snr_db"]) + received - float(required[key])
 
 
 RULES = {
