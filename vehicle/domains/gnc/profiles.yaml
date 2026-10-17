@@ -51,6 +51,7 @@ thresholds:
 
   # --- the ladder: what moves `gnc.nav_integrity` -----------------------------------------
   - id: estimator_divergence
+    acts: crew
     point: gnc.nav_position_sigma_m
     comparator: above
     assert: 1800
@@ -78,6 +79,7 @@ thresholds:
         threshold that can be defended from a published figure is worth more than one that cannot
 
   - id: covariance_high
+    acts: crew
     point: gnc.nav_position_sigma_m
     comparator: above
     assert: UNCONFIGURED
@@ -100,6 +102,7 @@ thresholds:
         is the same figure `mission.yaml#initial_state`'s missing perilune depends on
 
   - id: coast_limit_exceeded
+    acts: crew
     point: "gnc.coast_elapsed_s"
     comparator: above
     assert: UNCONFIGURED
@@ -121,6 +124,7 @@ thresholds:
         phase's accuracy need. Recording that chain is more useful than recording either end of it
 
   - id: innovation_rejected
+    acts: crew
     point: gnc.estimator_rejection_reason
     comparator: above
     assert: 0
@@ -143,6 +147,7 @@ thresholds:
         is a sensor that has stopped agreeing with the filter rather than a bad measurement
 
   - id: alignment_error_high
+    acts: crew
     point: gnc.imu_alignment_error_deg
     comparator: above
     assert: UNCONFIGURED
@@ -168,6 +173,7 @@ thresholds:
         spend propellant on, and it belongs to the mission rather than to the instrument
 
   - id: gyro_bias_growing
+    acts: crew
     point: "gnc.gyro_bias_xyz_deg_s"
     comparator: above
     assert: UNCONFIGURED
@@ -194,6 +200,7 @@ thresholds:
         life
 
   - id: radar_out_of_range
+    acts: crew
     point: gnc.radar_altitude_m
     comparator: above
     assert: UNCONFIGURED
@@ -224,6 +231,7 @@ thresholds:
 # will absorb is better than inventing a field before the second use of it exists.
 # --------------------------------------------------------------------------------------
   - id: nav_integrity_degraded
+    acts: crew
     point: gnc.nav_integrity
     comparator: below
     assert: 3
@@ -244,6 +252,7 @@ thresholds:
         refused. The ordinal is the ladder's own latency order rather than an invented scale
 
   - id: nav_velocity_sigma_high
+    acts: crew
     point: gnc.nav_velocity_sigma_m_s
     comparator: above
     assert: UNCONFIGURED

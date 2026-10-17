@@ -69,6 +69,12 @@ faults:
       false_positive_risk: >-
         low for the rate and high for the attribution. Any of the four causes produces the same
         first clue, and the vehicle will not choose between them for the fleet
+    fleet_class: onboard
+    fleet_class_note: >-
+      the review's list puts RCS-01 out of scope; on this vehicle it is not. The service isolates
+      the jet in seconds (S0), and since ADR 0005 the stuck jet's torque moves the body rate the
+      fleet reads, and the isolation's cost lands on `rcs.control_authority_margin`. The fleet
+      cannot prevent it and is held to attributing it and flying what is left
     response:
       kind: service
       note: >-
@@ -108,6 +114,7 @@ faults:
         that failure with its own entry. The separation is the *response* the vehicle takes:
         nothing is removed from the allocator at `suspect`, so a false positive costs the fleet
         nothing until it decides to act on one
+    fleet_class: onboard
     response:
       kind: service
       note: >-
@@ -144,6 +151,7 @@ faults:
         reaches `suspect` and stops. Whether `failed_off` follows is a decision — the fleet's, or
         the FDIR's if it were allowed to condemn on one sensor, which is what `apollo_diode.md:333`
         forbids
+    fleet_class: precursor
     response:
       kind: advisory
       note: >-
@@ -187,6 +195,7 @@ faults:
         derated together, and the fault is in `components.yaml` rather than in the vehicle. The
         separation is that a real derating appears on one thruster against its siblings — which is
         exactly why the domain publishes per-thruster impulse rather than only the total
+    fleet_class: precursor
     response:
       kind: advisory
       note: >-
@@ -219,6 +228,7 @@ faults:
         high if the transit time is wrong, which is why the detection is stated against
         `VALVE_CLOSE_MAX` rather than a bare threshold. A mismatch that appears on every pulse is
         the transit time being mis-set, not a valve failing
+    fleet_class: onboard
     response:
       kind: service
       note: "inhibit the dependent thrusters and isolate as appropriate — the conservative direction, because a valve whose position is unknown is a valve that might be open"
@@ -246,6 +256,7 @@ faults:
         a fault fast enough to destroy a driver is not one to detect in software
       latency: "immediate for the short, one pulse for the open"
       false_positive_risk: "low; the failure modes are electrical and unambiguous once the current is visible at all"
+    fleet_class: onboard
     response:
       kind: service
       note: "de-energize or isolate immediately for the short; disable the channel and substitute a thruster for the open. The asymmetry is speed: an overcurrent is a hazard in milliseconds and an open circuit is merely a capability loss"
@@ -278,6 +289,7 @@ faults:
         a genuine pressure transient during a heavy firing sequence is not a fault. The 1 s assert
         dwell exists for exactly this, and the reason it is only one second is that a feed below
         its firing-ready limit makes every subsequent pulse a guess
+    fleet_class: onboard
     response:
       kind: service
       note: "inhibit the affected group and re-evaluate the alternate string — the same decision the group-state verb exposes, taken by the vehicle when the fleet is not there to take it"
@@ -313,6 +325,10 @@ faults:
         `CNS-11` problem and it has the same answer: it needs a third source or a reasoning step,
         and `rcs.propellant_sigma_pct` widening while the feed pressure sags is the shape a fleet
         should be looking for rather than either number alone
+    fleet_class: onboard
+    fleet_class_note: >-
+      hours of evidence, but the service's response comes first, so the fleet is held to the
+      aftermath and not to the catch
     response:
       kind: service
       note: "isolate the branch if safe and declare the resource loss — `rcs_dode.md:952`'s 'declare' is deliberate, because a fleet that isolates a branch without recording the propellant it lost will misprice every later maneuver"
@@ -341,6 +357,7 @@ faults:
         a large requested slew can legitimately exceed the instantaneous wrench set while remaining
         feasible over its duration. The hysteresis band is what separates them, and the
         `constrained` value is the band
+    fleet_class: onboard
     response:
       kind: service
       note: >-
@@ -375,6 +392,7 @@ faults:
         without diverging. `rcs_dode.md:1074` makes hysteresis and dwell mandatory where threshold
         chatter would switch modes repeatedly, and this is the threshold that would do it — a
         chattering divergence alarm would walk the vehicle down the safety ladder on a healthy slew
+    fleet_class: onboard
     response:
       kind: service
       note: >-
@@ -417,6 +435,7 @@ faults:
         silent valve is unambiguous, and it is unambiguous *because* the residual is published —
         the channel exists to make an unpublished constant's worst failure observable, and if the
         channel were hidden this fault would be invisible until the attitude was gone
+    fleet_class: precursor
     response:
       kind: advisory
       note: >-
