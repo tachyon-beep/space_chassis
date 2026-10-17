@@ -119,8 +119,10 @@ state:
         extrapolation and the rule returns no value, as it does for a load beyond E0^2 / (4 R/2).
         **Below it the rule extrapolates** (`below_envelope: extrapolate`, a choice): a module under its
         400 W normal minimum reads the secant between the 31 V envelope edge and the 32.30 V intercept,
-        so the error is bounded by that 1.3 V span, where a refusal would leave a bus the crew has
-        lightly loaded with no voltage at all. With the standby glycol pump off, bus A starts at 826 W,
+        where a refusal would leave a bus the crew has lightly loaded with no voltage at all. That
+        1.3 V span is the reading's range, not a bound on its error: the 32.30 V intercept is itself
+        the secant extended to zero current, and no source publishes a module's terminal voltage
+        below 400 W, so the error there is unknown. With the standby glycol pump off, bus A starts at 826 W,
         26 W above its two modules' 800 W minimum, so one shed load reaches this branch
       routing: >-
         fuel cells 1 and 2 on main bus A: `components.fc_[1-2].normal_bus` (TN D-7609 p. 5; Apollo 15
@@ -452,6 +454,43 @@ state:
       basis: chosen
       reason: "Apollo shed load by crew procedure, not by an automatic ladder (AOH p. 2.6-38; WP02 E-9), so the published decision is the switch map and this state is its summary in the inventory's classes; `apollo_diode.md:48`'s \"any shed\" and \"any restore\" events are its changes"
 
+  # Whether each load has power: its switch, and a source on its bus. The state the consumers of a
+  # load's effect read (its heat, its flow, its signal), beside the switch they read before it.
+  - id: load_powered
+    method: discrete
+    node: load_shed_state
+    unit: "map[load_id,enum[on,off]]"
+    moved_by:
+      - "logic:`load_enabled`, read against whether the load's bus has a connected source"
+    # The rule's parameters (`domains/power/rules.py`): each CSM bus's sources, as the bus solves
+    # name them, and the loads `loads[].bus` puts on it, held to both by `tests/test_power_rules.py`.
+    buses:
+      - bus: csm_bus_a
+        cells: [fc_1, fc_2, battery_csm_1]
+        loads: [csm_sband_transceiver, csm_sband_power_amplifier, csm_imu, csm_guidance_computer,
+                csm_instrumentation, csm_coolant_pump_2, csm_heaters, csm_rcs_heaters,
+                csm_comm_heaters]
+      - bus: csm_bus_b
+        cells: [fc_3, battery_csm_2]
+        loads: [csm_suit_fan, csm_cabin_fan, csm_co2_scrubber, csm_coolant_pump_1, csm_lighting]
+    batteries: [battery_csm_1, battery_csm_2]
+    note: >-
+      `on` for a load whose switch is on and whose bus has a source connected (`source_enabled`, a
+      battery counting only while `battery_charge_j` holds charge), `off` otherwise. A switch is a
+      connection, not a supply: with fuel cell 3 taken off line bus B is dead, its loads draw nothing
+      (`bus_b_load_w`), and this map turns them off while `load_enabled` still has them on, which is
+      what the crew's switches show. A load's effect anywhere else in the vehicle (its heat, the fan's
+      flow, the transmitter's signal) belongs on this map rather than the switch map, or a dead bus
+      leaves its equipment running. A bus whose solve is a gap still has its source, so its loads
+      stay powered: the gap is the voltage's, not the supply's. The LM loads ride the LM's own
+      buses, which are not modelled (`load_enabled.initial_provenance`), so each passes its switch
+      through
+    provenance:
+      basis: derived
+      relation: >-
+        a load is powered when its switch is on and a source feeds its bus, the same test that
+        zeroes a dead bus's load in `bus_a_load_w` and `bus_b_load_w` (`domains/power/rules.py`)
+
   # The connection of every source `set_source` names. Internal: power alone reads it.
   - id: source_enabled
     node: internal
@@ -559,8 +598,10 @@ state:
     # The reference operating point, the reading the linter re-derives `fuel_cell_power_w` against:
     # every load below on and the transmitter on. The tick computes it from the switches.
     bus_a_load_w: 1148
-    # The bus is dead, and its loads draw nothing, when none of these modules is connected.
+    # The bus is dead, and its loads draw nothing, when none of these sources is connected; a
+    # battery among them counts only while `battery_charge_j` holds charge.
     cells: [fc_1, fc_2, battery_csm_1]
+    batteries: [battery_csm_1, battery_csm_2]
     # The rule's parameters (`domains/power/rules.py`): the loads `loads[].bus` puts on main bus A,
     # with their `demand_w`, copied because a rule reads only its own state's declaration and held to
     # the inventory by `tests/test_power_rules.py`.
@@ -598,6 +639,7 @@ state:
     unit: W
     bus_b_load_w: 575
     cells: [fc_3, battery_csm_2]
+    batteries: [battery_csm_1, battery_csm_2]
     loads_w:
       csm_suit_fan: 85
       csm_cabin_fan: 60

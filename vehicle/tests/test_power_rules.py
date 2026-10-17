@@ -665,3 +665,68 @@ def test_battery_c_on_the_buses_is_a_named_gap(world):
     _, gaps = tick(world, values, [c_on])
     assert "bus_a_v" in gaps and "bus_b_v" in gaps
     assert "battery C feeds both main buses" in gaps["bus_a_v"].owed, gaps["bus_a_v"].owed
+
+
+# ------------------------------------------------------------------------------------------------
+# A dead bus, an empty battery and an unloaded bus (the #43 review).
+# ------------------------------------------------------------------------------------------------
+
+
+def test_the_powered_map_copies_each_bus_and_its_loads():
+    doc = power_yaml()
+    states = {s["id"]: s for s in doc["state"]}
+    powered = states["load_powered"]
+    for bus in powered["buses"]:
+        assert bus["loads"] == [row["id"] for row in doc["loads"] if row["bus"] == bus["bus"]]
+    by_bus = {b["bus"]: b["cells"] for b in powered["buses"]}
+    assert by_bus == {
+        "csm_bus_a": states["bus_a_load_w"]["cells"],
+        "csm_bus_b": states["bus_b_load_w"]["cells"],
+    }
+    assert powered["batteries"] == states["bus_a_v"]["batteries"]
+
+
+def test_a_dead_bus_turns_its_loads_off_and_leaves_their_switches_on(world):
+    """Fuel cell 3 off: bus B is dead, so its loads are unpowered while their switches stay on, and
+    bus A's loads keep their supply."""
+    values, _ = tick(world, plant.initial_values(world))
+    assert values["load_powered"] == values["load_enabled"]
+    off = plant.Effect(0, "set_source", {"source": "fc_3", "state": "off"})
+    after, gaps = tick(world, values, [off])
+    assert "load_powered" not in gaps
+    bus_b = spec_of(world, "bus_b_load_w")["loads_w"]
+    for load_id in bus_b:
+        assert after["load_powered"][load_id] == "off", load_id
+        assert after["load_enabled"][load_id] == values["load_enabled"][load_id], load_id
+    for load_id in spec_of(world, "bus_a_load_w")["loads_w"]:
+        assert after["load_powered"][load_id] == values["load_enabled"][load_id], load_id
+
+
+def test_an_empty_battery_is_not_a_source(world):
+    """Battery A alone on bus A with no charge left: no source, so the bus is dead and unpowered,
+    where a Thevenin line read at no charge would hold the bus at 25 V."""
+    values, _ = tick(world, plant.initial_values(world))
+    values = dict(values, battery_charge_j=0.0)
+    effects = [
+        plant.Effect(0, "set_source", {"source": "fc_1", "state": "off"}),
+        plant.Effect(0, "set_source", {"source": "fc_2", "state": "off"}),
+        plant.Effect(0, "set_source", {"source": "battery_csm_1", "state": "on"}),
+    ]
+    after, gaps = tick(world, values, effects)
+    assert not {"bus_a_v", "bus_a_load_w", "load_powered"} & set(gaps)
+    assert after["bus_a_v"] == 0.0 and after["bus_a_load_w"] == 0.0
+    assert after["load_powered"]["csm_imu"] == "off"
+
+
+def test_an_unloaded_bus_stands_at_its_highest_source_emf():
+    """At no load the battery tied beside the modules holds the bus at its 37.1 V, every source at
+    0 A, rather than dropping out as not above the bus it makes."""
+    rules = rules_module()
+    sources = {"fc_1": (E0, R, True), "battery_csm_1": (E_BAT, R_BAT, False)}
+    solved, why = rules.solve_sources(0.0, sources, [12.903, 52.593], "extrapolate")
+    assert why is None
+    assert solved == (0.0, E_BAT, {"fc_1": 0.0, "battery_csm_1": 0.0})
+    alone, why = rules.solve_sources(
+        0.0, {"battery_csm_1": (E_BAT, R_BAT, False)}, [12.903, 52.593]
+    )
+    assert why is None and alone[1] == E_BAT

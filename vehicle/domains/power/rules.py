@@ -21,18 +21,28 @@ from __future__ import annotations
 import math
 
 
-def _connected(inputs, params):
-    """The modules in this bus's `cells` that `source_enabled` leaves connected, in declared order.
+def _connected(inputs, cells, batteries=()):
+    """The sources in this bus's `cells` that `source_enabled` leaves connected, in declared order.
 
-    A module missing from the switch map is a gap, not a disconnected module: the map is the whole
-    source inventory, so a missing key is a renamed or forgotten source."""
+    A source missing from the switch map is a gap, not a disconnected source: the map is the whole
+    source inventory, so a missing key is a renamed or forgotten source. A battery among `batteries`
+    is a source only while `battery_charge_j` holds charge: an empty battery tied on delivers
+    nothing, where a Thevenin line read at no charge would go on delivering at 37.1 V open circuit.
+    The stock is the three entry batteries' pooled charge, so it empties all of them at once."""
     switches = inputs["source_enabled"]
+    charged = None
     connected = []
-    for cell in params["cells"]:
+    for cell in cells:
         if cell not in switches:
             return None
-        if switches[cell] == "on":
-            connected.append(cell)
+        if switches[cell] != "on":
+            continue
+        if cell in batteries:
+            if charged is None:
+                charged = float(inputs["battery_charge_j"]) > 0.0
+            if not charged:
+                continue
+        connected.append(cell)
     return connected
 
 
@@ -43,7 +53,7 @@ def _enabled_load_w(inputs, params):
     switch: the amplifier's watts have one home, the load inventory, and the transmitter state says
     whether that load is drawing (ADR 0003 item 5). The transmitter is read only when it matters.
     """
-    connected = _connected(inputs, params)
+    connected = _connected(inputs, params["cells"], params["batteries"])
     if connected is None:
         return None
     if not connected:
@@ -82,8 +92,8 @@ def solve_modules(load_w, open_circuit_v, resistances_ohm, envelope_a, below_env
     small P. Returns (None, why) when there is no root (the load exceeds E0^2 / (4 R_eq)) or when a
     module current falls outside the published envelope, where the secant is an extrapolation —
     except below it when `below_envelope` is "extrapolate": a lightly loaded module reads the line
-    between its 31 V envelope edge and its 32.30 V intercept, a bounded extrapolation, rather than
-    leaving the bus with no voltage.
+    between its 31 V envelope edge and its 32.30 V intercept, an extrapolation whose error no source
+    bounds (the intercept is the secant's own), rather than leaving the bus with no voltage.
     """
     e0 = float(open_circuit_v)
     p = float(load_w)
@@ -150,24 +160,32 @@ def solve_sources(load_w, sources, envelope_a, below_envelope="refuse"):
     """
     p = float(load_w)
     active = {name: (float(e), float(r), fc) for name, (e, r, fc) in sources.items()}
-    while True:
-        g = sum(1.0 / r for _, r, _ in active.values())
-        s = sum(e / r for e, r, _ in active.values())
-        discriminant = s * s - 4.0 * g * p
-        if discriminant < 0.0:
-            return None, (
-                f"a load of {p:.0f} W is more than {sorted(active)} can deliver "
-                f"(S^2 / 4G = {s * s / (4.0 * g):.0f} W)"
-            )
-        volts = (s + math.sqrt(discriminant)) / (2.0 * g)
-        reverse = [name for name, (e, _, _) in active.items() if e <= volts]
-        if not reverse:
-            break
-        for name in reverse:
-            del active[name]
-        if not active:
-            return None, "no source on this bus is above the bus voltage it would make"
-    currents = {name: (e - volts) / r for name, (e, r, _) in active.items()}
+    if not active:
+        return None, "no source is connected to this bus"
+    if p <= 0.0:
+        # An unloaded bus stands at the highest open-circuit voltage among its sources, each at
+        # 0 A: the solve below would drop the last source as not above the bus it makes, and report
+        # a gap where the bus reads its EMF. The fuel cells' envelope still applies below.
+        volts = max(e for e, _, _ in active.values())
+    else:
+        while True:
+            g = sum(1.0 / r for _, r, _ in active.values())
+            s = sum(e / r for e, r, _ in active.values())
+            discriminant = s * s - 4.0 * g * p
+            if discriminant < 0.0:
+                return None, (
+                    f"a load of {p:.0f} W is more than {sorted(active)} can deliver "
+                    f"(S^2 / 4G = {s * s / (4.0 * g):.0f} W)"
+                )
+            volts = (s + math.sqrt(discriminant)) / (2.0 * g)
+            reverse = [name for name, (e, _, _) in active.items() if e <= volts]
+            if not reverse:
+                break
+            for name in reverse:
+                del active[name]
+            if not active:
+                return None, "no source on this bus is above the bus voltage it would make"
+    currents = {name: max(e - volts, 0.0) / r for name, (e, r, _) in active.items()}
     low, high = (float(x) for x in envelope_a)
     for name, (_, _, fc) in active.items():
         amps = currents[name]
@@ -189,7 +207,7 @@ def _solve(inputs, params, cells, load_w):
     connected, at their resistances this tick, or (None, why). A bus with no connected source is
     dead: 0 A at 0 V. With no battery connected it is the fuel cells' `solve_modules`; a battery
     connected to the bus makes it `solve_sources`, the cells and the battery behind its diodes."""
-    connected = _connected(inputs, {"cells": cells})
+    connected = _connected(inputs, cells, params["batteries"])
     if connected is None:
         return None, "a source on this bus has no position in `source_enabled`"
     isolated = [
@@ -307,7 +325,7 @@ def bus_a_rated_w(inputs, params, dt):
     A module's rating is its power at the envelope's 27 V terminal, (E0 - 27) / R_k amperes at 27 V,
     so under the secant it scales as R / R_k from the published 1,420 W: a module whose resistance
     has risen by half has lost a third of its rating, PWR-02's own mechanism."""
-    connected = _connected(inputs, params)
+    connected = _connected(inputs, params["cells"])
     if connected is None:
         return params.no_value("a module on bus A has no position in `source_enabled`")
     resistance_of = params["resistance_of"]
@@ -336,6 +354,25 @@ def load_shed_class(inputs, params, dt):
     return order[worst]
 
 
+def load_powered(inputs, params, dt):
+    """{load: on|off}: a load's switch, and off when no source is connected to its bus.
+
+    The supply half of a load's state, which `load_enabled` does not carry: a dead bus draws nothing
+    and leaves its switches on, so a consumer of a load's effect reads this map. A load on no CSM
+    bus here (the LM's) passes its switch through, its own bus not being modelled."""
+    switches = inputs["load_enabled"]
+    powered = dict(switches)
+    for bus in params["buses"]:
+        connected = _connected(inputs, bus["cells"], params["batteries"])
+        if connected is None:
+            return params.no_value(f"a source on {bus['bus']} has no position in `source_enabled`")
+        for load_id in bus["loads"]:
+            if load_id not in switches:
+                return params.no_value(f"{load_id} has no position in `load_enabled`")
+            powered[load_id] = "on" if connected and switches[load_id] == "on" else "off"
+    return powered
+
+
 def _held_resistance(state_id):
     """A module's source resistance, held: nothing aboard moves it (`dX/dt = 0`). A fault (PWR-02)
     or a scenario sets it; the rule returns what it carries, so a checkpoint restores it."""
@@ -355,6 +392,7 @@ RULES = {
     "fc_1_current_a": fc_1_current_a,
     "fuel_cell_power_w": fuel_cell_power_w,
     "bus_a_rated_w": bus_a_rated_w,
+    "load_powered": load_powered,
     "load_shed_class": load_shed_class,
     "fc_1_resistance_ohm": _held_resistance("fc_1_resistance_ohm"),
     "fc_2_resistance_ohm": _held_resistance("fc_2_resistance_ohm"),

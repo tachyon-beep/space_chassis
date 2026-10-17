@@ -328,20 +328,21 @@ nodes:
   bus_a:             {domain: power, kind: state,   unit: V,  apollo: "73-75"}
   bus_b:             {domain: power, kind: state,   unit: V,  apollo: "74"}
   bus_tie:           {domain: power, kind: discrete, unit: enum, apollo: "79"}
-  # `load_shed_state` carries two states: `load_enabled`, the switch position of every load (a map,
-  # so `key_space: by_state`), and `load_shed_class`, what the crew has shed by it. Together they
-  # are which loads the bus feeds. A node rather than the sentinel because thermal reads the switches.
+  # `load_shed_state` carries three states: `load_enabled`, the switch position of every load (a
+  # map, so `key_space: by_state`), `load_powered`, whether the load's bus has a source as well, and
+  # `load_shed_class`, what the crew has shed by the switches. Together they are which loads the
+  # bus feeds. A node rather than the sentinel because thermal reads the switches.
   load_shed_state:
     domain: power
     kind: discrete
     unit: enum
     apollo: "48, :237"
     key_space: by_state
-    state_order: [load_enabled, load_shed_class]
+    state_order: [load_enabled, load_powered, load_shed_class]
     state_order_note: >-
-      the switch map is written by `set_load` and the shed class is read from it
-      (`domains/power/rules.py`), so the switches go first and a `set_load` is reported in the tick
-      it lands. No bus voltage moves either: Apollo had no automatic DC load shed (AOH p. 2.6-38)
+      the switch map is written by `set_load` and the powered map and the shed class are read from
+      it (`domains/power/rules.py`), so the switches go first and a `set_load` is reported in the
+      tick it lands. No bus voltage moves either: Apollo had no automatic DC load shed (AOH p. 2.6-38)
 
   # --- thermal: lumped nodes plus the transport that an RC network loses ---------------
   coolant_flow:
