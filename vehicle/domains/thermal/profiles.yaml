@@ -22,6 +22,11 @@ profiles:
       ref: "apollo_diode.md:101-107"
       note: "the channel events are apollo's; the paired recovery values and dwells are chosen so that every regulated zone can be held without chattering at its own sampling rate"
 
+# `acts` says who acts on a crossing (the arc review's item 6, decided by the coordinator under
+# John's delegation of 2026-10-17 13:48Z): `automatic` only where a trip protects hardware inside
+# seconds and spends nothing (the pump's no-flow watch, and the stuck heater, whose feed the service
+# opens because the heater itself will not answer); everything else announces and waits for the
+# crew, because a choice the service makes for them is a decision the fleet never gets.
 thresholds:
 
   # --- CSM cabin: apollo's <10 and >30 events, paired and dwelled ------------------------
@@ -34,6 +39,7 @@ thresholds:
     dwell_clear_s: 120
     latched: true
     severity: CAUTION
+    acts: crew
     provenance:
       basis: apollo
       ref: "apollo_diode.md:89"
@@ -47,6 +53,7 @@ thresholds:
     dwell_clear_s: 120
     latched: true
     severity: CAUTION
+    acts: crew
     provenance:
       basis: apollo
       ref: "apollo_diode.md:89"
@@ -61,6 +68,7 @@ thresholds:
     dwell_clear_s: 60
     latched: true
     severity: WARNING
+    acts: crew
     provenance:
       basis: apollo
       ref: "apollo_diode.md:105"
@@ -74,6 +82,7 @@ thresholds:
     dwell_clear_s: 60
     latched: true
     severity: WARNING
+    acts: crew
     provenance:
       basis: apollo
       ref: "apollo_diode.md:106"
@@ -87,6 +96,7 @@ thresholds:
     dwell_clear_s: 120
     latched: true
     severity: CAUTION
+    acts: crew
     point_units: "K/min, a rate threshold on a level channel"
     provenance:
       basis: apollo
@@ -103,6 +113,7 @@ thresholds:
     dwell_clear_s: 60
     latched: true
     severity: CAUTION
+    acts: crew
     provenance:
       basis: apollo
       ref: "apollo_diode.md:101"
@@ -116,6 +127,7 @@ thresholds:
     dwell_clear_s: 60
     latched: true
     severity: CAUTION
+    acts: crew
     provenance:
       basis: apollo
       ref: "apollo_diode.md:101"
@@ -129,6 +141,7 @@ thresholds:
     dwell_clear_s: 60
     latched: true
     severity: WARNING
+    acts: crew
     provenance:
       basis: apollo
       ref: "apollo_diode.md:102"
@@ -141,6 +154,7 @@ thresholds:
     dwell_clear_s: 30
     latched: true
     severity: WARNING
+    acts: crew
     provenance:
       basis: apollo
       ref: "apollo_diode.md:103"
@@ -154,6 +168,7 @@ thresholds:
     dwell_clear_s: 30
     latched: true
     severity: EMERGENCY
+    acts: crew
     provenance:
       basis: apollo
       ref: "apollo_diode.md:103"
@@ -166,6 +181,7 @@ thresholds:
     dwell_clear_s: 120
     latched: true
     severity: CAUTION
+    acts: crew
     provenance:
       basis: derived
       relation: "the published inlet is 22.8-23.9 C in lunar orbit (TN D-6718); 35 C is chosen as the point where the rejection curve is stressed rather than comfortable, and it is set above the coolant supply limit because a high inlet with a normal supply is a load problem rather than a loop problem"
@@ -180,6 +196,7 @@ thresholds:
     dwell_clear_s: 120
     latched: true
     severity: CAUTION
+    acts: crew
     provenance:
       basis: chosen
       reason: "the LM cabin mirrors the CSM cabin's limits because no source distinguishes them (vehicle.yaml#thermal)"
@@ -192,6 +209,7 @@ thresholds:
     dwell_clear_s: 120
     latched: true
     severity: CAUTION
+    acts: crew
     provenance:
       basis: chosen
       reason: "as above; 2 K wider than the CSM's upper limit because the LM cabin is a smaller volume with a proportionally larger crew load"
@@ -204,6 +222,7 @@ thresholds:
     dwell_clear_s: 300
     latched: true
     severity: WARNING
+    acts: crew
     provenance:
       basis: chosen
       reason: "the descent bay holds water-based coolant and hypergolic propellant; -5 C is chosen as the point where an uninsulated line is at risk, and the 7 K recovery gap reflects that thawing takes far longer than freezing"
@@ -219,6 +238,7 @@ thresholds:
     latched: true
     interlock: true
     severity: WARNING
+    acts: automatic
     point_units: "L/min, evaluated only while the pump is commanded on"
     provenance:
       basis: apollo
@@ -234,6 +254,7 @@ thresholds:
     latched: true
     interlock: true
     severity: WARNING
+    acts: crew
     point_units: "K/min: the rate of change expected while a commanded heater or cooler is working"
     provenance:
       basis: chosen
@@ -248,6 +269,7 @@ thresholds:
     latched: true
     interlock: true
     severity: CAUTION
+    acts: automatic
     point_units: "% duty"
     gated_by: "the zone's own upper limit: the watch is only armed while the zone is above it"
     provenance:
