@@ -85,6 +85,10 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
 - **Merge order**: #45 (unpin), then #46 (ECLSS engine helper), then #47 (fault injection), then the
   rest rebase and merge when `required` is green. Figures are rewritten from the tools on rebase,
   never hand-merged.
+- **Shared decision records take one dated section per verb.** ADR 0004
+  (`vehicle/docs/decisions/0004-interlock-evaluation.md`) is being amended by ECLSS (#46), structure
+  (#51) and possibly propulsion (#50): each lane adds its own dated, verb-named section and rebases
+  over the others, never editing another lane's section.
 - **The quiet-coast episode must stay green; its numbers may move** (D29).
 - **Fidelity**: design for more fidelity, not less, except where it creates project risk (D31). Each
   lane tells the coordinator the fidelity it builds to and any approximation it keeps; the

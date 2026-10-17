@@ -112,3 +112,7 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
   applied the standby pump *off* on #43; thermal cherry-picks its re-derivation onto power's branch.
   Lane 9's engine queue adds `resolve_interlock` accepting a coupling-node `from` (propulsion).
 - 13:40 Governance PR #52 opened (this record, D24–D31, `status.md`).
+- 13:40 Draft #51 (structure), branch `claude/vehicle-structure-vvp7mm`; fidelity in `status.md`.
+  Structure proposes an ADR 0004 amendment (an interlock on the requested hatch direction); ADR 0004
+  is now amended by #46, #51 and possibly #50, one dated, verb-named section per lane
+  (`practice.md`, "Vehicle sprint").

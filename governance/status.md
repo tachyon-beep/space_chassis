@@ -32,7 +32,7 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | 5 | Comms remainder | [#48](https://github.com/tachyon-beep/space_chassis/pull/48) | draft; occultation from the orbit; `carrier_lock` waits on #47's seeding | #45, #47; John's Earth-link delay |
 | 2 | Finish thermal | [#49](https://github.com/tachyon-beep/space_chassis/pull/49) | draft; bays and pump speed advance; re-deriving MET-0 at 1,401 W; `heater_bank_duty` held | #45; the numeric-argument engine change (lane 9); John's two cards |
 | 3 | Propulsion and propellant | [#50](https://github.com/tachyon-beep/space_chassis/pull/50) | draft | #45; allowed domains for primary sources |
-| 4 | Structure states | — | in progress; `arm_state` waits on #47's seeding | #47 |
+| 4 | Structure states | [#51](https://github.com/tachyon-beep/space_chassis/pull/51) | draft; `arm_state` waits on #47's seeding; configuration states move to device firing after #47 | #45, #47; John's `hatch_state` initial card |
 | 7 | GNC + RCS | — | not started | the geometry lane (#44); John's pointing-modes answer |
 | 8 | Crew | — | not started | John: design item D-06 |
 | 10 | Avionics FDIR | — | not started | last; needs lane 9's faults |
@@ -61,6 +61,7 @@ One word each. Lanes carry on with the recommended option where they can.
 | thermal: bay thermal masses | chosen / hold / out (lane building *chosen*) | same |
 | the arc report's eleven decisions, including attitude as pointing modes (lane 7) and D-06 (lane 8) | in the report | Whole-vehicle arc assessment |
 | allowed domains `ibiblio.org`, `ntrs.nasa.gov`, `www.nasa.gov` in the cloud environment | a setting only John can change | project chat, 13:35 |
+| structure: `hatch_state` initial | on the card | Structure states (card) |
 | D22 pilot credentials for the 10-minute smoke | — | Vehicle to smoke-ready |
 | archive `space_vehicle` (D21) | a repository setting; safe since PR #35 | `records/2026-10-15-space-vehicle-archive-check.md` |
 
@@ -80,7 +81,8 @@ to the coordinator; *not reported* means the lane has not said yet.
 | propulsion (#50) | thrust a first-order lag to rated; chamber pressure proportional to thrust | DPS thrust and chamber pressure left as gaps (throttle-to-thrust law unsourced, `main_propulsion_diode.md:36` refuses it); feed pressure held at 100 % of nominal with no regulator or line loss; regulator lock-up, bottle blowdown and helium displacement wait on reachable sources; no start transient (none published) |
 | RCS geometry (#44) | per-jet SM and LM geometry from primary sources, linter-checked | all 44 jets treated as one article; CM jets owed |
 | fault injection (#47) | onset as a step change on the moved state, same tick | a ramp is a domain rule's job, not the plant's |
-| ECLSS, structure, unpin | not reported | — |
+| structure (#51) | latches, hatch and pyro as discrete devices; after #47: `pyro_health` fail-to-fire, descent stage separates only when all five staging devices fire, jettison only when the ring charge fires, `leak_sources_g_s` summed by the leak rule | latches move instantly to the drive (1 s dwell only; actuation time unsourced); the `one` scope is recorded and acts on nothing (re-cocking a failed latch unsourced); leak with an unlatched hatch or unseated ring above 0.5 psid is a named gap (aperture, seal, tunnel volume unsourced); configuration states still flip on the event until #47; `hatch_open_with_pressure` unevaluable (prose `gated_by`) |
+| ECLSS, unpin | not reported | — |
 | GNC + RCS | not started; the arc report recommends attitude as pointing modes until a decision needs 6-DOF | open with John; D31 bears on it |
 
 ## Known gaps in CI
