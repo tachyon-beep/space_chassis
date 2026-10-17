@@ -326,6 +326,38 @@ def test_the_linter_refuses_an_onset_it_cannot_hold_to_the_state(tmp_path):
         assert needle in out, f"{needle!r} did not fire:\n{out[-3000:]}"
 
 
+def test_every_onset_row_is_held_to_its_state_and_a_quantity_takes_a_number(tmp_path):
+    """The plant applies every `fault_value` row, so the linter reads every one, not the first."""
+    broken = faulted_copy(tmp_path / "vehicle")
+    power = broken / "domains" / "power" / "components.yaml"
+    thermal = broken / "domains" / "thermal" / "components.yaml"
+    # A word on a heat load: composed once, staged, and aborted the next tick in the domain's rule.
+    replace(thermal, "        scale: 1.5\n", "        becomes: warm\n")
+    # A second row for the same fault: a second element is fine, the same element twice is not, and
+    # the second row's value is held to the vocabulary as the first's is.
+    second = (
+        "      - fault: PWR-03-lcl-nuisance-trip\n"
+        "        key: {key}\n"
+        "        becomes: {becomes}\n"
+        '        provenance: {{basis: chosen, reason: "a second row"}}\n'
+    )
+    anchor = '        provenance: {basis: chosen, reason: "a test fixture: the trip drops one load"}\n'
+    replace(
+        power,
+        anchor,
+        anchor
+        + second.format(key="csm_lighting", becomes='"off"')
+        + second.format(key="csm_lighting_2", becomes='"tripped"'),
+    )
+    out = run_linter(broken).stdout
+    for needle in (
+        "makes environment_heat_w 'warm', and its `unit` ('W') is a quantity",
+        "declares 'PWR-03-lcl-nuisance-trip' twice on element 'csm_lighting'",
+        "makes load_enabled 'tripped', which its `unit`",
+    ):
+        assert needle in out, f"{needle!r} did not fire:\n{out[-3000:]}"
+
+
 def test_a_discrete_state_a_domain_rule_advances_starts_from_its_declared_initial(tmp_path):
     """Seeding, beside the fault path: a ruled latch reads its own last value, so it needs one at t=0.
 

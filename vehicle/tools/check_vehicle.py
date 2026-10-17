@@ -474,6 +474,26 @@ def check_fault_value(
             f"makes {sid} {row.get('becomes')!r}, which its `unit` ({unit!r}) cannot hold — the "
             f"vocabulary is {sorted(vocabulary)}",
         )
+    elif vocabulary is None:
+        # **A quantity takes a number, and a flag takes a flag.** Without a vocabulary there was no
+        # check at all, so `becomes: warm` on a heat load composed, staged the word, and aborted the
+        # next tick when the domain's rule tried to add it.
+        becomes = row.get("becomes")
+        element = unit[4:-1].split(",", 1)[-1].strip() if keyed and unit.endswith("]") else unit
+        flag = element.strip().lower() in ("bool", "boolean")
+        if flag and not isinstance(becomes, bool):
+            report.refuse(
+                where, f"makes {sid} {becomes!r}, and its `unit` ({unit!r}) holds true or false"
+            )
+        elif not flag and (
+            isinstance(becomes, bool | str)
+            or (isinstance(becomes, float) and not math.isfinite(becomes))
+        ):
+            report.refuse(
+                where,
+                f"makes {sid} {becomes!r}, and its `unit` ({unit!r}) is a quantity: an onset sets "
+                "it to a finite number",
+            )
     provenance = row.get("provenance")
     if not isinstance(provenance, dict):
         report.refuse(
@@ -6955,24 +6975,36 @@ def check_domain(
                         "through the coupling",
                     )
                     continue
-                onset = next(
-                    (
-                        row
-                        for row in state.get("fault_value") or []
-                        if isinstance(row, dict) and str(row.get("fault")) == name
-                    ),
-                    None,
-                )
-                if onset is None:
+                onsets = [
+                    row
+                    for row in state.get("fault_value") or []
+                    if isinstance(row, dict) and str(row.get("fault")) == name
+                ]
+                if not onsets:
                     report.refuse(
                         f"{mwhere}",
                         f"names fault {name!r} and nothing says what its onset makes this state: "
                         f"a `fault_value` entry for {name!r}",
                     )
                     continue
-                check_fault_value(
-                    f"{where}:state {sid}.fault_value", sid, state, onset, report, faults_here[name]
-                )
+                # **Every row, because the plant applies every row.** One fault may move several
+                # elements of a keyed state, one row per `key`; two rows on the same element (or two
+                # on a scalar state) would be applied one after the other, the second on what the
+                # first left.
+                keys_seen: set[str] = set()
+                for onset in onsets:
+                    element = repr(onset.get("key"))
+                    if element in keys_seen:
+                        report.refuse(
+                            f"{where}:state {sid}.fault_value",
+                            f"declares {name!r} twice on "
+                            f"{'element ' + element if onset.get('key') is not None else sid}; "
+                            "one onset moves one value once",
+                        )
+                    keys_seen.add(element)
+                    check_fault_value(
+                        f"{where}:state {sid}.fault_value", sid, state, onset, report, faults_here[name]
+                    )
                 continue
             if kind == "event":
                 if name not in events_here:
