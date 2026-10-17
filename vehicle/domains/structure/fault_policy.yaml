@@ -76,8 +76,8 @@ faults:
     seeding:
       on_demand_p: 5.0e-4
       trigger: "any docking or re-docking attempt"
-    perturbs: [structure.docking_latches, eclss.cabin_pressure_psia, eclss.lm_cabin_pressure_psia,
-               structure.leak_estimate_g_s]
+    perturbs: [structure.docking_latches, structure.docking_talkbacks, eclss.cabin_pressure_psia,
+               eclss.lm_cabin_pressure_psia, structure.leak_estimate_g_s]
     detection:
       evidence: >-
         a count below the full complement after an engage command, and — if the crew press on —
@@ -105,7 +105,8 @@ faults:
     seeding:
       on_demand_p: 2.0e-4
       trigger: "any undocking attempt"
-    perturbs: [structure.docking_latches, structure.stage_state, eclss.cabin_pressure_psia]
+    perturbs: [structure.docking_latches, structure.docking_talkbacks, structure.stage_state,
+               eclss.cabin_pressure_psia]
     detection:
       evidence: "a release command, a count that does not fall, and a stage state that does not change. The absence of a transition is the whole signature"
       latency: "seconds, and unambiguous"
