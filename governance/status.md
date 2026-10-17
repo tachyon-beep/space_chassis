@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 13:42 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 13:43 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -39,7 +39,12 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 
 Engine requests queued with lane 9: ruled-discrete seeding (structure, comms; in #47); numeric
 carried arguments with range refusal in `plant.command_effect` (thermal, after #45 and #46);
-`resolve_interlock` accepting a coupling-node `from` (propulsion).
+`resolve_interlock` accepting a coupling-node `from` (propulsion). Reported to lane 9 by ECLSS: `_walk`'s
+`staged.update` overwrites `values["internal"]` for all but the last sentinel state advanced per walk
+(published values unaffected). #46 also carries a state-level `preloaded:` in `advance()`/`_classify()`.
+
+Cross-lane follow-ups: ECLSS takes the structural-leak drain edge into `cabin_leak_csm`/`lm` after
+#51 lands. Lane-map correction: cabin water vapour waits on crew, like CO2.
 
 Cross-lane changes in flight: the standby-pump fix (D29) is power's `load_enabled` line in #43 plus
 thermal's re-derived MET-0 equilibrium and service-bay G (29.6875 W/K) and C (213,750 J/K),
@@ -62,6 +67,7 @@ One word each. Lanes carry on with the recommended option where they can.
 | the arc report's eleven decisions, including attitude as pointing modes (lane 7) and D-06 (lane 8) | in the report | Whole-vehicle arc assessment |
 | allowed domains `ibiblio.org`, `ntrs.nasa.gov`, `www.nasa.gov` in the cloud environment | a setting only John can change | project chat, 13:35 |
 | structure: `hatch_state` initial | on the card | Structure states (card) |
+| ECLSS: `o2_supply_pressure_psi` | relay recommended; on the card | ECLSS states (card) |
 | D22 pilot credentials for the 10-minute smoke | — | Vehicle to smoke-ready |
 | archive `space_vehicle` (D21) | a repository setting; safe since PR #35 | `records/2026-10-15-space-vehicle-archive-check.md` |
 
@@ -82,7 +88,8 @@ to the coordinator; *not reported* means the lane has not said yet.
 | RCS geometry (#44) | per-jet SM and LM geometry from primary sources, linter-checked | all 44 jets treated as one article; CM jets owed |
 | fault injection (#47) | onset as a step change on the moved state, same tick | a ramp is a domain rule's job, not the plant's |
 | structure (#51) | latches, hatch and pyro as discrete devices; after #47: `pyro_health` fail-to-fire, descent stage separates only when all five staging devices fire, jettison only when the ring charge fires, `leak_sources_g_s` summed by the leak rule | latches move instantly to the drive (1 s dwell only; actuation time unsourced); the `one` scope is recorded and acts on nothing (re-cocking a failed latch unsourced); leak with an unlatched hatch or unseated ring above 0.5 psid is a named gap (aperture, seal, tunnel volume unsourced); configuration states still flip on the event until #47; `hatch_open_with_pressure` unevaluable (prose `gated_by`) |
-| ECLSS, unpin | not reported | — |
+| ECLSS (#46, 18 of 24 states) | cabin leak per gas (bulk-flow shares); `set_o2_source` partly guarded through a general two-argument interlock condition (ADR 0004 amended; lane 7 can use it for its two verbs); suit loop on its compressor at 35 cfm, switched by `set_suit_fan` | cabin H2O waits on crew production (D-06), like CO2, since a removal-only vapour stock would dry the cabin; crew O2 uptake waits on `crew_state`, so cabin O2 still rises by the metabolic term; `o2_supply_pressure_psi` on a card to John (cryo tank sources on blocked hosts) |
+| unpin | not reported | — |
 | GNC + RCS | not started; the arc report recommends attitude as pointing modes until a decision needs 6-DOF | open with John; D31 bears on it |
 
 ## Known gaps in CI

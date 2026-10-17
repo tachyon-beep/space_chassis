@@ -116,3 +116,8 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
   Structure proposes an ADR 0004 amendment (an interlock on the requested hatch direction); ADR 0004
   is now amended by #46, #51 and possibly #50, one dated, verb-named section per lane
   (`practice.md`, "Vehicle sprint").
+- 13:41 ECLSS reports #46 at 18 of 24 states and its fidelity (`status.md`). Lane-map correction:
+  cabin H2O waits on crew (D-06), like CO2. ECLSS takes the structural-leak drain edge after #51.
+  Engine bug in `_walk` (`values["internal"]` overwritten) reported to lane 9. #46's shared pins
+  (README status line, build-order block, "24 states", "63 nodes", "25 cross-domain reads") are
+  rewritten from the tools at its rebase onto #45.
