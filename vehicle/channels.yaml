@@ -374,7 +374,7 @@ eclss:
     # quantity's full span, and a reserve alarm inside it is normal. The two are indistinguishable
     # from the numbers alone, which is why this is declared rather than inferred.
     range_kind: band
-    events: ["low pressure", "fall >5 psi/min"]
+    events: ["low pressure", "<800 CRYO PRESS", ">975 CRYO PRESS", "fall >5 psi/min"]
     event_class: alarm
     provenance:
       basis: historical

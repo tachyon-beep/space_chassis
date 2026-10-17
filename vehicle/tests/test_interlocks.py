@@ -387,9 +387,32 @@ def test_a_guard_over_two_arguments_applies_to_the_combinations_it_names(world):
     assert "eclss.lm_cabin_pressure_caution" in band_guards("lm", "off")
     assert "eclss.cabin_pressure_caution" not in band_guards("lm", "off")
     cautions = {"eclss.cabin_pressure_caution", "eclss.lm_cabin_pressure_caution"}
-    for vehicle in ("csm", "lm"):
-        for flow in ("low", "nominal", "high"):
+    csm_hazards = ["cabin_pressure_high", "o2_supply_low", "ppo2_fire_risk"]
+    for flow in ("low", "nominal", "high"):
+        assert band_guards("csm", flow) == csm_hazards, flow
+        assert band_guards("lm", flow) == ["lm_ppo2_fire_risk"], flow
+        for vehicle in ("csm", "lm"):
             assert not cautions & set(band_guards(vehicle, flow)), (vehicle, flow)
+
+
+def test_an_lm_fire_refuses_lm_oxygen_and_a_csm_fire_does_not(world, tmp_path):
+    """Codex, PR #64: the flow band's fire guard reads the commanded vehicle's cabin."""
+    outcomes = []
+    # One executive per fire: both thresholds latch, so the second would still see the first.
+    for n, (overrides, name) in enumerate(
+        [({"lm_cabin_o2_kg": 3.5}, "lm_ppo2_fire_risk"), ({"csm_cabin_o2_kg": 3.5}, "ppo2_fire_risk")]
+    ):
+        root = tmp_path / str(n)
+        built = console.Executive(world, root / "diode", phase="translunar_coast")
+        built.attach("alpha")
+        try:
+            trip(world, built, overrides, name)
+            outcomes.append(run(built, root, "set_o2_flow vehicle=lm flow=high"))
+        finally:
+            built.close()
+    refused, taken = outcomes
+    assert "refused: INTERLOCK TRIPPED" in refused and "lm_ppo2_fire_risk" in refused, refused
+    assert "state=accepted" in taken and "INTERLOCK" not in taken, taken
 
 
 def test_each_cabin_s_caution_guards_only_its_own_oxygen(world, tmp_path):

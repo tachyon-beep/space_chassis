@@ -32,17 +32,31 @@ commands:
     gate:
       kind: preference
       variable: o2_flow_<vehicle>_enable
-    interlocks: [cabin_pressure_high, o2_supply_low, ppo2_fire_risk, eclss.cabin_pressure_caution,
-                 eclss.lm_cabin_pressure_caution]
+    interlocks: [cabin_pressure_high, o2_supply_low, ppo2_fire_risk, lm_ppo2_fire_risk,
+                 eclss.cabin_pressure_caution, eclss.lm_cabin_pressure_caution]
     interlocks_when:
       - interlocks: [cabin_pressure_high, o2_supply_low, ppo2_fire_risk]
-        argument: flow
-        values: [low, nominal, high]
+        argument: [vehicle, flow]
+        values:
+          - [csm, low]
+          - [csm, nominal]
+          - [csm, high]
         why: >-
           each guard is a hazard that oxygen entering the cabin feeds (ADR 0004 §Direction): a cabin
           already over pressure (`cabin_pressure_high`), a supply already low (`o2_supply_low`), and an
           oxygen partial pressure already past the fire threshold (`ppo2_fire_risk`). Any flow adds to
-          all three, and `flow=off` is the recovery from each, so it is never refused by them
+          all three, and `flow=off` is the recovery from each, so it is never refused by them. All
+          three read the CSM's cabin or its S/M supply, so they guard the CSM's band
+      - interlocks: [lm_ppo2_fire_risk]
+        argument: [vehicle, flow]
+        values:
+          - [lm, low]
+          - [lm, nominal]
+          - [lm, high]
+        why: >-
+          the fire hazard in the LM's cabin, which any LM flow feeds and `flow=off` is the recovery
+          from. The LM has no over-pressure or supply-low threshold yet, so its band carries only
+          this one; a CSM hazard neither licenses nor blocks it
       - interlocks: [eclss.cabin_pressure_caution]
         argument: [vehicle, flow]
         values:

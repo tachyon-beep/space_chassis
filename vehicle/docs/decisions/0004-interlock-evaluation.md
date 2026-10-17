@@ -124,7 +124,8 @@ plainly the recovery. As declared:
 | set_radiator_bypass | `coolant_supply_high` | `state=bypass` | `state=radiator` |
 | set_radiator_bypass | `coolant_supply_low` | `state=radiator` | `state=bypass` |
 | arm_engine | the three feed guards | `state=armed` | `state=safe` |
-| set_o2_flow | `cabin_pressure_high`, `o2_supply_low`, `ppo2_fire_risk` | `flow=low`, `nominal`, `high` | `flow=off` |
+| set_o2_flow | `cabin_pressure_high`, `o2_supply_low`, `ppo2_fire_risk` | `vehicle=csm` at `flow=low`, `nominal`, `high` | `flow=off`; any LM command |
+| set_o2_flow | `lm_ppo2_fire_risk` | `vehicle=lm` at `flow=low`, `nominal`, `high` | `flow=off`; any CSM command |
 | set_o2_flow | `eclss.cabin_pressure_caution` | `vehicle=csm` at `flow=off` | any other band; any LM command |
 | set_o2_flow | `eclss.lm_cabin_pressure_caution` | `vehicle=lm` at `flow=off` | any other band; any CSM command |
 | set_cabin_regulator | `cabin_pressure_emergency` | `mode=closed`, `primary`, `isolated` | `mode=emergency` |
