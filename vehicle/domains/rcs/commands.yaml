@@ -225,7 +225,12 @@ commands:
       `rcs_propellant_reserve` — there is not enough left; and
       `rcs_propellant_uncertainty_high` — there may be enough left, and nobody can say so
       confidently enough to spend it. Not idempotent: two identical requests are two translations,
-      and a retry that the vehicle deduplicated would silently halve the Δv.
+      and a retry that the vehicle deduplicated would silently halve the Δv. The reserve guards
+      the whole verb, deliberately (ADR 0004's whole guards): every translation spends what the
+      reserve keeps, no frame or attitude policy is the recovery from having too little, and the
+      ways out of a translation, `abort_rcs_activity` and `enter_safe_hold`, are not guarded by
+      it. Attitude control is not a translation: slews and holds still fly below the reserve, and
+      each one shows what it cost.
     provenance:
       basis: historical
       source: "rcs_dode.md:735-746 — the request schema, and the statement that the vehicle, not the agent, selects legal combinations of jets"
