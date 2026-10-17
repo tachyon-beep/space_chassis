@@ -947,8 +947,9 @@ def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
         if len(world.states_on(node)) > 1
     }
     # 11 -> 10 in round 70, with the source regulator off the fuel cell's node; 13 with ADR 0003's
-    # rules (`load_shed_state`, `ground_received`, `fuel_cell` and `radiator_reject`'s duty). Not
-    # pinned since lane 0's follow-up: what matters here is that there is a crowded node to test.
+    # rules (`load_shed_state`, `ground_received`, `fuel_cell` and `radiator_reject`'s duty); 15 with
+    # the two cabin leaks, one outflow per gas. Not pinned since lane 0's follow-up (15 when it
+    # merged, at 9a0430a): what matters here is that there is a crowded node to test.
     assert crowded, "no node carries more than one state, so the check below is vacuous"
 
     # No blocked state is filed under a state that lives on a node with no value key.
@@ -3334,8 +3335,11 @@ def test_the_linter_holds_a_domain_s_declared_reads(tmp_path):
     owed = report.debts[0]
     # 23 -> 24 with ADR 0003: thermal reads `load_shed_state` for the switch map its heat rates sum
     # over, a one-way read. `thermal->link` was the delayed half of a declared cycle and is carried
-    # by `E-AMP-HEAT` now, so no read is left in that class. **The counts are not pinned** since lane
-    # 0's follow-up, because every lane that declares a read moves them; what is held is that the
+    # by `E-AMP-HEAT` now, so no read is left in that class. 24 -> 25: eclss reads `load_shed_state`
+    # for the suit compressor's switch, the same one-way read. 25 -> 26: eclss reads `fc_o2_draw`, the
+    # fuel cells' oxygen draw on the supply tanks, as their pressure rule's other draw.
+    # **The counts are not pinned** since lane 0's follow-up (26 and 8 when it merged, at 9a0430a),
+    # because every lane that declares a read moves them; what is held is that the
     # message's figures are the lengths of the lists it prints, and that its parts sum to its total.
     found = re.search(
         r"declares (\d+) cross-domain reads that no edge carries .*? — (\d+) of them return into a "
@@ -6871,7 +6875,7 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     # equilibria, the radiator's equilibrium and rejection, the bus load, the coldplate), and a rule is
     # not also a derivation. `environment_heat_w`'s derivation computes the hot hold, `sun_hold_w`
     # (ADR 0003 item 9), where it computed the state's `total_w`.
-    # (14 when lane 0's follow-up took the count out; a rule landing moves it.)
+    # (14 when lane 0's follow-up took the count out, at 9a0430a; a rule landing moves it.)
     assert declared, "no state declares its arithmetic"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
@@ -12656,7 +12660,7 @@ def test_every_stock_declares_where_it_starts():
     world = plant.load_world(VEHICLE)
     stocks = [s for s in world.states if s.method == "stock"]
     # 25 -> 26: comms `delivered_bits` (the recorder was already a stock).
-    # (26 when lane 0's follow-up took the count out.)
+    # (26 when lane 0's follow-up took the count out, at 9a0430a.)
     assert stocks, "the vehicle has no stock"
 
     seeded = plant.initial_values(world)
@@ -12688,8 +12692,10 @@ def test_every_stock_declares_where_it_starts():
     # helium charge landed from the Operational Data Book's loading table (round 13), which is the
     # last stock in the corpus whose `initial` was owed to a document nobody had opened.
     # 25 -> 26: comms `delivered_bits` starts at zero.
-    # (26 of 26 when lane 0's follow-up took the count out.)
-    assert declared, "no stock declares a numeric initial"
+    # (26 of 26 when lane 0's follow-up took the count out, at 9a0430a.) What is held is the
+    # property the count stood for: every stock declares a numeric `initial`, so a stock that
+    # reverts to `UNCONFIGURED` (a debt the linter accepts) fails here by name.
+    assert {s.id for s in stocks} == declared_ids, sorted({s.id for s in stocks} - declared_ids)
     on_nodes = {k: v for k, v in seeded_integrators.items() if k != "internal"}
     # 10 -> 12 with `prop_main` and `prop_rcs`: the two stocks whose `initial` was owed because
     # nothing said which tanks the nodes were. Both carry their loads now. **The six cabin gases
@@ -12735,7 +12741,9 @@ def test_every_stock_declares_where_it_starts():
     # `zone_csm_avionics_t` seed under their ids, `load_enabled` (the switch map `set_load`
     # writes) under its own, and `environment_heat_w` — a held boundary since item 9 — under its
     # id and its single-state node's alias, `environment_heat`.
-    # (89 when lane 0's follow-up took the count out: every sourced initial moves it.)
+    # 89 -> 91 with ECLSS: `suit_fan` (the switch `set_suit_fan` moves) under its id, and
+    # `o2_tank_heaters`, a ruled discrete whose id and single-state node share one name.
+    # (91 when lane 0's follow-up took the count out, at 9a0430a: every sourced initial moves it.)
     assert on_nodes, "no node key carries a seeded value"
     # And the map a tick actually starts from is that seed plus the declared arithmetic, so the
     # resolved states are a strict superset and every one of them is `algebraic`.
@@ -12750,14 +12758,15 @@ def test_every_stock_declares_where_it_starts():
     # position now, so they join this sub-map as well as the ids beside it.
     # 18 -> 22 with ADR 0003's thermal rules: the amplifier's temperature and the three loop
     # switch maps (`coolant_pump`, `evaporator_feed`, `radiator_bypass`) are sentinel states.
-    # (22 when lane 0's follow-up took the count out.)
+    # 22 -> 23 with ECLSS's `suit_fan`, the compressor switch, also on the sentinel.
+    # (23 when lane 0's follow-up took the count out, at 9a0430a.)
     assert seeded_integrators["internal"], "the sentinel seeds nothing"
     # Five of the sentinel's `algebraic` states resolve at t=0 as well — the bay heat, the cabin
     # pressure differential and three more — so the sentinel's sub-map is the same map the tick
     # commits, merged rather than replaced. (Six until ADR 0003's power rules moved the bus load to
-    # the cells' node.)
-    # (27 when lane 0's follow-up took the count out.) What is held is the merge: the sub-map the tick
-    # commits is the seed plus the resolved states, never the seed replaced.
+    # the cells' node.) 28 with ECLSS's `suit_fan`.
+    # (28 when lane 0's follow-up took the count out, at 9a0430a.) What is held is the merge: the
+    # sub-map the tick commits is the seed plus the resolved states, never the seed replaced.
     assert set(seeded_integrators["internal"]) < set(seeded["internal"]), sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
@@ -13101,8 +13110,11 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
     # comms' `transmitter_on` (`set_power_amplifier`) and `recorder_play` (`play_recorder`), power's
     # `load_enabled` (`set_load`), and thermal's three loop switch maps, `coolant_pump`,
     # `evaporator_feed` and `radiator_bypass`, each moved by its own verb.
-    # (49 states and (23, 5, 6, 23) when lane 0's follow-up took the counts out: every lane that
-    # adds a mover moved them. What is held is that every kind of mover is exercised by the walk.)
+    # 49 -> 51 with ECLSS: `suit_fan` (`set_suit_fan`) and `o2_tank_heaters`, the tanks' pressure
+    # switch, moved by its logic; 23 -> 24 commands and 23 -> 24 logic movers with the same two.
+    # (51 states and (24, 5, 6, 24) when lane 0's follow-up took the counts out, at 9a0430a: every
+    # lane that adds a mover moved them. What is held is that every kind of mover is exercised by
+    # the walk.)
     assert states and all((commands, triggers, events, logic)), (
         states, commands, triggers, events, logic,
     )
@@ -14098,8 +14110,9 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
     # count it is part of is what this assertion exists to notice.
     # 59 -> 61 with ADR 0003: thermal's three keyed commands (`evaporator_feed`, `coolant_pump`,
     # `radiator_bypass`) are on the sentinel and declared in its order, and power's `bus_a_load_w`
-    # left it for `fuel_cell`.
-    # **Since lane 0's follow-up the two counts are held to the plant's world rather than pinned**:
+    # left it for `fuel_cell`. 62 with ECLSS's `suit_fan`, the compressor switch `set_suit_fan` moves.
+    # **Since lane 0's follow-up the two counts are held to the plant's world rather than pinned**
+    # (62 states when it merged, at 9a0430a):
     # the domains that declare an order are exactly those with two or more sentinel states in the
     # world, and the states they order are exactly the world's. A sentinel state the file walk missed
     # still fails here; a lane that adds one no longer edits this line.
@@ -15481,8 +15494,8 @@ def test_interlocks_is_a_list_or_the_sentinel_and_nothing_else(tmp_path):
     guarded = sorted(v for v, s in verbs.items() if isinstance(s.get("interlocks"), list))
     # 23 -> 24: comms' `play_recorder` (ADR 0003) declares the sentinel; 24 -> 25: power's `set_load`
     # (ADR 0004 operator item 3: its `lcl_overcurrent` watched a template family no tick publishes).
-    # (25 and 34 when lane 0's follow-up took the counts out: every verb is one or the other, which is
-    # what the two figures summed to and what is held now.)
+    # (25 and 34 when lane 0's follow-up took the counts out, at 9a0430a: every verb is one or the
+    # other, which is what the two figures summed to and what is held now.)
     assert sentinel and guarded, (sentinel, guarded)
     assert len(sentinel) + len(guarded) == len(verbs), sorted(set(verbs) - set(sentinel) - set(guarded))
     assert not [v for v, s in verbs.items() if isinstance(s.get("interlocks"), str) and v not in sentinel]
@@ -16571,9 +16584,12 @@ def test_a_commanded_state_is_guarded_by_a_dwell_and_the_executive_reads_it(tmp_
     # 16 -> 22 with ADR 0003, and four of the six are keyed maps (`load_enabled`, `coolant_pump`,
     # `evaporator_feed`, `radiator_bypass`): `command_dwell` holds the whole value against its last
     # change, so a dwell there would make one element's switch block every other's. They declare
-    # none, and that is the second exemption, written down here rather than left as a gap.
-    # (22 commanded and 17 with a dwell when lane 0's follow-up took the counts out: every lane that
-    # adds a commanded mode moved both. The exemption list below is what they were guarding.)
+    # none, and that is the second exemption, written down here rather than left as a gap. 23 with
+    # ECLSS's `suit_fan`, a keyed map that declares one anyway: a second's lock-out of the LM's switch
+    # after a CSM command costs less than an undamped switch.
+    # (23 commanded and 18 with a dwell when lane 0's follow-up took the counts out, at 9a0430a:
+    # every lane that adds a commanded mode moved both. The exemption list below is what they were
+    # guarding.)
     assert commanded, "no discrete state is moved by a command"
     # The one-way state is the first exemption; the four keyed maps are the second.
     assert sorted(s.id for s in commanded if not s.spec.get("dwell")) == [
@@ -17891,7 +17907,8 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     anchor = '"""'
     assert anchor in text
     # The fixture's figure is one more than the vehicle's, spelled out. It was a typed word that the
-    # vehicle had to stay away from — twelve until the vehicle reached 12, then fourteen — and since
+    # vehicle had to stay away from — twelve until the vehicle reached 12, then fourteen, the vehicle
+    # at 13 after ADR 0003's merges and 15 with ECLSS's two cabin leak nodes — and since
     # lane 0's follow-up it is derived, so a lane that crowds a node never collides with it.
     shared = corpus_census()["multi-state nodes"]
     claim = f"{_in_words(shared + 1)} nodes carry more than one state"
