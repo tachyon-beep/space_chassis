@@ -180,3 +180,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 14:35 Lane 9's order after #47 adds the `ask_crew` `perceive()` caller after the instrument layer.
 - 14:36 Docking-latch talkback wiring sourced (TN D-6854 Fig A-7(b)); the research thread's earlier reading is struck through in `structure.md`.
 - 14:39 John confirms the delegated decisions and adds a closing phase: a light-touch fidelity calibration pass per station after the lanes merge (D45).
+- 14:41 Comms reports #48's fidelity: `link_snr` from Bellcomm CR-125670. Open across lanes: the CSM transmit chain uses LM figures, and the PA is an AC load whose inverter path is power's call.
