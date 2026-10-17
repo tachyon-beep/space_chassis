@@ -32,6 +32,10 @@ profiles:
       ref: "apollo_diode.md:73-80"
       note: "the event conditions are apollo's; the automatic shed tiers that sat below them were retired on 2026-10-17 because Apollo had none (AOH p. 2.6-38)"
 
+# `acts` says who answers each threshold (cross-lane rule, 2026-10-17): `automatic` for a trip or
+# interlock that protects hardware in seconds (an LCL's overcurrent with one reclose, the tie's dV
+# interlock), `crew` for everything that spends a resource or closes an option. Apollo's DC
+# undervoltage caution is the model: indication only, and the crew sheds (AOH p. 2.6-38).
 thresholds:
 
   # --- the undervoltage caution ---------------------------------------------------------
@@ -39,6 +43,7 @@ thresholds:
   # Apollo had no automatic DC load shed (AOH p. 2.6-38), so John retired them (decision b, PR #43)
   # and the crew sheds, `load_shed_class` reporting what they shed.
   - id: bus_a_undervoltage
+    acts: crew
     point: power.dc_bus_a_v
     comparator: below
     assert: 26.5
@@ -53,6 +58,7 @@ thresholds:
       note: "apollo's own event: <26.5 V for 0.5 s. It sheds nothing, as Apollo's own caution did not (AOH p. 2.6-38: \"for indication only\"); the crew answers it by checklist. It is the tier electrical_diode.md's ladder omits entirely."
   # --- the same caution on bus B -----------------------------------------------------------
   - id: bus_b_undervoltage
+    acts: crew
     point: power.dc_bus_b_v
     comparator: below
     assert: 26.5
@@ -68,6 +74,7 @@ thresholds:
 
   # --- margin, state of charge, temperature ----------------------------------------------
   - id: load_margin_low
+    acts: crew
     point: power.load_margin_w
     comparator: below
     assert: 100
@@ -81,6 +88,7 @@ thresholds:
       ref: "apollo_diode.md:80"
       note: "apollo's own thresholds: <100 W and negative, with >250 W preferred. The gap is apollo's, and it is wide on purpose: margin is an estimate, and an estimate that flickers across a threshold will shed twice"
   - id: load_margin_negative
+    acts: crew
     point: power.load_margin_w
     comparator: below
     assert: 0
@@ -93,6 +101,7 @@ thresholds:
       basis: apollo
       ref: "apollo_diode.md:80"
   - id: battery_soc_low
+    acts: crew
     point: power.battery_soc_pct
     comparator: below
     assert: 30
@@ -106,6 +115,7 @@ thresholds:
       ref: "apollo_diode.md:77"
       note: "<30 % then <15 %; the 10-point gap is chosen because SOC is an estimate with a slow bias, and a 1-point gap would trip on its own noise"
   - id: battery_soc_critical
+    acts: crew
     point: power.battery_soc_pct
     comparator: below
     assert: 15
@@ -118,6 +128,7 @@ thresholds:
       basis: apollo
       ref: "apollo_diode.md:77"
   - id: battery_overtemp
+    acts: crew
     point: power.battery_temp_c
     comparator: above
     assert: 45
@@ -131,6 +142,7 @@ thresholds:
       ref: "apollo_diode.md:78"
       note: "apollo's event is >45 C or a rise faster than 2 C/min. The clear is 5 C below the assert because battery capacity does not recover the instant the temperature does"
   - id: battery_thermal_runaway_rate
+    acts: crew
     point: power.battery_temp_c
     comparator: above
     assert: 2.0
@@ -147,6 +159,7 @@ thresholds:
 
   # --- interlocks (service-owned, never agent-writable) -----------------------------------
   - id: tie_dv_limit
+    acts: automatic
     point: power.dc_bus_a_v
     comparator: above
     assert: 1.0
@@ -164,6 +177,7 @@ thresholds:
       basis: chosen
       reason: "electrical_diode.md:880 requires |dV| <= 1.0 V before the tie closes. Modelled here as a threshold on the difference between buses; expressed against bus A because the profile schema keys on a single channel, and the linter's job is to check the hysteresis, not the arithmetic"
   - id: lcl_overcurrent
+    acts: automatic
     point: "power.lcl_[n]_current_a"
     comparator: above
     assert: 313
@@ -186,6 +200,7 @@ thresholds:
   # vehicle does not raise is worse than one that promises nothing: a fleet reads the promise and
   # waits.
   - id: bus_a_current_high
+    acts: crew
     point: power.bus_a_current_a
     comparator: above
     assert: 40
@@ -218,6 +233,7 @@ thresholds:
         the cause, one tick earlier
 
   - id: source_current_anomaly
+    acts: crew
     point: power.source_1_current_a
     comparator: below
     assert: UNCONFIGURED
@@ -238,6 +254,7 @@ thresholds:
         diagnosis and the single threshold is the alarm
 
   - id: lcl_state_trip
+    acts: crew
     point: "power.lcl_[n]_state"
     comparator: above
     assert: 1
@@ -260,6 +277,7 @@ thresholds:
         threshold, a load that tripped and stayed tripped is visible only as a load that stopped
 
   - id: load_shed_event
+    acts: crew
     point: power.load_shed_class
     comparator: above
     assert: 0
