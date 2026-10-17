@@ -18252,6 +18252,11 @@ COUNT_WORDS = {
         ]
     )
 }
+# The round tens on their own: without them "fifty" read as no figure at all, so a claim of exactly
+# fifty, sixty, ... passed unread while "fifty-one" was refused.
+COUNT_WORDS.update(
+    {"thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90}
+)
 COUNT_WORDS.update(
     {
         f"{tens}-{unit}": tens_value + unit_value
