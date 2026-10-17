@@ -162,3 +162,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
   power as a periodic load. Crew's #54 takes the census to 156 states. `fleet_class` vocabulary owed
   by lane 9. `sources/rcs.md` shows the CM jet differs from the SM's; the CM-jet answer is reopened
   with the RCS lane.
+- 14:14 ECLSS holds its crew-count CO2 edges until #54 is on `main`; CO2 removal becomes a rule after CRYO PRESS.
