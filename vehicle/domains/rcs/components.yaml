@@ -245,22 +245,22 @@ geometry:
     # DAP tables' own entries, so the linter can re-derive each from r x F and refuse a jet
     # whose geometry would fire the wrong way.
     jets:
-      - {id: 1,  quad: C, axis: "+X", torque: "+pitch", translation: "+X"}
-      - {id: 2,  quad: A, axis: "+X", torque: "-pitch", translation: "+X"}
-      - {id: 3,  quad: A, axis: "-X", torque: "+pitch", translation: "-X"}
-      - {id: 4,  quad: C, axis: "-X", torque: "-pitch", translation: "-X"}
-      - {id: 5,  quad: D, axis: "+X", torque: "+yaw",   translation: "+X"}
-      - {id: 6,  quad: B, axis: "+X", torque: "-yaw",   translation: "+X"}
-      - {id: 7,  quad: B, axis: "-X", torque: "+yaw",   translation: "-X"}
-      - {id: 8,  quad: D, axis: "-X", torque: "-yaw",   translation: "-X"}
-      - {id: 9,  quad: B, axis: "+Z", torque: "+roll",  translation: "+Z"}
-      - {id: 10, quad: D, axis: "+Z", torque: "-roll",  translation: "+Z"}
-      - {id: 11, quad: D, axis: "-Z", torque: "+roll",  translation: "-Z"}
-      - {id: 12, quad: B, axis: "-Z", torque: "-roll",  translation: "-Z"}
-      - {id: 13, quad: A, axis: "+Y", torque: "+roll",  translation: "+Y"}
-      - {id: 14, quad: C, axis: "+Y", torque: "-roll",  translation: "+Y"}
-      - {id: 15, quad: C, axis: "-Y", torque: "+roll",  translation: "-Y"}
-      - {id: 16, quad: A, axis: "-Y", torque: "-roll",  translation: "-Y"}
+      - {id: 1,  quad: C, axis: "+X", torque: "+pitch", translation: "+X", aoh_name: C3}
+      - {id: 2,  quad: A, axis: "+X", torque: "-pitch", translation: "+X", aoh_name: A4}
+      - {id: 3,  quad: A, axis: "-X", torque: "+pitch", translation: "-X", aoh_name: A3}
+      - {id: 4,  quad: C, axis: "-X", torque: "-pitch", translation: "-X", aoh_name: C4}
+      - {id: 5,  quad: D, axis: "+X", torque: "+yaw",   translation: "+X", aoh_name: D3}
+      - {id: 6,  quad: B, axis: "+X", torque: "-yaw",   translation: "+X", aoh_name: B4}
+      - {id: 7,  quad: B, axis: "-X", torque: "+yaw",   translation: "-X", aoh_name: B3}
+      - {id: 8,  quad: D, axis: "-X", torque: "-yaw",   translation: "-X", aoh_name: D4}
+      - {id: 9,  quad: B, axis: "+Z", torque: "+roll",  translation: "+Z", aoh_name: B1}
+      - {id: 10, quad: D, axis: "+Z", torque: "-roll",  translation: "+Z", aoh_name: D2}
+      - {id: 11, quad: D, axis: "-Z", torque: "+roll",  translation: "-Z", aoh_name: D1}
+      - {id: 12, quad: B, axis: "-Z", torque: "-roll",  translation: "-Z", aoh_name: B2}
+      - {id: 13, quad: A, axis: "+Y", torque: "+roll",  translation: "+Y", aoh_name: A1}
+      - {id: 14, quad: C, axis: "+Y", torque: "-roll",  translation: "+Y", aoh_name: C2}
+      - {id: 15, quad: C, axis: "-Y", torque: "+roll",  translation: "-Y", aoh_name: C1}
+      - {id: 16, quad: A, axis: "-Y", torque: "-roll",  translation: "-Y", aoh_name: A2}
     jets_provenance:
       basis: derived
       source: >-
@@ -277,10 +277,43 @@ geometry:
         control Y, Z and X axes. The result (A on -Z_c, B on +Y_c, C on +Z_c, D on -Y_c) is the
         one assignment under which all eight tables agree
       note: >-
-        flight software, not a simulator: the DAP that flew from Apollo 8. The pitch and yaw
-        jets are the AOH's "pitch and yaw engines" and 9-16 its roll engines (AOH p. 2.5-1, two
-        roll engines per quad). Jet numbers are the DAP's; the AOH's quad-letter engine names
-        (A1 to D4) map to them through AOH Figure 2.3-14, which is graphical and owed (G-5)
+        flight software, not a simulator: the DAP that flew from Apollo 8. Jet numbers are the
+        DAP's; `aoh_name` is the AOH's engine name, read from the rendered AOH Figure 2.5-1
+        "CM-SM Engine Locations" (s. 2.5; `/mnt/project-files/sources/rcs/`), which labels each
+        engine's rotation (+P A3, -P A4, CW+R A1, CCW-R A2, +Y B3, -Y B4, ...; "odd number engines
+        = +rotation") and draws quad A on -Z, B on +Y, C on +Z and D on -Y, the placement the DAP
+        tables above give independently. The map is the one assignment that matches the figure's
+        rotation label and quad to the DAP jet's (G-2)
+
+  # The CM's twelve jets: which subsystem feeds each and what it turns. Positions and thrust
+  # directions are owed (G-6); thrust and Isp are owed with the CM article (G-7).
+  rcs_cm:
+    jets:
+      - {id: 11, subsystem: 1, torque: "+roll"}
+      - {id: 12, subsystem: 1, torque: "-roll"}
+      - {id: 13, subsystem: 1, torque: "+pitch"}
+      - {id: 14, subsystem: 1, torque: "-pitch"}
+      - {id: 15, subsystem: 1, torque: "+yaw"}
+      - {id: 16, subsystem: 1, torque: "-yaw"}
+      - {id: 21, subsystem: 2, torque: "+roll"}
+      - {id: 22, subsystem: 2, torque: "-roll"}
+      - {id: 23, subsystem: 2, torque: "+pitch"}
+      - {id: 24, subsystem: 2, torque: "-pitch"}
+      - {id: 25, subsystem: 2, torque: "+yaw"}
+      - {id: 26, subsystem: 2, torque: "-yaw"}
+    provenance:
+      basis: historical
+      source: >-
+        AOH SM2A-03-BLOCK II-(1) s. 2.5, Figure 2.5-1 "CM-SM Engine Locations", rendered
+        (`/mnt/project-files/sources/rcs/aoh-fig2.5-1-cm-sm-engine-locations.png`): "CW + R21",
+        "CCW-R12", "CW+R11", "CCW-R22", "+P" 13 and 23, "-P" 14 and 24, "+Y" 15 and 25, "-Y" 16 and
+        26; legend "CM SUBSYSTEM 1" (solid) and "CM SUBSYSTEM 2" (open), "odd number engines =
+        +rotation maneuver". Corroborated by AOH p. 2.3-32 (direct coils on "all CM engines, except
+        13 and 23", the +pitch pair) and p. 2.5-39 (dump excludes "the two + pitch engines")
+      note: >-
+        the decision-bearing half of the CM's geometry: which jets a subsystem failure takes
+        away and which axis loses its redundancy. The figure is a perspective sketch, so it gives
+        no positions; R-577 s. 6.5.1.2's positions are sign-ambiguous in the text layer (G-6)
 
   # The LM's sixteen jets, from the LUMINARY simulator's control data, whose three printed
   # dimensions the Operational Data Book's flight-hardware figure states independently.
@@ -797,5 +830,5 @@ open_debts:
   - "The per-thruster minimum command-ON floor is owed until each thruster has SM, CM or LM membership and the controller path is named. Group enable/inhibit has a chosen zero policy dwell in both directions so inhibit and deliberate re-enable remain available; it is not an injector-pulse qualification. LM pulse-mode 10 ms and SM automatic-controller earliest OFF 12 ms are separately sourced under `capability.minimum_command_on_s`; CM hardware command timing remains unpublished in the sources reached. None is a delivered impulse bit or a universal qualification. The maximum ON time and duty cycle remain owed."
   - "Thrust rise and tailoff time constants. The asymmetry between them is what a total-impulse gauge misreads, and no source gives either."
   - "Inertia tensor and centre of mass, owed by `vehicle.yaml` and owed *to* this domain before the deadband, the allocator's wrench matrix and E-RCS-DYN can exist. Three of this domain's twelve states are waiting on it. **The docked stack's tensor landed in round 9** (`vehicle.yaml#mass_properties`) and four configurations' are still owed there by name; what this domain still cannot build is the wrench matrix, which needs the thrusters' own lever arms rather than the vehicle's tensor."
-  - "Thruster geometry, CM half and refinements. **The SM and LM tables have landed** (`geometry`, WP03 G-1 to G-4: SM jets 1-16 on quads A-D at their averaged centreline intersection with the 10 deg cant, LM jets 1-16 at the simulator positions the ODB corroborates), so the allocator can build `B = [F_i d_i ; r_i x F_i d_i]` (rcs_dode.md:685-693) for both. Still owed: the CM's twelve directions and four sign-ambiguous positions (G-6); the SM's per-jet offsets from the averaged point and the A1-D4 engine-name map, both graphical in ODB Figure 2-5 and AOH Figure 2.3-14 (G-5); and a scan reading of LM jet 4's sign (G-4)."
+  - "Thruster geometry, CM half and refinements. **The SM and LM tables have landed** (`geometry`, WP03 G-1 to G-4: SM jets 1-16 on quads A-D at their averaged centreline intersection with the 10 deg cant, LM jets 1-16 at the simulator positions the ODB corroborates), so the allocator can build `B = [F_i d_i ; r_i x F_i d_i]` (rcs_dode.md:685-693) for both. The CM's jet functions and subsystems are declared too (`geometry.rcs_cm`). Still owed: the CM's twelve positions and directions (G-6) and a scan reading of LM jet 4's sign (G-4). The SM's per-jet offsets from the averaged point are a documented approximation that adds no decision (G-5)."
   - "The mission's RCS propellant allocation. `rcs.total_impulse_ns` can be checked against the load (capability.impulse_capacity) but the mission declares no RCS budget, so the three systems still carry the linter's 'no mission burn' note while their loads are flown by attitude control, which no budget line can price."

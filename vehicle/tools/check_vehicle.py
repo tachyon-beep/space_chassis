@@ -13355,6 +13355,19 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
                     f"quad {jet['quad']} a thrust along {jet['axis']} gives tau = "
                     f"({tau[0]:.1f}, {tau[1]:.1f}, {tau[2]:.1f}) in per unit thrust",
                 )
+            name = str(jet.get("aoh_name", ""))
+            if (
+                len(name) != 2
+                or name[0] != jet["quad"]
+                or name[1] not in "1234"
+                or (int(name[1]) % 2 == 1) != (torque[:1] == "+")
+                or (name[1] in "12") != (torque[1:] == "roll")
+            ):
+                report.refuse(
+                    f"{sm_where}.jets.{jid}",
+                    f"is AOH engine {name!r}, which Figure 2.5-1 does not draw as a {torque} jet on "
+                    f"quad {jet['quad']}: engines 1 and 2 roll, 3 and 4 pitch or yaw, odd is +",
+                )
             translation = str(jet.get("translation", ""))
             if translation != jet["axis"]:
                 report.refuse(
@@ -13366,6 +13379,24 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
                 sm_where,
                 f"must put four jets on each of quads A-D; it declares {per_quad}",
             )
+
+    cm = geometry.get("rcs_cm")
+    cm_jets = cm.get("jets") if isinstance(cm, dict) else None
+    wanted = {f"{sign}{axis}" for sign in "+-" for axis in ("roll", "pitch", "yaw")}
+    if not isinstance(cm_jets, list) or not all(isinstance(j, dict) for j in cm_jets):
+        report.refuse(f"{where}.rcs_cm", "must list the CM's twelve jets")
+    else:
+        for subsystem in (1, 2):
+            jets = [j for j in cm_jets if j.get("subsystem") == subsystem]
+            torques = sorted(str(j.get("torque")) for j in jets)
+            if torques != sorted(wanted) or any(
+                (int(j.get("id", 0)) % 2 == 1) != str(j.get("torque")).startswith("+") for j in jets
+            ):
+                report.refuse(
+                    f"{where}.rcs_cm",
+                    f"subsystem {subsystem} must turn the CM both ways about every axis, one jet "
+                    f"each, odd-numbered jets positive (AOH Figure 2.5-1); it declares {torques}",
+                )
 
     lm = geometry.get("rcs_lm")
     lm_where = f"{where}.rcs_lm"
