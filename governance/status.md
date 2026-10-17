@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:21 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 14:22 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -27,7 +27,7 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | 0 | Unpin vehicle test figures | [#45](https://github.com/tachyon-beep/space_chassis/pull/45) | ready for review | its `required` check; merges first |
 | 6 | ECLSS states | [#46](https://github.com/tachyon-beep/space_chassis/pull/46) | draft (engine helper: two-argument interlock condition); 21 of 25 ready; `fleet_class` on all 21 faults (12 onboard, 9 precursor), 261 debts on its branch; CO2 and humidity wait on crew | #45 |
 | 9 | Fault injection into the step loop | [#47](https://github.com/tachyon-beep/space_chassis/pull/47) | draft; carries the engine work for other lanes (list below); per-tick hashes differ from `main` (nothing pins them) | #45, #46 |
-| 1 | Burn down power subsystem | [#43](https://github.com/tachyon-beep/space_chassis/pull/43) | draft at `a9c27d5`; per-cell fuel cells, PWR-02, battery tie; standby pump *off* | #45; #47 before the PWR-02 `fault:` row |
+| 1 | Burn down power subsystem | [#43](https://github.com/tachyon-beep/space_chassis/pull/43) | draft at `a9c27d5`; per-cell fuel cells, PWR-02, battery tie; standby pump *off*; aurora job red (policy D times out instead of `physical_loss` at 1,401 W); fix order in D42 | thermal's re-derived MET-0 equilibrium; #45; #47 before the PWR-02 `fault:` row |
 | — | Source RCS thruster geometry | [#44](https://github.com/tachyon-beep/space_chassis/pull/44) | draft; SM and LM jets sourced; CM jets, SM offsets, minimum impulse bit owed | #45; primary sources (now reachable, D32) |
 | 5 | Comms remainder | [#48](https://github.com/tachyon-beep/space_chassis/pull/48) | draft; occultation from the orbit; `carrier_lock` waits on #47's seeding | #45, #47 |
 | 2 | Finish thermal | [#49](https://github.com/tachyon-beep/space_chassis/pull/49) | draft; bays and pump speed advance; `fleet_class` and `acts` added (`efdb857`); ADR 0003 records Fraction and Chosen (`b60c310`); MET-0 re-derivation for #43 pending its test run; `heater_bank_duty` held | #45; the numeric-argument engine change (lane 9) |

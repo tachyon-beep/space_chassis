@@ -94,6 +94,8 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   (`vehicle/docs/decisions/0004-interlock-evaluation.md`) is being amended by ECLSS (#46), structure
   (#51) and possibly propulsion (#50): each lane adds its own dated, verb-named section and rebases
   over the others, never editing another lane's section.
+- **A vehicle PR may carry the matching `aurora/tests` assertion change** when it moves behaviour a
+  chassis test asserts, and says so; nothing else in `aurora/` (D42).
 - **Every fault carries `fleet_class`** (`precursor | onboard | out_of_scope`, a note on
   `out_of_scope`; D38 item 5); lane 9 lints it after #47.
 - **The quiet-coast episode must stay green; its numbers may move** (D29).

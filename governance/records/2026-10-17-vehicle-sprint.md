@@ -168,3 +168,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 14:17 Propulsion models SPS helium pressurization on #50 (`26532d3`; branch ready 74 → 80, debts 265 → 256). The coordinator answers its scope questions under D33 (D41).
 - 14:19 Power ties batteries A and B to the main buses on #43 (`a9c27d5`) and adds `acts` and `fleet_class`; the A–B tie's replacement follows #43.
 - 14:20 ECLSS classes all 21 faults on #46. The O2 tank heaters move onto a coupling node so power can load them.
+- 14:21 #43's aurora job is red: policy D no longer overheats inside the window at 1,401 W. The coordinator lets #43 carry the matching `aurora/tests` assertion if thermal's re-derivation does not fix it (D42), posted to John to override.
