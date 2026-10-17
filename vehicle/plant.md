@@ -244,6 +244,11 @@ Consequences:
   so a lost edge cannot leave a consumer permanently wrong.
 - Dwell timers run on the **monotonic** clock, never a source time that can jump
   (`avionics_diode.md:192`), so a time-correlation adjustment cannot expire a safety dwell.
+- **A fault's onset rides the same queue** (WP09). A scenario's `faults:` block or the hazard
+  schedule (`tools/faults.py`, `injections`) stamps it to the tick and microsecond, and what it does
+  is declared on the state it moves (`moved_by: [fault:<id>]` beside a `fault_value` row), never
+  written into evidence (§8). At an equal stamp the fault lands before the command, and the truth
+  records each arrival under `__fault_onsets`, so a replay and a resume carry it.
 
 ---
 
