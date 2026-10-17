@@ -178,3 +178,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 14:32 Structure publishes the docking-latch count on #51 (`3dd1e64`) for propulsion's docked-burn guard.
 - 14:34 Crew reports #54's fidelity (`ed840ef`). The `perceive()` caller goes to lane 9 after #47.
 - 14:35 Lane 9's order after #47 adds the `ask_crew` `perceive()` caller after the instrument layer.
+- 14:36 Docking-latch talkback wiring sourced (TN D-6854 Fig A-7(b)); the research thread's earlier reading is struck through in `structure.md`.
