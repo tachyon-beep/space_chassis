@@ -6364,9 +6364,9 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
     # environment's derivation is the hot hold's figure, `sun_hold_w` (ADR 0003 item 9).
     converted = {
         "environment_heat_w": "solar_flux_w_m2",
-        # `cabin_o2_supply_csm_kg_s` left with the surge tank: a rule routes its demand by
-        # `o2_source`, and `check_metabolic_rules` still holds its `nominal_kg_s`.
-        "cabin_o2_supply_lm_kg_s": "leak_kg_per_h",
+        # `cabin_o2_supply_csm_kg_s` left with the surge tank and `cabin_o2_supply_lm_kg_s` with
+        # the LM's switches: a rule routes each demand by `o2_source` and `o2_flow`, and
+        # `check_metabolic_rules` still holds both `nominal_kg_s`.
         "co2_removal_csm_kg_s": "co2_kg_per_crew_day",
         "co2_removal_lm_kg_s": "co2_kg_per_crew_day",
         "fc_h2_draw_kg_s": "per_amp_kg_s",
@@ -14257,27 +14257,18 @@ def test_the_cabin_oxygen_supplies_are_derived_from_the_losses(tmp_path):
     definition = copy_definition(tmp_path / "derivation")
     path = definition / "domains" / "eclss" / "components.yaml"
     text = path.read_text()
-    # The rule is a `derivation` now, whose inputs are the leak, the crew size and the metabolic
-    # rate by dotted path rather than three numbers restated in an expression. The needle moves
-    # with the spelling and the break is the same break: drop the per-hour-to-per-second step.
-    anchor = (
-        'expression: "(leak_kg_per_h + crew * o2_kg_per_crew_day / hours_per_day) '
-        '/ seconds_per_hour"'
-    )
-    assert anchor in text, "the fixture no longer matches the CSM supply rule"
-    # The break multiplies by the seconds instead of dividing by them — a wrong *value* rather
-    # than a wrong shape. Dropping the term entirely leaves `seconds_per_hour` bound and unused,
-    # which the derivation rule refuses first and for a different reason.
-    path.write_text(
-        text.replace(anchor, anchor.replace("/ seconds_per_hour", "* seconds_per_hour"), 1)
-    )
+    # Both supplies are rules now (PR #64), which route the demand by `o2_source` and `o2_flow`, so
+    # neither is a `derivation`; `check_metabolic_rules` holds each `nominal_kg_s` to the leak, the
+    # crew size and the metabolic rate. The break forgets the per-hour-to-per-second step on the
+    # LM's figure — a wrong *value* rather than a wrong shape.
+    anchor = "nominal_kg_s: 2.736470e-05"
+    assert text.count(anchor) == 1, "the fixture no longer matches the LM supply"
+    path.write_text(text.replace(anchor, "nominal_kg_s: 9.851292e-02", 1))
 
     result = run_linter(definition)
     assert result.returncode == 1
-    # `check_declared_derivation`'s wording, which is the rule a `derivation` is held by. The
-    # message says "no longer re-derives" where `rederive` — still used by an edge's `sums_to_h`
-    # and the tick arithmetic — says "does not re-derive".
-    assert "no longer re-derives" in result.stdout
+    assert "state cabin_o2_supply_lm_kg_s" in result.stdout
+    assert "The regulator replaces what the cabin loses" in result.stdout
 
 
 def test_the_water_cycle_edges_have_the_right_way_round(tmp_path):
@@ -15668,9 +15659,9 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
 
 def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
     """ADR 0004 §Direction, amended 2026-10-17: `set_o2_source`'s hazard is its `source` and its `flow`
-    together. A cabin losing pressure is fed by cutting its oxygen (an isolated source, or a flow of
-    `off`), and the service module's reserve is spent only by a flow drawn from `primary`, so neither
-    guard can name its direction with one argument. A condition may list its arguments and name the
+    together. A cabin losing pressure is fed by cutting its oxygen (an isolated source; a flow of
+    `off` is `set_o2_flow`'s to refuse), and the service module's reserve is spent by `primary` at any
+    band, so the guards are written over both arguments. A condition may list its arguments and name the
     combinations it applies to; the linter reads each combination as it reads a single value, and HELP
     prints them."""
     o2 = yaml.safe_load((VEHICLE / "domains" / "consumables" / "commands.yaml").read_text())
@@ -15678,7 +15669,10 @@ def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
     caution, reserve = verb["interlocks_when"]
     assert caution["argument"] == reserve["argument"] == ["source", "flow"]
     assert ["primary", "nominal"] not in caution["values"] and ["isolated", "high"] in caution["values"]
-    assert reserve["values"] == [["primary", "low"], ["primary", "nominal"], ["primary", "high"]]
+    # `primary` at every band, `off` included, since this verb's `flow` moves nothing (PR #64).
+    assert reserve["values"] == [
+        ["primary", "off"], ["primary", "low"], ["primary", "nominal"], ["primary", "high"]
+    ]
 
     generated = subprocess.run(
         [sys.executable, str(VEHICLE / "tools" / "generate_help.py"), "--dir", str(VEHICLE)],
@@ -15686,7 +15680,7 @@ def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
         text=True,
         check=False,
     ).stdout
-    assert "`o2_reserve_10` — only when (`source`, `flow`) is one of (`primary`, `low`)" in generated, generated[-800:]
+    assert "`o2_reserve_10` — only when (`source`, `flow`) is one of (`primary`, `off`)" in generated, generated[-800:]
 
     block = "        values:\n          - [primary, low]\n          - [primary, nominal]\n          - [primary, high]\n"
 
@@ -15809,9 +15803,9 @@ def test_a_command_value_says_which_argument_carries_the_value():
     # Five quantity states joined the eight mode ones this round, and one keyed state declares
     # nothing but its key. 17 -> 21 with ADR 0003: thermal's `coolant_pump`, `evaporator_feed` and
     # `radiator_bypass` and power's `load_enabled`, each keyed; 22 with ECLSS's `suit_fan`.
-    # 22 -> 25 with `o2_source`, which `set_o2_source`'s `source` moves, and `o2_flow`, which its
-    # `flow` and `set_o2_flow`'s move.
-    assert declared == 25, declared
+    # 22 -> 24 with `o2_source`, which `set_o2_source`'s `source` moves, and `o2_flow`, which
+    # `set_o2_flow`'s `flow` moves.
+    assert declared == 24, declared
     assert sorted(constants) == [
         "rcs.thruster_valve.isolate_rcs_manifold",
         "structure.pyro_fired.execute_event",

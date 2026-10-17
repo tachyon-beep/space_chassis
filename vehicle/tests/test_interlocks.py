@@ -297,7 +297,14 @@ DEFAULT_WORLD_SAFING = [
         "cabin_pressure_caution",
         {"csm_cabin_pressure_pa": 30000.0},  # 4.35 psia, past the 4.5 psia caution, above the emergency
         "set_o2_source vehicle=csm source=surge flow=high",
-        "set_o2_source vehicle=csm source=primary flow=off",
+        "set_o2_source vehicle=csm source=isolated flow=nominal",
+    ),
+    # The same caution on the band (reviewer, PR #64): `off` cuts the cabin's oxygen.
+    (
+        "cabin_pressure_caution",
+        {"csm_cabin_pressure_pa": 30000.0},
+        "set_o2_flow vehicle=csm flow=nominal",
+        "set_o2_flow vehicle=csm flow=off",
     ),
     (
         "o2_reserve_10",
@@ -357,8 +364,9 @@ def test_every_readable_interlock_names_its_direction_or_is_whole_on_purpose(wor
 
 
 def test_a_guard_over_two_arguments_applies_to_the_combinations_it_names(world):
-    """`set_o2_source` (ADR 0004 §Direction, amended 2026-10-17): the cabin caution guards cutting the
-    cabin's oxygen, an isolated source or a flow of `off`; the reserve guards drawing on `primary`."""
+    """`set_o2_source` (ADR 0004 §Direction, amended 2026-10-17): the cabin caution guards an isolated
+    source, and the reserve guards `primary` at every band, because this verb's `flow` moves nothing
+    (`eclss.o2_flow` is `set_o2_flow`'s, which carries the caution on `off`)."""
     spec = world.verbs["set_o2_source"]
 
     def guards(source: str, flow: str) -> list[str]:
@@ -369,28 +377,39 @@ def test_a_guard_over_two_arguments_applies_to_the_combinations_it_names(world):
         assert "o2_reserve_10" not in guards("isolated", flow)
         assert "o2_reserve_10" not in guards("surge", flow)
     for source in ("primary", "surge"):
-        assert "eclss.cabin_pressure_caution" in guards(source, "off")
-        for flow in ("low", "nominal", "high"):
+        for flow in ("off", "low", "nominal", "high"):
             assert "eclss.cabin_pressure_caution" not in guards(source, flow)
-    assert guards("primary", "off") == ["eclss.cabin_pressure_caution"]
-    assert guards("primary", "high") == ["o2_reserve_10"]
+    for flow in ("off", "low", "nominal", "high"):
+        assert guards("primary", flow) == ["o2_reserve_10"]
+    band = world.verbs["set_o2_flow"]
+    assert "eclss.cabin_pressure_caution" in plant.guarding_interlocks(
+        band, {"vehicle": "csm", "flow": "off"}
+    )
+    for flow in ("low", "nominal", "high"):
+        assert "eclss.cabin_pressure_caution" not in plant.guarding_interlocks(
+            band, {"vehicle": "csm", "flow": flow}
+        )
     # A leak on a low reserve: the surge tank is the one source both guards admit.
     assert guards("surge", "high") == []
 
 
 def test_the_reserve_guard_s_recovery_draws_nothing_once_taken(world, tmp_path):
-    """`o2_reserve_10` admits `primary` at `flow=off` because off spends no S/M oxygen, so taking it
-    must stop the cabin's draw rather than leave the regulator on the tripped reserve."""
+    """With `o2_reserve_10` tripped, `set_o2_source primary flow=off` is refused, because its `flow`
+    moves nothing and `primary` keeps the S/M tanks on the cabin; `set_o2_flow flow=off` is the
+    recovery that stops the draw (Codex, PR #64)."""
     built = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
     built.attach("alpha")
     try:
         trip(world, built, {"o2_csm_kg": 20.0}, "o2_reserve_10")
-        taken = run(built, tmp_path, "set_o2_source vehicle=csm source=primary flow=off")
+        refused = run(built, tmp_path, "set_o2_source vehicle=csm source=primary flow=off")
+        trip(world, built, {"o2_csm_kg": 20.0}, "o2_reserve_10")
+        taken = run(built, tmp_path, "set_o2_flow vehicle=csm flow=off")
         for _ in range(3):
             built.cycle()
         truth = built.truth
     finally:
         built.close()
+    assert "refused: INTERLOCK TRIPPED" in refused and "o2_reserve_10" in refused, refused
     assert "state=accepted" in taken and "INTERLOCK" not in taken, taken
     assert truth["o2_flow"]["csm"] == "off" and truth["o2_source"]["csm"] == "primary"
     assert truth["cabin_o2_supply_csm_kg_s"] == 0.0

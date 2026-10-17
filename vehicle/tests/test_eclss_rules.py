@@ -165,11 +165,13 @@ def test_the_tank_pressure_moves_on_a_real_tick_at_the_rate_the_table_gives(worl
 
 # --------------------------------------------------------------------------------------------
 # The CM's surge tank (AOH ECS p. 2.7-7): `set_o2_source` moves the regulator's draw between the
-# S/M supply and the surge tank, and `isolated` or a closed regulator stops it.
+# S/M supply and the surge tank, and `isolated` stops it. The cabin regulator's position does not:
+# it is one value for both vehicles, so an LM command would stop the CSM's oxygen (Codex, PR #64).
 # --------------------------------------------------------------------------------------------
 
 SUPPLY = STATES["cabin_o2_supply_csm_kg_s"]
 SURGE = STATES["o2_surge_csm_kg"]
+LM_SUPPLY = STATES["cabin_o2_supply_lm_kg_s"]
 
 
 def test_the_surge_tank_starts_full_and_the_cabin_draws_on_the_service_module(world):
@@ -202,17 +204,40 @@ def test_set_o2_source_surge_moves_the_draw_to_the_surge_tank(world):
     )
 
 
-@pytest.mark.parametrize("source, regulator", [("isolated", "primary"), ("primary", "closed")])
-def test_an_isolated_source_or_a_closed_regulator_admits_nothing(world, source, regulator):
+def test_an_isolated_source_admits_nothing(world):
     values = plant.initial_values(world)
-    values = {
-        **values,
-        "o2_source": {"csm": source, "lm": "primary"},
-        "cabin_regulator_position": regulator,
-    }
+    values = {**values, "o2_source": {"csm": "isolated", "lm": "primary"}}
     after = walk(world, values, 5)
     assert after["cabin_o2_supply_csm_kg_s"] == 0.0
     assert after["cabin_o2_surge_supply_csm_kg_s"] == 0.0
+    assert after["cabin_o2_supply_lm_kg_s"] == pytest.approx(LM_SUPPLY["nominal_kg_s"])
+
+
+def test_an_lm_regulator_command_leaves_the_csm_s_oxygen_alone(world):
+    values = walk(world, plant.initial_values(world), 1)
+    staged = plant.apply_command(
+        world, values, "set_cabin_regulator", {"vehicle": "lm", "mode": "closed"}
+    )
+    after = walk(world, {**values, **staged}, 3)
+    assert after["cabin_o2_supply_csm_kg_s"] == pytest.approx(SUPPLY["nominal_kg_s"])
+
+
+@pytest.mark.parametrize(
+    "switch", [{"o2_flow": {"csm": "nominal", "lm": "off"}}, {"o2_source": {"csm": "primary", "lm": "isolated"}}]
+)
+def test_the_lm_supply_honours_its_own_switches(world, switch):
+    values = {**plant.initial_values(world), **switch}
+    after = walk(world, values, 5)
+    assert after["cabin_o2_supply_lm_kg_s"] == 0.0
+    assert after["cabin_o2_supply_csm_kg_s"] == pytest.approx(SUPPLY["nominal_kg_s"])
+
+
+@pytest.mark.parametrize("source", ["primary", "surge"])
+def test_the_lm_draws_on_its_own_store_from_either_source(world, source):
+    """The LM has no surge tank, so `surge` reads as the store it does have."""
+    values = {**plant.initial_values(world), "o2_source": {"csm": "primary", "lm": source}}
+    after = walk(world, values, 5)
+    assert after["cabin_o2_supply_lm_kg_s"] == pytest.approx(LM_SUPPLY["nominal_kg_s"])
 
 
 def surge_quanta(world, values, steps):
@@ -255,20 +280,30 @@ def test_a_surge_tank_near_empty_never_gives_the_cabin_more_than_it_had(world, s
 
 
 def test_flow_off_stops_the_cabin_supply_from_either_store(world):
-    """`o2_reserve_10` admits `primary` at `off` as the recovery, so `off` must stop the draw."""
+    """`set_o2_flow flow=off` is the reserve guard's recovery, so `off` must stop the draw from
+    whichever store is selected."""
     values = walk(world, plant.initial_values(world), 1)
     assert values["o2_flow"] == {"csm": "nominal", "lm": "nominal"}
     for source in ("primary", "surge"):
-        staged = plant.apply_command(
-            world, values, "set_o2_source", {"vehicle": "csm", "source": source, "flow": "off"}
-        )
-        after = walk(world, {**values, **staged}, 3)
+        selected = {**values, "o2_source": {"csm": source, "lm": "primary"}}
+        staged = plant.apply_command(world, selected, "set_o2_flow", {"vehicle": "csm", "flow": "off"})
+        after = walk(world, {**selected, **staged}, 3)
         assert after["o2_flow"]["csm"] == "off"
         assert after["cabin_o2_supply_csm_kg_s"] == 0.0
         assert after["cabin_o2_surge_supply_csm_kg_s"] == 0.0
-    staged = plant.apply_command(world, values, "set_o2_flow", {"vehicle": "csm", "flow": "off"})
+
+
+def test_set_o2_source_s_flow_argument_moves_no_band(world):
+    """One writer for the band (Codex, PR #64): `set_o2_source` cannot bypass `set_o2_flow`'s gate
+    and guards, restart its dwell or lock it under another conflict domain."""
+    values = walk(world, plant.initial_values(world), 1)
+    staged = plant.apply_command(
+        world, values, "set_o2_source", {"vehicle": "csm", "source": "surge", "flow": "off"}
+    )
+    assert "o2_flow" not in staged
     after = walk(world, {**values, **staged}, 3)
-    assert after["cabin_o2_supply_csm_kg_s"] == 0.0
+    assert after["o2_flow"]["csm"] == "nominal"
+    assert after["cabin_o2_surge_supply_csm_kg_s"] == pytest.approx(SUPPLY["nominal_kg_s"])
 
 
 def test_the_supply_rule_stops_below_a_tick_of_flow():
@@ -283,7 +318,6 @@ def test_the_supply_rule_stops_below_a_tick_of_flow():
     inputs = {
         "o2_source": {"csm": "surge", "lm": "primary"},
         "o2_flow": {"csm": "nominal", "lm": "nominal"},
-        "cabin_regulator_position": "primary",
         "o2_surge_csm_kg": 0.0,
     }
     assert rule(inputs, params, DT) == 0.0

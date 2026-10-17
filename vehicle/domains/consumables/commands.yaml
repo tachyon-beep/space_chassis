@@ -125,17 +125,17 @@ commands:
           - [isolated, low]
           - [isolated, nominal]
           - [isolated, high]
-          - [primary, "off"]
-          - [surge, "off"]
         why: >-
           a cabin below its 4.5 psia caution is losing gas, and what makes it worse is cutting its
-          oxygen: an isolated supply, whatever the flow, or a flow of `off`, whatever the source.
-          Any flow from `primary` or `surge` admits oxygen and is the recovery, so it is never
-          refused by this guard; the emergency regulator's published job is exactly that, holding
+          oxygen: an isolated supply, whatever the flow. A flow of `off` is `set_o2_flow`'s to
+          refuse, under the same guard, because this verb's `flow` moves nothing (`eclss.o2_flow`).
+          `primary` and `surge` admit oxygen and are the recovery, so they are never refused by
+          this guard; the emergency regulator's published job is exactly that, holding
           the cabin above 3.5 psia for as long as the supply lasts (`apollo_diode.md:84`)
       - interlocks: [o2_reserve_10]
         argument: [source, flow]
         values:
+          - [primary, "off"]
           - [primary, low]
           - [primary, nominal]
           - [primary, high]
@@ -145,9 +145,12 @@ commands:
           PDF p. 12 (printed p. 2-1, §2.1-2.2.1) places the two cryogenic tanks in the S/M and the
           3.7 lb surge tank in the command module's LH equipment bay, fed in parallel downstream of
           the S/M shut-off valve, so `surge` draws a different store and `isolated` draws none.
-          `primary` at `off`, `surge` and `isolated` are the recovery, and the surge tank's own
-          floor is not this guard's to hold. In the plant `surge` moves the regulator's draw to
-          `eclss.o2_surge_csm_kg` (`eclss.o2_source`), so the S/M tanks stop feeding the cabin
+          `surge` and `isolated` are the recovery, and the surge tank's own floor is not this
+          guard's to hold. In the plant `surge` moves the regulator's draw to
+          `eclss.o2_surge_csm_kg` (`eclss.o2_source`), so the S/M tanks stop feeding the cabin.
+          `primary` is refused at every band, `off` included, because this verb's `flow` moves
+          nothing: the band is `set_o2_flow`'s (`eclss.o2_flow`), so `primary` here keeps the S/M
+          tanks on the cabin whatever band it names. `set_o2_flow flow=off` is the other recovery
     conflict_domain: res.<vehicle>.o2_source
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -159,7 +162,8 @@ commands:
       Select an oxygen source and a flow band. A flow band rather than a rate because the
       regulator owns the rate; what an agent chooses is which tank the regulator draws from,
       and a vehicle that has to reason about its own reserve should be able to say "spend this
-      tank first".
+      tank first". The flow band is carried for apollo's argument list and moves nothing; the
+      band an agent sets is `set_o2_flow`'s.
     provenance:
       basis: apollo
       ref: "apollo_diode.md:238"

@@ -323,7 +323,10 @@ thresholds:
         level of **975 psia**, the CM master alarm was inhibited by the fact that a warning of low
         hydrogen pressure was already in effect". Chosen over the AOH's 950 psia (SM2A-03-BLOCK II-(1)
         Vol. 1, p. 2.6-14, and p. 2.10-6, SC 108 and subsequent) because the target scenario is
-        Apollo 13 (scope decision, 2026-10-17); with 975 the trip at 55:54:29 reproduces
+        Apollo 13 (scope decision, 2026-10-17). The setting is CSM-109's; the event is not
+        reproduced: the trip was tank no. 2's pressure alone, and this point reads one aggregate
+        supply pressure over both tanks (`eclss.o2_supply_pressure_psi`), so a one-tank excursion
+        is diluted below it. Per-tank pressure, and the caution on each, is owed
       note: >-
         the overpressure half, and the one a quiet vehicle can reach on its own: with no draw the
         26 Btu/h heat leak drives a full tank up about a psi a minute past the 935 psia switch, so

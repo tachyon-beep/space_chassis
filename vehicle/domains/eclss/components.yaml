@@ -460,7 +460,9 @@ state:
   - id: cabin_o2_supply_csm_kg_s
     # **The regulator's demand, drawn from the store `o2_source` selects** (ECLSS lane, 2026-10-17).
     # The demand is the nominal figure below; it reaches this node only while the CSM's source is
-    # `primary` and the cabin regulator is open, and never more than the S/M stock holds for a tick.
+    # `primary` and its flow band is not `off`, and never more than the S/M stock holds for a tick.
+    # The cabin regulator's position does not gate it: `cabin_regulator_position` is one value for
+    # both vehicles, so gating on it let an LM `set_cabin_regulator` stop the CSM's oxygen.
     # `cabin_o2_surge_supply_csm_kg_s` is the same demand from the CM's surge tank.
     node: cabin_o2_supply_csm
     method: algebraic
@@ -469,8 +471,6 @@ state:
     draws_on: primary
     source_switch: {state: o2_source, element: csm}
     flow_switch: {state: o2_flow, element: csm}
-    regulator_state: cabin_regulator_position
-    regulator_open: [primary, emergency]
     stock_state: o2_csm_kg
     provenance:
       basis: derived
@@ -503,8 +503,6 @@ state:
     draws_on: surge
     source_switch: {state: o2_source, element: csm}
     flow_switch: {state: o2_flow, element: csm}
-    regulator_state: cabin_regulator_position
-    regulator_open: [primary, emergency]
     stock_state: o2_surge_csm_kg
     provenance:
       basis: derived
@@ -547,26 +545,31 @@ state:
         that valve, so the package's 1.36 kg is outside the surge store until one does. The surge
         tank's pressure transducer (sharing the O2 tank 1 meter) is not a channel yet
   - id: cabin_o2_supply_lm_kg_s
+    # The LM regulator's demand, under the same switches as the CSM's: nothing while the LM's
+    # source is `isolated` or its flow band is `off`. The LM has no surge tank, so `surge` and
+    # `primary` both draw on its own store.
     node: cabin_o2_supply_lm
     method: algebraic
     unit: kg O2/s
     nominal_kg_s: 2.736470e-05
+    draws_on: [primary, surge]
+    source_switch: {state: o2_source, element: lm}
+    flow_switch: {state: o2_flow, element: lm}
+    stock_state: o2_lm_kg
     provenance:
       basis: derived
-      computes: nominal_kg_s
-      derivation:
-        expression: "(leak_kg_per_h + crew * o2_kg_per_crew_day / hours_per_day) / seconds_per_hour"
-        inputs:
-          leak_kg_per_h: vehicle.yaml:consumables.leak.lm_kg_per_h
-          crew: 2
-          o2_kg_per_crew_day: vehicle.yaml:consumables.metabolic.o2_kg_per_crew_day
-          hours_per_day: 24
-          seconds_per_hour: 3600
       relation: >-
         as the CSM's, over the LM's own figures: `vehicle.yaml#consumables.leak.lm_kg_per_h` =
         0.0226796 (A11's measured 0.05 lb/hr) and two crew rather than three, so
         0.0226796 + 2 x 0.91/24 = 0.098513 kg/h = **2.736470e-05 kg/s**. This is the better-attested
-        of the two, because the leak figure is the LM's own
+        of the two, because the leak figure is the LM's own. The figure is `nominal_kg_s`, the demand
+        the rule routes (`domains/eclss/rules.py`), and not a `provenance.derivation`, for the
+        reason the CSM's is not; `check_metabolic_rules` holds it to the same figures within 1 %
+      note: >-
+        `surge` draws on the LM's store because the LM has none of its own: the vocabulary is one
+        verb's across both vehicles, and a source the LM does not have is read as the one it does
+        rather than as no oxygen. Which of the LM's tanks feeds the regulator (descent, then ascent)
+        is not modelled; `o2_lm_kg` is one store
   - id: cabin_regulator_position
     node: cabin_regulator
     method: discrete
@@ -785,24 +788,23 @@ state:
       reason: >-
         chosen: the regulator delivering its nominal demand, which is what the cabin drew before this
         state existed. No checklist position at TLI was read
-    moved_by: ["command:set_o2_source", "command:set_o2_flow"]
+    moved_by: ["command:set_o2_flow"]
     command_value:
-      - verb: set_o2_source
-        argument: flow
-        key: vehicle
-        why: "one element per vehicle; `off` stops the regulator's flow from whichever store is selected"
       - verb: set_o2_flow
         argument: flow
         key: vehicle
-        why: "the same band, set without choosing a store"
+        why: "one element per vehicle; `off` stops the regulator's flow from whichever store is selected"
     dwell:
       min_on_s: 1
       min_off_s: 1
     provenance:
       basis: chosen
       reason: >-
-        the flow band both verbs carry. Only `off` acts: it stops the cabin supply, which is what the
-        two `o2_reserve_10` and `cabin_pressure_caution` guards assume when they admit or refuse it.
+        the flow band `set_o2_flow` sets, and only it: `set_o2_source` carries a `flow` argument too,
+        but a second writer would bypass `set_o2_flow`'s gate and its fire and overpressure guards,
+        restart this state's dwell on a source change, and lock under a different conflict domain, so
+        that argument moves nothing. Only `off` acts: it stops the cabin supply, which is what the
+        `cabin_pressure_caution` guard on `set_o2_flow` assumes when it refuses it.
         `low`, `nominal` and `high` all deliver the nominal demand, because no source reached gives
         their rates. The one-second dwell each way is chosen, as `o2_source`'s is
   - id: o2_source
