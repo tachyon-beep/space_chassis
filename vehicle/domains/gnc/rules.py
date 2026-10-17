@@ -119,7 +119,16 @@ def _attitude(inputs, params, dt):
     return list(_unit(_qmul(q, step)))
 
 
+def _sun_direction_body(inputs, params, dt):
+    """The sun line in BODY: `q^-1 (x) s (x) q`, with `s` the fixed EARTH_J2000 unit vector."""
+    q = tuple(float(c) for c in inputs["attitude"])
+    sun = tuple(float(c) for c in params["sun_earth_j2000"])
+    conj = (q[0], -q[1], -q[2], -q[3])
+    return list(_qmul(_qmul(conj, (0.0, *sun)), q)[1:])
+
+
 RULES = {
     "body_rate": _body_rate,
     "attitude": _attitude,
+    "sun_direction_body": _sun_direction_body,
 }

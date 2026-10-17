@@ -1,4 +1,4 @@
-# domains/rcs/commands.yaml — nine verbs, and the eleven this vehicle refuses to have.
+# domains/rcs/commands.yaml — ten verbs, and the eleven this vehicle refuses to have.
 #
 # ## The architectural claim, turned into a verb list
 #
@@ -137,6 +137,34 @@ commands:
         than a mode for the same reason: `rcs_dode.md:1107` insists no generic specification can
         say Sun pointing is always safe, so the safe target is a choice the fleet makes with the
         power and thermal evidence in front of it
+
+  - verb: set_ptc_roll
+    argument_schema:
+      # Apollo's one PTC rate (Apollo 11 Mission Report), and zero to end the roll and hold.
+      rate_deg_s: {type: enum, values: ["0.0", "0.3"]}
+    authority: A1
+    gate: {kind: preference, variable: rcs_ptc_enable}
+    interlocks: [rcs_uncommanded_rate]
+    conflict_domain: rcs.target
+    allowed_phases: [translunar_coast, transearth_coast]
+    irreversible: false
+    idempotent: true
+    execution_class: declarative
+    maximum_queue_age_s: 120
+    help: >-
+      Start or stop the passive thermal control roll: the service spins the vehicle up to 0.3
+      deg/s about +X and holds +X on the current target. The roll evens the Sun's heating over
+      the radiators and the tanks, and the price is three ways round. The spin-up and the
+      spin-down each cost propellant. Held in `auto` the roll keeps paying a little; switched to
+      `free_drift` it pays nothing and cones, slowly, because the stack is not spinning about a
+      principal axis. And while it rolls, the high-gain antenna cannot hold the Earth. A new
+      `set_attitude_target` ends the roll, which is what leaving PTC for a burn costs.
+    provenance:
+      basis: historical
+      source: "Apollo 11 Mission Report (MSC-00171): PTC at 0.3 deg/s about +X, ecliptic-normal, with the SM auto RCS switches off after spin-up"
+      note: >-
+        the verb the PTC trade needed. Apollo set the roll through the DAP and a crew switch
+        sequence; here the switch is `set_rcs_mode free_drift`, so the two decisions stay two
 
   - verb: set_deadband
     argument_schema:

@@ -450,12 +450,13 @@ nodes:
     kind: state
     unit: "m, m/s, quat"
     apollo: "117-120"
-    state_order: [body_rate, attitude, orbital_state]
+    state_order: [body_rate, attitude, sun_direction_body, orbital_state]
     state_order_note: >-
       a 6-DOF integrator advanced as three states, in the causal order the integration implies:
       the rate integrates the attitude, and the attitude determines the thrust direction that
       integrates the orbit. The three are physically simultaneous and the split is a modelling
-      choice, so the order is declared as the one the equations are written in
+      choice, so the order is declared as the one the equations are written in. The sun line in
+      body axes follows the attitude it is rotated by (ADR 0005)
   # A `service` node, and the header's own definition is the argument: it holds authority, not
   # energy. Apollo's guidance could command the engine and the RCS without a crew verb, and
   # `set_guidance_mode` is the agent-side half of the same authority — its `conflict_domain` has

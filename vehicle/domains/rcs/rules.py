@@ -61,6 +61,29 @@ def _apply(matrix, v):
     return tuple(sum(matrix[i][j] * v[j] for j in range(3)) for i in range(3))
 
 
+def _rotate(q, v):
+    """`v` rotated by `q`: `q (x) [0, v] (x) q^-1`."""
+    return _qmul(_qmul(q, (0.0, *v)), _conj(q))[1:]
+
+
+def pointing_error(q, target, rolling):
+    """The error the service steers out, as (angle rad, unit axis in BODY).
+
+    Holding, it is the whole rotation to the target. In the thermal roll it is only where +X points:
+    the roll about +X is the commanded motion, so the error is the angle between the body's +X and
+    the target's, about the axis that carries one onto the other.
+    """
+    if not rolling:
+        return rotation_error(q, target)
+    wanted = _rotate(_qmul(_conj(q), target), (1.0, 0.0, 0.0))
+    axis = _cross((1.0, 0.0, 0.0), wanted)
+    sine = math.sqrt(sum(c * c for c in axis))
+    angle = math.atan2(sine, wanted[0])
+    if sine == 0.0:
+        return angle, (0.0, 1.0, 0.0)
+    return angle, tuple(c / sine for c in axis)
+
+
 def rotation_error(q, target):
     """The rotation from the present attitude to the target, as (angle rad, unit axis in BODY).
 
@@ -142,16 +165,22 @@ def _held_target(inputs, params, dt):
     The commanded text and frame are what the effect path wrote; this resolves them once, when they
     change, because a BODY-frame target is relative to the attitude *when it was asked for* — read
     every tick it would move with the vehicle and never be reached. `current` holds the attitude the
-    vehicle has now (an abort, or a hold where it stands). LVLH waits on the orbit-referenced frame
+    vehicle has now (an abort, a hold where it stands, or the start and end of the thermal roll,
+    which re-resolve it because the roll changes). LVLH waits on the orbit-referenced frame
     (`open_debts`), so a target given in it is recorded and not steered to.
     """
     previous = inputs["held_target"]
     text = str(inputs["attitude_target"])
     frame = str(inputs["target_frame"])
-    if previous.get("source") == text and previous.get("frame") == frame:
+    roll = float(inputs["roll_rate_command"])
+    if (
+        previous.get("source") == text
+        and previous.get("frame") == frame
+        and float(previous.get("roll", 0.0)) == roll
+    ):
         return dict(previous)
     present = tuple(float(c) for c in inputs["attitude"])
-    resolved = {"source": text, "frame": frame, "q": list(previous["q"])}
+    resolved = {"source": text, "frame": frame, "roll": roll, "q": list(previous["q"])}
     if text == "current":
         resolved["q"] = list(_unit(present))
         resolved["status"] = "held"
@@ -181,6 +210,11 @@ def _control_torque(inputs, params, dt):
 
     Inside the deadband, with the rate below what one minimum-impulse pulse can correct, the service
     asks for nothing: that is the hold, and the limit cycle it costs is `thruster_thrust`'s.
+
+    In the thermal roll (`roll_rate_command`, set by `set_ptc_roll`) the rate it steers to carries
+    the roll about +X as well, and the error is only where +X points. Apollo spun up this way and
+    then switched the jets off; the vehicle does the same when the fleet selects `free_drift`, and
+    from then on the roll is a torque-free spin that cones.
     """
     mode = str(inputs["mode"])
     if mode != "auto":
@@ -188,14 +222,16 @@ def _control_torque(inputs, params, dt):
     q = tuple(float(c) for c in inputs["attitude"])
     omega = tuple(math.radians(float(w)) for w in inputs["body_rate"])
     target = tuple(float(c) for c in inputs["held_target"]["q"])
-    angle, axis = rotation_error(q, target)
+    roll = math.radians(float(inputs["roll_rate_command"]))
+    spin = (roll, 0.0, 0.0)
+    angle, axis = pointing_error(q, target, roll != 0.0)
     inertia = _inertia(params)
     offset = math.radians(float(params["quad_offset_deg"]))
     limits = couple_torque_nm(params)
 
     deadband = math.radians(float(inputs["deadband_deg"]))
     rate_floor = math.radians(float(params["rate_floor_deg_s"]))
-    speed = math.sqrt(sum(w * w for w in omega))
+    speed = math.sqrt(sum((w - s) ** 2 for w, s in zip(omega, spin, strict=True)))
     if angle <= deadband and speed <= rate_floor:
         return [0.0, 0.0, 0.0]
 
@@ -205,7 +241,7 @@ def _control_torque(inputs, params, dt):
     alpha = min(lim / abs(d) for lim, d in zip(limits, demand, strict=True) if d != 0.0)
     rate_limit = math.radians(float(inputs["slew_rate_limit"]))
     steer = 0.0 if angle <= deadband else min(rate_limit, math.sqrt(2.0 * alpha * angle))
-    wanted = tuple(steer * a for a in axis)
+    wanted = tuple(s + steer * a for s, a in zip(spin, axis, strict=True))
 
     error = tuple(w_d - w for w_d, w in zip(wanted, omega, strict=True))
     gyro = _cross(omega, _apply(inertia, omega))
@@ -311,10 +347,12 @@ def _deadband_deg(inputs, params, dt):
 
 
 def _attitude_error(inputs, params, dt):
-    """The angle between the attitude and the held target, deg."""
+    """The angle between the attitude and the held target, deg; in the thermal roll, between the
+    body's +X and the target's, because the roll itself is not an error."""
     q = tuple(float(c) for c in inputs["attitude"])
     target = tuple(float(c) for c in inputs["held_target"]["q"])
-    return math.degrees(rotation_error(q, target)[0])
+    rolling = float(inputs["roll_rate_command"]) != 0.0
+    return math.degrees(pointing_error(q, target, rolling)[0])
 
 
 RULES = {

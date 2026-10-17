@@ -148,3 +148,35 @@ def test_a_commanded_slew_reaches_its_target_and_the_tank_pays_for_it(world):
     # Spin up and spin down: 2 x I w / (arm Isp g0), with the -7.25 deg quad offset putting yaw
     # couples to work beside the pitch ones. About 1.35 kg each way on the docked stack.
     assert 2.4 < spent < 3.0
+
+
+def test_the_thermal_roll_spins_up_then_drifts_free_with_the_sun_across_the_roll_axis(world):
+    values = _seeded(world)
+    _apply(values, plant.apply_command(world, values, "set_ptc_roll", {"rate_deg_s": "0.3"}))
+    for _ in range(int(10 / DT)):
+        values = plant.step(world, values, DT, [])
+    assert _level(world, values, "body_rate")[0] == pytest.approx(0.3, abs=0.001)
+    _apply(values, plant.apply_command(world, values, "set_rcs_mode", {"mode": "free_drift"}))
+    tank = _level(world, values, "prop_rcs_kg")
+    sun = []
+    for _ in range(int(60 / DT)):
+        values = plant.step(world, values, DT, [])
+        sun.append(_level(world, values, "sun_direction_body"))
+    # Free drift is free, and the roll axis sits on the ecliptic pole, so the Sun stays across it
+    # while it turns about it: 18 degrees in a minute at 0.3 deg/s.
+    assert _level(world, values, "prop_rcs_kg") == tank
+    assert max(abs(s[0]) for s in sun) < 0.05
+    turned = math.degrees(math.atan2(sun[-1][2], sun[-1][1]) - math.atan2(sun[0][2], sun[0][1]))
+    assert abs(turned) == pytest.approx(18.0, abs=0.5)
+
+
+def test_ending_the_roll_holds_where_the_vehicle_is_rather_than_turning_back(world):
+    values = _seeded(world)
+    _apply(values, plant.apply_command(world, values, "set_ptc_roll", {"rate_deg_s": "0.3"}))
+    for _ in range(int(60 / DT)):
+        values = plant.step(world, values, DT, [])
+    _apply(values, plant.apply_command(world, values, "set_ptc_roll", {"rate_deg_s": "0.0"}))
+    for _ in range(int(20 / DT)):
+        values = plant.step(world, values, DT, [])
+    assert max(abs(w) for w in _level(world, values, "body_rate")) < 0.001
+    assert _level(world, values, "attitude_error") < 0.5

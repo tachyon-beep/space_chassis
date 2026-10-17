@@ -290,6 +290,41 @@ state:
         the conventions are declared in `vehicle.yaml` rather than in a channel: a channel's
         `unit` field can hold `dimensionless` and cannot hold a rotation direction
 
+  - id: sun_direction_body
+    node: vehicle_dynamics
+    method: algebraic
+    unit: dimensionless
+    # The rule is `domains/gnc/rules.py`: the inertial sun line rotated into BODY by this tick's
+    # attitude. Thermal reads it for the PTC heating distribution; the edge is thermal's.
+    sun_earth_j2000: [0.927125806333986, 0.34381373598922815, 0.14909679464926695]
+    sun_provenance:
+      basis: historical
+      source: >-
+        JPL Horizons (DE441), the Sun (10) from the Earth's centre (500@399), ICRF, vectors, km,
+        at 1970-04-11 21:54:47 UT: X = 1.390305374379971e8, Y = 5.155784486482996e7,
+        Z = 2.235835454989255e7, normalised here
+        (https://ssd.jpl.nasa.gov/api/horizons.api?COMMAND='10'&CENTER='500@399'&EPHEM_TYPE='VECTORS'&REF_SYSTEM='ICRF'&START_TIME='1970-04-11 21:54:47').
+        The instant is Apollo 13's translunar injection: range zero 2:13:00 p.m. e.s.t. on 11
+        April 1970 (19:13:00 UT) plus TLI at 02:41:47 g.e.t., Report of Apollo 13 Review Board,
+        Table 3-II, Apollo 13 Mission Sequence of Events:
+        https://ntrs.nasa.gov/api/citations/19700076776/downloads/19700076776.pdf
+      note: >-
+        fixed at Apollo 13's TLI, the epoch the episode moves to (John, 2026-10-17: "we want to be
+        able to model apollo 13"; `mission.yaml#met_epoch_utc` follows in comms' change). A scope
+        decision taken under delegation: the Sun moves about 1 deg a day along the ecliptic, so
+        over a coast of days the line is off by a few degrees, and against the PTC roll axis (the
+        ecliptic pole) not at all. An ephemeris read every tick would need MET as a rule input,
+        which no rule has. ICRF and EARTH_J2000 agree to well under an arcsecond. The Earth's and
+        the Moon's shadows are not modelled; the vehicle is in sunlight
+    provenance:
+      basis: derived
+      relation: "s_body = q^-1 (x) s_ref (x) q, the attitude's inverse applied to the sun line"
+      note: >-
+        where the Sun is in the vehicle's own axes, which is the half of the PTC trade the
+        attitude can say. In the thermal roll the vector turns about +X at the roll rate and its
+        +X component stays near zero; held for the high-gain antenna it stands still and one
+        side bakes. The cos of the angle off the roll axis is its first component
+
   - id: body_rate
     node: vehicle_dynamics
     method: dynamics

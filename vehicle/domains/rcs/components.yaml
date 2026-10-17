@@ -216,7 +216,7 @@ capability:
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [mode, attitude_target, target_frame, slew_rate_limit, control_profile, deadband_deg, held_target, safety_state, authority_margin, attitude_error, deadband_latch, allocation_status, pulse_width, pulse_residual, impulse_total, propellant_estimate, feed_pressure]
+internal_order: [mode, attitude_target, target_frame, slew_rate_limit, roll_rate_command, control_profile, deadband_deg, held_target, safety_state, authority_margin, attitude_error, deadband_latch, allocation_status, pulse_width, pulse_residual, impulse_total, propellant_estimate, feed_pressure]
 internal_order_note: >-
   the control chain: the mode selects the authority, the authority bounds what the error may
   be, the error against the deadband decides whether a pulse is owed, the allocation decides
@@ -251,6 +251,7 @@ state:
         last asked to hold at the cut
     moved_by:
       - "command:set_attitude_target"
+      - "command:set_ptc_roll"
       - "command:abort_rcs_activity"
     command_value:
       - verb: set_attitude_target
@@ -259,6 +260,13 @@ state:
           the target is the quaternion, carried as the text the window sent. `held_target` reads it
           once, when it changes, and refuses a text that is not four numbers within 1 % of unit
           length by keeping the target it had (`status: unreadable`)
+      - verb: set_ptc_roll
+        argument: rate_deg_s
+        constant: "current"
+        why: >-
+          the roll starts and ends where the vehicle is: spinning up holds +X where it points now,
+          and spinning down holds the attitude the roll has reached rather than turning back
+          through it
       - verb: abort_rcs_activity
         argument: scope
         constant: "current"
@@ -346,6 +354,56 @@ state:
         difference here. The rate is the slew's whole trade: the propellant a slew costs is
         proportional to it (spin up, spin down) and the time is inversely so
 
+  - id: roll_rate_command
+    node: internal
+    method: discrete
+    unit: deg/s
+    initial: 0.0
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        the vehicle starts at rest in the PTC attitude (`gnc.attitude.initial`), holding: the roll
+        is the fleet's to start, and whether to start it is the first trade the coast offers
+    moved_by:
+      - "command:set_ptc_roll"
+      - "command:set_attitude_target"
+      - "command:abort_rcs_activity"
+    command_value:
+      - verb: set_ptc_roll
+        argument: rate_deg_s
+        maps:
+          "0.0": 0.0
+          "0.3": 0.3
+        why: "the roll rate the service spins the vehicle up to about +X, read as the number it names"
+      - verb: set_attitude_target
+        argument: frame
+        constant: 0.0
+        why: >-
+          a new target ends the roll: the service steers to the target and stops the spin on the
+          way, which is what leaving PTC for a burn attitude costs
+      - verb: abort_rcs_activity
+        argument: scope
+        constant: 0.0
+        why: "a stopped slew stops the roll too; `scope` is not read, as for `attitude_target`"
+    dwell:
+      min_on_s: 0
+      min_off_s: 0
+      provenance:
+        basis: chosen
+        reason: "as `attitude_target`: a request, paced by the law and not by a hold on the request"
+    provenance:
+      basis: historical
+      source: >-
+        Apollo 11 Mission Report (MSC-00171), passive thermal control: a 0.3 deg/s roll about +X
+        with +X toward the ecliptic north pole in translunar coast (south in transearth), after
+        which all sixteen SM auto RCS switches were turned off:
+        https://www.nasa.gov/wp-content/uploads/static/apollo50th/pdf/A11_MissionReport.pdf
+      note: >-
+        the thermal roll's half of the pointing modes. It is a rate, not a mode, because Apollo's
+        PTC was the autopilot flying a rate about one axis and then nobody flying at all: the
+        spin-up costs propellant, the free drift costs none and cones, and leaving it for a burn
+        or a comms hold costs the spin-down. The fleet chooses when each of those happens
+
   - id: control_profile
     node: internal
     method: discrete
@@ -409,10 +467,11 @@ state:
   - id: held_target
     node: internal
     method: dynamics
-    unit: "record{source,frame,q,status}"
+    unit: "record{source,frame,roll,q,status}"
     initial:
       source: "current"
       frame: EARTH_J2000
+      roll: 0.0
       q: [0.7071067811865476, 0.0, -0.6487577877061355, -0.2812709243605549]
       status: held
     initial_provenance:
