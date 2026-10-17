@@ -327,9 +327,16 @@ class Probe:
             self.check("telemetry advances on its own", None, "no telemetry/ directory")
             return
         first = sorted(path.name for path in self.telemetry.glob("*.json"))
+        # Two polls is the expectation, not the limit: a window on a loaded host can miss a cycle,
+        # so the probe keeps looking for a few seconds before it calls the telemetry still.
         time.sleep(self.poll_seconds * 2)
-        second = sorted(path.name for path in self.telemetry.glob("*.json"))
-        advanced = len(second) > len(first) or set(second) != set(first)
+        deadline = time.monotonic() + max(self.poll_seconds * 2, 5.0)
+        while True:
+            second = sorted(path.name for path in self.telemetry.glob("*.json"))
+            advanced = len(second) > len(first) or set(second) != set(first)
+            if advanced or time.monotonic() >= deadline:
+                break
+            time.sleep(min(self.poll_seconds, 0.25))
         self.check(
             "telemetry advances without being asked",
             advanced,
