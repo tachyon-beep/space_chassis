@@ -28,9 +28,9 @@ points:
       *consequence* lives in another domain. The hatch domain publishes the position; ECLSS
       publishes what it costs.
   - channel: structure.docking_latches
-    from: docking_latch_state
+    from: latches_engaged
     layer: service
-    derivation: "each latch's position, with count-and-disagreement collapsed into one published value"
+    derivation: "the number of ring latches drawn down and locked, of twelve"
     note: >-
       apollo's channel is a count with a "latch disagreement" event. The count is what is
       published and the individual positions are hidden truth, because a count is what a crew

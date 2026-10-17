@@ -257,3 +257,24 @@ def test_after_undocking_an_open_tunnel_hatch_faces_space(world, tmp_path):
     assert trace[-1]["lm_separation_state"] == "undocked"
     owed = trace[-1]["gaps"]["structural_leak_g_s"]
     assert "hatch_tunnel_lm" in owed and "nothing docked beyond it" in owed
+
+
+# --- the count the guards read -------------------------------------------------------------------
+
+
+def test_the_engaged_count_is_a_reading_the_docking_latches_point_can_give(world, tmp_path):
+    """`structure.docking_latches` is a count over a map, so it had no reading. It reads its own
+    count state now: twelve on the hard-docked stack, none once the ring is cocked for undocking."""
+    script = [(1, "set_docking_latch", {"interface": "docking_interface", "latch": "all", "state": "release"})]
+    trace = run(world, tmp_path, script, 5, ["latches_engaged"])
+    assert trace[0]["latches_engaged"] == 12
+    assert trace[-1]["latches_engaged"] == 0
+    values = plant.initial_values(world)
+    after = plant.step(world, values, plant.tick_seconds(world), [])
+    assert plant.point_reading(world, "structure.docking_latches", after) == 12
+
+
+def test_the_seal_count_is_one_figure_in_two_places(world):
+    spec = state(world, "latches_engaged").spec
+    assert spec["seal_threshold"] == state(world, "structural_leak_g_s").spec["seal_min_engaged"] == 3
+    assert spec["burn_threshold"] == 9

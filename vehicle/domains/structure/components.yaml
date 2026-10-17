@@ -46,7 +46,7 @@ writes: [structure_config]
 # advanced by the effect path (the commanded ones) and by `domains/structure/rules.py` (the rest),
 # and the order is declared so the frozen lexicographic tiebreak is not what decides. See
 # `internal_order_note`.
-internal_order: [relief_valve_state, hatch_state, latch_drive, docking_latch_state, arm_age_s, arm_state, cabin_dp_psi, structural_leak_g_s]
+internal_order: [relief_valve_state, hatch_state, latch_drive, docking_latch_state, latches_engaged, arm_age_s, arm_state, cabin_dp_psi, structural_leak_g_s]
 internal_order_note: >-
   the mechanisms before the quantities they explain: a valve, a hatch and a latch each change
   what the cabin's differential pressure and leak are, and each latch follows the drive that
@@ -473,6 +473,43 @@ state:
         only means something if the individual latches are modelled. A count cannot express
         `eleven of twelve engaged`, and `eleven of twelve` is the state a crew has to reason
         about.
+  - id: latches_engaged
+    node: internal
+    method: discrete
+    unit: count
+    # **The count is a reading of the map, and it is its own state so that a point can read it.**
+    # `structure.docking_latches` is a `count` and `docking_latch_state` a map, so the point had no
+    # reading (`plant.point_reading` returns one only where the two units agree), and the two
+    # numbers the sources hang decisions on are counts: three latches about 120 degrees apart seal
+    # the tunnel, and a docked SPS or DPS burn needs nine.
+    moved_by:
+      - "logic:the number of ring latches whose hook is drawn down and locked, counted from the map"
+    seal_threshold: 3
+    burn_threshold: 9
+    thresholds_provenance:
+      basis: historical
+      source: >-
+        seal: the CSM News Reference's docking pages, printed p. 87, "locking of any 3 of the 12
+        latches is sufficient to assure a pressure-tight seal and allow entry into tunnel", and the
+        CSM Apollo Operations Handbook §2.13, printed 2.13-12, "any three latches located
+        approximately 120 degrees apart engaged and latched will hold the CSM and LM together with
+        the tunnel pressurized". Burn: the CSM/LM Operational Data Book Vol. I, SNA-8-D-027(I),
+        §3.8.2.5, printed 3.8-2 (Amd 85, 14 Jan 1972), "For docked DPS or SPS burns, at least nine
+        latches are required" (all as quoted in /mnt/project-files/sources/structure.md, 2026-10-17)
+      note: >-
+        carried here for the reader and for the guards that read this count — the burn guard is
+        propulsion's, on its own verb, and the seal figure is `structural_leak_g_s.seal_min_engaged`,
+        which a test holds equal to this one. The 120-degree spacing is not modelled: any three
+        engaged latches count as a seal
+    provenance:
+      basis: apollo
+      ref: "apollo_diode.md:208"
+      note: >-
+        apollo's `docking_latches` channel is this count. It is the count a CM crewman reaches by
+        inspecting every latch through the open tunnel after the first docking (News Reference
+        p. 87), not the docking-system talkbacks, which read a subset of latch switches and can
+        disagree with the hooks either way (Apollo 17, latch 9); the talkback is a separate signal
+        and is owed with its switch-to-latch wiring
   - id: latch_drive
     node: internal
     method: discrete
