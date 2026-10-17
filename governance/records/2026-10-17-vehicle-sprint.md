@@ -200,3 +200,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 16:10 D54: every PR that leaves draft gets an independent Fable review report for John (`vehicle-status/reviews/pr-<N>.md`); merges need green plus a non-blocking verdict.
 - 16:11 John confirms D54 on the card: "Merge on clear".
 - 16:12 Comms builds the Apollo 13 epoch as its own PR after #48: `met_epoch_utc` at TLI, re-derived elements, periselene-targeted trajectory. Two source conflicts recorded, unresolved (415.8 vs 86.8 n mi; 73.0 h vs 75.24 h arrival). #48 is fixing census pins after its rebase.
+- 16:12 The engine lane allows prose-only edits in `check_vehicle.py` and `plant.py` on a lane's own PR when its data change makes the prose stale; logic still goes through the engine lane.

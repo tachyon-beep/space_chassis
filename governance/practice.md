@@ -86,7 +86,9 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   edge belongs to the lane owning its target state, a channel to the lane whose prefix it carries.
 - **Engine code (`vehicle/tools/plant.py`, `check_vehicle.py`, `faults.py`) belongs to the
   fault-injection lane.** Other lanes route engine needs through the coordinator, or land them as a
-  small PR merged before the domain PR that uses them.
+  small PR merged before the domain PR that uses them. The engine lane's rule (16:12): when a lane's own data
+  change makes prose in `check_vehicle.py` or `plant.py` stale, the lane may fix that prose on its own PR, as
+  long as no logic changes; logic changes still go to the engine lane through the coordinator.
 - **Merge order**: #45 (unpin), then #46 (ECLSS engine helper), then #58 (unpin the census figures #45 kept, from 15:26), then #47 (fault injection), then the
   rest rebase and merge when `required` is green. Since #45 (14:46), a PR that closes a state does not
   touch the pinned figures, the README status paragraph or `plant.py`; a README count-line conflict
