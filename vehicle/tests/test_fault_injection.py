@@ -486,9 +486,21 @@ def test_a_command_value_with_when_moves_only_the_state_its_call_names(tmp_path)
     assert {"sps_state", "dps_state", "aps_state"} <= {
         s.id for s in plant.command_targets(routed, "arm_engine")
     }
+    # A call that omits the routing argument is refused, not taken as moving no state.
+    with pytest.raises(plant.EffectRefused, match=r"routes its effect on \['engine'\], which this call omits"):
+        plant.apply_command(routed, values, "arm_engine", {"state": "armed"})
     # A route on a value the argument cannot take is refused by name.
     components.write_text(text.replace("when: {engine: aps}", "when: {engine: lmde}", 1))
     assert "is 'lmde', which 'engine' cannot take" in run_linter(copy).stdout
+    # And a route on an optional argument is refused, since a call may leave it out.
+    components.write_text(text)
+    commands = copy / "domains" / "propulsion" / "commands.yaml"
+    replace(
+        commands,
+        "      engine: {type: enum, values: [sps, dps, aps]}\n      state: {type: enum, values: [armed, safe]}\n",
+        "      engine: {type: enum, values: [sps, dps, aps], optional: true}\n      state: {type: enum, values: [armed, safe]}\n",
+    )
+    assert "names 'engine', an optional argument of 'arm_engine'" in run_linter(copy).stdout
 
 
 LEAK_SOURCES = """state:

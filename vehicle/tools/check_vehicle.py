@@ -7266,6 +7266,13 @@ def check_domain(
                                     f"names {name!r}, which is not an enum argument of "
                                     f"{verb_name!r} (it has {sorted(schema2)})",
                                 )
+                            elif routed.get("optional"):
+                                report.refuse(
+                                    f"{cwhere2}.when.{name}",
+                                    f"names {name!r}, an optional argument of {verb_name!r}. A call "
+                                    "that omits it routes to no state, so the argument that selects "
+                                    "the state has to be one every call names",
+                                )
                             elif str(value) not in {str(v) for v in routed.get("values") or []}:
                                 report.refuse(
                                     f"{cwhere2}.when.{name}",

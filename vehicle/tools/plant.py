@@ -4537,6 +4537,24 @@ def apply_command(
     """
     if verb not in world.verbs:
         raise Unconfigured(f"plant.py:verb {verb}", "is not registered by any domain")
+    # **A route on an argument the call omits is refused, not taken as "no state".** `when` selects
+    # which sibling state a call moves (`arm_engine engine=sps`); a call without `engine` matched
+    # none of them, staged nothing, and read exactly like an effect that landed.
+    omitted = sorted(
+        {
+            str(name)
+            for state in command_targets(world, verb)
+            for entry in state.spec.get("command_value") or []
+            if isinstance(entry, dict) and str(entry.get("verb")) == verb
+            for name in (entry.get("when") if isinstance(entry.get("when"), dict) else {})
+            if str(name) not in arguments
+        }
+    )
+    if omitted:
+        raise EffectRefused(
+            f"`{verb}` routes its effect on {omitted}, which this call omits, so it would move no "
+            "state: name the argument"
+        )
     staged: dict[str, Any] = {}
     for state in command_targets(world, verb, arguments):
         try:
