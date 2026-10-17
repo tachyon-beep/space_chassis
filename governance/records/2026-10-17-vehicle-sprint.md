@@ -205,3 +205,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 16:18 D54 verdicts: #57 clear after its merge (one wording fix: the post-#45 figure convention holds fully only after #58, fixed on #59); #59 clear (#46's draft state fixed); #46 clear with follow-ups. The review finds the cryo O2 fans are AC loads and the heaters 113.88 W DC per tank, so power splits its 166.7 W figure.
 - 17:07 GNC + RCS #56 at `312c89c` (24 census-pin fixes): `select_nav_source` now acts, with a divergence alarm whose timing depends on when the ground was last used.
 - 17:11 D56: John puts the quiet-coast window `D_TICKS` change on #43 ("On #43"). Power raises the main bus band ceiling to 31.0 V and records the O2 tank split (113.88 W DC heater, 52.8 W AC fans); #43 goes green after #58.
+- 16:55 The D54 review of #46 turns blocking on one stale test assertion (`test_vehicle_config.py:3313`) until ECLSS pushes a one-line fix.
