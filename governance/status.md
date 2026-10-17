@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:24 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 14:28 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -44,7 +44,8 @@ ruled-discrete seeding (structure, comms); the `arm_event` effect; numeric carri
 refused not clamped (thermal); per-argument command routing `when:`; burn sequencing as a discrete
 machine with command and logic movers (propulsion); node-read interlocks (propulsion's
 `resolve_interlock` from a coupling node); the ECLSS sentinel fix (`_walk` overwrote
-`values["internal"]`). Held: `gated_by`, waiting on the in-burn-guard answer's application (D35).
+`values["internal"]`); the interlock test fixed at `fdbedf9` with `set_vent_valve` (structure warned
+that making `hatch_open_with_pressure` readable moves that test). Held: `gated_by`, waiting on the in-burn-guard answer's application (D35).
 Burn sequencing and node-read interlocks change truth bytes; side effect, ECLSS
 `co2_absorber_low` becomes evaluable. Queued for lane 9 after #47: an argument check for `set_throttle` (`dps_throttle_band`) and
 `gated_by` on a state condition (propulsion). The "61 nodes" prose
@@ -124,7 +125,7 @@ to the coordinator; *not reported* means the lane has not said yet.
 | structure (#51) | two tunnel hatches (CM forward, LM overhead) in `hatch_state`, so the ring seal matters only with a tunnel hatch open; undocking fires no pyro (CSM News Reference p. 88); staging also fires two ascent circuit interrupters (Grumman study guide p. 93); latches, hatch and pyro as discrete devices; after #47: `pyro_health` fail-to-fire, descent stage separates only when all five staging devices fire, jettison only when the ring charge fires, `leak_sources_g_s` summed by the leak rule | **decision** (close the tunnel before latch release) and **confounder** (tunnel versus cabin leak) | latches move instantly to the drive (1 s dwell only; actuation time unsourced); the `one` scope is recorded and acts on nothing (re-cocking a failed latch unsourced); leak with an unlatched hatch or unseated ring above 0.5 psid is a named gap (aperture, seal, tunnel volume unsourced); configuration states still flip on the event until #47; `hatch_open_with_pressure` unevaluable (prose `gated_by`) |
 | ECLSS (#46, 21 of 25 ready; CO2 edges written against #54) | cabin leak per gas (bulk-flow shares); `set_o2_source` partly guarded through a general two-argument interlock condition (ADR 0004 amended; lane 7 can use it for its two verbs); suit loop on its compressor at 35 cfm, switched by `set_suit_fan`; O2 supply pressure on the Apollo heater relay (on 865 / off 935 psia, rate from the AOH p. 2.6-13 repressurization table; the Apollo 11-dated AOH chosen over the Apollo 13 Review Board's 950 psia caution and 983 psig relief); crew-count CO2 edges derive from `co2_kg_per_crew_day` (held as a patch in the project's shared folder, `vehicle-status/eclss-lane/held/`, applied once #54 is on `main`); next after CRYO PRESS: CO2 removal as a rule (suit-loop flow × concentration × spent-absorber efficiency) | **signal**: the heater-cycle sawtooth changes shape with quantity, and a pressure that will not hold is the Apollo 13 signature; CO2 removal is also a **signal**, and fixes constant crew-nominal removal draining the empty LM's CO2 at MET 0 | cabin H2O waits on crew production (D-06), like CO2, since a removal-only vapour stock would dry the cabin; crew O2 uptake waits on `crew_state`, so cabin O2 still rises by the metabolic term; humidity waits on a sourced condensing heat exchanger rate |
 | unpin (#45) | — (test figures, no model) | — | — |
-| crew (#54) | per-cabin crew count; location as a rule; the crew day as sourced activities | **event/noise**: meals as water draws the team must tell from a leak (D40); asking the crew as a **decision** | — |
+| crew (#54) | per-cabin crew count; location as a rule; the crew day as sourced activities; sleep at 0.7 of awake metabolism and meal water in the three meal hours (both *chosen*, D44) | **event/noise**: meals as water draws the team must tell from a leak (D40); the potable-water heater's 45 W sleep switch-off (FP11 pp. 3-11, 3-16) is a **confounder** for PWR-02, routed to power and gated on `crew_activity`; asking the crew as a **decision** | surface rest schedule owed, not invented |
 | GNC + RCS | attitude as pointing modes: a rate-limited slew law behind `set_attitude_target` (D38) | not reported | 6-DOF deferred; it would replace only the law |
 
 ## Known gaps in CI

@@ -171,3 +171,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 14:21 #43's aurora job is red: policy D no longer overheats inside the window at 1,401 W. The coordinator lets #43 carry the matching `aurora/tests` assertion if thermal's re-derivation does not fix it (D42), posted to John to override.
 - 14:22 The CM jet is split (D43) on #44 (`b4c3c44`), which also carries the full CM jet table.
 - 14:22 #47 (`4a531df`) adds `refused_bands` and enforces `minimum`/`maximum` everywhere. Lane 9's order after #47 now starts with `gated_by` on state conditions.
+- 14:27 The coordinator chooses the crew-day values under D33 (D44). The potable-water heater's sleep switch-off goes to power as a PWR-02 confounder. #47's interlock test fixed at `fdbedf9`.
