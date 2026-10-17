@@ -547,7 +547,8 @@ state:
   - id: cabin_o2_supply_lm_kg_s
     # The LM regulator's demand, under the same switches as the CSM's: nothing while the LM's
     # source is `isolated` or its flow band is `off`. The LM has no surge tank, so `surge` is a gap
-    # that says so (`no_store`) rather than a store the rule pretends to draw on.
+    # that says so (`no_store`); the plant holds a gapped state at its last value, so the LM store
+    # keeps draining at that rate while the gap is reported.
     node: cabin_o2_supply_lm
     method: algebraic
     unit: kg O2/s
@@ -568,9 +569,11 @@ state:
         reason the CSM's is not; `check_metabolic_rules` holds it to the same figures within 1 %
       note: >-
         `surge` is in the verb's vocabulary for both vehicles and names no LM tank, so selecting it
-        for the LM is a gap with that message rather than a draw on some other store or on none.
-        Refusing it at the command needs a per-vehicle vocabulary, which the executive does not
-        read yet. Which of the LM's tanks feeds the regulator (descent, then ascent; AOH LM ECS) is
+        for the LM is a gap with that message. **It is not a stop:** a gapped state holds its last
+        value (stale through the gap), so `o2_lm_kg` keeps draining at the nominal demand while the
+        plant reports the gap on every tick. The fix is to refuse `surge` for the LM at the command,
+        which needs a per-vehicle vocabulary the executive does not read yet; it is owed to the
+        fault-injection lane's executive work. Which of the LM's tanks feeds the regulator (descent, then ascent; AOH LM ECS) is
         not modelled either; `o2_lm_kg` is one store, and the LM's own valve positions are owed
   - id: cabin_regulator_position
     node: cabin_regulator
