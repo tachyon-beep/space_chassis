@@ -12723,7 +12723,9 @@ def test_every_stock_declares_where_it_starts():
     # `crew_destination`, `crew_roused`, `crew_clock_us`, `crew_scheduled`, `crew_rest_owed_s`,
     # `crew_activity`, `crew_location` and `crew_availability` — each under its id; none is alone on
     # its node, so none adds an alias.
-    assert len(on_nodes) == 97, f"{len(on_nodes)} node keys carry a value"
+    # 97 -> 100 with the crew workload: `crew_busy_s`, `crew_workload_index` and `crew_workload`,
+    # whose start was owed while it was a lag and is the band the index starts in now.
+    assert len(on_nodes) == 100, f"{len(on_nodes)} node keys carry a value"
     # And the map a tick actually starts from is that seed plus the declared arithmetic, so the
     # resolved states are a strict superset and every one of them is `algebraic`.
     assert seeded_integrators.keys() < seeded.keys(), "the resolution added nothing to the seed"
@@ -12738,13 +12740,15 @@ def test_every_stock_declares_where_it_starts():
     # 18 -> 22 with ADR 0003's thermal rules: the amplifier's temperature and the three loop
     # switch maps (`coolant_pump`, `evaporator_feed`, `radiator_bypass`) are sentinel states.
     # 22 -> 24 with the crew lane: `crew_destination` and `crew_roused`.
-    assert len(seeded_integrators["internal"]) == 24, sorted(seeded_integrators["internal"])
+    # 24 -> 25 with `crew_busy_s`.
+    assert len(seeded_integrators["internal"]) == 25, sorted(seeded_integrators["internal"])
     # Five of the sentinel's `algebraic` states resolve at t=0 as well — the bay heat, the cabin
     # pressure differential and three more — so the sentinel's sub-map is the same map the tick
     # commits, merged rather than replaced. (Six until ADR 0003's power rules moved the bus load to
     # the cells' node.)
-    # 27 -> 29 with the crew lane's two sentinel modes, for the reason the sub-map above moved.
-    assert len(seeded["internal"]) == 29, sorted(seeded["internal"])
+    # 27 -> 29 with the crew lane's two sentinel modes, for the reason the sub-map above moved, and
+    # 29 -> 30 with `crew_busy_s`.
+    assert len(seeded["internal"]) == 30, sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
     # six of the twenty-four declared values are the last of their key rather than a key of their
@@ -12787,6 +12791,11 @@ def test_every_stock_declares_where_it_starts():
     # starts at 900 because `csm_ecs_study_guide.pdf` p. 12 says so; and a suit loop starts at 35
     # because p. 39 says so. Which is which is the *declaration's* business, and this is the map's.
     assert set(seeded_integrators["internal"]) == {
+        # The crew lane's three records of a question: where a person was sent, whether it woke them,
+        # and how long it keeps them busy.
+        "crew_destination",
+        "crew_roused",
+        "crew_busy_s",
         "bias_accumulator",
         "sensor_bus_errors",
         "frame_loss",
@@ -12841,9 +12850,12 @@ def test_every_stock_declares_where_it_starts():
     # Zero everywhere except the supply tank's pressure, which is the one seeded sentinel value that
     # is not an accumulator's origin — and, from round 67, `auto`, which is not a number at all and
     # is the reason the value assertions below name their states rather than ranging over the map.
-    # The three switch maps are maps, which a set cannot hold, so they are asserted by name below.
+    # The three switch maps are maps, which a set cannot hold, so they are asserted by name below,
+    # and so are the crew lane's three per-person maps.
     switch_maps = {k for k, v in seeded_integrators["internal"].items() if isinstance(v, dict)}
-    assert switch_maps == {"coolant_pump", "evaporator_feed", "radiator_bypass"}, switch_maps
+    assert switch_maps == {
+        "coolant_pump", "evaporator_feed", "radiator_bypass", "crew_destination", "crew_roused", "crew_busy_s",
+    }, switch_maps
     assert {v for k, v in seeded_integrators["internal"].items() if k not in switch_maps} == {
         0.0,
         35.0,
@@ -13086,12 +13098,16 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
     # `evaporator_feed` and `radiator_bypass`, each moved by its own verb.
     # 49 -> 55 with the crew lane: the crew day's machine (`crew_destination`, `crew_clock_us`,
     # `crew_scheduled`, `crew_roused`, `crew_rest_owed_s`, `crew_activity`).
-    assert states == 55, states
+    # 55 -> 58 with the crew workload: `crew_busy_s`, `crew_workload_index`, and `crew_workload`,
+    # which was a lag.
+    assert states == 58, states
     # And (23, 5, 6, 23) -> (25, 5, 6, 30): `ask_crew` moves the two crew modes it writes, and the
     # crew rules move seven — the five crew-day states, `crew_location` and `crew_availability`,
     # which were `UNCONFIGURED` until the crew lane, and `crew_roused`, which the rule clears at the
     # edge of a rest period.
-    assert (commands, triggers, events, logic) == (25, 5, 6, 30), (
+    # (25, 5, 6, 30) -> (26, 5, 6, 33) with the crew workload: `ask_crew` moves `crew_busy_s`, and
+    # the rules move it, the index and the band.
+    assert (commands, triggers, events, logic) == (26, 5, 6, 33), (
         commands, triggers, events, logic,
     )
     # Two states owed it until the crew lane, and they were the two the crew debt named:
@@ -14089,7 +14105,8 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
     # left it for `fuel_cell`.
     # 61 -> 63 with the crew lane: `crew_destination` (where `ask_crew` sent each person) and
     # `crew_roused` (whom a question woke), both written by a command and so on the sentinel.
-    assert sum(len(states) for _, states in declared) == 63, "the sentinel's state count moved"
+    # 63 -> 64 with `crew_busy_s`.
+    assert sum(len(states) for _, states in declared) == 64, "the sentinel's state count moved"
 
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
@@ -15730,8 +15747,10 @@ def test_a_command_value_says_which_argument_carries_the_value():
     # `radiator_bypass` and power's `load_enabled`, each keyed.
     # 21 -> 23 with the crew lane: `ask_crew` writes a person's `position` into `crew_destination`
     # and a constant `true` into `crew_roused`, both keyed by `crew_id`.
-    assert declared == 23, declared
+    # 23 -> 24 with `crew_busy_s`: `ask_crew` writes a constant 120 s for the person it names.
+    assert declared == 24, declared
     assert sorted(constants) == [
+        "crew.crew_busy_s.ask_crew",
         "crew.crew_roused.ask_crew",
         "rcs.thruster_valve.isolate_rcs_manifold",
         "structure.pyro_fired.execute_event",
@@ -16502,13 +16521,15 @@ def test_a_commanded_state_is_guarded_by_a_dwell_and_the_executive_reads_it(tmp_
     # 22 -> 24 with the crew lane: `crew_destination` and `crew_roused`, both keyed maps `ask_crew`
     # writes one person of. The destination declares a zero dwell (a person may be sent again at
     # once); `crew_roused` declares none and takes the second exemption.
-    assert len(commanded) == 24, [s.id for s in commanded]
+    # 24 -> 25 with `crew_busy_s`, the seconds a question occupies its person: a keyed map with no
+    # dwell, like `crew_roused`.
+    assert len(commanded) == 25, [s.id for s in commanded]
     guarded = [s for s in commanded if s.spec.get("dwell")]
     assert len(guarded) == 18, [s.id for s in commanded if not s.spec.get("dwell")]
     # The one-way state is the first exemption; the four keyed maps are the second.
     assert sorted(s.id for s in commanded if not s.spec.get("dwell")) == [
-        "coolant_pump", "crew_roused", "evaporator_feed", "load_enabled", "pyro_fired",
-        "radiator_bypass",
+        "coolant_pump", "crew_busy_s", "crew_roused", "evaporator_feed", "load_enabled",
+        "pyro_fired", "radiator_bypass",
     ]
     assert all(
         s.spec.get("one_way") or str(s.spec.get("unit") or "").startswith("map[")
@@ -17835,7 +17856,7 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     result = run_linter(other)
     assert result.returncode == 1, result.stdout[-900:]
     assert "states 'forty-eight states live on it'" in result.stdout, result.stdout[-900:]
-    assert "this vehicle has 63 states on the sentinel" in result.stdout, result.stdout[-900:]
+    assert "this vehicle has 64 states on the sentinel" in result.stdout, result.stdout[-900:]
 
     # A *digits* figure is read too, so the reader is not tied to the spelling the corpus happens
     # to use today.
@@ -19854,15 +19875,16 @@ def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     # not about the tick's total: whatever else the plant learns to advance, a driver in the wrong
     # quantity must stay refused.
     reasons = {g.state.id: (g.where, g.owed) for g in gaps}
-    assert "crew_workload" in reasons and "thrust_main_n" in reasons, sorted(reasons)[:8]
-    # **`crew_workload` is refused for a different reason since the crew lane, and it is the better
-    # one.** `E-CREW-WATER` advances `csm_water_draw_crew` now, so a drink of water stopped being
-    # the workload's input in the wrong quantity, and the lag is left with no incoming edge at all —
-    # a driver that was never declared, which the crew domain's `open_debts` names.
-    assert reasons["crew_workload"][0] == "domains/crew/components.yaml:state crew_workload", reasons[
+    # **And `crew_workload` is no longer one of them: it is the first of the two to be advanced, and
+    # by being taken off the integrator rather than by being given an edge.** `E-CREW-WATER` left it
+    # when the edge named `csm_water_draw_crew`, which left a lag with no driver; the crew lane made
+    # the lag a rule's (`crew_workload_index`, five minutes on the crew's demand) and the workload a
+    # band on it, so a drink of water is not the input in any quantity. `thrust_main_n` is the one
+    # this test still holds.
+    assert "thrust_main_n" in reasons, sorted(reasons)[:8]
+    assert "crew_workload" not in reasons and "crew_workload_index" not in reasons, reasons.get(
         "crew_workload"
-    ]
-    assert "no incoming edge" in reasons["crew_workload"][1], reasons["crew_workload"]
+    )
     assert "coupling.yaml:edge E-PROP-ENG" in reasons["thrust_main_n"][0], reasons["thrust_main_n"]
     assert "driver" in reasons["thrust_main_n"][1] or "quantity" in reasons["thrust_main_n"][1], reasons[
         "thrust_main_n"
@@ -20060,7 +20082,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
     # 27 -> 29 with the crew lane: `crew_destination` and `crew_roused`, the two crew modes a command
     # writes.
-    assert len(values["internal"]) == 29, sorted(values["internal"])
+    # 29 -> 30 with `crew_busy_s`.
+    assert len(values["internal"]) == 30, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
@@ -20144,7 +20167,7 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
     # And the debt states both figures, because a number in prose with no reader is the next round's
     # finding — this is that reader.
     entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
-    assert "142 published points" in entry and "72 are *derived*" in entry
+    assert "142 published points" in entry and "71 are *derived*" in entry
 
 
 def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
@@ -20197,8 +20220,10 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     ), report)
     counts = _cv.CHANNEL_DERIVATION_COUNTS
     # 64/71 -> 63/72 with the comms quiet-coast model (7b22cd7), which moved the docstring too.
-    assert counts["same"] == 63, counts
-    assert counts["derived"] == 72, counts
+    # 63/72 -> 64/71 with the crew workload: `crew.workload` reads a discrete in its own vocabulary
+    # now, where it read an `enum-level` lag.
+    assert counts["same"] == 64, counts
+    assert counts["derived"] == 71, counts
     assert counts["total"] == 135, counts
     assert not [r for r in report.refusals if "channels read from a state" in r], report.refusals
     doc = _cv.CHANNEL_DERIVATION_FIGURES.search(_cv.inspect.getdoc(_cv.check_channel_derivations) or "")
@@ -20255,10 +20280,12 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     # 63 -> 64 in round 32: `eclss.o2_supply_pressure_psi` moved from the node-sourced set to the
     # state-sourced one, where its unit is its source's. 134 -> 135 in round 61, when the total was
     # given a reader and the sentence it was read from turned out to be the stale copy.
-    assert "only 63 have the state's own unit" in entry
+    # 63 -> 64 and 72 -> 71 with the crew workload, whose channel reads a discrete in its own
+    # vocabulary now.
+    assert "only 64 have the state's own unit" in entry
     assert "of the 135 channels read from a state" in entry
-    assert "The other 72 are *derived*" in entry
-    assert "15 of the 72 now carry an evaluable `derivation`" in entry
+    assert "The other 71 are *derived*" in entry
+    assert "15 of the 71 now carry an evaluable `derivation`" in entry
 
 
 def test_the_frame_publishes_a_derived_channel_at_this_tick_s_own_readings():
