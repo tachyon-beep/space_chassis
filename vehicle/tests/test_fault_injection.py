@@ -363,7 +363,22 @@ def test_a_numeric_argument_is_carried_as_its_number_and_refused_outside_its_ran
         "internal_order: [heater_duty_commanded, heater_bank_duty,",
     )
     out = run_linter(copy).stdout
-    assert "command_value[set_heater]" not in out, out[-3000:]
+    # The fixture's one refusal of its own is the dwell a discrete state owes; the carried number
+    # itself must pass every check, the completeness check included. The first line keeps this from
+    # passing on a linter that printed nothing.
+    mentions = [line for line in out.splitlines() if "heater_duty_commanded" in line]
+    assert mentions, out[-3000:]
+    assert all("neither hysteresis nor dwell" in line for line in mentions), mentions
+    # A keyed state the number is carried into must still say which element it sets.
+    unkeyed = faulted_copy(tmp_path / "unkeyed")
+    unkeyed_components = unkeyed / "domains" / "thermal" / "components.yaml"
+    replace(unkeyed_components, "\nstate:\n", "\n" + HEATER_DUTY.replace("        key: zone\n", ""))
+    replace(
+        unkeyed_components,
+        "internal_order: [heater_bank_duty,",
+        "internal_order: [heater_duty_commanded, heater_bank_duty,",
+    )
+    assert "declares no `key` for 'set_heater'" in run_linter(unkeyed).stdout
     heated = plant.load_world(copy)
     values = plant.initial_values(heated)
     staged = plant.apply_command(

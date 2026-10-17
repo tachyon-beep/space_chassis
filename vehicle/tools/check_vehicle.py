@@ -7473,6 +7473,36 @@ def check_domain(
                     entry.get("constant") is not None or entry.get("computed") is not None
                 ):
                     continue
+                carried_spec = (
+                    (spec2.get("argument_schema") or {}).get(str(entry.get("argument"))) or {}
+                    if entry is not None
+                    else {}
+                )
+                if (
+                    entry is not None
+                    and entry.get("maps") is None
+                    and isinstance(carried_spec, dict)
+                    and carried_spec.get("type") in ("integer", "number")
+                ):
+                    # **The numeric identity form**: the argument is carried as its number, which
+                    # the form check above holds to the verb's range, so there is no vocabulary
+                    # for the gap below to compare. What it can still get wrong is the state: one
+                    # with a vocabulary cannot hold a number, and a keyed one must say which
+                    # element the number sets.
+                    if values:
+                        report.refuse(
+                            f"{where}:state {sid}.command_value",
+                            f"carries {verb_name!r}'s numeric {str(entry.get('argument'))!r} as its "
+                            f"number, and {sid} holds only {sorted(values)}",
+                        )
+                    elif "map[" in str(state.get("unit") or "") and entry.get("key") is None:
+                        report.refuse(
+                            f"{where}:state {sid}.command_value",
+                            f"declares no `key` for {verb_name!r}, and {sid} is a keyed state "
+                            f"(`unit: {state.get('unit')!r}`), so which element the number sets "
+                            "is not readable off the state",
+                        )
+                    continue
                 arg_values: set[str] = set()
                 if entry is not None and isinstance(entry.get("maps"), dict):
                     argument = str(entry.get("argument"))
