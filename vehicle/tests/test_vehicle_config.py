@@ -15658,21 +15658,20 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
 
 
 def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
-    """ADR 0004 §Direction, amended 2026-10-17: `set_o2_source`'s hazard is its `source` and its `flow`
-    together. A cabin losing pressure is fed by cutting its oxygen (an isolated source; a flow of
-    `off` is `set_o2_flow`'s to refuse), and the service module's reserve is spent by `primary` at any
-    band, so the guards are written over both arguments. A condition may list its arguments and name the
+    """ADR 0004 §Direction, amended 2026-10-17: `set_o2_source`'s hazard is its `vehicle` and its
+    `source` together. A cabin losing pressure is fed by cutting its oxygen (an isolated source; a
+    flow of `off` is `set_o2_flow`'s to refuse), each cabin under its own caution, and the service
+    module's reserve is spent only by the CSM's `primary`, so the guards are written over both. A condition may list its arguments and name the
     combinations it applies to; the linter reads each combination as it reads a single value, and HELP
     prints them."""
     o2 = yaml.safe_load((VEHICLE / "domains" / "consumables" / "commands.yaml").read_text())
     verb = next(v for v in o2["commands"] if v["verb"] == "set_o2_source")
-    caution, reserve = verb["interlocks_when"]
-    assert caution["argument"] == reserve["argument"] == ["source", "flow"]
-    assert ["primary", "nominal"] not in caution["values"] and ["isolated", "high"] in caution["values"]
-    # `primary` at every band, `off` included, since this verb's `flow` moves nothing (PR #64).
-    assert reserve["values"] == [
-        ["primary", "off"], ["primary", "low"], ["primary", "nominal"], ["primary", "high"]
-    ]
+    caution, lm_caution, reserve = verb["interlocks_when"]
+    # Over `vehicle` and `source` since PR #64: `flow` moves nothing, and each guard reads one
+    # vehicle's cabin or store.
+    assert caution["argument"] == lm_caution["argument"] == reserve["argument"] == ["vehicle", "source"]
+    assert caution["values"] == [["csm", "isolated"]] and lm_caution["values"] == [["lm", "isolated"]]
+    assert reserve["values"] == [["csm", "primary"]]
 
     generated = subprocess.run(
         [sys.executable, str(VEHICLE / "tools" / "generate_help.py"), "--dir", str(VEHICLE)],
@@ -15680,9 +15679,9 @@ def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
         text=True,
         check=False,
     ).stdout
-    assert "`o2_reserve_10` — only when (`source`, `flow`) is one of (`primary`, `off`)" in generated, generated[-800:]
+    assert "`o2_reserve_10` — only when (`vehicle`, `source`) is one of (`csm`, `primary`)" in generated, generated[-800:]
 
-    block = "        values:\n          - [primary, low]\n          - [primary, nominal]\n          - [primary, high]\n"
+    block = "        argument: [vehicle, source]\n        values:\n          - [csm, primary]\n"
 
     def refusal(name: str, old: str, new: str, needle: str) -> None:
         definition = copy_definition(fixture_dir(tmp_path, name))
@@ -15693,17 +15692,17 @@ def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
         out = run_linter(definition).stdout
         assert needle in out, out[-1400:]
 
-    refusal("o2-one", block, block.replace("[primary, low]", "[primary]"), "not a list of 2 values")
-    refusal("o2-bad", block, block.replace("[primary, low]", "[primary, max]"), "which those arguments cannot take")
-    refusal("o2-twice", block, block.replace("[primary, nominal]", "[primary, low]"), "name each combination once")
-    every = "        values:\n" + "".join(
-        f"          - [{s}, {f}]\n" for s in ("primary", "surge", "isolated") for f in ('"off"', "low", "nominal", "high")
+    refusal("o2-one", block, block.replace("[csm, primary]", "[csm]"), "not a list of 2 values")
+    refusal("o2-bad", block, block.replace("[csm, primary]", "[csm, max]"), "which those arguments cannot take")
+    refusal("o2-twice", block, block + "          - [csm, primary]\n", "name each combination once")
+    every = "        argument: [vehicle, source]\n        values:\n" + "".join(
+        f"          - [{v}, {s}]\n" for v in ("csm", "lm") for s in ("primary", "surge", "isolated")
     )
-    refusal("o2-every", block, every, "names every combination of ['source', 'flow']")
+    refusal("o2-every", block, every, "names every combination of ['vehicle', 'source']")
     refusal(
         "o2-argument",
-        "        argument: [source, flow]\n        values:\n          - [primary, low]",
-        "        argument: [source, vehicle_note]\n        values:\n          - [primary, low]",
+        block,
+        block.replace("[vehicle, source]", "[vehicle, source_note]"),
         "which is not an enum argument of this verb",
     )
 

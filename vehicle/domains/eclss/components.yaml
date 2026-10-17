@@ -813,12 +813,14 @@ state:
     unit: "map[vehicle,enum[primary,surge,isolated]]"
     initial: {csm: primary, lm: primary}
     initial_provenance:
-      basis: historical
+      basis: chosen
       reason: >-
-        AOH ECS p. 2.7-7 (`sources/eclss.md` Q3): the surge tank "is normally open during flight, and
-        is closed only when it is necessary to isolate the surge tank from the system", and the S/M
-        supply feeds the regulator in flight, so the CSM starts on `primary`. The LM's element is
-        declared for the verb's vocabulary and drives nothing yet
+        the CSM's element is the AOH's: ECS p. 2.7-7 (`sources/eclss.md` Q3), the surge tank "is
+        normally open during flight, and is closed only when it is necessary to isolate the surge
+        tank from the system", and the S/M supply feeds the regulator in flight, so the CSM starts on
+        `primary`. The LM's is chosen: no LM source was read for its supply valves at TLI, and
+        `primary` is its regulator drawing its own store (`cabin_o2_supply_lm_kg_s`), which is what
+        the LM cabin drew before this state existed. Chosen as a whole because one element is
     moved_by: ["command:set_o2_source"]
     command_value:
       - verb: set_o2_source

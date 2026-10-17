@@ -32,7 +32,8 @@ commands:
     gate:
       kind: preference
       variable: o2_flow_<vehicle>_enable
-    interlocks: [cabin_pressure_high, o2_supply_low, ppo2_fire_risk, eclss.cabin_pressure_caution]
+    interlocks: [cabin_pressure_high, o2_supply_low, ppo2_fire_risk, eclss.cabin_pressure_caution,
+                 eclss.lm_cabin_pressure_caution]
     interlocks_when:
       - interlocks: [cabin_pressure_high, o2_supply_low, ppo2_fire_risk]
         argument: flow
@@ -43,15 +44,23 @@ commands:
           oxygen partial pressure already past the fire threshold (`ppo2_fire_risk`). Any flow adds to
           all three, and `flow=off` is the recovery from each, so it is never refused by them
       - interlocks: [eclss.cabin_pressure_caution]
-        argument: flow
-        values: ["off"]
+        argument: [vehicle, flow]
+        values:
+          - [csm, "off"]
         why: >-
           a cabin below its 4.5 psia caution is losing gas, and what makes it worse is cutting its
           oxygen, as `set_o2_source`'s guard on an isolated supply says: `flow=off` stops the
           regulator's flow from whichever store is selected (`eclss.o2_flow`). Any other band admits
           oxygen and is the recovery, so it is never refused by this guard; the emergency regulator's
           published job is exactly that, holding the cabin above 3.5 psia for as long as the supply
-          lasts (`apollo_diode.md:84`)
+          lasts (`apollo_diode.md:84`). The guard reads the CSM's cabin, so it guards the CSM's band
+      - interlocks: [eclss.lm_cabin_pressure_caution]
+        argument: [vehicle, flow]
+        values:
+          - [lm, "off"]
+        why: >-
+          the same hazard in the LM's cabin, which `eclss.cabin_o2_supply_lm_kg_s` stops feeding at
+          `off`; a CSM caution neither licenses nor blocks it
     conflict_domain: eclss.<vehicle>.o2_flow
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]

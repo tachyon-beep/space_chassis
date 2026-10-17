@@ -364,33 +364,50 @@ def test_every_readable_interlock_names_its_direction_or_is_whole_on_purpose(wor
 
 
 def test_a_guard_over_two_arguments_applies_to_the_combinations_it_names(world):
-    """`set_o2_source` (ADR 0004 §Direction, amended 2026-10-17): the cabin caution guards an isolated
-    source, and the reserve guards `primary` at every band, because this verb's `flow` moves nothing
-    (`eclss.o2_flow` is `set_o2_flow`'s, which carries the caution on `off`)."""
+    """`set_o2_source` (ADR 0004 §Direction, amended 2026-10-17): each cabin's caution guards
+    isolating that vehicle's supply, and the reserve guards the CSM's `primary` whatever the band,
+    because this verb's `flow` moves nothing (`eclss.o2_flow` is `set_o2_flow`'s, which carries the
+    cautions on `off`, again per vehicle)."""
     spec = world.verbs["set_o2_source"]
 
-    def guards(source: str, flow: str) -> list[str]:
-        return plant.guarding_interlocks(spec, {"vehicle": "csm", "source": source, "flow": flow})
+    def guards(vehicle: str, source: str, flow: str = "nominal") -> list[str]:
+        return plant.guarding_interlocks(spec, {"vehicle": vehicle, "source": source, "flow": flow})
 
     for flow in ("off", "low", "nominal", "high"):
-        assert "eclss.cabin_pressure_caution" in guards("isolated", flow)
-        assert "o2_reserve_10" not in guards("isolated", flow)
-        assert "o2_reserve_10" not in guards("surge", flow)
-    for source in ("primary", "surge"):
-        for flow in ("off", "low", "nominal", "high"):
-            assert "eclss.cabin_pressure_caution" not in guards(source, flow)
-    for flow in ("off", "low", "nominal", "high"):
-        assert guards("primary", flow) == ["o2_reserve_10"]
+        assert guards("csm", "isolated", flow) == ["eclss.cabin_pressure_caution"]
+        assert guards("lm", "isolated", flow) == ["eclss.lm_cabin_pressure_caution"]
+        assert guards("csm", "primary", flow) == ["o2_reserve_10"]
+        assert guards("csm", "surge", flow) == []
+        assert guards("lm", "primary", flow) == []
     band = world.verbs["set_o2_flow"]
-    assert "eclss.cabin_pressure_caution" in plant.guarding_interlocks(
-        band, {"vehicle": "csm", "flow": "off"}
-    )
-    for flow in ("low", "nominal", "high"):
-        assert "eclss.cabin_pressure_caution" not in plant.guarding_interlocks(
-            band, {"vehicle": "csm", "flow": flow}
-        )
-    # A leak on a low reserve: the surge tank is the one source both guards admit.
-    assert guards("surge", "high") == []
+
+    def band_guards(vehicle: str, flow: str) -> list[str]:
+        return plant.guarding_interlocks(band, {"vehicle": vehicle, "flow": flow})
+
+    assert "eclss.cabin_pressure_caution" in band_guards("csm", "off")
+    assert "eclss.lm_cabin_pressure_caution" not in band_guards("csm", "off")
+    assert "eclss.lm_cabin_pressure_caution" in band_guards("lm", "off")
+    assert "eclss.cabin_pressure_caution" not in band_guards("lm", "off")
+    cautions = {"eclss.cabin_pressure_caution", "eclss.lm_cabin_pressure_caution"}
+    for vehicle in ("csm", "lm"):
+        for flow in ("low", "nominal", "high"):
+            assert not cautions & set(band_guards(vehicle, flow)), (vehicle, flow)
+
+
+def test_each_cabin_s_caution_guards_only_its_own_oxygen(world, tmp_path):
+    """Codex, PR #64: an LM below 4.5 psia refuses `set_o2_flow vehicle=lm flow=off`, and a CSM
+    below it no longer blocks the LM's command."""
+    built = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
+    built.attach("alpha")
+    try:
+        trip(world, built, {"lm_cabin_pressure_pa": 30000.0}, "lm_cabin_pressure_caution")
+        refused = run(built, tmp_path, "set_o2_flow vehicle=lm flow=off")
+        trip(world, built, {"csm_cabin_pressure_pa": 30000.0}, "cabin_pressure_caution")
+        taken = run(built, tmp_path, "set_o2_flow vehicle=lm flow=off")
+    finally:
+        built.close()
+    assert "refused: INTERLOCK TRIPPED" in refused and "lm_cabin_pressure_caution" in refused, refused
+    assert "state=accepted" in taken and "INTERLOCK" not in taken, taken
 
 
 def test_the_reserve_guard_s_recovery_draws_nothing_once_taken(world, tmp_path):

@@ -377,9 +377,16 @@ eclss:
     events: ["low pressure", "fall >5 psi/min"]
     event_class: alarm
     provenance:
-      basis: apollo
-      ref: "apollo_diode.md:91"
-      note: "C-06: eclss_diode.md:736 removes this; apollo wins"
+      basis: historical
+      source: >-
+        the band is the cryogenic oxygen caution pair: 800 psia low, SM2A-03-BLOCK II-(1) Vol. 1
+        p. 2.6-14 ("alarm when oxygen pressure in either tank ... falls below 800 psia"), and 975
+        psia high, Apollo 13 Review Board report PDF p. 195, printed p. 5-22 ("exceeded the master
+        caution and warning trip level of 975 psia", CSM-109 as flown)
+      note: >-
+        the channel itself is apollo's (`apollo_diode.md:91`; C-06: `eclss_diode.md:736` removes
+        it, apollo wins), whose 750-950 band put the AOH's 800 psia caution inside the band. The
+        point is one aggregate pressure over both tanks (`domains/eclss/rules.py` `_tank_pressure`)
   - id: eclss.lm_cabin_pressure_psia
     unit: psia
     layer: measurement
