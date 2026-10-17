@@ -31,8 +31,15 @@ DT = 0.02
 LB = 0.45359237
 _COUNTER = itertools.count()
 
-# Every fuel-cell module connected, as at MET 0 (`source_enabled`).
-ALL_ON = {"fc_1": "on", "fc_2": "on", "fc_3": "on"}
+# Every fuel-cell module connected and every battery off the buses, as at MET 0 (`source_enabled`).
+ALL_ON = {
+    "fc_1": "on",
+    "fc_2": "on",
+    "fc_3": "on",
+    "battery_csm_1": "off",
+    "battery_csm_2": "off",
+    "battery_csm_3": "off",
+}
 # ... and every module at its published resistance (WP02 E-2).
 HEALTHY = {f"fc_{n}_resistance_ohm": 0.1008 for n in (1, 2, 3)}
 
@@ -117,7 +124,7 @@ def test_the_rule_parameters_are_the_inventory_and_the_cells_they_copy():
     doc = power_yaml()
     states = {s["id"]: s for s in doc["state"]}
     cells = {c["id"]: c for c in doc["components"] if c.get("class") == "source"}
-    for sid in ("bus_a_v", "bus_b_v", "fuel_cell_current_a", "fc_1_current_a"):
+    for sid in ("bus_a_v", "bus_b_v", "fuel_cell_current_a", "fc_1_current_a", "fuel_cell_power_w"):
         assert states[sid]["resistance_of"] == {c: f"{c}_resistance_ohm" for c in cells}, sid
         for cell in cells.values():
             assert states[sid]["cell_open_circuit_v"] == cell["open_circuit_intercept_v"]
@@ -132,13 +139,27 @@ def test_the_rule_parameters_are_the_inventory_and_the_cells_they_copy():
     for cid, cell in cells.items():
         feeding[cell["normal_bus"]].append(cid)
     assert feeding == {"csm_bus_a": ["fc_1", "fc_2"], "csm_bus_b": ["fc_3"]}
-    assert states["bus_a_v"]["cells"] == states["bus_a_load_w"]["cells"] == feeding["csm_bus_a"]
-    assert states["bus_b_v"]["cells"] == states["bus_b_load_w"]["cells"] == feeding["csm_bus_b"]
     assert states["bus_a_rated_w"]["cells"] == feeding["csm_bus_a"]
     assert states["bus_a_rated_w"]["rated_w"] == {
         c: cells[c]["rated_w"] for c in feeding["csm_bus_a"]
     }
-    for sid in ("fuel_cell_current_a", "fc_1_current_a"):
+    # The sources a bus solve sees are its modules and the battery its motor switch ties to it:
+    # battery A to main A, battery B to main B (AOH p. 2.6-38).
+    feeding["csm_bus_a"].append("battery_csm_1")
+    feeding["csm_bus_b"].append("battery_csm_2")
+    assert states["bus_a_v"]["cells"] == states["bus_a_load_w"]["cells"] == feeding["csm_bus_a"]
+    assert states["bus_b_v"]["cells"] == states["bus_b_load_w"]["cells"] == feeding["csm_bus_b"]
+    battery = next(c for c in doc["components"] if c["id"] == "battery_csm_1")
+    jeps = next(p for p in battery["loaded_points"] if "J-mission" in p["source"])
+    for sid in ("bus_a_v", "bus_b_v", "fuel_cell_current_a", "fc_1_current_a", "fuel_cell_power_w"):
+        assert states[sid]["batteries"] == ["battery_csm_1", "battery_csm_2"], sid
+        assert states[sid]["isolated_sources"] == ["battery_csm_3"], sid
+        assert states[sid]["battery_open_circuit_v"] == jeps["open_circuit_v"], sid
+        # The secant of the J-mission point: (37.1 - 28) / 25 = 0.364 ohm (WP02 E-4).
+        assert states[sid]["battery_resistance_ohm"] == round(
+            (jeps["open_circuit_v"] - jeps["v"]) / jeps["a"], 3
+        ), sid
+    for sid in ("fuel_cell_current_a", "fc_1_current_a", "fuel_cell_power_w"):
         assert {b["bus"]: b["cells"] for b in states[sid]["buses"]} == feeding, sid
         assert [b["load"] for b in states[sid]["buses"]] == ["bus_a_load_w", "bus_b_load_w"], sid
     # Every module starts at its published resistance, and the margin's nominal is that resistance.
@@ -146,7 +167,7 @@ def test_the_rule_parameters_are_the_inventory_and_the_cells_they_copy():
         assert states[f"{cid}_resistance_ohm"]["initial"] == cell["source_resistance_ohm"]
         assert states["bus_a_rated_w"]["cell_resistance_ohm"] == cell["source_resistance_ohm"]
     assert states["bus_a_rated_w"]["resistance_of"] == {
-        c: f"{c}_resistance_ohm" for c in feeding["csm_bus_a"]
+        c: f"{c}_resistance_ohm" for c in feeding["csm_bus_a"] if c in cells
     }
     assert (
         states["fc_1_current_a"]["cell_current_envelope_a"]
@@ -568,3 +589,79 @@ def test_no_bus_voltage_sheds_a_load():
     coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
     into = [e for e in coupling["edges"] if e.get("to") == "load_shed_state"]
     assert [e["id"] for e in into] == ["E-CMD-LOAD"]
+
+
+# The CSM batteries on the main buses: Thevenin sources behind diodes (WP02 E-4, AOH p. 2.6-38).
+E_BAT = 37.1
+R_BAT = 0.364
+
+
+def test_tying_battery_a_onto_main_bus_a_shares_the_load_by_hand(world):
+    """Battery A on main bus A beside two healthy modules: G = 2/R + 1/R_b, S = 2 E0/R + E_b/R_b,
+    P = V (S - G V), the larger root; the battery carries (E_b - V) / R_b and the modules the rest,
+    so the reactant current and the cells' output fall by the battery's share."""
+    values, _ = tick(world, plant.initial_values(world))
+    tie = plant.Effect(0, "set_source", {"source": "battery_csm_1", "state": "on"})
+    tied, gaps = tick(world, values, [tie])
+    assert not {"bus_a_v", "fuel_cell_current_a", "fuel_cell_power_w", "fc_1_current_a"} & set(gaps)
+    p = tied["bus_a_load_w"]
+    g = 2 / R + 1 / R_BAT
+    s = 2 * E0 / R + E_BAT / R_BAT
+    v = (s + math.sqrt(s * s - 4 * g * p)) / (2 * g)
+    i_bat = (E_BAT - v) / R_BAT
+    assert tied["bus_a_v"] == pytest.approx(v, abs=1e-9)
+    assert tied["bus_a_v"] > values["bus_a_v"]
+    assert tied["fc_1_current_a"] == pytest.approx((E0 - v) / R, abs=1e-9)
+    assert tied["fuel_cell_power_w"] == pytest.approx(
+        tied["bus_a_load_w"] + tied["bus_b_load_w"] - v * i_bat, abs=1e-6
+    )
+    assert tied["fuel_cell_current_a"] == pytest.approx(
+        2 * (E0 - v) / R + values["fuel_cell_current_a"] - 2 * values["fc_1_current_a"], abs=1e-9
+    )
+    # Bus B never saw it.
+    assert tied["bus_b_v"] == values["bus_b_v"]
+
+
+def test_a_battery_alone_holds_a_bus_its_modules_have_left(world):
+    """Fuel cells 1 and 2 off line and battery A tied on: bus A is the battery's own line, the
+    smaller current of E_b I - R_b I^2 = P, and the modules carry nothing."""
+    values, _ = tick(world, plant.initial_values(world))
+    effects = [
+        plant.Effect(0, "set_source", {"source": "fc_1", "state": "off"}),
+        plant.Effect(0, "set_source", {"source": "fc_2", "state": "off"}),
+        plant.Effect(0, "set_source", {"source": "battery_csm_1", "state": "on"}),
+    ]
+    alone, gaps = tick(world, values, effects)
+    assert "bus_a_v" not in gaps
+    p = alone["bus_a_load_w"]
+    i = (E_BAT - math.sqrt(E_BAT**2 - 4 * R_BAT * p)) / (2 * R_BAT)
+    assert alone["bus_a_v"] == pytest.approx(E_BAT - R_BAT * i, abs=1e-9)
+    assert alone["fc_1_current_a"] == 0.0
+
+
+def test_a_module_the_bus_rises_above_carries_nothing():
+    """The diode rule both ways: a light load on a bus with a battery tied on lifts it above the
+    modules' 32.30 V, so the modules drop out and the battery carries the whole load."""
+    rules = rules_module()
+    sources = {"fc_1": (E0, R, True), "fc_2": (E0, R, True), "battery_csm_1": (E_BAT, R_BAT, False)}
+    solved, why = rules.solve_sources(300.0, sources, [12.903, 52.593], "extrapolate")
+    assert why is None
+    _, volts, currents = solved
+    i = (E_BAT - math.sqrt(E_BAT**2 - 4 * R_BAT * 300.0)) / (2 * R_BAT)
+    assert volts == pytest.approx(E_BAT - R_BAT * i, abs=1e-9) and volts > E0
+    assert currents == {"fc_1": 0.0, "fc_2": 0.0, "battery_csm_1": pytest.approx(i, abs=1e-9)}
+    # With no battery, `solve_sources` is `solve_modules`.
+    plain = {"fc_1": (E0, R, True), "fc_2": (E0, 1.5 * R, True)}
+    a, _ = rules.solve_sources(1100.0, plain, [12.903, 52.593])
+    b, _ = rules.solve_modules(1100.0, E0, [R, 1.5 * R], [12.903, 52.593])
+    assert a[0] == pytest.approx(b[0], abs=1e-9) and a[1] == pytest.approx(b[1], abs=1e-9)
+
+
+def test_battery_c_on_the_buses_is_a_named_gap(world):
+    """Battery C feeds both main buses through its diodes (AOH p. 2.6-38), which a per-bus solve
+    cannot honestly give, so connecting it is refused by name rather than ignored."""
+    values, _ = tick(world, plant.initial_values(world))
+    c_on = plant.Effect(0, "set_source", {"source": "battery_csm_3", "state": "on"})
+    _, gaps = tick(world, values, [c_on])
+    assert "bus_a_v" in gaps and "bus_b_v" in gaps
+    assert "battery C feeds both main buses" in gaps["bus_a_v"].owed, gaps["bus_a_v"].owed

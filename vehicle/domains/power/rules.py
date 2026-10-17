@@ -136,15 +136,89 @@ def why_unsolved(load_w, cells_in_parallel, open_circuit_v, resistance_ohm, enve
     return why
 
 
+def solve_sources(load_w, sources, envelope_a, below_envelope="refuse"):
+    """(bus current A, voltage V, {source: current A}) of Thevenin sources in parallel behind ideal
+    diodes delivering `load_w`, or (None, why).
+
+    `sources` is {name: (open-circuit V, resistance ohm, is_fuel_cell)}. Each source k delivers
+    i_k = (E_k - V) / R_k while E_k is above the bus and nothing once the bus reaches it: a battery
+    feeds the bus through its diodes and cannot be charged by it (AOH p. 2.6-38), and a fuel cell
+    the bus has risen above would be taken off by its reverse-current relay. With G = sum(1/R_k) and
+    S = sum(E_k/R_k) over the sources delivering, P = V (S - G V), whose larger root is the stable
+    point; a source whose E_k is not above that V is dropped and the bus solved again. Each fuel
+    cell's current is held to the published envelope as `solve_modules` holds it.
+    """
+    p = float(load_w)
+    active = {name: (float(e), float(r), fc) for name, (e, r, fc) in sources.items()}
+    while True:
+        g = sum(1.0 / r for _, r, _ in active.values())
+        s = sum(e / r for e, r, _ in active.values())
+        discriminant = s * s - 4.0 * g * p
+        if discriminant < 0.0:
+            return None, (
+                f"a load of {p:.0f} W is more than {sorted(active)} can deliver "
+                f"(S^2 / 4G = {s * s / (4.0 * g):.0f} W)"
+            )
+        volts = (s + math.sqrt(discriminant)) / (2.0 * g)
+        reverse = [name for name, (e, _, _) in active.items() if e <= volts]
+        if not reverse:
+            break
+        for name in reverse:
+            del active[name]
+        if not active:
+            return None, "no source on this bus is above the bus voltage it would make"
+    currents = {name: (e - volts) / r for name, (e, r, _) in active.items()}
+    low, high = (float(x) for x in envelope_a)
+    for name, (_, _, fc) in active.items():
+        amps = currents[name]
+        if not fc or (amps < low and below_envelope == "extrapolate"):
+            continue
+        if not low <= amps <= high:
+            side = "below" if amps < low else "above"
+            return None, (
+                f"a load of {p:.0f} W puts {name} at {amps:.2f} A, {side} the published normal "
+                "envelope (400-1,420 W a module, AOH p. 2.6-2), where the terminal relation is an "
+                "extrapolation of its secant (WP02 E-2)"
+            )
+    current = sum(currents.values())
+    return (current, volts, {name: currents.get(name, 0.0) for name in sources}), None
+
+
 def _solve(inputs, params, cells, load_w):
-    """((bus current, voltage, {module: current}), None) for the modules in `cells` that are
-    connected, at their resistances this tick, or (None, why). A bus with no connected module is
-    dead: 0 A at 0 V."""
+    """((bus current, voltage, {source: current}), None) for the sources in `cells` that are
+    connected, at their resistances this tick, or (None, why). A bus with no connected source is
+    dead: 0 A at 0 V. With no battery connected it is the fuel cells' `solve_modules`; a battery
+    connected to the bus makes it `solve_sources`, the cells and the battery behind its diodes."""
     connected = _connected(inputs, {"cells": cells})
     if connected is None:
-        return None, "a module on this bus has no position in `source_enabled`"
+        return None, "a source on this bus has no position in `source_enabled`"
+    isolated = [
+        name for name in params["isolated_sources"] if inputs["source_enabled"].get(name) == "on"
+    ]
+    if isolated:
+        return None, (
+            f"{isolated} is connected, and battery C feeds both main buses through its diodes "
+            "(AOH p. 2.6-38), which this solve does not model yet: it solves each bus alone"
+        )
     if not connected:
         return (0.0, 0.0, {}), None
+    batteries = [cell for cell in connected if cell in params["batteries"]]
+    if batteries:
+        resistance_of = params["resistance_of"]
+        sources = {
+            cell: (params["cell_open_circuit_v"], inputs[resistance_of[cell]], True)
+            for cell in connected
+            if cell not in batteries
+        }
+        for cell in batteries:
+            sources[cell] = (
+                params["battery_open_circuit_v"],
+                params["battery_resistance_ohm"],
+                False,
+            )
+        return solve_sources(
+            load_w, sources, params["cell_current_envelope_a"], params["below_envelope"]
+        )
     resistance_of = params["resistance_of"]
     missing = [cell for cell in connected if cell not in resistance_of]
     if missing:
@@ -177,14 +251,39 @@ def bus_b_v(inputs, params, dt):
     return _bus_v(inputs, params, inputs["bus_b_load_w"])
 
 
-def fuel_cell_current_a(inputs, params, dt):
-    """The connected modules' summed current: each bus's solve, at the bus's own load, added."""
-    total = 0.0
+def _per_source(inputs, params):
+    """{source: current A} over every bus, or (None, why)."""
+    currents = {}
     for bus in params["buses"]:
         solved, why = _solve(inputs, params, bus["cells"], inputs[str(bus["load"])])
         if solved is None:
+            return None, f"{bus['load']}: {why}"
+        currents.update(solved[2])
+    return currents, None
+
+
+def fuel_cell_current_a(inputs, params, dt):
+    """The connected modules' summed current: each bus's solve, at the bus's own load, with the
+    batteries' share left out, because the reactants are charged per ampere of module current."""
+    currents, why = _per_source(inputs, params)
+    if currents is None:
+        return params.no_value(why)
+    return sum(amps for name, amps in currents.items() if name not in params["batteries"])
+
+
+def fuel_cell_power_w(inputs, params, dt):
+    """What the modules deliver: the two bus loads, less what a connected battery carries. With no
+    battery on a bus it is that bus's load, the arithmetic it was declared as."""
+    total = 0.0
+    for bus in params["buses"]:
+        load = float(inputs[str(bus["load"])])
+        solved, why = _solve(inputs, params, bus["cells"], load)
+        if solved is None:
             return params.no_value(f"{bus['load']}: {why}")
-        total += solved[0]
+        _, volts, currents = solved
+        total += load - sum(
+            volts * amps for name, amps in currents.items() if name in params["batteries"]
+        )
     return total
 
 
@@ -254,6 +353,7 @@ RULES = {
     "bus_b_v": bus_b_v,
     "fuel_cell_current_a": fuel_cell_current_a,
     "fc_1_current_a": fc_1_current_a,
+    "fuel_cell_power_w": fuel_cell_power_w,
     "bus_a_rated_w": bus_a_rated_w,
     "load_shed_class": load_shed_class,
     "fc_1_resistance_ohm": _held_resistance("fc_1_resistance_ohm"),

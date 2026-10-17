@@ -21,6 +21,12 @@
 # what is advisory (something an agent should decide). A local LCL does not ask whether a dead
 # short should be disconnected (`electrical_diode.md:845`).
 
+#
+# **`fleet_class` says what the fleet can be held to** (vocabulary: fault-injection lane, 2026-10-17):
+# `precursor` when published evidence arrives early enough to act on (PWR-02's tens of minutes),
+# `onboard` when the service or the crew's checklist answers first and the fleet manages the
+# aftermath, and `out_of_scope`, with its reason, when nothing published reaches the fleet in time.
+
 domain: power
 faults:
   - id: PWR-02-fuel-cell-degradation
@@ -31,6 +37,7 @@ faults:
       hazard: 2.0e-5
       unit: per_h
     perturbs: [power.source_1_current_a, power.dc_bus_a_v, power.load_margin_w, res.time_to_limit_s]
+    fleet_class: precursor
     detection:
       evidence: "one source current falls while the others rise to hold the bus; margin shrinks before the voltage does"
       latency: "tens of minutes at 2 Hz on the current channel"
@@ -49,6 +56,8 @@ faults:
       on_demand_p: 1.0e-4
       trigger: "any load energisation with inrush_w > 300"
     perturbs: ["power.lcl_[n]_state", "power.lcl_[n]_current_a", power.dc_bus_a_v, power.load_margin_w]
+    fleet_class: out_of_scope
+    fleet_class_note: "a nuisance trip is one event in milliseconds and reads as a load the crew turned off; nothing published precedes it and nothing after it separates it from a shed (review of the arc report)"
     detection:
       evidence: "a load current steps to zero with no command; the bus voltage rises slightly as the load leaves"
       latency: "one event, immediate, but easy to misread as a load the crew turned off"
@@ -66,6 +75,7 @@ faults:
       hazard: 2.0e-4
       unit: per_h
     perturbs: [power.bus_a_current_a, "power.lcl_[n]_current_a", power.dc_bus_a_v, power.source_1_current_a]
+    fleet_class: onboard
     detection:
       evidence: "bus current rises above what the enabled load list accounts for, with no LCL tripped. The overload is visible only at the bus, not at the load"
       latency: "seconds — the highest-energy fault in the domain"
@@ -83,6 +93,7 @@ faults:
       on_demand_p: 5.0e-4
       trigger: "tie closure into a bus that is already faulted"
     perturbs: [power.bus_tie_state, power.dc_bus_a_v, power.dc_bus_b_v, power.bus_a_current_a]
+    fleet_class: onboard
     detection:
       evidence: "a tie commanded open reports closed and the voltages stay coupled: the healthy bus's voltage sags toward the faulted one's"
       latency: "immediate on the tie channel, but the consequence arrives before the command result does"
@@ -101,6 +112,7 @@ faults:
       hazard: 2.0e-4
       unit: per_h
     perturbs: [power.bus_tie_state, power.dc_bus_a_v, power.dc_bus_b_v, power.load_margin_w]
+    fleet_class: onboard
     detection:
       evidence: "a tie command is accepted and the tie does not close; a subsequent single-bus failure has no cross-support"
       latency: "the fault is instantaneous and the consequence may be hours later, which is exactly the latent class"
@@ -118,6 +130,7 @@ faults:
       coupled_to: TCS-*
       trigger: "battery zone temperature above 318 K"
     perturbs: [power.battery_soc_pct, power.battery_temp_c, res.battery_energy_wh, res.time_to_limit_s]
+    fleet_class: precursor
     detection:
       evidence: "the published SOC estimate and the actual delivered energy part company; the estimate is the thing that is wrong, so the evidence is a load that lasts less long than predicted"
       latency: "hours — and it is discovered by a plan failing rather than by a channel moving"
@@ -137,6 +150,8 @@ faults:
       trigger: "bus voltage below 24.5 V for more than one tick with the pump energised"
     perturbs: [power.dc_bus_b_v, power.bus_a_current_a, thermal.pump_1_commanded,
                thermal.primary_flow_l_min, thermal.coolant_return_c]
+    fleet_class: out_of_scope
+    fleet_class_note: "the contactor drops in seconds on a sag the fleet cannot see coming, and the load returns with the bus; the flow and coldplate show only the aftermath of a cause no channel publishes (review of the arc report)"
     detection:
       evidence: "pump commanded true, pump current zero, coolant flow falling, and no LCL trip. The corroboration is that the electrical channels are innocent of the thermal consequence"
       latency: "seconds on the flow channel, tens of seconds on the coldplate"
@@ -156,6 +171,7 @@ faults:
       unit: per_h
     perturbs: [avionics.instrumentation_power_w, avionics.telemetry_frame_sync,
                avionics.oldest_sample_age_ms, "power.lcl_[n]_state"]
+    fleet_class: onboard
     detection:
       evidence: "a correlated group of channels stops updating at once, with the frame-sync and oldest-sample-age channels confirming that the silence is real rather than a quiet vehicle"
       latency: "immediate, and the failure is that the agents lose the ability to see anything else"
@@ -174,6 +190,7 @@ faults:
       hazard: 2.0e-4
       unit: per_h
     perturbs: [power.dc_bus_a_v, power.bus_a_current_a, power.load_margin_w]
+    fleet_class: precursor
     detection:
       evidence: "the bus sags a little more each day at the same load, and the sag is not explained by any single load's current"
       latency: "days — the slowest fault in the domain, and the one a short run cannot see"
@@ -192,6 +209,7 @@ faults:
       trigger: "any bus with a pre-existing high-resistance joint"
     perturbs: [power.dc_bus_a_v, power.bus_a_current_a, power.bus_tie_state,
                "power.lcl_[n]_state", power.load_margin_w]
+    fleet_class: onboard
     detection:
       evidence: "voltage collapse with a current spike, an LCL trip and a breaker state change, all inside a second"
       latency: "instantaneous; the interesting number is not the latency but the order the channels move in"
@@ -209,6 +227,7 @@ faults:
       on_demand_p: 5.0e-4
       trigger: "any degraded source on the same bus"
     perturbs: [power.source_1_current_a, power.load_margin_w]
+    fleet_class: onboard
     detection:
       evidence: "a current that never varies at all: real currents breathe with the load, and a perfectly steady one is the signature"
       latency: "long — until a load change that should have moved it does not"

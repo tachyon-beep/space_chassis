@@ -51,30 +51,37 @@ state:
     method: algebraic
     node: fuel_cell
     unit: W
-    # The field the arithmetic produces, named by the state's own id. 1,723 W is the reference
-    # operating point the linter re-derives against: every CSM load on and the transmitter on, which
-    # is `load_budget.csm_total_demand_w` split across the two buses.
+    # The reference operating point: every CSM load on and the transmitter on, which is
+    # `load_budget.csm_total_demand_w` split across the two buses, with no battery tied on.
     fuel_cell_power_w: 1723
+    # The rule's parameters (`domains/power/rules.py`): each bus's solve, as `fuel_cell_current_a`.
+    buses:
+      - {bus: csm_bus_a, load: bus_a_load_w, cells: [fc_1, fc_2, battery_csm_1]}
+      - {bus: csm_bus_b, load: bus_b_load_w, cells: [fc_3, battery_csm_2]}
+    cell_open_circuit_v: 32.30
+    cell_current_envelope_a: [12.903, 52.593]
+    below_envelope: extrapolate
+    resistance_of: {fc_1: fc_1_resistance_ohm, fc_2: fc_2_resistance_ohm, fc_3: fc_3_resistance_ohm}
+    batteries: [battery_csm_1, battery_csm_2]
+    isolated_sources: [battery_csm_3]
+    battery_open_circuit_v: 37.1
+    battery_resistance_ohm: 0.364
     note: >-
-      What the three modules deliver to the two main buses this tick: the two bus loads, summed. At
-      steady state the output is the load, so a load `set_load` turns off leaves this state in the
-      same tick. The margin a crew watches is the capacity headroom, three 1,420 W modules against
-      this figure, which is what `power.load_margin_w` means. The reactant draw is charged per
-      ampere of module current (`fuel_cell_current_a`), not per watt of this figure (ADR 0003 item 3)
+      What the three modules deliver to the two main buses this tick: the two bus loads, less what a
+      battery tied onto a bus carries. At steady state the output is the load, so a load `set_load`
+      turns off leaves this state in the same tick, and with no battery on the buses (the coast
+      configuration, TN D-7609) it is the two loads summed. The margin a crew watches is the
+      capacity headroom, three 1,420 W modules against this figure, which is what
+      `power.load_margin_w` means. The reactant draw is charged per ampere of module current
+      (`fuel_cell_current_a`), not per watt of this figure (ADR 0003 item 3)
     provenance:
       basis: derived
-      computes: fuel_cell_power_w
-      derivation:
-        expression: bus_a_load + bus_b_load
-        inputs:
-          bus_a_load: bus_a_load_w
-          bus_b_load: bus_b_load_w
       relation: >-
-        the cells generate what the buses draw, so this is the two bus loads read as one generation.
-        Until the quiet-coast power rules it summed the fourteen `demand_w` declarations directly, a
-        constant: now each bus sums the loads its switches leave connected (`domains/power/rules.py`)
-        and this state adds the two, so the electricity follows the switches. The node's
-        `state_order` puts both bus loads before it
+        the cells generate what the buses draw less the batteries' share: each bus's load less
+        V x i for each battery connected to it, from that bus's solve (`domains/power/rules.py`).
+        Until the batteries could be tied on it was the derivation `bus_a_load + bus_b_load`, and it
+        still is that sum whenever none is. The node's `state_order` puts both bus loads and the
+        module resistances before it
 
   - id: bus_a_v
     method: algebraic
@@ -85,10 +92,18 @@ state:
     # because a rule reads only its own state's declaration, and held to those components by
     # `tests/test_power_rules.py`.
     # The modules that can feed this bus; the solve uses the ones `source_enabled` leaves on.
-    cells: [fc_1, fc_2]
+    cells: [fc_1, fc_2, battery_csm_1]
     cell_open_circuit_v: 32.30
     cell_current_envelope_a: [12.903, 52.593]
     below_envelope: extrapolate
+    # Batteries A and B can be tied onto main buses A and B (MAIN BUS TIE BAT A/C, BAT B/C; AOH
+    # p. 2.6-38) by `set_source`, each a Thevenin source behind its diodes: open circuit 37.1 V and
+    # 0.364 ohm, the J-mission handout's secant (WP02 E-4, p. 2.6-19: 37.1 V open, 28 V at 25 A).
+    # Battery C feeds both buses through its diodes and is refused by name until the tie re-model.
+    batteries: [battery_csm_1, battery_csm_2]
+    isolated_sources: [battery_csm_3]
+    battery_open_circuit_v: 37.1
+    battery_resistance_ohm: 0.364
     resistance_of: {fc_1: fc_1_resistance_ohm, fc_2: fc_2_resistance_ohm, fc_3: fc_3_resistance_ohm}
     solve_provenance:
       basis: derived
@@ -128,10 +143,18 @@ state:
     method: algebraic
     node: bus_b
     unit: V
-    cells: [fc_3]
+    cells: [fc_3, battery_csm_2]
     cell_open_circuit_v: 32.30
     cell_current_envelope_a: [12.903, 52.593]
     below_envelope: extrapolate
+    # Batteries A and B can be tied onto main buses A and B (MAIN BUS TIE BAT A/C, BAT B/C; AOH
+    # p. 2.6-38) by `set_source`, each a Thevenin source behind its diodes: open circuit 37.1 V and
+    # 0.364 ohm, the J-mission handout's secant (WP02 E-4, p. 2.6-19: 37.1 V open, 28 V at 25 A).
+    # Battery C feeds both buses through its diodes and is refused by name until the tie re-model.
+    batteries: [battery_csm_1, battery_csm_2]
+    isolated_sources: [battery_csm_3]
+    battery_open_circuit_v: 37.1
+    battery_resistance_ohm: 0.364
     resistance_of: {fc_1: fc_1_resistance_ohm, fc_2: fc_2_resistance_ohm, fc_3: fc_3_resistance_ohm}
     solve_provenance:
       basis: derived
@@ -537,7 +560,7 @@ state:
     # every load below on and the transmitter on. The tick computes it from the switches.
     bus_a_load_w: 1148
     # The bus is dead, and its loads draw nothing, when none of these modules is connected.
-    cells: [fc_1, fc_2]
+    cells: [fc_1, fc_2, battery_csm_1]
     # The rule's parameters (`domains/power/rules.py`): the loads `loads[].bus` puts on main bus A,
     # with their `demand_w`, copied because a rule reads only its own state's declaration and held to
     # the inventory by `tests/test_power_rules.py`.
@@ -574,7 +597,7 @@ state:
     node: fuel_cell
     unit: W
     bus_b_load_w: 575
-    cells: [fc_3]
+    cells: [fc_3, battery_csm_2]
     loads_w:
       csm_suit_fan: 85
       csm_cabin_fan: 60
@@ -595,11 +618,19 @@ state:
     # 12.9-52.6 A envelope.
     fuel_cell_current_a: 56.686
     buses:
-      - {bus: csm_bus_a, load: bus_a_load_w, cells: [fc_1, fc_2]}
-      - {bus: csm_bus_b, load: bus_b_load_w, cells: [fc_3]}
+      - {bus: csm_bus_a, load: bus_a_load_w, cells: [fc_1, fc_2, battery_csm_1]}
+      - {bus: csm_bus_b, load: bus_b_load_w, cells: [fc_3, battery_csm_2]}
     cell_open_circuit_v: 32.30
     cell_current_envelope_a: [12.903, 52.593]
     below_envelope: extrapolate
+    # Batteries A and B can be tied onto main buses A and B (MAIN BUS TIE BAT A/C, BAT B/C; AOH
+    # p. 2.6-38) by `set_source`, each a Thevenin source behind its diodes: open circuit 37.1 V and
+    # 0.364 ohm, the J-mission handout's secant (WP02 E-4, p. 2.6-19: 37.1 V open, 28 V at 25 A).
+    # Battery C feeds both buses through its diodes and is refused by name until the tie re-model.
+    batteries: [battery_csm_1, battery_csm_2]
+    isolated_sources: [battery_csm_3]
+    battery_open_circuit_v: 37.1
+    battery_resistance_ohm: 0.364
     resistance_of: {fc_1: fc_1_resistance_ohm, fc_2: fc_2_resistance_ohm, fc_3: fc_3_resistance_ohm}
     note: >-
       the three modules' summed current, which is what the reactants are charged by (ADR 0003 item 3):
@@ -625,11 +656,19 @@ state:
     fc_1_current_a: 18.884
     cell: fc_1
     buses:
-      - {bus: csm_bus_a, load: bus_a_load_w, cells: [fc_1, fc_2]}
-      - {bus: csm_bus_b, load: bus_b_load_w, cells: [fc_3]}
+      - {bus: csm_bus_a, load: bus_a_load_w, cells: [fc_1, fc_2, battery_csm_1]}
+      - {bus: csm_bus_b, load: bus_b_load_w, cells: [fc_3, battery_csm_2]}
     cell_open_circuit_v: 32.30
     cell_current_envelope_a: [12.903, 52.593]
     below_envelope: extrapolate
+    # Batteries A and B can be tied onto main buses A and B (MAIN BUS TIE BAT A/C, BAT B/C; AOH
+    # p. 2.6-38) by `set_source`, each a Thevenin source behind its diodes: open circuit 37.1 V and
+    # 0.364 ohm, the J-mission handout's secant (WP02 E-4, p. 2.6-19: 37.1 V open, 28 V at 25 A).
+    # Battery C feeds both buses through its diodes and is refused by name until the tie re-model.
+    batteries: [battery_csm_1, battery_csm_2]
+    isolated_sources: [battery_csm_3]
+    battery_open_circuit_v: 37.1
+    battery_resistance_ohm: 0.364
     resistance_of: {fc_1: fc_1_resistance_ohm, fc_2: fc_2_resistance_ohm, fc_3: fc_3_resistance_ohm}
     note: >-
       what fuel cell 1 itself delivers, which `power.source_1_current_a` publishes: i_1 = (E0 - V) / R_1

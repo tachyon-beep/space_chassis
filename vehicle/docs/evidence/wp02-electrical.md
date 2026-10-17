@@ -114,7 +114,12 @@ Corpus, cited and not edited: `apollo_diode.md:72-80` (the power channel table),
   belongs with E-6.
 - **Not derived.** A battery internal resistance from (OCV - V_loaded)/I gives 0.234 ohm (AOH)
   and 0.364 ohm (JEPS): the two handbooks disagree by 55 %, and the secant includes polarization.
-  Nothing was written to YAML from it.
+- **Decided (2026-10-17, power lane).** The bus solves take the JEPS secant, 37.1 V open circuit
+  and 0.364 ohm, for J-mission effectivity (CSM 112-114); recorded by the coordinator under John's
+  delegation of 13:48Z. Batteries A and B tie onto main buses A and B by `set_source`, each a
+  Thevenin source behind its diodes (`domains/power/rules.py:solve_sources`). Battery C's two-bus
+  feed and the charge it spends (`battery_charge_j`, whose charger edge `E-BUS-BAT` is still owed)
+  are not yet modelled.
 - **Consumer.** WP04 (battery on bus during burns, entry); none in the coast episode, where the
   batteries are off the main buses (D-7609; A10C: two batteries in parallel only "during ascent and
   each SPS maneuver").
