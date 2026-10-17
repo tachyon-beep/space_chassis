@@ -57,12 +57,14 @@ episode:
       relation: >-
         ADR 0003 item 7 (B2): the playback volume is a task declaration, not physics. Each block is
         15 min of playback at the configured 51,200 bit/s (`comms` `playback_rate.play_rate_bps`),
-        900 s x 51,200 = 46,080,000 bits, equivalently 8 h of the 1,600 bit/s low-rate record
-        (`telemetry_rate` at MET 0). D1 + D2 = 92,160,000 bits = 1,800 s of the 2,400 s contact (75 %),
+        900 s x 51,200 = 46,080,000 bits. That is a high-rate record: the 8 h of 1,600 bit/s it would
+        also equal is more than the tape holds at the low rate (2 h at 3-3/4 in/s, 11.52 Mbit, AOH
+        §2.8). D1 + D2 = 92,160,000 bits = 1,800 s of the 2,400 s contact (75 %),
         which leaves the 600 s that a policy may spend on set-up and on a cool-down between windows.
       bound: >-
-        D1 + D2 below the recorder's capacity, which is UNCONFIGURED (`components[recorder].capacity_bit`,
-        B2): the bound is declared, not checked. (D1 + D2) / r_play = 1,800 s <= 2,400 s.
+        D1 + D2 at most the recorder's capacity, and it is exactly that: 92,160,000 bits is the 30
+        minutes of 15 in/s high-rate record the AOH gives (`components[recorder].capacity_bit`), so
+        the episode starts with a full tape. (D1 + D2) / r_play = 1,800 s <= 2,400 s.
       chosen_after: "the feasibility run below; D1 and D2 were fixed before any policy class was asserted"
 
   # Margins, judged on per-tick truth (09 §5). `limit` is the margin; `loss` is the loss condition

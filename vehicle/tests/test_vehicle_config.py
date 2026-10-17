@@ -2912,7 +2912,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     path.write_text(without_block(path.read_text(), "coverage"))
     result = run_linter(definition)
     assert result.returncode == 0, result.stdout[-900:]
-    assert "declares 148 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
+    assert "declares 149 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
     assert "derived here as 20 unperturbed, 15 of them `service`" in result.stdout
     # One block deleted is one debt added, so the ablation is the corpus's own count plus one.
     assert f"COMPOSES, with {corpus_debts() + 1} declared debt(s)." in result.stdout
@@ -8002,7 +8002,7 @@ def test_the_stock_integrator_reads_its_driver():
     pascals-per-kelvin to kilograms-per-hour and calling the result a mass is not an approximation;
     it is a dimension error wearing a number.
 
-    That stop is gone: a tick now walks all 160 states and records what it cannot advance, so the
+    That stop is gone: a tick now walks all 161 states and records what it cannot advance, so the
     integrator is reached by the order rather than only by a hand-written call. It still cannot be
     *exercised* from the live corpus, because every stock's driver is itself gapped — the tick
     reaches `lm_cabin_o2_kg` and gives up on it for a reason that belongs to the other state. The
@@ -12389,7 +12389,7 @@ def test_the_registry_coverage_claim_is_data_rather_than_a_sentence(tmp_path):
             if isinstance(row, dict) and row.get("id"):
                 registry.add(flatten(row["id"]))
                 layers[flatten(row["id"])] = row.get("layer")
-    assert len(registry) == 148, f"the registry is {len(registry)} channels, not 148"
+    assert len(registry) == 149, f"the registry is {len(registry)} channels, not 149"
 
     perturbed = set()
     for policy_path in sorted((VEHICLE / "domains").glob("*/fault_policy.yaml")):
@@ -12416,14 +12416,14 @@ def test_the_registry_coverage_claim_is_data_rather_than_a_sentence(tmp_path):
     definition = copy_definition(tmp_path / "coverage")
     path = definition / "channels.yaml"
     text = path.read_text()
-    broken = text.replace("perturbed_service_layer: 42", "perturbed_service_layer: 117", 1)
+    broken = text.replace("perturbed_service_layer: 43", "perturbed_service_layer: 117", 1)
     assert broken != text, "the fixture no longer matches channels.yaml"
     path.write_text(broken)
 
     result = run_linter(definition)
     assert result.returncode == 1, result.stdout[-900:]
     assert "channels.yaml:coverage.perturbed_service_layer" in result.stdout, result.stdout[-900:]
-    assert "claims 117 and the policies give 42" in result.stdout, result.stdout[-900:]
+    assert "claims 117 and the policies give 43" in result.stdout, result.stdout[-900:]
 
 
 def test_a_configuration_cannot_declare_two_different_masses(tmp_path):
@@ -12706,8 +12706,9 @@ def test_every_stock_declares_where_it_starts():
     # Five of the sentinel's `algebraic` states resolve at t=0 as well — the bay heat, the cabin
     # pressure differential and three more — so the sentinel's sub-map is the same map the tick
     # commits, merged rather than replaced. (Six until ADR 0003's power rules moved the bus load to
-    # the cells' node.) 28 with ECLSS's `suit_fan`.
-    assert len(seeded["internal"]) == 28, sorted(seeded["internal"])
+    # the cells' node.) 28 with ECLSS's `suit_fan`; 29 with comms' `light_time_s`, which is the
+    # orbit's range over c and resolves at t=0 like the rest.
+    assert len(seeded["internal"]) == 29, sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
     # six of the twenty-four declared values are the last of their key rather than a key of their
@@ -12790,10 +12791,10 @@ def test_every_stock_declares_where_it_starts():
         "evaporator_feed",
         "radiator_bypass",
     }, sorted(seeded_integrators["internal"])
-    # **And the five `algebraic` states the resolver adds**, the sentinel's half of the declared
-    # arithmetic: the bay heat rate, the cabin pressure differential, the two loops' collected loads
-    # and the RCS propellant estimate. (The bus load was the sixth, until ADR 0003's power rules
-    # moved it to the cells' node.) They are values a tick computes and a seed
+    # **And the six `algebraic` states the resolver adds**, the sentinel's half of the declared
+    # arithmetic: the bay heat rate, the cabin pressure differential, the two loops' collected loads,
+    # the RCS propellant estimate and comms' light time. (The bus load was a seventh, until ADR
+    # 0003's power rules moved it to the cells' node.) They are values a tick computes and a seed
     # cannot, which is why the map a tick starts from is a strict superset of what it seeds.
     assert set(seeded["internal"]) == set(seeded_integrators["internal"]) | {
         "avionics_bay_heat_w",
@@ -12801,6 +12802,7 @@ def test_every_stock_declares_where_it_starts():
         "loop_primary_load_w",
         "loop_lm_load_w",
         "propellant_estimate",
+        "light_time_s",
     }
     # Zero everywhere except the supply tank's pressure, which is the one seeded sentinel value that
     # is not an accumulator's origin — and, from round 67, `auto`, which is not a number at all and
@@ -13156,7 +13158,7 @@ def test_a_points_layer_is_the_registrys_layer(tmp_path):
         for row in rows:
             if isinstance(row, dict) and row.get("id") and row.get("layer"):
                 registered[str(row["id"])] = str(row["layer"])
-    assert len(registered) == 148, len(registered)
+    assert len(registered) == 149, len(registered)
     assert set(registered.values()) == {"measurement", "estimate", "service"}
 
     points = 0
@@ -13171,7 +13173,7 @@ def test_a_points_layer_is_the_registrys_layer(tmp_path):
             else:
                 # A template instantiation; its layer must still be one of the three.
                 assert row["layer"] in set(registered.values()), (cid, row["layer"])
-    assert points == 142, points
+    assert points == 143, points
 
     mapping = yaml.safe_load((VEHICLE / "presentation.yaml").read_text())["epistemic_layers"][
         "mapping"
@@ -14049,7 +14051,9 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
     # 59 -> 61 with ADR 0003: thermal's three keyed commands (`evaporator_feed`, `coolant_pump`,
     # `radiator_bypass`) are on the sentinel and declared in its order, and power's `bus_a_load_w`
     # left it for `fuel_cell`. 62 with ECLSS's `suit_fan`, the compressor switch `set_suit_fan` moves.
-    assert sum(len(states) for _, states in declared) == 62, "the sentinel's state count moved"
+    # 62 -> 63 with comms' `light_time_s`, read off this tick's orbit and declared first in comms'
+    # order beside `blackout`.
+    assert sum(len(states) for _, states in declared) == 63, "the sentinel's state count moved"
 
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
@@ -17840,7 +17844,7 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     result = run_linter(other)
     assert result.returncode == 1, result.stdout[-900:]
     assert "states 'forty-eight states live on it'" in result.stdout, result.stdout[-900:]
-    assert "this vehicle has 62 states on the sentinel" in result.stdout, result.stdout[-900:]
+    assert "this vehicle has 63 states on the sentinel" in result.stdout, result.stdout[-900:]
 
     # A *digits* figure is read too, so the reader is not tied to the spelling the corpus happens
     # to use today.
@@ -17875,8 +17879,9 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
         "states on the sentinel": _cv.SENTINEL_STATE_FIGURES,
     }
     # 11 -> 10 in round 70, with the source regulator off the fuel cell's node.
-    # 10 -> 13 and 59 -> 61 with ADR 0003's thermal, power and comms rules.
-    expected = {"multi-state nodes": 15, "states on the sentinel": 62}
+    # 10 -> 13 and 59 -> 61 with ADR 0003's thermal, power and comms rules; 63 with ECLSS's
+    # `suit_fan` and comms' `light_time_s`.
+    expected = {"multi-state nodes": 15, "states on the sentinel": 63}
     for tool in sorted((VEHICLE / "tools").glob("*.py")):
         tree = _ast.parse(tool.read_text())
         for node in _ast.walk(tree):
@@ -18268,7 +18273,7 @@ def test_the_gate_s_own_prose_states_the_vehicle_it_tests():
 def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     """The status line's own sentence, held whole rather than in the three figures a test read.
 
-    The sentence is "148 channels, 160 states over 64 scheduled nodes, 142 thresholds, 59 verbs and
+    The sentence is "148 channels, 161 states over 64 scheduled nodes, 142 thresholds, 59 verbs and
     128 classified events". `test_the_readme_status_matches_the_tools` reads the first three; the
     last three were read by nothing, which is the same defect one clause further along in the same
     line. The fixture moves the threshold count by one, because that is the smallest change the
@@ -19787,7 +19792,7 @@ def test_the_battery_s_smallest_flow_is_its_smallest_load_and_its_quantum_is_fin
 def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     """The lag integrator applies no conversion, and nothing said so — so both were dimensional errors.
 
-    A real tick advanced exactly two of the vehicle's 160 states, and both numbers were nonsense: `crew_workload`
+    A real tick advanced exactly two of the vehicle's 161 states, and both numbers were nonsense: `crew_workload`
     is an `enum-level` and was relaxed toward `water_potable`'s 14 kg of water; `thrust_main_n` is in
     newtons and was relaxed toward `prop_main`'s 18,508 kg of propellant. Neither is a crash — both
     are plausible numbers — which is why the rule has to exist rather than the values being watched.
@@ -19903,9 +19908,9 @@ def test_every_domain_that_uses_the_sentinel_declares_the_order_it_advances_in()
     # domain declares an order now too.
     assert len(declared) == 10, sorted(declared)
     # The orders are the domains' own decisions, not one template: propulsion's is physics and
-    # comms' is a link chain, so no two need agree.
+    # comms' is the geometry and then a link chain, so no two need agree.
     assert declared["propulsion"][0] == "dps_throttle_pct"
-    assert declared["comms"][0] == "comm_mode"
+    assert declared["comms"][0] == "blackout"
 
 
 def test_the_linter_refuses_an_internal_order_with_no_reason(tmp_path):
@@ -20055,8 +20060,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
-    # 27 -> 28 with ECLSS's `suit_fan`.
-    assert len(values["internal"]) == 28, sorted(values["internal"])
+    # 27 -> 28 with ECLSS's `suit_fan`, and 28 -> 29 with comms' `light_time_s`.
+    assert len(values["internal"]) == 29, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
@@ -20095,7 +20100,7 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
             published += 1
             if state_node.get(str(row.get("from"))) in shared:
                 unnameable += 1
-    assert published == 142, published
+    assert published == 143, published
     # 33 -> 31 in round 70: two published channels read states that shared the fuel cell's node, and
     # the node publishes its key now, so they are nameable.
     # 31 -> 32 when `load_enabled` joined `load_shed_state` (`power.load_shed_class`), and 32 -> 36
@@ -20140,7 +20145,7 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
     # And the debt states both figures, because a number in prose with no reader is the next round's
     # finding — this is that reader.
     entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
-    assert "142 published points" in entry and "72 are *derived*" in entry
+    assert "143 published points" in entry and "72 are *derived*" in entry
 
 
 def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
@@ -20193,9 +20198,10 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     ), report)
     counts = _cv.CHANNEL_DERIVATION_COUNTS
     # 64/71 -> 63/72 with the comms quiet-coast model (7b22cd7), which moved the docstring too.
-    assert counts["same"] == 63, counts
+    # 63 -> 64 with `comm.light_time_s`, which publishes its state unchanged.
+    assert counts["same"] == 64, counts
     assert counts["derived"] == 72, counts
-    assert counts["total"] == 135, counts
+    assert counts["total"] == 136, counts
     assert not [r for r in report.refusals if "channels read from a state" in r], report.refusals
     doc = _cv.CHANNEL_DERIVATION_FIGURES.search(_cv.inspect.getdoc(_cv.check_channel_derivations) or "")
     assert doc is not None, "the docstring no longer states the figures this check computes"
@@ -20237,12 +20243,12 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     total_fixture = copy_definition(fixture_dir(tmp_path, "total-count"))
     path = total_fixture / "presentation.yaml"
     text = path.read_text()
-    assert "of the 135 channels read from a state" in text
-    path.write_text(text.replace("of the 135 channels read from a state", "of the 134 channels read from a state", 1))
+    assert "of the 136 channels read from a state" in text
+    path.write_text(text.replace("of the 136 channels read from a state", "of the 135 channels read from a state", 1))
     result = run_linter(total_fixture)
     assert result.returncode == 1, result.stdout[-900:]
     assert (
-        "states that 134 channels read from a state, and the registry now has 135" in result.stdout
+        "states that 135 channels read from a state, and the registry now has 136" in result.stdout
     ), result.stdout[-900:]
 
     # And the corpus's own sentence carries all the figures, which is what makes it a declaration.
@@ -20250,9 +20256,10 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
     # 63 -> 64 in round 32: `eclss.o2_supply_pressure_psi` moved from the node-sourced set to the
     # state-sourced one, where its unit is its source's. 134 -> 135 in round 61, when the total was
-    # given a reader and the sentence it was read from turned out to be the stale copy.
-    assert "only 63 have the state's own unit" in entry
-    assert "of the 135 channels read from a state" in entry
+    # given a reader and the sentence it was read from turned out to be the stale copy. 63/135 ->
+    # 64/136 with `comm.light_time_s`, a channel that is its state.
+    assert "only 64 have the state's own unit" in entry
+    assert "of the 136 channels read from a state" in entry
     assert "The other 72 are *derived*" in entry
     assert "15 of the 72 now carry an evaluable `derivation`" in entry
 

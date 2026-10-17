@@ -13979,7 +13979,7 @@ def check_channel_derivations(
     """The window's channels: how many are their source state, and how many are a sentence.
 
     Round 23 built the frame's `values` from the points registry and found, by refusing to publish a
-    channel whose unit is not its source state's, that **only 63 of the 135 channels read from a state
+    channel whose unit is not its source state's, that **only 64 of the 136 channels read from a state
     are the state itself**. The other 72 are *derived* — a partial pressure from a mass and a volume,
     a flow in litres per minute from a mass flow and a density — and their `derivation` is prose,
     which nothing can evaluate. The frame omits them, the debt says so, and the two figures lived in

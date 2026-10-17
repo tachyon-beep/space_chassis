@@ -1719,6 +1719,23 @@ comms:
         difference between "the vehicle is behind the Moon" and "the vehicle has stopped
         transmitting" is the whole content of a comms fault, and a fleet that cannot see the
         first will spend every orbit diagnosing the second
+  - id: comm.light_time_s
+    unit: s
+    layer: service
+    precision: 0.001
+    rate_hz: 0.2
+    priority: P3
+    provenance:
+      basis: apollo
+      ref: "apollo_diode.md:526"
+      note: >-
+        the vehicle's Earth-centred range over the speed of light (`domains/comms/rules.py:light_time_s`):
+        the one-way delay between the vehicle and the ground. `apollo_diode.md:526` makes the
+        Earth-link delay "approximately 1-2 s one way as a simulation setting"; that is the figure
+        at lunar distance, and this channel is the figure the trajectory actually flies, 0.02 s at
+        MET 0 to 1.32 s at arrival. A millisecond because the delay changes by about that much in a
+        minute near the Moon and by much more near the Earth; 0.2 Hz because it moves slowly
+
   - id: comm.recorder_fill_pct
     unit: "%"
     layer: estimate
@@ -2689,7 +2706,7 @@ coverage:
   # two thirds of it is the first thing a fault moves.
   unperturbed: 20
   unperturbed_service_layer: 15
-  perturbed_service_layer: 42
+  perturbed_service_layer: 43
   provenance:
     basis: derived
     relation: "counted over `channels.yaml`'s registered ids against every `perturbs` list in the eleven `domains/*/fault_policy.yaml`. Exact id matching, which is also the rule `check_fault_coverage` uses per domain: a fault that names a template perturbs the template, and a fault that names one instance of a template is a fault that named a channel this registry does not have"

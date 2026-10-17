@@ -40,8 +40,15 @@ profiles:
 
 thresholds:
 
+# `acts` (the cross-lane rule of 2026-10-17: Apollo's — a hardware-protecting trip inside seconds is
+# automatic, and anything that spends a resource or closes an option waits for a command). Every
+# threshold here is `crew`: none of them protects hardware, and the one that guards a verb
+# (`tx_power_high`, an interlock) refuses a command rather than acting. The amplifier's automatic
+# shed on overheat is thermal's threshold, not one of these.
+
   # --- pointing: apollo's two-sided wording, taken literally ------------------------------
   - id: hga_pointing_warning
+    acts: crew
     point: comm.hga_pointing_error_deg
     comparator: above
     assert: 2
@@ -62,6 +69,7 @@ thresholds:
         loss goes from 0.5 dB to 12. Two seconds to assert because the gimbal is chasing, ten to
         recover because a pointing error that has stopped growing is a gimbal that has caught up
   - id: hga_scan_limit
+    acts: crew
     point: comm.hga_pointing_error_deg
     comparator: above
     assert: UNCONFIGURED
@@ -90,6 +98,7 @@ thresholds:
 
   # --- the link itself --------------------------------------------------------------------
   - id: snr_degraded
+    acts: crew
     point: comm.snr_db
     comparator: below
     assert: 8
@@ -109,6 +118,7 @@ thresholds:
         one alarm with two names
 
   - id: snr_loss
+    acts: crew
     point: comm.snr_db
     comparator: below
     assert: 3
@@ -130,6 +140,7 @@ thresholds:
         because it is part of what the alarm *means*
 
   - id: frame_loss_high
+    acts: crew
     point: comm.rx_frame_loss_pct
     comparator: above
     assert: 2
@@ -151,6 +162,7 @@ thresholds:
 
   # --- the transmitter as a load ----------------------------------------------------------
   - id: tx_power_high
+    acts: crew
     point: comm.tx_power_w
     comparator: above
     # ADR 0004 operator item 2, decided by John 2026-10-16: one constant ceiling, the highest DC
@@ -190,6 +202,7 @@ thresholds:
 
   # --- the recorder ----------------------------------------------------------------------
   - id: recorder_fill_high
+    acts: crew
     point: comm.recorder_fill_pct
     comparator: above
     assert: 80
@@ -206,12 +219,13 @@ thresholds:
         where the vehicle must choose what to forget. The choice is the interesting failure and
         the threshold exists to make it visible *before* it happens rather than after — a fleet
         that sees 80 % can spend the next blackout on `emergency`, and a fleet that sees 99 % has
-        already lost the argument. The capacity it is a percentage of is owed
-        (`components.yaml#open_debts`), which is why the number is a fraction rather than a
-        duration
+        already lost the argument. The capacity it is a percentage of is 92.16 Mbit, 30 minutes of
+        high-rate record (`components.yaml#components[recorder]`, AOH §2.8), so 80 % is 6 minutes of
+        high-rate record left, or about 24 minutes of tape at the low rate
 
   # --- the link's discrete state, where the *change* is the event -------------------------
   - id: carrier_lock_loss
+    acts: crew
     point: comm.carrier_lock
     comparator: below
     assert: 0.5
@@ -232,6 +246,7 @@ thresholds:
         announcing it would be announcing the orbit
 
   - id: link_mode_none
+    acts: crew
     point: comm.link_mode
     comparator: below
     assert: 1

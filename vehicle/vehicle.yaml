@@ -236,12 +236,6 @@ environment:
     provenance:
       basis: historical
       source: "mean lunar albedo; a surface-phase thermal input"
-  - id: earth_moon_light_time_s
-    value: 1.3
-    unit: s
-    provenance:
-      basis: historical
-      source: "one-way light time; apollo_diode.md:526 makes the link delay a simulation setting of approximately 1-2 s one way, which brackets this"
   - id: tick_hz
     value: 50
     unit: Hz
