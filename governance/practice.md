@@ -97,7 +97,10 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
 - **The quiet-coast episode must stay green; its numbers may move** (D29).
 - **Fidelity**: "preference more fidelity where it doesn't start creating significant delivery
   risk" (John, D34; D31), and only where it adds an interesting option for a scenario, behaviour,
-  decision or challenge, not a single forced move (D37); otherwise a documented approximation. Each
+  decision or challenge, not a single forced move (D37); otherwise a documented approximation. A new
+  signal to debug or a new confounder is worth it; a quantity that only drains from full to empty is
+  not, but the events around it (meals that make barks and noise) are; propellant is not in that
+  class (D40). Each
   lane tells the coordinator the fidelity it builds to and any approximation it keeps; the
   coordinator evens the lanes out, and the governance thread writes the ledger in `status.md`.
 - **Sources**: any domain may be read (D32). Lanes started before 13:46 on 2026-10-17 get primary

@@ -143,3 +143,5 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 13:58–14:00 The independent review of the arc report's eleven lands; the coordinator answers all
   eleven on it (D38). D-07 (crew dialogue per console or shared) stays John's, *per-console* by
   default. Lanes 7 (GNC and RCS) and 8 (Crew) start at 13:59. The instrument layer has no owner yet.
+- 13:59–14:00 John: what fidelity is worth (D40); the ledger classes each option as signal,
+  confounder, event/noise or none. 14:00 John picks *per console* for D-07 (D39).

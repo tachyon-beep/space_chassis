@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:02 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
+As of **2026-10-17 14:03 UTC**, `tachyon-beep/space_chassis` `main` @ `b525b48`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -34,7 +34,7 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | 3 | Propulsion and propellant | [#50](https://github.com/tachyon-beep/space_chassis/pull/50) | draft | #45; primary sources (now reachable, D32) |
 | 4 | Structure states | [#51](https://github.com/tachyon-beep/space_chassis/pull/51) | draft; `arm_state` waits on #47's seeding; configuration states move to device firing after #47 | #45, #47 |
 | 7 | GNC and RCS lane | — | started 13:59; attitude as pointing modes, a rate-limited slew law behind `set_attitude_target` (D38) | the geometry lane (#44) |
-| 8 | Crew lane | — | started 13:59 on D-06 revision 1 (D38) | D-07 default *per-console* until John answers |
+| 8 | Crew lane | — | started 13:59 on D-06 revision 1 (D38); crew dialogue per console (D39) | — |
 | 10 | Avionics FDIR | — | not started | last; needs lane 9's faults |
 | — | Instrument layer | — | **no owner yet** (D38 item 6); needed before the coordination test (item 8) | the coordinator assigning it |
 
@@ -60,13 +60,13 @@ which thermal cherry-picks onto power's branch. Power has applied *off* on #43 (
 
 | item | options | asked in |
 |---|---|---|
-| D-07: crew dialogue per console or shared | per-console (recommended, used as the default) / shared | card from the coordinator, 14:00 |
 | D22 pilot credentials for the 10-minute smoke | — | Vehicle to smoke-ready |
 | archive `space_vehicle` (D21) | a repository setting; safe since PR #35 | `records/2026-10-15-space-vehicle-archive-check.md` |
 
 ## Answered for John, his to override
 
-Answered by John today: power d / standby pump *off* (D29, 13:35); any domain, read-only (D32, 13:46).
+Answered by John today: power d / standby pump *off* (D29, 13:35); any domain, read-only (D32, 13:46);
+D-07 crew dialogue *per console* (D39, 14:00).
 
 Answered by the coordinator on the independent review at 14:00: the arc report's eleven (D38).
 
@@ -88,15 +88,17 @@ Answered by the coordinator under D33 at 13:50 (D35), each the lane's recommende
 ## Fidelity ledger
 
 "Preference more fidelity where it doesn't start creating significant delivery risk" (D34, D31). Added fidelity must add an interesting option for a scenario, behaviour, decision or challenge,
-not a single forced move (D37). One line per lane: the fidelity it builds to, the option it adds, and
-any approximation it deliberately keeps. Filled from what lanes report
+not a single forced move (D37). "What option it adds" is classed **signal** (a new signal to debug),
+**confounder** (first- or second-order effects on another reading), **event/noise** (barks and
+non-mission events the team must triage) or **none** (D40). One line per lane: the fidelity it builds
+to, the option it adds, and any approximation it deliberately keeps. Filled from what lanes report
 to the coordinator; *not reported* means the lane has not said yet.
 
 | lane | builds to | what option it adds | approximations kept |
 |---|---|---|---|
 | power (#43) | Apollo EPS as flown: each fuel cell a module (AOH 2.6); a, b, c as answered (D35): battery-to-main-bus tie plus fuel cell 2 cross-feed, no automatic shed ladder (cautions only, the crew sheds), source converter retired | not reported | for lack of a text source: fuel-cell terminal a linear secant of the AOH envelope, not the polarization curve (graphical only, A14DB), extrapolated below 400 W per module; no feeder or motor-switch drop (0–1 V, WP02 E-2); no AC buses or inverters, so the glycol pumps (AC, likely tens of watts) are 250 W DC loads; load draws mostly `chosen`, constant-power, no inrush; battery derate, temperature and internal resistance unsourced (AOH 0.234 Ω and JEPS 0.364 Ω disagree; JEPS taken for J-mission effectivity unless John says otherwise); charger output current graphical only |
 | thermal (#49) | the loop as heat balances; bays `C dT/dt = Q − G(T − T_coolant)` | not reported | bay C and G are `chosen`, bounded by limits (ADR 0003 item 11); pump speed as a fraction of rated (no rated rpm found); both below sourced fidelity until the research thread reads TIR 580-S-7159, NTRS 19670039777, LM0-510-1036 and the AOH §2.7 table |
-| comms (#48) | blackout as exact sphere geometry per tick from the propagated orbit, Moon at real distance; link budget designed in full; light time `range/c`, 0.02–1.32 s, for the window to apply | pointing becomes a crew trade: TN D-6723 Table I gives the high-gain array as 4.4° / 25.7 dB (not the derived 26.7 dB / 9.4°), so the loss at 2° off-axis goes from −0.54 to about −2.5 dB/° | ground end is Earth's centre, not MSFN stations (no station coordinates; stations would change `link_ok` in the episode, so only as a deliberate change); no link-budget constant sourced (TN D-6723 and the USB tables are behind blocked `ntrs.nasa.gov`); `carrier_lock` a discrete with a numeric acquisition timer once #47 is on `main` |
+| comms (#48) | blackout as exact sphere geometry per tick from the propagated orbit, Moon at real distance; link budget designed in full; light time `range/c`, 0.02–1.32 s, for the window to apply | **signal**: pointing becomes a crew trade: TN D-6723 Table I gives the high-gain array as 4.4° / 25.7 dB (not the derived 26.7 dB / 9.4°), so the loss at 2° off-axis goes from −0.54 to about −2.5 dB/° | ground end is Earth's centre, not MSFN stations (no station coordinates; stations would change `link_ok` in the episode, so only as a deliberate change); no link-budget constant sourced (TN D-6723 and the USB tables are behind blocked `ntrs.nasa.gov`); `carrier_lock` a discrete with a numeric acquisition timer once #47 is on `main` |
 | propulsion (#50) | thrust a first-order lag to rated; chamber pressure proportional to thrust | not reported | DPS thrust and chamber pressure left as gaps (throttle-to-thrust law unsourced, `main_propulsion_diode.md:36` refuses it); feed pressure held at 100 % of nominal with no regulator or line loss; regulator lock-up, bottle blowdown and helium displacement wait on reachable sources; no start transient (none published) |
 | RCS geometry (#44) | per-jet SM and LM geometry from primary sources, linter-checked | not reported | all 44 jets treated as one article; CM jets owed |
 | fault injection (#47) | onset as a step change on the moved state, same tick | not reported | a ramp is a domain rule's job, not the plant's |
