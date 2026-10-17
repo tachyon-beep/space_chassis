@@ -36,7 +36,7 @@ Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 | 7 | GNC and RCS lane | — | started 13:59; attitude as pointing modes, a rate-limited slew law behind `set_attitude_target` (D38) | the geometry lane (#44) |
 | 8 | Crew lane | [#54](https://github.com/tachyon-beep/space_chassis/pull/54) | draft (`claude/vehicle-crew-bogej1`); per-cabin crew count, location as a rule, potable water drains; next the crew day (sleep, meals, work as sourced activities; meals as water draws to tell from a leak); D-06 revision 1 (D38), dialogue per console (D39) | #45, #47 |
 | 10 | Avionics FDIR | — | not started | last; needs lane 9's faults |
-| 9 | Instrument layer (after #47) | — | owned by the fault-injection lane (it lives in `plant.py`/`console.py`); its order after #47: `gated_by` on state conditions, the instrument layer, the decision-age delay at the window, the fair-chance stamps, then the `fleet_class` and `acts` lints | #47 |
+| 9 | Instrument layer (after #47) | — | owned by the fault-injection lane (it lives in `plant.py`/`console.py`); its order after #47: `gated_by` on state conditions, the instrument layer, the `ask_crew` `perceive()` caller (needs #54 on `main`; perceived by the asking console only, audit to the evaluator, never in the diode), the decision-age delay at the window, the fair-chance stamps, then the `fleet_class` and `acts` lints | #47 |
 
 Engine work on #47 (at `4a531df`) for other lanes: `refused_bands` on numeric arguments, and
 `minimum`/`maximum` now enforced everywhere (they were declared and read by nothing; all lanes told); the fault hook (`becomes`, `scale`, `becomes_from: magnitude`);

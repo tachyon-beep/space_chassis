@@ -177,3 +177,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 14:31 Governance PR #53 merged (`e90d9f1`).
 - 14:32 Structure publishes the docking-latch count on #51 (`3dd1e64`) for propulsion's docked-burn guard.
 - 14:34 Crew reports #54's fidelity (`ed840ef`). The `perceive()` caller goes to lane 9 after #47.
+- 14:35 Lane 9's order after #47 adds the `ask_crew` `perceive()` caller after the instrument layer.
