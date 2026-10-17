@@ -193,3 +193,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 15:02 Research delivers the Apollo 13 MSFN network as flown (`sources/comms.md`); no as-flown rise/set table. D51: Vanguard and ARIA positions from the pre-flight press kit, labelled planned. Comms models handovers in its own PR after #48.
 - 15:03 Governance #55 merged as `7ad188f` (D41–D44, lane events to 14:30); the next batch carries D45–D51.
 - 15:23 D52: GNC navigation (`select_nav_source`) as a reduced Apollo-shaped covariance model, not the corpus's 15×15 EKF; recorded as a dated deviation in ADR 0005 on #56. ECLSS owes a vent state; GNC owns the edge into navigation.
+- 15:26 Merge order becomes #46 → #58 → #47 → the rest. Lane 0's draft #58 (`11c8a95`) unpins the census figures #45 kept on purpose, judging that keeping them pinned was the wrong call for a parallel sprint.

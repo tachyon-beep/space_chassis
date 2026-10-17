@@ -19,7 +19,7 @@ the sprint's rules and history are in
 
 ## Vehicle sprint: who holds what
 
-Merge order: ~~#45~~ (merged 14:46, `e990b25`) **→ #46 → #47 → the rest** (rebase onto `main`, merge when `required` is green).
+Merge order: ~~#45~~ (merged 14:46, `e990b25`) **→ #46 → #58 → #47 → the rest** (#58 inserted at 15:26) (rebase onto `main`, merge when `required` is green).
 After the lanes merge: a light-touch fidelity calibration pass per station (D45).
 #45 is on `main`; every lane rebases. A PR that closes a state no longer touches the pinned figures,
 the README status paragraph or `plant.py`; README count-line conflicts resolve to `main`'s side plus
@@ -28,6 +28,7 @@ a test re-run.
 | # | lane | PR | state | waits on |
 |---|---|---|---|---|
 | 0 | Unpin vehicle test figures | [#45](https://github.com/tachyon-beep/space_chassis/pull/45) | **merged** 14:46 as `e990b25`, `required` green with both episode jobs | — |
+| 0 | Unpin the census figures #45 kept | [#58](https://github.com/tachyon-beep/space_chassis/pull/58) | draft (`claude/vehicle-unpin-figures-ojibgi`, `11c8a95`); crowded nodes, sentinel, commanded/dwell, tick order, cross-domain reads, reads list, verb/channel/fault/point counts, mover and seed censuses, domain-clause and `faults.py` fixtures, 152-state docstrings, each held to the linter's `domain_figures`, the plant's world, or found by pattern | #46 |
 | 6 | ECLSS states | [#46](https://github.com/tachyon-beep/space_chassis/pull/46) | draft (engine helper: two-argument interlock condition); 21 of 25 ready; `fleet_class` on all 21 faults (12 onboard, 9 precursor), 261 debts on its branch; CO2 and humidity wait on crew | #45 |
 | 9 | Fault injection into the step loop | [#47](https://github.com/tachyon-beep/space_chassis/pull/47) | draft; carries the engine work for other lanes (list below); per-tick hashes differ from `main` (nothing pins them) | #45, #46 |
 | 1 | Burn down power subsystem | [#43](https://github.com/tachyon-beep/space_chassis/pull/43) | draft; per-cell fuel cells, PWR-02, battery tie; standby pump *off* with thermal's MET-0 re-derivation (`efd60cf`: environment heat 1,285.5 W, radiator start 288.02 K, hot-hold 293.40 K, evaporator hold 984.8 W; ADR 0003 item 9); policy D's non-loss is the corrected physics, so #43 carries the `aurora/tests` expectation change (D42) | #45; #47 before the PWR-02 `fault:` row |
