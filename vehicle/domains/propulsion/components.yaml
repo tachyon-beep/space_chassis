@@ -148,12 +148,31 @@ state:
         translunar midcourse correction later in that phase. Zero is what the mission profile
         says rather than a placeholder for a figure nobody has
     node: thrust_main
-    method: lag
+    # **A rule rather than a lag, because the driver is a mode and not a quantity.** As a `lag` this
+    # relaxed toward its one incoming edge, `E-PROP-ENG`, which is the propellant tank's *drain*
+    # (kg/s per N) and not a cause of thrust: the plant refused it as a numerator naming a quantity
+    # the state is not, and it was right. What sets thrust is which engine is firing, which is a mode
+    # on `engine_main`, and a mode selection is a table and never a gain. So the rule
+    # (`domains/propulsion/rules.py`) relaxes toward the firing engine's rated thrust with the same
+    # half-second constant: `rated_thrust_n[engine]` while that engine's state is in `firing_states`,
+    # zero while none is. The DPS has no rated figure here, because its thrust at a throttle setting
+    # is `thrust_curve`'s owed law, so a firing DPS is a gap rather than a number; two engines firing
+    # at once is a gap too, because no configuration of this vehicle does it. `E-PROP-ENG` keeps its
+    # job, reading this state to drain `prop_main`.
+    method: dynamics
     unit: N
     tau_s: 0.5
+    firing_states: [ignition, mainstage]
+    engine_states: {sps: sps_state, dps: dps_state, aps: aps_state}
+    rated_thrust_n: {sps: 91188, aps: 15569}
     provenance:
       basis: chosen
       reason: "thrust build-up and tailoff. apollo_diode.md:521 gives valve and motor mechanical transit as 'typically 0.1 to several seconds', and half a second sits inside that: long enough that a one-tick command cannot produce instant thrust, short enough that a burn's shape is dominated by its commanded duration rather than by its rise"
+      note: >-
+        `rated_thrust_n` is `components.sps.thrust_n` and `components.aps.thrust_n`, copied for the
+        rule and held equal to them by `tests/test_propulsion_rules.py`; their provenance is there.
+        `firing_states` counts `ignition` as firing because the build-up is this lag's job: an
+        engine in ignition is producing a rising thrust, and the half-second constant is the rise
 
   - id: dps_throttle_pct
     initial: 0
@@ -180,12 +199,24 @@ state:
         gauge reads zero percent of nominal. This is the state whose 0.3 s filling time the
         launch sequence exercises, and it starts empty
     node: internal
-    method: lag
+    # **A rule rather than a lag**, for the reason its own provenance gives: it "follows thrust", and
+    # a state on the sentinel can be reached by no edge, so as a `lag` nothing could drive it. The
+    # rule relaxes toward `100 x thrust_main_n / rated_thrust_n[engine]` for the firing engine with
+    # the chamber's 0.3 s, and toward zero when none fires: apollo's own row, "0 off; 95-105 firing"
+    # (apollo_diode.md:135), with 100 the nominal of a pressure-fed engine at its rated thrust. Thrust
+    # is on `thrust_main`, scheduled before the sentinel, so the reading is this tick's. A firing DPS
+    # is a gap here for the same reason it is one on `thrust_main_n`.
+    method: dynamics
     unit: "% nominal"
     tau_s: 0.3
+    thrust_state: thrust_main_n
+    firing_states: [ignition, mainstage]
+    engine_states: {sps: sps_state, dps: dps_state, aps: aps_state}
+    rated_thrust_n: {sps: 91188, aps: 15569}
     provenance:
       basis: chosen
       reason: "chamber pressure follows thrust with the chamber's own filling time; faster than the valve because the chamber is small. apollo_diode.md:135 publishes it at 10 Hz with a 0.1 % precision, which is a fast channel and needs a fast state behind it"
+      note: "`rated_thrust_n` is the same copy `thrust_main_n` carries, and the same test holds both to `components`"
 
   - id: feed_pressure_pct
     initial: 100
