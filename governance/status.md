@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 14:37 UTC**, `tachyon-beep/space_chassis` `main` @ `e90d9f1`. Kept by the
+As of **2026-10-17 14:41 UTC**, `tachyon-beep/space_chassis` `main` @ `e90d9f1`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -20,6 +20,7 @@ the sprint's rules and history are in
 ## Vehicle sprint: who holds what
 
 Merge order: **#45 → #46 → #47 → the rest** (rebase onto `main`, merge when `required` is green).
+After the lanes merge: a light-touch fidelity calibration pass per station (D45).
 Lanes keep draft PRs until the coordinator tells them #45 is on `main`.
 
 | # | lane | PR | state | waits on |
@@ -82,7 +83,7 @@ now on power's branch (`efd60cf`); the service-bay 380 W G and C follow on #49 a
 | D22 pilot credentials for the 10-minute smoke | — | Vehicle to smoke-ready |
 | archive `space_vehicle` (D21) | a repository setting; safe since PR #35 | `records/2026-10-15-space-vehicle-archive-check.md` |
 
-## Answered for John, his to override
+## Answered for John (confirmed by him at 14:39, D45)
 
 Answered by John today: power d / standby pump *off* (D29, 13:35); any domain, read-only (D32, 13:46);
 D-07 crew dialogue *per console* (D39, 14:00).
@@ -116,7 +117,8 @@ Answered by the coordinator under D33 at 13:50 (D35), each the lane's recommende
 not a single forced move (D37). "What option it adds" is classed **signal** (a new signal to debug),
 **confounder** (first- or second-order effects on another reading), **event/noise** (barks and
 non-mission events the team must triage), **decision** (a choice the crew or fleet faces) or
-**none** (D37, D40). One line per lane: the fidelity it builds
+**none** (D37, D40). Keep *none* entries listed: the ledger is the input to the calibration pass
+that closes the sprint (D45). One line per lane: the fidelity it builds
 to, the option it adds, and any approximation it deliberately keeps. Filled from what lanes report
 to the coordinator; *not reported* means the lane has not said yet.
 
