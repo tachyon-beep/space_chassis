@@ -54,8 +54,12 @@ ascent circuit interrupters wait for the LM power slice; structure holds a place
 `lm_ascent_interrupter`. ECLSS routes each cryo tank's 166.7 W heater and fan to power as a periodic
 load (a confounder); the CRYO PRESS caution follows #46. Crew (#54) adds `csm_crew_count` and
 `lm_crew_count`, taking the README census from 152 to 156, so lanes adding states rewrite it from the
-tools on rebase (sprint rule 4). `fleet_class` has no vocabulary yet: lane 9 publishes it before its
-lint, and lanes add only `acts:` until then. Propulsion takes the docked-burn requirement (9 of 12 latches) as an interlock
+tools on rebase (sprint rule 4). `fleet_class` vocabulary is published (14:15; the project's shared folder,
+`vehicle-status/fault-injection-lane/fleet-class-vocabulary.md`): `precursor | onboard |
+out_of_scope`, with a required `fleet_class_note` on `out_of_scope`. After #47 the lint refuses
+`service` with `precursor`, a `precursor` whose latency is only sub-minute, and `out_of_scope`
+without a note; a missing field is debt until every domain has it. Every fault-owning lane adds the
+field now. Propulsion takes the docked-burn requirement (9 of 12 latches) as an interlock
 edge from structure; structure's tunnel volume is published (11.6 ft³, ODB Vol I Fig 4.2-8.1),
 correcting the repo's "unpublished" note. ECLSS takes the structural-leak drain edge into `cabin_leak_csm`/`lm` after
 #51 lands. Lane-map correction: cabin water vapour waits on crew, like CO2.
