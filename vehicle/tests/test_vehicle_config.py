@@ -12879,9 +12879,12 @@ def test_every_stock_declares_where_it_starts():
         "coolant_pump",
         "evaporator_feed",
         "radiator_bypass",
-        # The structure lane: the four hatches latched at launch, and the latch ring's drive.
+        # The structure lane: the four hatches latched at launch, the latch ring's drive, and the
+        # arm token with its age.
         "hatch_state",
         "latch_drive",
+        "arm_state",
+        "arm_age_s",
     }, sorted(seeded_integrators["internal"])
     # **And the five `algebraic` states the resolver adds**, the sentinel's half of the declared
     # arithmetic: the bay heat rate, the cabin pressure differential, the two loops' collected loads
@@ -12903,6 +12906,7 @@ def test_every_stock_declares_where_it_starts():
     # The structure lane's two are maps as well: the hatches and the latch ring's drive.
     assert switch_maps == {
         "coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan", "hatch_state", "latch_drive",
+        "arm_state", "arm_age_s",
     }, switch_maps
     assert {v for k, v in seeded_integrators["internal"].items() if k not in switch_maps} == {
         0.0,
@@ -20207,9 +20211,10 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
-    # 27 -> 28 with ECLSS's `suit_fan`; 28 -> 30 with the structure lane: `latches_engaged` and
-    # `docking_talkback`, both computed from the latch positions on the sentinel.
-    assert len(values["internal"]) == 30, sorted(values["internal"])
+    # 27 -> 28 with ECLSS's `suit_fan`; 28 -> 32 with the structure lane: `latches_engaged` and
+    # `docking_talkback`, both computed from the latch positions on the sentinel, and the arm
+    # token's `arm_state` and `arm_age_s`, seeded since ruled discrete states are.
+    assert len(values["internal"]) == 32, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
