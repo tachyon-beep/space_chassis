@@ -91,8 +91,9 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   long as no logic changes; logic changes still go to the engine lane through the coordinator.
 - **Merge order**: #45 (unpin), then #46 (ECLSS engine helper), then #58 (unpin the census figures #45 kept, from 15:26), then #47 (fault injection), then the
   rest rebase and merge when `required` is green. Since #45 (14:46), a PR that closes a state does not
-  touch the pinned figures, the README status paragraph or `plant.py`; a README count-line conflict
-  resolves to `main`'s side plus a test re-run.
+  touch the test figures #45 unpinned; the census figures #45 kept stay pinned until #58 merges, and only
+  then does such a PR leave every figure, the README status paragraph and `plant.py` alone. A README
+  count-line conflict resolves to `main`'s side plus a test re-run.
 - **Review before merge (D54, from 16:09).** Every PR that leaves draft, governance batches included, gets an
   independent Fable review written to `vehicle-status/reviews/pr-<N>.md` in the project's shared folder. A PR merges
   when `required` is green and the verdict is not blocking (John, "Merge on clear"); John evaluates the PR and the report

@@ -21,15 +21,16 @@ the sprint's rules and history are in
 
 Merge order: ~~#45~~ (merged 14:46, `e990b25`) **→ #46 → #58 → #47 → the rest** (#58 inserted at 15:26). From 16:09 each PR also needs a non-blocking independent review verdict (D54) (rebase onto `main`, merge when `required` is green).
 After the lanes merge: a light-touch fidelity calibration pass per station (D45).
-#45 is on `main`; every lane rebases. A PR that closes a state no longer touches the pinned figures,
-the README status paragraph or `plant.py`; README count-line conflicts resolve to `main`'s side plus
-a test re-run.
+#45 is on `main`; every lane rebases. A PR that closes a state no longer touches the test figures #45
+unpinned; the census figures #45 kept stay pinned until #58 merges, and only after that does such a PR
+leave every figure, the README status paragraph and `plant.py` alone. README count-line conflicts
+resolve to `main`'s side plus a test re-run.
 
 | # | lane | PR | state | waits on |
 |---|---|---|---|---|
 | 0 | Unpin vehicle test figures | [#45](https://github.com/tachyon-beep/space_chassis/pull/45) | **merged** 14:46 as `e990b25`, `required` green with both episode jobs | — |
 | 0 | Unpin the census figures #45 kept | [#58](https://github.com/tachyon-beep/space_chassis/pull/58) | draft (`claude/vehicle-unpin-figures-ojibgi`, `11c8a95`); crowded nodes, sentinel, commanded/dwell, tick order, cross-domain reads, reads list, verb/channel/fault/point counts, mover and seed censuses, domain-clause and `faults.py` fixtures, 152-state docstrings, each held to the linter's `domain_figures`, the plant's world, or found by pattern | #46 |
-| 6 | ECLSS states | [#46](https://github.com/tachyon-beep/space_chassis/pull/46) | draft (engine helper: two-argument interlock condition); 21 of 25 ready; `fleet_class` on all 21 faults (12 onboard, 9 precursor), 261 debts on its branch; CO2 and humidity wait on crew | #45 |
+| 6 | ECLSS states | [#46](https://github.com/tachyon-beep/space_chassis/pull/46) | out of draft, reviewed clear with follow-ups under D54 (engine helper: two-argument interlock condition); 21 of 25 ready; `fleet_class` on all 21 faults (12 onboard, 9 precursor), 261 debts on its branch; CO2 and humidity wait on crew | #45 |
 | 9 | Fault injection into the step loop | [#47](https://github.com/tachyon-beep/space_chassis/pull/47) | draft; carries the engine work for other lanes (list below); per-tick hashes differ from `main` (nothing pins them) | #45, #46 |
 | 1 | Burn down power subsystem | [#43](https://github.com/tachyon-beep/space_chassis/pull/43) | draft; per-cell fuel cells, PWR-02, battery tie; standby pump *off* with thermal's MET-0 re-derivation (`efd60cf`: environment heat 1,285.5 W, radiator start 288.02 K, hot-hold 293.40 K, evaporator hold 984.8 W; ADR 0003 item 9); policy D's non-loss is the corrected physics, so #43 carries the `aurora/tests` expectation change (D42) | #45; #47 before the PWR-02 `fault:` row |
 | — | Source RCS thruster geometry | [#44](https://github.com/tachyon-beep/space_chassis/pull/44) | draft at `b4c3c44`; SM and LM jets sourced; full CM jet table, SM radii, LM jet 4 note corrected; CM engine split (D43); minimum impulse bit owed | #45; primary sources (now reachable, D32) |
@@ -70,7 +71,7 @@ ascent circuit interrupters wait for the LM power slice; structure holds a place
 `lm_ascent_interrupter`. ECLSS routes each cryo tank's 166.7 W heater and fan to power as a periodic
 load (a confounder): power cannot read `o2_tank_heaters` on node `internal` (`plant.md` §2 sentinel
 rule), so ECLSS puts it on its own node on #46 (commit 0007, edges E-O2-HTR-BUSA/BUSB, 166.68 W each),
-and power adds, after `main` has it, two 166.7 W gated loads (tank 1 on main A, tank 2 on main B, `chosen` pending a source); the CRYO PRESS caution follows #46. Crew (#54) adds `csm_crew_count` and
+and power adds, after `main` has it, the two gated loads (tank 1 on main A, tank 2 on main B), splitting the 166.7 W figure: each tank's heaters are 113.88 W DC and its fans are AC loads (AOH Fig 2.6-2, found in #46's review); the CRYO PRESS caution follows #46. Crew (#54) adds `csm_crew_count` and
 `lm_crew_count`, taking the README census from 152 to 156, so lanes adding states rewrite it from the
 tools on rebase (sprint rule 4). `fleet_class` vocabulary is published (14:15; the project's shared folder,
 `vehicle-status/fault-injection-lane/fleet-class-vocabulary.md`): `precursor | onboard |
