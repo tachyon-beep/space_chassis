@@ -185,3 +185,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 14:44 Research lane finished: eight source files under `sources/` in the project's shared folder. `thermal.md` finds the SM bays are not glycol-cooled; thermal decides the fix on #49.
 - 14:46 Power's AC distribution and comms' ground end decided under D33 (D47). GNC's dynamics seeding is on #47 (`4761970`).
 - 14:46 #45 (unpin) merged as `e990b25`, `required` green including both episode jobs. Every lane rebases; #46 next, then #47. From now on a closing PR does not touch the pinned figures, the README status paragraph or `plant.py`.
+- 14:47 John: "we want to be able to model apollo 13" (D48). Station handovers come into the episode; MET 0 moves to Apollo 13's TLI.

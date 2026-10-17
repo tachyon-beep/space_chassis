@@ -105,7 +105,7 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   decision or challenge, not a single forced move (D37); otherwise a documented approximation. A new
   signal to debug or a new confounder is worth it; a quantity that only drains from full to empty is
   not, but the events around it (meals that make barks and noise) are; propellant is not in that
-  class (D40). Each
+  class (D40). The target scenario is **Apollo 13** (D48): each lane checks its fidelity against it. Each
   lane tells the coordinator the fidelity it builds to and any approximation it keeps; the
   coordinator evens the lanes out, and the governance thread writes the ledger in `status.md`.
 - **Sources**: any domain may be read (D32). Lanes started before 13:46 on 2026-10-17 get primary
