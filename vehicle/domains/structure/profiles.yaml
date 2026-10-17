@@ -31,8 +31,15 @@ profiles:
         only number in this file that is a safety parameter rather than a physical limit
 
 thresholds:
+
+# `acts` (the cross-lane rule of 2026-10-17: Apollo's — a hardware-protecting trip inside seconds is
+# automatic, and anything that spends a resource or closes an option waits for a command). Every
+# threshold here is `crew`. None trips hardware: the four interlocks refuse a command rather than
+# act, the relief valve's own opening is the valve's mechanism and not this file's, and the arm
+# token's expiry is the arm rule's (`arm_state`), which the `arm_expiry` threshold only reads.
   # --- the pressure vessel ------------------------------------------------------------------
   - id: cabin_dp_low
+    acts: crew
     point: structure.cabin_dp_psi
     comparator: below
     assert: 3.5
@@ -50,6 +57,7 @@ thresholds:
         differential rather than as a cabin pressure, because it is the vessel that has to hold
         it. No assert dwell: this is the level at which a crew have minutes.
   - id: cabin_dp_high
+    acts: crew
     point: structure.cabin_dp_psi
     comparator: above
     assert: 6.0
@@ -68,6 +76,7 @@ thresholds:
 
   # --- latches and hatches ------------------------------------------------------------------
   - id: latch_disagreement
+    acts: crew
     point: structure.docking_latches
     comparator: below
     assert: 12
@@ -88,6 +97,7 @@ thresholds:
         threshold that bands, it is a readiness condition — the interface is either fully seated
         or it is not, and there is nothing in between to debounce.
   - id: hatch_open_with_pressure
+    acts: crew
     point: structure.cabin_dp_psi
     comparator: above
     assert: 0.5
@@ -113,6 +123,7 @@ thresholds:
 
   # --- pyro and relief ----------------------------------------------------------------------
   - id: pyro_continuity_loss
+    acts: crew
     point: "structure.pyro_continuity_[n]"
     comparator: below
     assert: 1
@@ -132,6 +143,7 @@ thresholds:
         for a device whose state it cannot establish. The distinction between the two causes is
         made against the command record, which is the record's job.
   - id: relief_valve_unexpected
+    acts: crew
     point: structure.relief_valve_state
     comparator: above
     assert: 1
@@ -150,6 +162,7 @@ thresholds:
 
   # --- the arm window ------------------------------------------------------------------------
   - id: arm_expiry
+    acts: crew
     point: "structure.arm_state_[event]"
     comparator: above
     assert: 120
@@ -169,6 +182,7 @@ thresholds:
         and an arm that outlived its queue age would be an arm issued against a world that has
         moved. It is the one threshold in the vehicle whose *expiry* is the safety property.
   - id: arm_reuse
+    acts: crew
     point: "structure.arm_state_[event]"
     comparator: above
     assert: 1
@@ -188,6 +202,7 @@ thresholds:
         anti-replay property at the level of a single agent's own commands.
 
   - id: uncommanded_acceleration
+    acts: crew
     point: structure.accel_xyz_g
     comparator: above
     assert: 0.3248
