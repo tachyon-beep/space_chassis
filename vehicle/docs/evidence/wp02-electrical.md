@@ -119,7 +119,11 @@ Corpus, cited and not edited: `apollo_diode.md:72-80` (the power channel table),
   batteries are off the main buses (D-7609; A10C: two batteries in parallel only "during ascent and
   each SPS maneuver").
 
-## E-5 `power.source_converter_v` tau_s (UNCONFIGURED; operator decision)
+## E-5 `power.source_converter_v` tau_s (closed: the state is retired)
+
+- **Decided.** John, 2026-10-17 (power lane, PR #43, decision c "retire"): option (a). The
+  converter state, its node, its edge `E-BUS-CONV` and its fault PWR-01 are removed; the bus solve
+  is the cells' terminal relation.
 
 - **Question.** The converter's regulation time constant.
 - **Finding.** Apollo has no source converter: fuel cells connect to the main buses through motor

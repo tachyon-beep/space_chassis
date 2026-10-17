@@ -410,14 +410,14 @@ def test_removing_the_per_ampere_draw_edge_stops_the_oxygen_tank(tmp_path):
 # ------------------------------------------------------------------------------------------------
 
 
-def test_the_source_converter_is_read_by_nothing_on_the_bus_path(world):
-    """ADR 0003 item 1: no converter. Its lag stays owed, and no edge or rule on the bus path reads it."""
-    assert spec_of(world, "source_converter_v")["tau_s"] == "UNCONFIGURED"
-    assert not [e.id for e in world.edges if e.source == "source_converter"]
-    text = (VEHICLE / "domains" / "power" / "rules.py").read_text()
-    assert "source_converter" not in text
-    _, gaps = tick(world, plant.initial_values(world))
-    assert "source_converter_v" in gaps and "bus_a_v" not in gaps and "bus_b_v" not in gaps
+def test_there_is_no_source_converter(world):
+    """ADR 0003 item 1 and John's decision c (2026-10-17): Apollo had no source converter (AOH
+    pp. 2.6-2, 2.6-25), so the vehicle has none: no state, no node, no edge, no fault."""
+    assert "source_converter_v" not in {s.id for s in world.states}
+    assert "source_converter" not in world.nodes
+    assert not [e.id for e in world.edges if "source_converter" in (e.source, e.target)]
+    faults = yaml.safe_load((VEHICLE / "domains" / "power" / "fault_policy.yaml").read_text())
+    assert not [f["id"] for f in faults["faults"] if f["id"].startswith("PWR-01")]
 
 
 # ------------------------------------------------------------------------------------------------

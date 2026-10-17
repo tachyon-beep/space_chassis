@@ -26,7 +26,7 @@ natural_rate_hz: 50
 # `command_executive`, which `E-CMD-BUS` drives the load-shed ladder with. All three are *inputs*,
 # which is why they belong here rather than in `writes` — the nodes they land on are power's.
 reads: [o2_csm, h2_csm, coldplate_t, link, command_executive]
-writes: [fuel_cell, source_converter, bus_a, bus_b, battery_energy, bus_tie, load_shed_state,
+writes: [fuel_cell, bus_a, bus_b, battery_energy, bus_tie, load_shed_state,
          fc_o2_draw, fc_h2_draw, battery_usable_j]
 
 # --------------------------------------------------------------------------------------
@@ -75,44 +75,6 @@ state:
         constant: now each bus sums the loads its switches leave connected (`domains/power/rules.py`)
         and this state adds the two, so the electricity follows the switches. The node's
         `state_order` puts both bus loads before it
-
-  - id: source_converter_v
-    method: lag
-    node: source_converter
-    unit: V
-    initial: 29
-    initial_source: vehicle.yaml:electrical.fuel_cells.output_v
-    initial_provenance:
-      basis: derived
-      relation: >-
-        the converter starts at the cells' declared output voltage, 29 V — the three modules are
-        activated before launch and rated at 29 +- 2 V each, so the bus is up before the mission
-        clock starts and the converter regulates around what they are already making
-    tau_s: UNCONFIGURED
-    evidence_question: >-
-      WP02 E-5 (docs/evidence/wp02-electrical.md). **The Apollo CSM has no source converter to
-      take a time constant from**: the fuel cells connect to the main buses through motor switches
-      and their terminal voltage falls with load (AOH SM2A-03-Block II-(1) pp. 2.6-2, 2.6-25,
-      2.6-38). The only figure in reach is electrical_diode.md:248's reference-design target,
-      "regulation transient <10 ms", which is a settling bound for hardware the vehicle does not
-      carry and is under one 20 ms tick. Owed to the operator as a model decision, not a value:
-      (a) replace this lag with the algebraic terminal relation V = E0 - R I on `fc_[n]` (E0
-      32.30 V, R 0.1008 ohm, both derived), or (b) keep a converter and take its tau from a
-      source for a converter. The slow effect Apollo does describe -- voltage recovering as the
-      stack's skin temperature follows the load (p. 2.6-25) -- has no published time constant
-    note: >-
-      Converter regulation lags its setpoint. electrical_diode.md:248 gives a 1.2 kW
-      converter with a >=94 % efficiency but no time constant — and its 24-32 V envelope is
-      re-anchored to apollo's 27.0-30.5 V band (C-01), so the parameter is owed rather than
-      inherited. **Off the episode path** (ADR 0003 item 1, option (a) above): `bus_a_v` and
-      `bus_b_v` solve the modules' terminal relation directly, and no edge from `source_converter`
-      reaches a bus or anything else, so the owed `tau_s` blocks nothing the quiet-coast episode
-      needs. The state stays declared, and stays owed, rather than being deleted or given a tau:
-      `tests/test_power_rules.py` holds that nothing reads it, so a reader added later has to
-      answer this question first.
-    provenance:
-      basis: chosen
-      reason: "a regulated converter is a first-order lag by construction; electrical_diode.md:248 gives its rating and efficiency but no time constant, so the class is chosen and the parameter is owed"
 
   - id: bus_a_v
     method: algebraic

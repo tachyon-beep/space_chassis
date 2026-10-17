@@ -5607,7 +5607,7 @@ def test_the_linter_refuses_a_fault_whose_detection_was_swallowed(tmp_path):
     path = definition / "domains" / "power" / "fault_policy.yaml"
     lines = path.read_text().split("\n")
     start = next(
-        i for i, line in enumerate(lines) if line.strip() == "- id: PWR-01-source-regulation-loss"
+        i for i, line in enumerate(lines) if line.strip() == "- id: PWR-02-fuel-cell-degradation"
     )
     det = next(i for i in range(start, len(lines)) if lines[i] == "    detection:")
     for k in range(det + 1, det + 4):
@@ -5618,7 +5618,7 @@ def test_the_linter_refuses_a_fault_whose_detection_was_swallowed(tmp_path):
     result = run_linter(definition)
     assert result.returncode == 1
     assert "not a mapping" in result.stdout
-    assert "PWR-01-source-regulation-loss" in result.stdout
+    assert "PWR-02-fuel-cell-degradation" in result.stdout
 
 
 
@@ -8416,10 +8416,16 @@ def test_a_voltage_does_not_live_on_a_node_declared_in_watts():
     assert [state.id for state in world.states_on("fuel_cell")] == [
         "bus_a_load_w",
         "bus_b_load_w",
+        "fc_1_resistance_ohm",
+        "fc_2_resistance_ohm",
+        "fc_3_resistance_ohm",
         "fuel_cell_power_w",
         "fuel_cell_current_a",
+        "fc_1_current_a",
+        "bus_a_rated_w",
     ]
-    assert [state.id for state in world.states_on("source_converter")] == ["source_converter_v"]
+    # The converter itself is gone (John's decision c, 2026-10-17: Apollo had none).
+    assert "source_converter" not in world.nodes
     leaving = [e for e in world.edges if e.source == "fuel_cell"]
     assert leaving and all(e.reads for e in leaving), [(e.id, e.reads) for e in leaving]
 
@@ -8428,17 +8434,7 @@ def test_a_voltage_does_not_live_on_a_node_declared_in_watts():
         values = plant.step(world, values, plant.tick_seconds(world), [])
     # The number five edges were reading as `None`.
     assert isinstance(values.get("fuel_cell_power_w"), (int, float)), values.get("fuel_cell_power_w")
-    assert values["source_converter"] == values["source_converter_v"]
-    # And the two are different quantities, which is the whole reason one node could not hold both.
     assert world.nodes["fuel_cell"]["unit"] == "W"
-    assert world.nodes["source_converter"]["unit"] == "V"
-
-    # The converter's own edge exists, is declared, and is owed rather than filled: a node in the
-    # graph and not merely in the node list, with the coefficient no source publishes.
-    edge = next(e for e in world.edges if e.id == "E-BUS-CONV")
-    assert (edge.source, edge.target) == ("bus_a", "source_converter")
-    assert edge.sensitivity["value"] == "UNCONFIGURED"
-    assert "internal resistance" in edge.sensitivity["relation"]
 
 
 def test_the_linter_refuses_a_read_that_names_a_state_on_another_node(tmp_path):

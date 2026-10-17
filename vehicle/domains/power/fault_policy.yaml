@@ -23,24 +23,6 @@
 
 domain: power
 faults:
-  - id: PWR-01-source-regulation-loss
-    component: source_converter_v
-    mechanism: "the converter's regulation loop degrades: bus voltage follows load instead of holding its setpoint"
-    kind: continuous_degradation
-    seeding:
-      hazard: 2.0e-5
-      unit: per_h
-      condition: "2x beyond the caution temperature limit"
-    perturbs: [power.dc_bus_a_v, power.bus_a_current_a, power.load_margin_w]
-    detection:
-      evidence: "bus voltage falls further than the measured load step explains; the two buses diverge under a shared load change"
-      latency: "minutes to hours — this is the creeping fault"
-      false_positive_risk: "a genuine load step looks identical for the first few seconds, which is why it needs the second bus to disagree"
-    response: {kind: advisory, note: "an agent decides whether to move loads; the service only warns"}
-    provenance:
-      basis: chosen
-      reason: "electrical_diode.md's converter (its :248) is a real component with a >=94 % efficiency claim and no degradation model; the mechanism is the obvious failure of a regulated output and the hazard rate is apollo's noncritical baseline"
-
   - id: PWR-02-fuel-cell-degradation
     component: fc_1
     mechanism: "one cell's output falls away: the stack loses a third of its capacity and its internal resistance rises"
