@@ -166,3 +166,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 14:15 Lane 9 publishes the `fleet_class` vocabulary; every fault-owning lane adds the field now.
 - 14:16 Thermal adds `fleet_class` and `acts` on #49 (`efdb857`; only `pump_no_flow` and `heater_stuck_on` act automatically) and records Fraction and Chosen in ADR 0003 (`b60c310`).
 - 14:17 Propulsion models SPS helium pressurization on #50 (`26532d3`; branch ready 74 → 80, debts 265 → 256). The coordinator answers its scope questions under D33 (D41).
+- 14:19 Power ties batteries A and B to the main buses on #43 (`a9c27d5`) and adds `acts` and `fleet_class`; the A–B tie's replacement follows #43.
