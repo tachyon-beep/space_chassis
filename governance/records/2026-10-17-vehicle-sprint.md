@@ -209,3 +209,4 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
 - 18:26 Governance #60 merged as `cd80375` (D56).
 - 19:33 ECLSS #46 merged as `9a0430a` after a clear D54 review with follow-ups, the first lane on `main`; `main` now 160 states, 86 ready, 261 debts (`plant.py --build-order`, `check_vehicle.py`). Aurora #61 (diode-probe deflake) reviewed clear. The vehicle status report is out; a trial merge of nine PRs measured 124 of 179 ready. #49 and #50 are green, waiting for their slots; power #43 and GNC #56 resolve #46 conflicts by hand; #58 goes ready next, then #47.
 - 19:36 Governance #62 reviewed clear. #47 is out of draft at `fbaf9bb`, with `main` merged through #46, and in review. #49 and #50 were green only on a pre-#46 base; both still need a rebase, a CI run and a review.
+- 19:51 Governance #62 merged as `e18e022`.

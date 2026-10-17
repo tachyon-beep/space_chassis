@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 19:36 UTC**, `tachyon-beep/space_chassis` `main` @ `9a0430a`. Kept by the
+As of **2026-10-17 19:36 UTC**, `tachyon-beep/space_chassis` `main` @ `e18e022`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -171,4 +171,4 @@ Nothing in the sprint changes for it.
 - 2026-10-15: three-stream restructure (#2); governance review; D1–D23.
 - 2026-10-17: tranche 2 (#40) accepted the quiet-coast episode; #41 and #42 merged; the vehicle
   sprint opened (D24–D31, [`records/2026-10-17-vehicle-sprint.md`](records/2026-10-17-vehicle-sprint.md));
-  governance batches #52, #53, #55, #57, #59, #60 (D24–D56); #46, the first lane, merged.
+  governance batches #52, #53, #55, #57, #59, #60, #62 (D24–D56); #46, the first lane, merged.
