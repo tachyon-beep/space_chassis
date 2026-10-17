@@ -140,3 +140,19 @@ All times UTC, 2026-10-17. Each entry points to where it is recorded.
   pattern linter change goes to lane 9. Thermal's bays and pump speed stay below sourced fidelity
   until the research thread reads its documents. The research thread drops ECLSS and SPS (those
   lanes fetch their own); RCS pages first.
+- 13:58–14:00 The independent review of the arc report's eleven lands; the coordinator answers all
+  eleven on it (D38). D-07 (crew dialogue per console or shared) stays John's, *per-console* by
+  default. Lanes 7 (GNC and RCS) and 8 (Crew) start at 13:59. The instrument layer has no owner yet.
+- 13:59–14:00 John: what fidelity is worth (D40); the ledger classes each option as signal,
+  confounder, event/noise or none. 14:00 John picks *per console* for D-07 (D39).
+- 14:04 The instrument layer goes to the fault-injection lane after #47 (it owns `plant.py` and
+  `console.py`); then the delay at the window, the fair-chance stamps, and the `fleet_class` and
+  `acts` lints last. The comms `measured` antenna pattern landed on #47 at `2e9f79e`.
+- 14:06 Structure raises fidelity on #51 (`173216c`): two tunnel hatches, no pyro at undocking,
+  two ascent circuit interrupters at staging; the hatch card is closed. The interrupter edge goes to
+  power if those states are power's.
+- 14:10 Governance PR #52 merged (`910adc9`); later governance changes go on a follow-up PR.
+- 14:06–14:10 Research delivered `sources/structure.md`, `comms.md`, `propulsion.md`. Tunnel
+  volume is published (11.6 ft³, ODB Vol I Fig 4.2-8.1). Docked burns need 9 of 12 latches: routed
+  to propulsion as an interlock edge.
+- 14:08 ECLSS models O2 supply pressure on the heater relay (865/935 psia) on #46; 21 of 25 ready.
