@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 22:02 UTC**, `tachyon-beep/space_chassis` `main` @ `f4d576a`. Kept by the
+As of **2026-10-17 22:20 UTC**, `tachyon-beep/space_chassis` `main` @ `032d12c`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -11,7 +11,7 @@ the sprint's rules and history are in
 
 | | where | checked |
 |---|---|---|
-| `main` | `f4d576a` (governance #63); since 2026-10-15: #2–#9, #35–#38, #40 tranche 2 (`54257b7`), #41 recovery fix (`c1b244d`), #42, then the sprint's #45 and #46, governance #52, #53, #55, #57, #59, #60, #62 (`e18e022`), #61 and #63 (`f4d576a`) | `git log --first-parent origin/main` |
+| `main` | `032d12c` (#58, the census unpin); since 2026-10-15: #2–#9, #35–#38, #40 tranche 2 (`54257b7`), #41 recovery fix (`c1b244d`), #42, then the sprint's #45 and #46, governance #52, #53, #55, #57, #59, #60, #62 (`e18e022`), #61, #63 (`f4d576a`) and #58 (`032d12c`) | `git log --first-parent origin/main` |
 | vehicle | 160 states, **86 ready**, 23 owe a value, 12 an edge, 39 a rule; **261** declared debts (152 / 74 / 265 before #46); a trial merge of nine sprint PRs measured 124 of 179 ready ([vehicle status report](https://claude.ai/code/artifact/d86a2e9b-4b1c-4be4-907e-ff5c8e65defe)) | `vehicle/tools/plant.py --build-order`; `check_vehicle.py` on `9a0430a` |
 | quiet-coast episode | accepted after #40 (policies A/B full success, C partial, D physical loss; restart at tick 60,000 reproduces every hash). A milestone, not a record: lanes may move its numbers (D29) | PR #40 |
 | CI | `required` rolls up lint, the aurora suite, the vehicle check on 3.12 and 3.13 (~50 min each), readiness and the quiet-coast episode jobs (hours); vehicle jobs skip when a change cannot touch `vehicle/` | `.github/workflows/ci.yml` |
@@ -19,7 +19,7 @@ the sprint's rules and history are in
 
 ## Vehicle sprint: who holds what
 
-Merge order: ~~#45~~ (merged 14:46, `e990b25`) → ~~#46~~ (merged by 19:33, `9a0430a`) **→ #58 (reviewed clear) → #47 → the rest** (#58 inserted at 15:26; ECLSS's #64 among the rest, after #58 and #47). After the Codex pass every verdict stands and every lane keeps its slot. From 16:09 each PR also needs a non-blocking independent review verdict (D54) (rebase onto `main`, merge when `required` is green).
+Merge order: ~~#45~~ (merged 14:46, `e990b25`) → ~~#46~~ (merged by 19:33, `9a0430a`) → ~~#58~~ (merged 22:18, `032d12c`) **→ #47 (merging next) → the rest** (#58 inserted at 15:26; ECLSS's #64 among the rest, after #58 and #47). After the Codex pass every verdict stands and every lane keeps its slot. From 16:09 each PR also needs a non-blocking independent review verdict (D54) (rebase onto `main`, merge when `required` is green).
 After the lanes merge: a light-touch fidelity calibration pass per station (D45).
 #45 is on `main`; every lane rebases. A PR that closes a state no longer touches the test figures #45
 unpinned; the census figures #45 kept stay pinned until #58 merges, and only after that does such a PR
@@ -29,7 +29,7 @@ resolve to `main`'s side plus a test re-run.
 | # | lane | PR | state | waits on |
 |---|---|---|---|---|
 | 0 | Unpin vehicle test figures | [#45](https://github.com/tachyon-beep/space_chassis/pull/45) | **merged** 14:46 as `e990b25`, `required` green with both episode jobs | — |
-| 0 | Unpin the census figures #45 kept | [#58](https://github.com/tachyon-beep/space_chassis/pull/58) | reviewed clear with follow-ups (D54), merges on green; lane 0 then opens a small follow-up PR (the stock-initial test, stale comments, #46's history notes, the probe README line, and Codex's Low: the census test cannot see a feedback or one-way misclassification) (`claude/vehicle-unpin-figures-ojibgi`, reviewed head `d935d4f`); crowded nodes, sentinel, commanded/dwell, tick order, cross-domain reads, reads list, verb/channel/fault/point counts, mover and seed censuses, domain-clause and `faults.py` fixtures, 152-state docstrings, each held to the linter's `domain_figures`, the plant's world, or found by pattern | #46 |
+| 0 | Unpin the census figures #45 kept | [#58](https://github.com/tachyon-beep/space_chassis/pull/58) | **merged** as `032d12c` (22:18, head `d935d4f`, `required` green with both episodes); every later rebase resolves the census pins to `main`'s side; lane 0's small follow-up PR comes off `main` (the stock-initial test, stale comments, #46's history notes, the probe README line, and Codex's Low: the census test cannot see a feedback or one-way misclassification) (`claude/vehicle-unpin-figures-ojibgi`, reviewed head `d935d4f`); crowded nodes, sentinel, commanded/dwell, tick order, cross-domain reads, reads list, verb/channel/fault/point counts, mover and seed censuses, domain-clause and `faults.py` fixtures, 152-state docstrings, each held to the linter's `domain_figures`, the plant's world, or found by pattern | #46 |
 | 6 | ECLSS states | [#46](https://github.com/tachyon-beep/space_chassis/pull/46) | **merged** as `9a0430a` after a clear review with follow-ups (D54); the O2 heater edges carry only the 113.88 W heaters on main A/B, the fans are on AC buses 1 and 2; next, [#64](https://github.com/tachyon-beep/space_chassis/pull/64), reviewed clear with follow-ups at `e8f8ed5` (D54), merging once its `flow: off` Medium is fixed on #64, after #58 and #47: the CM surge O2 store as a real 3.7 lb store, `set_o2_source` selects the feeding store, CRYO PRESS caution at 800 psia low and a high trip at CSM-109's 975 psia (D60, A13RB p. 5-22; Apollo 11's 950 in provenance) | #64: its `flow: off` Medium, then #58 and #47 |
 | 9 | Fault injection into the step loop | [#47](https://github.com/tachyon-beep/space_chassis/pull/47) | out of draft at `fbaf9bb` with `main` merged through #46, reviewed clear with follow-ups (D54); carries the engine work for other lanes (list below); per-tick hashes differ from `main` (nothing pins them) | #58's merge |
 | 1 | Burn down power subsystem | [#43](https://github.com/tachyon-beep/space_chassis/pull/43) | draft; per-cell fuel cells, PWR-02, battery tie; standby pump *off* with thermal's MET-0 re-derivation (`efd60cf`: environment heat 1,285.5 W, radiator start 288.02 K, hot-hold 293.40 K, evaporator hold 984.8 W; ADR 0003 item 9); policy D's non-loss is the corrected physics, so #43 carries the `aurora/tests` expectation change (D42), and now also the `D_TICKS` 9500 → 11000 change in `aurora/tests/test_quiet_coast_window.py` with an ADR 0003 bullet (`a0c6db3`, D56); vehicle fixes at `5e16f21`; main bus bands and `csm_bus_a/b` `v_band` ceiling 30.5 → 31.0 V (ODB Fig 4.1-11 nominal range; the corpus's 30.5 marked Sim; bus A reads 30.96 V at MET 0; floor stays 27.0, so quiet-coast margins are unchanged); the 13 remaining red tests are census pins a trial merge of #58 clears | resolving its #46 conflicts by hand; #58 (goes green after it); #47 before the PWR-02 `fault:` row |
@@ -171,4 +171,4 @@ Nothing in the sprint changes for it.
 - 2026-10-15: three-stream restructure (#2); governance review; D1–D23.
 - 2026-10-17: tranche 2 (#40) accepted the quiet-coast episode; #41 and #42 merged; the vehicle
   sprint opened (D24–D31, [`records/2026-10-17-vehicle-sprint.md`](records/2026-10-17-vehicle-sprint.md));
-  governance batches #52, #53, #55, #57, #59, #60, #62, #63 (D24–D56); #46, the first lane, merged.
+  governance batches #52, #53, #55, #57, #59, #60, #62, #63 (D24–D56); #46, the first lane, merged; #58 merged.
