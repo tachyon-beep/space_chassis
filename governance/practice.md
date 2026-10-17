@@ -97,7 +97,9 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
 - **Review before merge (D54, from 16:09).** Every PR that leaves draft, governance batches included, gets an
   independent Fable review written to `vehicle-status/reviews/pr-<N>.md` in the project's shared folder. A PR merges
   when `required` is green and the verdict is not blocking (John, "Merge on clear"); John evaluates the PR and the report
-  afterwards and can ask for a revert.
+  afterwards and can ask for a revert. Codex findings count once the reviewer confirms them: the Codex review
+  bot ran out of credits, so from 20:50 the reviewer ran the Codex CLI, and since 21:21 Codex reviews run on nyx (John,
+  relayed); the reviewer folds them into the report, and they never delay a merge that is already clear and green.
 - **Shared decision records take one dated section per verb.** ADR 0004
   (`vehicle/docs/decisions/0004-interlock-evaluation.md`) is being amended by ECLSS (#46), structure
   (#51) and possibly propulsion (#50): each lane adds its own dated, verb-named section and rebases
