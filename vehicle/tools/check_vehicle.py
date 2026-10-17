@@ -316,6 +316,41 @@ def effect_owned_movers(state: dict[str, Any]) -> list[str]:
     return movers
 
 
+def numeric_bounds(declared: dict[str, Any]) -> tuple[Any, Any]:
+    """A numeric argument's closed bounds, from `range: [lo, hi]` or `minimum` / `maximum`.
+
+    Both spellings are the corpus's: `range` is the one a carried argument declares, and most verbs
+    wrote `minimum` and `maximum`, often only one of them, which bounds one side.
+    """
+    span = declared.get("range")
+    if isinstance(span, list) and len(span) == 2:
+        return span[0], span[1]
+    return declared.get("minimum"), declared.get("maximum")
+
+
+# A refused band is a hole inside an argument's range: `set_throttle`'s 65 % up to but not including
+# 92.5 % is a region the descent engine is not run in, while 92.5 % itself is its full-throttle
+# position. Each band names one lower and one upper edge, and which edges are open is spelled out
+# rather than left to a convention a reader has to know.
+BAND_LOWER = {"at_or_above": "[", "above": "("}
+BAND_UPPER = {"below": ")", "at_or_below": "]"}
+
+
+def band_holds(band: dict[str, Any], value: float) -> bool:
+    """Whether `value` lies inside one `refused_bands` entry."""
+    inside = value >= band["at_or_above"] if "at_or_above" in band else value > band["above"]
+    if "below" in band:
+        return inside and value < band["below"]
+    return inside and value <= band["at_or_below"]
+
+
+def band_text(band: dict[str, Any]) -> str:
+    """A refused band in interval notation, open and closed edges as declared: `[65, 92.5)`."""
+    lower = next(key for key in BAND_LOWER if key in band)
+    upper = next(key for key in BAND_UPPER if key in band)
+    return f"{BAND_LOWER[lower]}{band[lower]}, {band[upper]}{BAND_UPPER[upper]}"
+
+
 # --------------------------------------------------------------------------------------------------
 # **WP09: what a fault's onset does to the truth, declared on the state it moves.**
 #
@@ -5610,6 +5645,48 @@ def check_domain(
                 f"argument_schema is {verb.get('argument_schema')!r}, not a mapping; an empty "
                 "schema advertises a verb with no arguments",
             )
+        # A numeric argument's refused bands are holes in its range, refused at the window and in
+        # the plant the way a value outside the range is. Each names exactly one lower and one
+        # upper edge so which ends are open is declared, and each sits inside the bounds it is a
+        # hole in: a band past the range refuses nothing the range had not already refused.
+        for arg_name, spec in (verb.get("argument_schema") or {}).items() if isinstance(verb.get("argument_schema"), dict) else ():
+            if not isinstance(spec, dict) or spec.get("refused_bands") is None:
+                continue
+            bwhere = f"{vwhere}.argument_schema.{arg_name}.refused_bands"
+            bands = spec["refused_bands"]
+            if spec.get("type") not in ("integer", "number") or not isinstance(bands, list):
+                report.refuse(
+                    bwhere,
+                    f"is declared on {arg_name!r}, a {spec.get('type')!r} argument, or is not a list; a "
+                    "refused band is a hole in a numeric argument's range",
+                )
+                continue
+            low, high = numeric_bounds(spec)
+            for band_index, band in enumerate(bands):
+                lowers = [k for k in BAND_LOWER if isinstance(band, dict) and k in band]
+                uppers = [k for k in BAND_UPPER if isinstance(band, dict) and k in band]
+                if len(lowers) != 1 or len(uppers) != 1:
+                    report.refuse(
+                        f"{bwhere}[{band_index}]",
+                        f"is {band!r}; a band names exactly one lower edge ({sorted(BAND_LOWER)}) "
+                        f"and one upper edge ({sorted(BAND_UPPER)}), so which ends are open is "
+                        "declared rather than assumed",
+                    )
+                    continue
+                lo, hi = band[lowers[0]], band[uppers[0]]
+                if not all(isinstance(v, int | float) and not isinstance(v, bool) for v in (lo, hi)) or not lo < hi:
+                    report.refuse(
+                        f"{bwhere}[{band_index}]",
+                        f"runs from {lo!r} to {hi!r}, which is not two ordered numbers",
+                    )
+                    continue
+                if (low is not None and lo < low) or (high is not None and hi > high):
+                    report.refuse(
+                        f"{bwhere}[{band_index}]",
+                        f"is {band_text(band)}, which reaches past {arg_name!r}'s declared bounds "
+                        f"[{low}, {high}]; the part outside them is refused already, so the band "
+                        "says something the range does not mean",
+                    )
         # A gate *template* is a name a fleet never sees. `presentation.yaml#mirror` says so and
         # gives the reason §9's check 5 depends on it: "a refusal that named the template rather
         # than the instantiation — `reserve_floor_<resource>_enable` instead of
@@ -7059,7 +7136,7 @@ def check_domain(
                 # and without a range the plant would have nothing to refuse it against.
                 numeric = isinstance(arg_spec, dict) and arg_spec.get("type") in ("integer", "number")
                 if numeric:
-                    span = arg_spec.get("range")
+                    span = list(numeric_bounds(arg_spec))
                     if not (
                         isinstance(span, list)
                         and len(span) == 2
@@ -7071,7 +7148,7 @@ def check_domain(
                         report.refuse(
                             f"{cwhere2}.argument",
                             f"names {argument!r}, a numeric argument of {verb_name!r} with no "
-                            f"`range` of two ordered numbers ({span!r}). A carried number is "
+                            f"`range` (or `minimum` and `maximum`) of two ordered numbers ({span!r}). A carried number is "
                             "refused outside the verb's range, so the range is what makes it a value",
                         )
                     if entry.get("maps") is not None:
