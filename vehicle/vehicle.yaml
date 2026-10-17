@@ -1090,7 +1090,9 @@ propulsion:
     throttleable: false
     qualified_restarts: 50
     propellant: "N2O4 / Aerozine 50, hypergolic, restartable"
-    pressurant: "helium, 3,600 psia nominal, regulated to 186 psia, engine inlet 165 psia"
+    # "engine inlet 165 psia" was here, cited to the AJ10 report; no SPS source supports it, and the
+    # 165 +/- 4 psia the LM AOH publishes is the ascent engine's trim-orifice outlet (p. 2.3-43).
+    pressurant: "helium, 3,600 psia nominal, regulated to 186 psia (AOH SM2A-03 Block II p. 2.4-41)"
     mass_kg: 18508
     provenance:
       basis: historical
