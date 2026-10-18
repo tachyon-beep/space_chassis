@@ -1252,12 +1252,15 @@ propulsion:
     # quantity's full span, and a reserve alarm inside it is normal. The two are indistinguishable
     # from the numbers alone, which is why this is declared rather than inferred.
     range_kind: scale
-    events: ["commanded into the 65-92.5 % non-operating region"]
-    event_class: alarm
+    # No event. "commanded into the 65-92.5 % non-operating region" was an alarm with an interlock
+    # behind it, and a command into that region is now refused at the argument
+    # (`domains/propulsion/commands.yaml`, `set_throttle`'s and `load_burn`'s `refused_bands`), so
+    # there is nothing left for the channel to announce. An actuator that drifts in by malfunction
+    # is a fault's evidence, read off this value against the command.
     provenance:
       basis: historical
       source: >-
-        the DPS experience report: 10.5 % to 92.5 % with 65-92.5 % a NON-OPERATING region. **That is
+        the DPS experience report: 10 % to 92.5 % with 65-92.5 % a NON-OPERATING region. **That is
         an operating band and this is not a band**: the actuator parks at its closed stop, 0 %,
         whenever the engine is off — which is where the state's declared `initial` is, and what round
         33's check found. A band that excludes the vehicle's own starting value reports a healthy

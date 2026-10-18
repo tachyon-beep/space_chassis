@@ -345,7 +345,8 @@ def test_outside_a_scenario_the_safing_direction_is_taken_while_tripped(
 
 def test_every_readable_interlock_names_its_direction_or_is_whole_on_purpose(world):
     """A verb with a readable interlock declares `interlocks_when`, except the three ADR 0004 lists as
-    guarded whole because no argument value is plainly the recovery."""
+    guarded whole because no argument value is plainly the recovery (`start_burn` declares one too,
+    naming the engine its readings belong to rather than a direction)."""
     whole = {"request_translation", "start_burn", "select_nav_source"}
     for verb, spec in world.verbs.items():
         readable = [

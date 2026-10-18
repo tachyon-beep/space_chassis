@@ -220,7 +220,7 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 160 states over 64 scheduled nodes, 142
+**All eleven domains have landed** — 148 channels, 160 states over 64 scheduled nodes, 141
 thresholds, 59 verbs and 128 classified events across the eleven directories, with every debt
 named. Those are the corpus's declarations, and the linter holds each of them against the files
 (`check_readme_figures`); they move when a domain adds a channel, a state or a verb, not when one
@@ -324,16 +324,17 @@ It declares 25 states, 20 thresholds, 6 verbs, 21 faults — four conserved gase
   equalise in between. Which one is crewed is a mission-phase fact, so it comes from
   `mission.yaml` rather than from the domain.
 
-`domains/propulsion/` declares 10 states, 12 thresholds, 6 verbs, 11 faults, including three
+`domains/propulsion/` declares 10 states, 11 thresholds, 6 verbs, 11 faults, including three
 engine state machines with minimum on and off times. It is the domain where
 the mission's Δv stops being a budget and starts being spent, and it closes conflict C-12 —
 `prop.accumulated_dv_m_s` had no producer and no consumer until `set_burn_cutoff` and
 `prop.cutoff_mode` existed. Two things in it are worth reading:
 
-- **The interlock that is unique to the vehicle.** `dps_throttle_band` refuses a throttle
-  command inside the descent engine's 65–92.5 % *non-operating* region. Every other interlock
-  protects against a consequence; this one protects against a command that is **meaningless**,
-  and an agent that commands 80 % is not being lied to by the vehicle but by its own model.
+- **The refusal that is unique to the vehicle.** `set_throttle` refuses a throttle command
+  inside the descent engine's 65–92.5 % *non-operating* region, as a refused band on its
+  argument (it was the `dps_throttle_band` interlock). Every other refusal protects against a
+  consequence; this one protects against a command that is **meaningless**, and an agent that
+  commands 80 % is not being lied to by the vehicle but by its own model.
 - **The fault that corrupts its own diagnosis.** PRP-01 is a feed-pressure sensor stuck high.
   The thrust estimate is partly *derived* from feed pressure, so the stuck sensor corrupts the
   quantity that would reveal it — `apollo_diode.md:336` — and the corroboration has to come

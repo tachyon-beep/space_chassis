@@ -67,6 +67,9 @@ state:
     command_value:
       - verb: arm_engine
         argument: state
+        # Each engine's state answers only the call that names it: unrouted, `arm_engine engine=sps`
+        # armed all three engines.
+        when: {engine: sps}
         maps:
           safe: standby
         why: >-
@@ -94,6 +97,7 @@ state:
     command_value:
       - verb: arm_engine
         argument: state
+        when: {engine: dps}
         maps:
           safe: standby
         why: >-
@@ -126,6 +130,7 @@ state:
     command_value:
       - verb: arm_engine
         argument: state
+        when: {engine: aps}
         maps:
           safe: "off"
         why: >-
@@ -183,7 +188,7 @@ state:
       basis: chosen
       reason: >-
         as `thrust_main_n`: the descent engine is not firing at MET 0, so its throttle actuator
-        sits at its closed stop. The engine's own `operating_band_pct` starts at 10.5 % and the
+        sits at its closed stop. The engine's own `operating_band_pct` starts at 10 % and the
         actuator's separate existence is what lets a command sit below the band it cannot use
     node: internal
     method: lag
@@ -368,20 +373,22 @@ components:
     thrust_min_n: 4671
     throttle_ratio: 10
     isp_s: 305
-    # Two operating intervals, not one. The DPS reaches 1,050 lbf at 10.5 % and its 9,710 lbf
+    # Two operating intervals, not one. The DPS reaches 1,050 lbf at 10 % and its 9,710 lbf
     # maximum at 92.5 %, and **65-92.5 % is a region it is not designed to run in** — the source
     # below says so in those words. Until this round `operating_band_pct` was the single interval
     # `[10.5, 92.5]`, which contains the non-operating one: a fleet asking whether 75 % is
     # commandable got yes from this field and no from the next, and neither was read by a tool.
+    # The floor was 10.5 %, which no source gives: 1,050 lbf is 10 % of the 10,500 lbf rating, and
+    # TN D-7143 and the LMAOH both put the minimum-throttle point at 10 % (below).
     operating_band_pct:
-      - [10.5, 65]
+      - [10, 65]
       - [92.5, 100]
     non_operating_band_pct:
       - [65, 92.5]
     vehicle_keys: [lm_dps]
     provenance:
       basis: historical
-      source: "the DPS experience report: 9,710 lbf operating maximum and 1,050 lbf minimum, 10:1 range, with 65-92.5 % a NON-OPERATING region. Isp 305 s is the NASA end-of-duty-cycle requirement; the 311 s in circulation traces only to Wikipedia"
+      source: "the DPS experience report: 9,710 lbf operating maximum and 1,050 lbf minimum, 10:1 range, with 65-92.5 % a NON-OPERATING region. TN D-7143 (Apollo Experience Report, Descent Propulsion System) p. 9: 'The minimum-throttle point was 10 percent of the rated thrust' (10,500 lb, p. 7). LMAOH LM-10 p. 2.1-155: the TTCA controls 'from 10% to 92.5 % of maximum thrust'; its p. 2.3-27 'Minimum engine thrust 1,280 pounds (12.2%)' is delivered thrust at that stop on LM-10 and later, not the commanded floor. Isp 305 s is the NASA end-of-duty-cycle requirement; the 311 s in circulation traces only to Wikipedia"
   - id: aps
     kind: discrete
     class: engine
@@ -467,7 +474,7 @@ components:
   - id: dps_throttle_actuator
     kind: discrete
     class: actuator
-    band_pct: [10.5, 92.5]
+    band_pct: [10, 92.5]
     non_operating_pct: [65, 92.5]
     provenance:
       basis: historical
@@ -480,7 +487,7 @@ thrust_curve:
 
   shape: "piecewise; monotone within each operating segment; zero outside the operating band"
   segments:
-    - band_pct: [10.5, 65]
+    - band_pct: [10, 65]
       operating: true
       model: "monotone, curvature unknown"
       coefficients: UNCONFIGURED

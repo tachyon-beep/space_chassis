@@ -5941,8 +5941,9 @@ def test_the_conflict_policy_is_first_valid_wins_and_the_loser_is_told(tmp_path)
     loser must be told)". The template makes it sharper than that — `prop.<engine>.run` is one
     domain per engine, so two agents stopping *different* engines must both be accepted.
 
-    **What changed (ADR 0001).** `start_burn` declares six interlocks and is refused
-    `INTERLOCK UNEVALUATED` under choice C, so it can no longer win a domain; `stop_burn` is
+    **What changed (ADR 0001).** `start_burn` declared six interlocks and was refused
+    `INTERLOCK UNEVALUATED` under choice C, so it could not win a domain (its guards read now, and
+    the fixture closes its gate instead); `stop_burn` is
     interlock-free and carries the same template, and a refused command never claims the domain
     (`:578` says first *valid*). And the old console exempted the *same verb* with different
     arguments (`winner != verb`), so `set_rcs_mode mode=manual` and `mode=free_drift` both applied in
@@ -5972,9 +5973,14 @@ def test_the_conflict_policy_is_first_valid_wins_and_the_loser_is_told(tmp_path)
     assert newest_frame(root)["values"]["rcs.mode"] == "manual"
 
     # Two verbs in one domain: the refused one never claims it, so the valid one is not superseded.
-    bodies = run(["start_burn engine=sps", "stop_burn engine=sps"])
+    # `start_burn`'s admission guards all read now (ADR 0004's 2026-10-17 amendment and #47), so it is
+    # refused here by its own gate, which this window closes.
+    clear_results(root)
+    submit(root, ["start_burn engine=sps", "stop_burn engine=sps"], {"burn_start_sps_enable": False})
+    executive.cycle()
+    bodies = results_of(root)
     assert len(bodies) == 2, bodies
-    assert any("INTERLOCK UNEVALUATED" in b and "'start_burn'" in b for b in bodies), bodies
+    assert any("burn_start_sps_enable is closed" in b and "'start_burn'" in b for b in bodies), bodies
     assert any("accepted" in b and "'stop_burn'" in b for b in bodies), bodies
     assert not any("CONFLICT_SUPERSEDED" in b for b in bodies), bodies
 
@@ -6550,7 +6556,7 @@ def test_an_engine_cannot_run_where_it_says_it_cannot(tmp_path):
     65-92.5 % a NON-OPERATING region"* — so the corpus quoted the sentence and contradicted it in
     the same breath.
 
-    `thrust_curve` states the truth as three segments ([10.5, 65], [65, 92.5], [92.5, 100]) and was
+    `thrust_curve` states the truth as three segments ([10, 65], [65, 92.5], [92.5, 100]) and was
     the last block in the corpus that no tool named. So the fix is not only to split the band: each
     segment declares `operating:` so the curve and the bands can be held against each other, which
     is what gives the block a reader.
@@ -6563,7 +6569,7 @@ def test_an_engine_cannot_run_where_it_says_it_cannot(tmp_path):
     propulsion = yaml.safe_load((VEHICLE / "domains" / "propulsion" / "components.yaml").read_text())
     engine = next(c for c in propulsion["components"] if c.get("id") == "dps")
 
-    assert engine["operating_band_pct"] == [[10.5, 65], [92.5, 100]], engine["operating_band_pct"]
+    assert engine["operating_band_pct"] == [[10, 65], [92.5, 100]], engine["operating_band_pct"]
     assert engine["non_operating_band_pct"] == [[65, 92.5]]
     (stopped,) = engine["non_operating_band_pct"]
     for low, high in engine["operating_band_pct"]:
@@ -6573,7 +6579,7 @@ def test_an_engine_cannot_run_where_it_says_it_cannot(tmp_path):
     assert "65-92.5 % a NON-OPERATING region" in engine["provenance"]["source"]
 
     segments = propulsion["thrust_curve"]["segments"]
-    assert [s["band_pct"] for s in segments] == [[10.5, 65], [65, 92.5], [92.5, 100]]
+    assert [s["band_pct"] for s in segments] == [[10, 65], [65, 92.5], [92.5, 100]]
     assert [s["operating"] for s in segments] == [True, False, True]
     assert [s["coefficients"] for s in segments] == ["UNCONFIGURED", None, "UNCONFIGURED"], (
         "a non-operating segment has no law to owe and says so with null; the others owe one"
@@ -6604,7 +6610,7 @@ def test_an_engine_cannot_run_where_it_says_it_cannot(tmp_path):
     result = broken(lambda d: segment(d, [65, 92.5]).update(operating=True, coefficients="UNCONFIGURED"))
     assert "which no operating band covers" in result.stdout
     assert "a hole wearing the same spelling as an answer" in broken(
-        lambda d: segment(d, [10.5, 65]).update(coefficients=None)
+        lambda d: segment(d, [10, 65]).update(coefficients=None)
     ).stdout
     assert "a claim about combustion in a region the design excludes" in broken(
         lambda d: segment(d, [65, 92.5]).update(coefficients=[0.0, 1.0])
@@ -6619,7 +6625,7 @@ def test_an_engine_cannot_run_where_it_says_it_cannot(tmp_path):
 
     # A segment that does not say whether the engine runs there, and the flat shape that made the
     # contradiction invisible in the first place.
-    assert "nothing to be joined to" in broken(lambda d: segment(d, [10.5, 65]).pop("operating")).stdout
+    assert "nothing to be joined to" in broken(lambda d: segment(d, [10, 65]).pop("operating")).stdout
     assert "the shape that let an operating band contain a non-operating one" in broken(
         lambda d: dps_of(d).update(operating_band_pct=[10.5, 92.5])
     ).stdout
@@ -15583,8 +15589,10 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
     arm = yaml.safe_load((VEHICLE / "domains" / "propulsion" / "commands.yaml").read_text())
     verb = next(v for v in arm["commands"] if v["verb"] == "arm_engine")
     assert verb["interlocks"] == ["pressurant_low", "feed_pressure_low", "prop_cutoff_guard_5"]
-    assert verb["interlocks_when"]["argument"] == "state"
-    assert verb["interlocks_when"]["values"] == ["armed"]
+    # The guards read the SPS's own feed, helium and propellant, so the condition names the engine
+    # as well as the direction (ADR 0004, amended 2026-10-18).
+    assert verb["interlocks_when"]["argument"] == ["engine", "state"]
+    assert verb["interlocks_when"]["values"] == [["sps", "armed"]]
     assert verb["interlocks_when"]["why"].strip()
     # `safe` is the value the guards do not apply to, and it is the one the help promises for.
     assert "never refused" in verb["help"]
@@ -15604,20 +15612,18 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
         text=True,
         check=False,
     ).stdout
-    assert "only when `state` is `armed`" in generated, generated[-800:]
+    assert "only when (`engine`, `state`) is one of (`sps`, `armed`)" in generated, generated[-800:]
 
+    # The one-argument form's refusals, on `start_burn`, whose condition names one argument.
     block = (
         "    interlocks_when:\n"
-        "      argument: state\n"
-        "      values: [armed]\n"
+        "      argument: engine\n"
+        "      values: [sps]\n"
         "      why: >-\n"
-        "        the three guards are about *arming*, and safing is not refused by any of them. `apollo_diode.md:241`\n"
-        "        lists arm and safe as two verbs and this vehicle merged them into one binary argument, so the\n"
-        "        asymmetry the merge was made to preserve has to be sayable here or it is lost: an armed engine\n"
-        "        on a failing feed is the hazard F-01 is about, and a *safe* command is how a crew ends that\n"
-        "        hazard. Declaring the three guards for the whole verb refused `safe` exactly when the feed was\n"
-        "        failing — the one moment it matters — and refusing to de-energise an engine because its feed is\n"
-        "        low is backwards\n"
+        "        the three admission guards read the service propulsion system's feed, helium and propellant,\n"
+        "        and the LM engines have none of those states here. Guarding a descent or ascent burn on them\n"
+        "        would refuse the LM's engine for an SPS failure, which is the Apollo 13 case backwards: there\n"
+        "        the SPS was not trusted and the descent engine flew the return burns\n"
     )
 
     def refusal(name: str, old: str, new: str, needle: str) -> None:
@@ -15629,12 +15635,12 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
         out = run_linter(definition).stdout
         assert needle in out, out[-1400:]
 
-    refusal("no-argument", block, block.replace("argument: state", "argument: throttle"),
+    refusal("no-argument", block, block.replace("argument: engine", "argument: throttle"),
             "which is not an enum argument of this verb")
-    refusal("bad-value", block, block.replace("values: [armed]", "values: [disarmed]"),
+    refusal("bad-value", block, block.replace("values: [sps]", "values: [lmde]"),
             "cannot take")
-    refusal("every-value", block, block.replace("values: [armed]", "values: [armed, safe]"),
-            "names every value 'state' takes")
+    refusal("every-value", block, block.replace("values: [sps]", "values: [sps, dps, aps]"),
+            "names every value 'engine' takes")
     refusal(
         "no-why",
         block,
@@ -26791,7 +26797,7 @@ def test_a_refusal_only_cycle_is_recorded_and_its_receipts_and_spend_delta_repla
     A refusal moves the window's receipt counter, and an accepted deferral moves the queue and the
     spend with no effect this tick; a record of effects alone would repeat window-local receipt numbers
     after a restart and forget the deferral. Tick 2's cycle here holds refusals only — an unknown
-    verb, a bus tie refused `INTERLOCK UNEVALUATED`, a burn refused the same way — and tick 3's holds
+    verb, a bus tie refused `INTERLOCK UNEVALUATED`, a burn load refused the same way — and tick 3's holds
     only bravo's accepted deferral. Both rows carry no effect and carry every receipt (global and
     window-local) and each window's spend delta, explicitly zero for the refusals; the deferral's row
     carries the queue entry it added and the settlement's row the one it removed.
@@ -26807,7 +26813,7 @@ def test_a_refusal_only_cycle_is_recorded_and_its_receipts_and_spend_delta_repla
     executive.attach("bravo")
     script = {
         0: {"alpha": ["set_rcs_mode mode=manual"]},
-        1: {"alpha": ["zzz_not_a_verb", "set_bus_tie tie=csm_tie_ab state=closed"], "bravo": ["start_burn engine=sps"]},
+        1: {"alpha": ["zzz_not_a_verb", "set_bus_tie tie=csm_tie_ab state=closed"], "bravo": ["load_burn engine=sps target=midcourse_translunar duration_s=5"]},
         2: {"bravo": ["request_imu_alignment source=star target=LVLH"]},
         3: {},
     }

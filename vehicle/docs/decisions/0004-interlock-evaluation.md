@@ -123,7 +123,10 @@ plainly the recovery. As declared:
 | set_evaporator_feed | `res.cooling_water_reserve` | `state=on` | `state=off` |
 | set_radiator_bypass | `coolant_supply_high` | `state=bypass` | `state=radiator` |
 | set_radiator_bypass | `coolant_supply_low` | `state=radiator` | `state=bypass` |
-| arm_engine | the three feed guards | `state=armed` | `state=safe` |
+| arm_engine | the three feed guards | `engine=sps` at `state=armed` | `state=safe`; `engine=dps`, `aps` at any state |
+| load_burn | `prop_cutoff_guard_5`, `sps_burn_budget_guard`, `sps_total_burn_guard` | `engine=sps` | `engine=dps`, `aps` |
+| start_burn | `feed_pressure_low`, `pressurant_low`, `prop_cutoff_guard_5` | `engine=sps` | `engine=dps`, `aps` (no value is the SPS's recovery) |
+| set_burn_cutoff | `prop_cutoff_guard_5` | `engine=sps` | `engine=dps` |
 | set_o2_flow | `cabin_pressure_high`, `o2_supply_low`, `ppo2_fire_risk` | `flow=low`, `nominal`, `high` | `flow=off` |
 | set_cabin_regulator | `cabin_pressure_emergency` | `mode=closed`, `primary`, `isolated` | `mode=emergency` |
 | set_cabin_regulator | `ppo2_fire_risk` | `mode=primary`, `emergency` | `mode=closed`, `isolated` |
@@ -142,7 +145,8 @@ plainly the recovery. As declared:
 
 Guarded whole, because no argument value is plainly the recovery: `request_translation`
 (`rcs_propellant_reserve`; every translation spends propellant), `start_burn` (`feed_pressure_low`;
-the safing verb is `stop_burn`), and `select_nav_source` (`estimator_divergence`; the help refuses
+the safing verb is `stop_burn`; its condition names the engine its readings belong to, not a
+direction, amended 2026-10-18 below), and `select_nav_source` (`estimator_divergence`; the help refuses
 choosing any source while the estimator diverges, and whether `blended` is a recovery is not said).
 `set_o2_source` was the fourth until 2026-10-17: its hazardous direction depends on two arguments,
 `source` and `flow`, together, which one condition could not name. A cabin below its caution is fed
@@ -259,9 +263,29 @@ the safing verb. Its admission list is `feed_pressure_low`, `pressurant_low` and
 `prop_cutoff_guard_5`. `dps_throttle_band` left it too, by the same decision: it is the 65-92.5 %
 no-go region of `set_throttle`'s commanded argument, not a reading, so it could never resolve here;
 it stays on `set_throttle`, where it becomes a refused sub-range of the numeric argument (engine
-work). `pressurant_low` no longer carries a `gated_by` (it is the SPS PRESS light's 157 psia
+work). That engine work landed with the fault-injection lane's PR #47 as `refused_bands`: the band is
+declared on `set_throttle`'s and `load_burn`'s `throttle_pct` and the threshold is gone, since its
+one comparator (above 65) also tripped at the full-throttle position, 92.5 %. `pressurant_low` no longer carries a `gated_by` (it is the SPS PRESS light's 157 psia
 setting, AOH p. 2.4-41, in every phase). What still keeps the verb from being admitted:
 `prop_cutoff_guard_5` reads a node-sourced point, which the engine's `resolve_interlock` does not
 resolve until the fault-injection lane's change lands. Neither the in-burn evaluation nor its gate on
 mainstage exists yet: the engine evaluates no `gated_by`, and nothing moves an engine to mainstage
 until `start_burn` stages its sequence. Both are engine work, routed to the fault-injection lane.
+
+## Amendment: a propulsion guard applies to the engine it reads (2026-10-18)
+
+Proposed by the propulsion lane as the domain's owner, the question this record leaves to the owner
+of a guard left whole. Every readable guard on `arm_engine`, `load_burn`, `start_burn` and
+`set_burn_cutoff` reads the
+service propulsion system: its feed (`prop.feed_pressure_pct`), its helium
+(`prop.pressurant_pressure_psi`), its propellant (`prop_main`, the SPS load), its 50 qualified
+restarts and its 750 s of burn. The LM's descent and ascent engines have no feed, tank or pressurant
+state in this vehicle. Declared for every engine, those guards refused a descent or ascent burn for
+an SPS reading, which is the Apollo 13 case backwards: there the SPS was not trusted after the
+oxygen tank failure and the descent engine flew the return burns.
+
+Each of the four verbs now conditions its guards on `engine=sps` (`arm_engine` on `engine` and
+`state` together, so safing stays unguarded). `start_burn` is still guarded whole in direction: no
+value is the SPS's recovery and `stop_burn` is the safing verb; the condition only says which engine
+the readings belong to. A DPS or APS burn is admitted on no reading until those engines' own feed and
+propellant states exist, which is the propulsion lane's debt, not a guard.

@@ -1,14 +1,15 @@
 # domains/propulsion/profiles.yaml — engine limits, cutoff guards, and the interlock nobody else
 # has.
 #
-# ## The interlock that is unique to this domain
+# ## The refusal that is not here
 #
-# `dps_throttle_band` refuses a throttle command inside 65-92.5 %. Every other interlock in the
-# vehicle protects against a *consequence* — a sagging bus, an overheated zone, a dry tank.
-# This one protects against a command that is **meaningless**: the engine is not designed to run
-# there, so the throttle will do something, and what it does is not what the number says. An
-# agent that commands 80 % and gets thrust is not being lied to by the vehicle; it is being lied
-# to by its own model, and the refusal is the correction.
+# The descent engine's 65-92.5 % non-operating region was `dps_throttle_band`, an interlock on the
+# commanded throttle. It is a refused band on `set_throttle`'s and `load_burn`'s `throttle_pct`
+# now (`commands.yaml`): it was never a reading to debounce, a threshold's single comparator could
+# not say "inside 65 up to 92.5" (it asserted above 65, so the full-throttle position tripped it),
+# and the refusal is the whole mechanism. An actuator that drifts into the region by malfunction,
+# which is the case the LMAOH says needs a manual correction, is a fault's question (PRP-04's
+# stuck actuator is the nearest), not a refusal's.
 #
 # ## Cutoff guards are not alarms
 #
@@ -98,23 +99,6 @@ thresholds:
       basis: apollo
       ref: "apollo_diode.md:137"
       note: "apollo's event is a >5 % discrepancy between commanded and estimated. It is expressed here as a signed deviation below the command because an *over*-performing engine is a different fault from an under-performing one, and an absolute-value threshold would hide which. The 3-point recovery gap is chosen so that a burn whose estimate settles does not clear and re-trip"
-
-  # --- the throttle band that is not an alarm but an impossibility -------------------------
-  - id: dps_throttle_band
-    point: prop.dps_throttle_pct
-    comparator: above
-    assert: 65
-    clear: 60
-    dwell_assert_ms: 0
-    dwell_clear_s: 0
-    latched: false
-    interlock: true
-    severity: ADVISORY
-    acts: crew
-    point_units: "% commanded throttle, in the 65-92.5 % non-operating region"
-    provenance:
-      basis: historical
-      source: "the DPS experience report names 65-92.5 % a non-operating region. There is no dwell and no latch because the condition is not an event to be debounced: it is a command that will be refused, and the refusal is the whole mechanism"
 
   # --- cutoff guards: evaluated at the moment of effect, not published as alerts -----------
   - id: prop_cutoff_guard_5

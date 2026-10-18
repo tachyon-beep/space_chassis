@@ -384,14 +384,13 @@ def test_a_numeric_argument_is_carried_as_its_number_and_refused_outside_its_ran
             )
 
 
-THROTTLE = "      throttle_pct: {type: number, minimum: 10.5, maximum: 92.5}\n"
 THROTTLE_BAND = (
     "      throttle_pct:\n"
     "        type: number\n"
-    "        minimum: 10.5\n"
+    "        minimum: 10\n"
     "        maximum: 92.5\n"
     "        refused_bands:\n"
-    "          - {at_or_above: 65, below: 92.5, note: the descent engine is not run here}\n"
+    "          - {at_or_above: 65, below: 92.5, note: \"the descent engine's 65-92.5 % non-operating region\"}\n"
 )
 
 
@@ -404,16 +403,16 @@ def test_a_refused_band_is_a_hole_in_a_numeric_argument_s_range(tmp_path):
     """
     declared = {
         "type": "number",
-        "minimum": 10.5,
+        "minimum": 10,
         "maximum": 92.5,
         "refused_bands": [{"at_or_above": 65, "below": 92.5, "note": "the descent engine is not run here"}],
     }
-    for good in ("10.5", "64.9", "92.5"):
+    for good in ("10", "64.9", "92.5"):
         assert plant.numeric_argument("set_throttle", "throttle_pct", good, declared) == float(good)
     for bad, why in (
         ("65", r"inside its refused band \[65, 92\.5\) \(the descent engine is not run here\)"),
         ("92.4", "inside its refused band"),
-        ("5", r"outside its declared range \[10\.5, 92\.5\]"),
+        ("5", r"outside its declared range \[10, 92\.5\]"),
         ("93", "outside its declared range"),
     ):
         with pytest.raises(plant.EffectRefused, match=why):
@@ -423,13 +422,13 @@ def test_a_refused_band_is_a_hole_in_a_numeric_argument_s_range(tmp_path):
         plant.numeric_argument("set_floor", "floor", "-1", {"type": "number", "minimum": 0})
 
     copy = faulted_copy(tmp_path / "declared")
-    replace(copy / "domains" / "propulsion" / "commands.yaml", THROTTLE, THROTTLE_BAND)
+    assert THROTTLE_BAND in (copy / "domains" / "propulsion" / "commands.yaml").read_text()
     out = run_linter(copy).stdout
     assert "COMPOSES" in out and "refused_bands" not in out, out[-3000:]
     broken = faulted_copy(tmp_path / "broken")
     replace(
         broken / "domains" / "propulsion" / "commands.yaml",
-        THROTTLE,
+        THROTTLE_BAND,
         THROTTLE_BAND.replace("below: 92.5, ", "below: 95, ").replace("at_or_above: 65, ", ""),
     )
     replace(
@@ -443,18 +442,15 @@ def test_a_refused_band_is_a_hole_in_a_numeric_argument_s_range(tmp_path):
 
 
 def test_a_command_value_with_when_moves_only_the_state_its_call_names(tmp_path):
-    """The propulsion lane's bug, beside the fault path: `arm_engine engine=sps` armed all three."""
+    """The propulsion lane's bug, beside the fault path: `arm_engine engine=sps` armed all three.
+
+    The three engine states now route by `when: {engine: ...}` in the stock configuration.
+    """
     copy = faulted_copy(tmp_path / "vehicle")
     components = copy / "domains" / "propulsion" / "components.yaml"
     text = components.read_text()
-    entry = "      - verb: arm_engine\n        argument: state\n"
-    assert text.count(entry) == 3
-    parts = text.split(entry)
-    text = parts[0] + "".join(
-        entry + f"        when: {{engine: {engine}}}\n" + rest
-        for engine, rest in zip(("sps", "dps", "aps"), parts[1:], strict=True)
-    )
-    components.write_text(text)
+    for engine in ("sps", "dps", "aps"):
+        assert text.count(f"        when: {{engine: {engine}}}\n") == 1, engine
     out = run_linter(copy).stdout
     assert ".when" not in out, out[-3000:]
     routed = plant.load_world(copy)
@@ -526,14 +522,9 @@ def test_an_interlock_on_a_point_read_from_a_coupling_node_is_evaluated(tmp_path
 
     A point may not name another domain's state, so a cross-domain reading names the node, and
     `point_reading` reads one by its derivation. The threshold's `point_units` still has to name the
-    channel's unit, which the fixture states plainly.
+    channel's unit, which the stock threshold now does (`"%, remaining, checked at burn start"`).
     """
     copy = faulted_copy(tmp_path / "vehicle")
-    replace(
-        copy / "domains" / "propulsion" / "profiles.yaml",
-        'point_units: "% remaining, checked at burn start"',
-        'point_units: "%"',
-    )
     guarded = plant.load_world(copy)
     interlock, problem = plant.resolve_interlock(guarded, "prop_cutoff_guard_5")
     assert problem is None and interlock is not None, problem
