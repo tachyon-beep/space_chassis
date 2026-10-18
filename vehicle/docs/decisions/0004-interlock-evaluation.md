@@ -124,7 +124,10 @@ plainly the recovery. As declared:
 | set_radiator_bypass | `coolant_supply_high` | `state=bypass` | `state=radiator` |
 | set_radiator_bypass | `coolant_supply_low` | `state=radiator` | `state=bypass` |
 | arm_engine | the three feed guards | `state=armed` | `state=safe` |
-| set_o2_flow | `cabin_pressure_high`, `o2_supply_low`, `ppo2_fire_risk` | `flow=low`, `nominal`, `high` | `flow=off` |
+| set_o2_flow | `cabin_pressure_high`, `ppo2_fire_risk` | `vehicle=csm` at `flow=low`, `nominal`, `high` | `flow=off`; any LM command |
+| set_o2_flow | `lm_ppo2_fire_risk` | `vehicle=lm` at `flow=low`, `nominal`, `high` | `flow=off`; any CSM command |
+| set_o2_flow | `eclss.cabin_pressure_caution` | `vehicle=csm` at `flow=off` | any other band; any LM command |
+| set_o2_flow | `eclss.lm_cabin_pressure_caution` | `vehicle=lm` at `flow=off` | any other band; any CSM command |
 | set_cabin_regulator | `cabin_pressure_emergency` | `mode=closed`, `primary`, `isolated` | `mode=emergency` |
 | set_cabin_regulator | `ppo2_fire_risk` | `mode=primary`, `emergency` | `mode=closed`, `isolated` |
 | set_absorber_path | `co2_caution` | `path=bypass` | `primary`, `secondary`, `both` |
@@ -137,8 +140,9 @@ plainly the recovery. As declared:
 | set_source | `bus_a_undervoltage`, `load_margin_negative` | `state=off` | `state=on` |
 | set_battery_contactor | `load_margin_negative` | `state=off` | `state=on` |
 | select_sensor | `redundancy_degraded` | `source=primary`, `secondary` | `source=auto` |
-| set_o2_source | `eclss.cabin_pressure_caution` | `source=isolated` at any flow; `flow=off` at any source | `source=primary` or `surge` at `flow=low`, `nominal`, `high` |
-| set_o2_source | `o2_reserve_10` | `source=primary` at `flow=low`, `nominal`, `high` | `source=primary` at `flow=off`; `source=surge`, `isolated` at any flow |
+| set_o2_source | `eclss.cabin_pressure_caution` | `vehicle=csm` at `source=isolated` | `source=primary`, `surge`; any LM command |
+| set_o2_source | `eclss.lm_cabin_pressure_caution` | `vehicle=lm` at `source=isolated` | `source=primary`, `surge`; any CSM command |
+| set_o2_source | `o2_reserve_10`, `eclss.o2_supply_low` | `vehicle=csm` at `source=primary` | `source=surge`, `isolated`; any LM command |
 
 Guarded whole, because no argument value is plainly the recovery: `request_translation`
 (`rcs_propellant_reserve`; every translation spends propellant), `start_burn` (`feed_pressure_low`;
@@ -149,7 +153,9 @@ choosing any source while the estimator diverges, and whether `blended` is a rec
 by cutting its oxygen and the S/M reserve is spent only by a flow from `primary` (the cryogenic
 tanks are in the S/M and the 3.7 lb surge tank is a separate store in the CM,
 `csm_ecs_study_guide.pdf` PDF p. 12), so it now names combinations, and on a leak with a low
-reserve the surge tank at any flow is the one choice both guards admit. The unconditional
+reserve the surge tank at any flow is the one choice both guards admit. PR #64 (2026-10-17) moved the
+flow band to `set_o2_flow` alone, so the two arguments are now `vehicle` and `source`: each cabin's
+caution guards isolating that vehicle's supply, and the reserve guards only the CSM's `primary`. The unconditional
 entries above are the same judgement for one guard of a verb whose other guard has a direction.
 
 The same rule applies to UNEVALUATED: a safing command needs no guard, so an unreadable interlock

@@ -216,8 +216,8 @@ state:
       basis: derived
       relation: >-
         the three systems' loads summed: 608 + 112 + 288 = **1,008 kg**, which is the right lump
-        rather than a convenience. The RCS domain models all forty-four thrusters as one article
-        (`thruster_100lbf`, `vehicle_keys: [rcs_sm, rcs_cm, rcs_lm]`), so the service the allocator
+        rather than a convenience. The RCS domain models the forty-four thrusters as two articles
+        (`thruster_100lbf` for the SM and LM, `thruster_cm` for the CM), so the service the allocator
         commands is one service: a fleet that has spent the SM's propellant has spent the vehicle's,
         and a per-system stock would be four stocks for one tank farm
     quantum: 1.0e-5

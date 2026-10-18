@@ -301,18 +301,25 @@ DEFAULT_WORLD_SAFING = [
         "set_suit_fan vehicle=csm state=on",
         "set_suit_fan vehicle=csm state=off",
     ),
-    # `set_o2_source` (ADR 0004, amended 2026-10-17): its guards name source and flow together.
+    # `set_o2_source` (ADR 0004, amended 2026-10-17): its guards name vehicle and source together.
     (
         "cabin_pressure_caution",
         {"csm_cabin_pressure_pa": 30000.0},  # 4.35 psia, past the 4.5 psia caution, above the emergency
-        "set_o2_source vehicle=csm source=surge flow=high",
-        "set_o2_source vehicle=csm source=primary flow=off",
+        "set_o2_source vehicle=csm source=surge",
+        "set_o2_source vehicle=csm source=isolated",
+    ),
+    # The same caution on the band (reviewer, PR #64): `off` cuts the cabin's oxygen.
+    (
+        "cabin_pressure_caution",
+        {"csm_cabin_pressure_pa": 30000.0},
+        "set_o2_flow vehicle=csm flow=nominal",
+        "set_o2_flow vehicle=csm flow=off",
     ),
     (
         "o2_reserve_10",
         {"o2_csm_kg": 20.0},  # past the 27.9 kg floor
-        "set_o2_source vehicle=csm source=surge flow=nominal",
-        "set_o2_source vehicle=csm source=primary flow=nominal",
+        "set_o2_source vehicle=csm source=surge",
+        "set_o2_source vehicle=csm source=primary",
     ),
     (
         "load_margin_negative",
@@ -367,22 +374,106 @@ def test_every_readable_interlock_names_its_direction_or_is_whole_on_purpose(wor
 
 
 def test_a_guard_over_two_arguments_applies_to_the_combinations_it_names(world):
-    """`set_o2_source` (ADR 0004 §Direction, amended 2026-10-17): the cabin caution guards cutting the
-    cabin's oxygen, an isolated source or a flow of `off`; the reserve guards drawing on `primary`."""
+    """`set_o2_source` (ADR 0004 §Direction, amended 2026-10-17): each cabin's caution guards
+    isolating that vehicle's supply, and the reserve guards the CSM's `primary`. The band is
+    `set_o2_flow`'s (`eclss.o2_flow`), which carries the cautions on `off`, again per vehicle."""
     spec = world.verbs["set_o2_source"]
 
-    def guards(source: str, flow: str) -> list[str]:
-        return plant.guarding_interlocks(spec, {"vehicle": "csm", "source": source, "flow": flow})
+    def guards(vehicle: str, source: str) -> list[str]:
+        return plant.guarding_interlocks(spec, {"vehicle": vehicle, "source": source})
 
-    for flow in ("off", "low", "nominal", "high"):
-        assert "eclss.cabin_pressure_caution" in guards("isolated", flow)
-        assert "o2_reserve_10" not in guards("isolated", flow)
-        assert "o2_reserve_10" not in guards("surge", flow)
-    for source in ("primary", "surge"):
-        assert "eclss.cabin_pressure_caution" in guards(source, "off")
-        for flow in ("low", "nominal", "high"):
-            assert "eclss.cabin_pressure_caution" not in guards(source, flow)
-    assert guards("primary", "off") == ["eclss.cabin_pressure_caution"]
-    assert guards("primary", "high") == ["o2_reserve_10"]
-    # A leak on a low reserve: the surge tank is the one source both guards admit.
-    assert guards("surge", "high") == []
+    assert guards("csm", "isolated") == ["eclss.cabin_pressure_caution"]
+    assert guards("lm", "isolated") == ["eclss.lm_cabin_pressure_caution"]
+    assert guards("csm", "primary") == ["o2_reserve_10", "eclss.o2_supply_low"]
+    assert guards("csm", "surge") == []
+    assert guards("lm", "primary") == guards("lm", "surge") == []
+    band = world.verbs["set_o2_flow"]
+
+    def band_guards(vehicle: str, flow: str) -> list[str]:
+        return plant.guarding_interlocks(band, {"vehicle": vehicle, "flow": flow})
+
+    assert "eclss.cabin_pressure_caution" in band_guards("csm", "off")
+    assert "eclss.lm_cabin_pressure_caution" not in band_guards("csm", "off")
+    assert "eclss.lm_cabin_pressure_caution" in band_guards("lm", "off")
+    assert "eclss.cabin_pressure_caution" not in band_guards("lm", "off")
+    cautions = {"eclss.cabin_pressure_caution", "eclss.lm_cabin_pressure_caution"}
+    csm_hazards = ["cabin_pressure_high", "ppo2_fire_risk"]
+    for flow in ("low", "nominal", "high"):
+        assert band_guards("csm", flow) == csm_hazards, flow
+        assert band_guards("lm", flow) == ["lm_ppo2_fire_risk"], flow
+        for vehicle in ("csm", "lm"):
+            assert not cautions & set(band_guards(vehicle, flow)), (vehicle, flow)
+
+
+def test_a_failed_primary_supply_leaves_the_surge_tank_open(world, tmp_path):
+    """Codex, PR #64: with the S/M supply below 750 psi, re-opening the band is the surge tank's
+    recovery, so `set_o2_flow` takes it while `set_o2_source source=primary` is refused."""
+    built = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
+    built.attach("alpha")
+    try:
+        trip(world, built, {"o2_supply_pressure_psi": 600.0}, "o2_supply_low")
+        taken = run(built, tmp_path, "set_o2_flow vehicle=csm flow=nominal")
+        trip(world, built, {"o2_supply_pressure_psi": 600.0}, "o2_supply_low")
+        refused = run(built, tmp_path, "set_o2_source vehicle=csm source=primary")
+    finally:
+        built.close()
+    assert "state=accepted" in taken and "INTERLOCK" not in taken, taken
+    assert "refused: INTERLOCK TRIPPED" in refused and "o2_supply_low" in refused, refused
+
+
+def test_an_lm_fire_refuses_lm_oxygen_and_a_csm_fire_does_not(world, tmp_path):
+    """Codex, PR #64: the flow band's fire guard reads the commanded vehicle's cabin."""
+    outcomes = []
+    # One executive per fire: both thresholds latch, so the second would still see the first.
+    for n, (overrides, name) in enumerate(
+        [({"lm_cabin_o2_kg": 3.5}, "lm_ppo2_fire_risk"), ({"csm_cabin_o2_kg": 3.5}, "ppo2_fire_risk")]
+    ):
+        root = tmp_path / str(n)
+        built = console.Executive(world, root / "diode", phase="translunar_coast")
+        built.attach("alpha")
+        try:
+            trip(world, built, overrides, name)
+            outcomes.append(run(built, root, "set_o2_flow vehicle=lm flow=nominal"))
+        finally:
+            built.close()
+    refused, taken = outcomes
+    assert "refused: INTERLOCK TRIPPED" in refused and "lm_ppo2_fire_risk" in refused, refused
+    assert "state=accepted" in taken and "INTERLOCK" not in taken, taken
+
+
+def test_each_cabin_s_caution_guards_only_its_own_oxygen(world, tmp_path):
+    """Codex, PR #64: an LM below 4.5 psia refuses `set_o2_flow vehicle=lm flow=off`, and a CSM
+    below it no longer blocks the LM's command."""
+    built = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
+    built.attach("alpha")
+    try:
+        trip(world, built, {"lm_cabin_pressure_pa": 30000.0}, "lm_cabin_pressure_caution")
+        refused = run(built, tmp_path, "set_o2_flow vehicle=lm flow=off")
+        trip(world, built, {"csm_cabin_pressure_pa": 30000.0}, "cabin_pressure_caution")
+        taken = run(built, tmp_path, "set_o2_flow vehicle=lm flow=off")
+    finally:
+        built.close()
+    assert "refused: INTERLOCK TRIPPED" in refused and "lm_cabin_pressure_caution" in refused, refused
+    assert "state=accepted" in taken and "INTERLOCK" not in taken, taken
+
+
+def test_the_reserve_guard_s_recovery_draws_nothing_once_taken(world, tmp_path):
+    """With `o2_reserve_10` tripped, `set_o2_source source=primary` is refused, because `primary`
+    keeps the S/M tanks on the cabin; `set_o2_flow flow=off` is the recovery that stops the draw
+    (Codex, PR #64)."""
+    built = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
+    built.attach("alpha")
+    try:
+        trip(world, built, {"o2_csm_kg": 20.0}, "o2_reserve_10")
+        refused = run(built, tmp_path, "set_o2_source vehicle=csm source=primary")
+        trip(world, built, {"o2_csm_kg": 20.0}, "o2_reserve_10")
+        taken = run(built, tmp_path, "set_o2_flow vehicle=csm flow=off")
+        for _ in range(3):
+            built.cycle()
+        truth = built.truth
+    finally:
+        built.close()
+    assert "refused: INTERLOCK TRIPPED" in refused and "o2_reserve_10" in refused, refused
+    assert "state=accepted" in taken and "INTERLOCK" not in taken, taken
+    assert truth["o2_flow"]["csm"] == "off" and truth["o2_source"]["csm"] == "primary"
+    assert truth["cabin_o2_supply_csm_kg_s"] == 0.0
