@@ -23,13 +23,8 @@ points:
     layer: measurement
     derivation: as dc_bus_a_v, on the second bus
   - channel: power.bus_a_current_a
-    from: bus_a_load_w
+    from: bus_a_current_a
     layer: measurement
-    derivation:
-      expression: load_w / voltage_v
-      inputs:
-        load_w: bus_a_load_w
-        voltage_v: bus_a_v
     note: >-
       Apollo's range for this channel is 10-120 A (apollo_diode.md:75), which is wider than
       electrical_diode.md:251's 40 A continuous rating — the vehicle is apollo's, so the

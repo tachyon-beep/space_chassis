@@ -520,7 +520,7 @@ state:
         the battery entries are positions `set_source` writes and no rule reads yet: the bus solve is
         the fuel cells' alone, as `bus_a_v`'s note says. They are declared so the map is the verb's
         whole argument space, and they become a reading when the batteries join the bus
-    moved_by: ["command:set_source"]
+    moved_by: ["command:set_source", "command:set_battery_contactor"]
     command_value:
       - verb: set_source
         argument: state
@@ -528,6 +528,13 @@ state:
         why: >-
           identity: the verb's `state` argument is `on` or `off` and so is the element it writes, keyed
           by the verb's `source` argument
+      - verb: set_battery_contactor
+        argument: state
+        key: battery
+        why: >-
+          identity, as `set_source`: a battery's contactor is its connection, so the verb writes the
+          same position keyed by its `battery` argument. Battery C is in neither verb's argument space
+          until a solve gives its feed to both main buses, so its position stays `off`
     note: >-
       one position per source. A fuel cell set `off` is disconnected from its main bus: "one fuel cell
       can be disconnected from the buses increasing the loads on the remaining fuel cells" (AOH
@@ -726,6 +733,31 @@ state:
         share one terminal voltage, and under V = E0 - R_k i_k (`components.fc_[n]`, WP02 E-2) module k
         carries (E0 - V) / R_k; healthy modules split the bus current equally. E0 and the envelope are
         copied as `bus_a_v` copies them and held to them by `tests/test_power_rules.py`
+  - id: bus_a_current_a
+    method: algebraic
+    node: fuel_cell
+    unit: A
+    # The reference operating point: bus A's 1,148 W on its two modules, 37.767 A.
+    bus_a_current_a: 37.767
+    cells: [fc_1, fc_2, battery_csm_1]
+    cell_open_circuit_v: 32.30
+    cell_current_envelope_a: [12.903, 52.593]
+    below_envelope: extrapolate
+    batteries: [battery_csm_1, battery_csm_2]
+    isolated_sources: [battery_csm_3]
+    battery_open_circuit_v: 37.1
+    battery_resistance_ohm: 0.364
+    resistance_of: {fc_1: fc_1_resistance_ohm, fc_2: fc_2_resistance_ohm, fc_3: fc_3_resistance_ohm}
+    note: >-
+      the current main bus A carries, which `power.bus_a_current_a` publishes: the bus solve's own,
+      every source on the bus summed. It was the channel's derivation `load_w / voltage_v`, which is
+      0 / 0 on a dead bus, so the channel went missing at exactly the source loss it should show as
+      0 A
+    provenance:
+      basis: derived
+      relation: >-
+        `bus_a_v`'s solve (`domains/power/rules.py`), the current that delivers the bus load at the
+        bus voltage: P / V wherever the bus is live, and 0 A when no source is connected
   - id: bus_a_rated_w
     method: algebraic
     node: fuel_cell

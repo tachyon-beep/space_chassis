@@ -22,7 +22,10 @@ commands:
       # *classes* here — `source` generates, `storage` stores — so the argument declares that it
       # names components rather than a class. What the declaration buys is the check: every value
       # must be a component of this domain, which is what catches a name that was renamed.
-      source: {type: enum, values: [fc_1, fc_2, fc_3, battery_csm_1, battery_csm_2, battery_csm_3,
+      # Battery C is left out: it feeds both main buses through its diodes (AOH p. 2.6-38), which the
+      # per-bus solve does not model, so the verb refuses it by its argument space rather than
+      # accepting a position that leaves both buses unsolved.
+      source: {type: enum, values: [fc_1, fc_2, fc_3, battery_csm_1, battery_csm_2,
                                   battery_lm_descent_1, battery_lm_descent_2,
                                   battery_lm_descent_3, battery_lm_descent_4,
                                   battery_lm_ascent_1, battery_lm_ascent_2],
@@ -78,7 +81,8 @@ commands:
 
   - verb: set_battery_contactor
     argument_schema:
-      battery: {type: enum, values: [battery_csm_1, battery_csm_2, battery_csm_3,
+      # Battery C is left out, as `set_source` leaves it out.
+      battery: {type: enum, values: [battery_csm_1, battery_csm_2,
                                    battery_lm_descent_1, battery_lm_descent_2,
                                    battery_lm_descent_3, battery_lm_descent_4,
                                    battery_lm_ascent_1, battery_lm_ascent_2],

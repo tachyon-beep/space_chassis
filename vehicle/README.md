@@ -220,7 +220,7 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 166 states over 63 scheduled nodes, 139
+**All eleven domains have landed** — 148 channels, 167 states over 63 scheduled nodes, 139
 thresholds, 59 verbs and 127 classified events across the eleven directories, with every debt
 named. Those are the corpus's declarations, and the linter holds each of them against the files
 (`check_readme_figures`); they move when a domain adds a channel, a state or a verb, not when one
@@ -259,7 +259,7 @@ took them from being read by nobody to being refusals under `--strict`, which is
 is only displayed stops being a debt.
 
 `domains/power/` carries a 25-load inventory with inrush currents and shed classes, and it
-declares 22 states, 14 thresholds, 5 verbs, 11 faults. Two
+declares 23 states, 14 thresholds, 5 verbs, 11 faults. Two
 things in it are worth reading rather than skimming:
 
 - **The crew sheds load; the vehicle does not.** Apollo had no automatic DC load shed (AOH

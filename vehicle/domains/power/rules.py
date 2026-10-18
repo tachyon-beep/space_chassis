@@ -261,6 +261,14 @@ def _bus_v(inputs, params, load_w):
     return solved[1]
 
 
+def bus_a_current_a(inputs, params, dt):
+    """Main bus A's current from its solve: 0 A when the bus is dead, where P / V would be 0 / 0."""
+    solved, why = _solve(inputs, params, params["cells"], inputs["bus_a_load_w"])
+    if solved is None:
+        return params.no_value(why)
+    return solved[0]
+
+
 def bus_a_v(inputs, params, dt):
     return _bus_v(inputs, params, inputs["bus_a_load_w"])
 
@@ -390,6 +398,7 @@ RULES = {
     "bus_b_v": bus_b_v,
     "fuel_cell_current_a": fuel_cell_current_a,
     "fc_1_current_a": fc_1_current_a,
+    "bus_a_current_a": bus_a_current_a,
     "fuel_cell_power_w": fuel_cell_power_w,
     "bus_a_rated_w": bus_a_rated_w,
     "load_powered": load_powered,

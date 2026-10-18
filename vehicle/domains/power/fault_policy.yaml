@@ -220,7 +220,7 @@ faults:
       reason: "the fast fault that makes the sub-tick event queue necessary: a >=200 % hard short trips in <=2 ms (electrical_diode.md:254), which is a tenth of a tick, so it cannot be evaluated on the tick boundary at all (plant.md §5)"
 
   - id: PWR-12-source-current-sensor-stuck
-    component: fc_2
+    component: fc_1
     mechanism: "the source current transducer sticks at its last value: the source looks steady while its output is not"
     kind: instrument
     seeding:

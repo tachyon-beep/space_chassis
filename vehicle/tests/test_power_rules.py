@@ -173,11 +173,16 @@ def test_the_rule_parameters_are_the_inventory_and_the_cells_they_copy():
         states["fc_1_current_a"]["cell_current_envelope_a"]
         == states["bus_a_v"]["cell_current_envelope_a"]
     )
-    # `source_enabled` is the whole of `set_source`'s argument space, every source in it a component.
+    # `source_enabled` is `set_source`'s argument space and battery C, which neither verb may move
+    # until a solve gives its feed to both buses; `set_battery_contactor` names the same batteries.
     commands = yaml.safe_load((VEHICLE / "domains" / "power" / "commands.yaml").read_text())
-    verb = next(c for c in commands["commands"] if c["verb"] == "set_source")
+    verbs = {c["verb"]: c for c in commands["commands"]}
     initial = states["source_enabled"]["initial"]
-    assert list(initial) == verb["argument_schema"]["source"]["values"]
+    sources = verbs["set_source"]["argument_schema"]["source"]["values"]
+    assert [s for s in initial if s != "battery_csm_3"] == sources
+    assert initial["battery_csm_3"] == "off"
+    batteries = verbs["set_battery_contactor"]["argument_schema"]["battery"]["values"]
+    assert batteries == [s for s in sources if s.startswith("battery_")]
     assert {k for k, v in initial.items() if v == "on"} == set(cells)
     # Each bus load lists exactly the CSM loads `loads[].bus` puts on it, at their `demand_w`.
     for sid, bus in (("bus_a_load_w", "csm_bus_a"), ("bus_b_load_w", "csm_bus_b")):
@@ -730,3 +735,32 @@ def test_an_unloaded_bus_stands_at_its_highest_source_emf():
         0.0, {"battery_csm_1": (E_BAT, R_BAT, False)}, [12.903, 52.593]
     )
     assert why is None and alone[1] == E_BAT
+
+
+def test_a_dead_bus_reads_zero_amperes(world):
+    """Fuel cells 1 and 2 off with no battery: bus A is dead, and its current is 0 A rather than the
+    0 / 0 a load-over-voltage derivation would leave unpublished."""
+    values, _ = tick(world, plant.initial_values(world))
+    assert values["bus_a_current_a"] == pytest.approx(values["bus_a_load_w"] / values["bus_a_v"])
+    effects = [
+        plant.Effect(0, "set_source", {"source": "fc_1", "state": "off"}),
+        plant.Effect(0, "set_source", {"source": "fc_2", "state": "off"}),
+    ]
+    after, gaps = tick(world, values, effects)
+    assert "bus_a_current_a" not in gaps
+    assert after["bus_a_current_a"] == 0.0
+
+
+def test_the_battery_contactor_ties_a_battery_as_set_source_does(world):
+    values, _ = tick(world, plant.initial_values(world))
+    by_source, _ = tick(
+        world, values, [plant.Effect(0, "set_source", {"source": "battery_csm_1", "state": "on"})]
+    )
+    by_contactor, gaps = tick(
+        world,
+        values,
+        [plant.Effect(0, "set_battery_contactor", {"battery": "battery_csm_1", "state": "on"})],
+    )
+    assert "bus_a_v" not in gaps
+    assert by_contactor["source_enabled"]["battery_csm_1"] == "on"
+    assert by_contactor["bus_a_v"] == by_source["bus_a_v"]

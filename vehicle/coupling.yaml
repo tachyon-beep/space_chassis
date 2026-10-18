@@ -317,7 +317,7 @@ nodes:
     # those loads draw. Four states, so every edge leaving this node names the one it reads.
     state_order: [bus_a_load_w, bus_b_load_w, fc_1_resistance_ohm, fc_2_resistance_ohm,
                   fc_3_resistance_ohm, fuel_cell_power_w, fuel_cell_current_a, fc_1_current_a,
-                  bus_a_rated_w]
+                  bus_a_current_a, bus_a_rated_w]
     state_order_note: >-
       the bus loads are the switches' sums, the modules' resistances are held, the generation is the
       two loads added, and the currents are each bus's solve at its own load over those resistances,
