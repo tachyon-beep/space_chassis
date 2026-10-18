@@ -351,3 +351,19 @@ def test_the_supply_rule_stops_below_a_tick_of_flow():
     assert rule(inputs, params, DT) == 0.0
     inputs["o2_surge_csm_kg"] = demand * DT
     assert rule(inputs, params, DT) == pytest.approx(demand)
+
+
+# --------------------------------------------------------------------------------------------
+# The overboard dumps: a readable state for GNC's navigation model, moved by `set_overboard_dump`.
+# --------------------------------------------------------------------------------------------
+
+
+def test_the_dumps_start_closed_and_set_overboard_dump_opens_one_path(world):
+    values = plant.initial_values(world)
+    assert values["overboard_vent"] == {"waste_water": "closed", "urine": "closed", "o2": "closed"}
+    staged = plant.apply_command(world, values, "set_overboard_dump", {"source": "urine", "state": "open"})
+    after = walk(world, {**values, **staged}, 3)
+    assert after["overboard_vent"] == {"waste_water": "closed", "urine": "open", "o2": "closed"}
+    staged = plant.apply_command(world, after, "set_overboard_dump", {"source": "urine", "state": "closed"})
+    after = walk(world, {**after, **staged}, 100)  # past the one-second dwell
+    assert after["overboard_vent"]["urine"] == "closed"

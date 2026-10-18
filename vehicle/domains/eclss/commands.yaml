@@ -312,6 +312,38 @@ commands:
         issue and the vehicle cannot honour is a worse artifact than a verb with an unmodelled
         consequence — and the gap is written down in components.yaml#open_debts.
 
+  - verb: set_overboard_dump
+    argument_schema:
+      source:
+        type: enum
+        values: [waste_water, urine, o2]
+      state:
+        type: enum
+        values: [open, closed]
+    authority: A2
+    gate:
+      kind: preference
+      variable: overboard_dump_<source>_enable
+    interlocks: none
+    conflict_domain: eclss.overboard.<source>
+    allowed_phases: [translunar_coast, lunar_orbit, lunar_orbit_docked, transearth_coast]
+    irreversible: false
+    idempotent: true
+    execution_class: declarative
+    maximum_queue_age_s: 60
+    help: >-
+      Open or close one overboard dump: waste water, urine, or the oxygen overboard path. A dump
+      is crew housekeeping and a navigation hazard at once: its particles block sextant sightings
+      and its thrust nudges the trajectory, which is why Apollo 13 stopped all overboard dumps after
+      its first urine dump.
+    provenance:
+      basis: chosen
+      note: >-
+        a new verb for GNC's navigation model, asked for through the coordinator; the corpus's
+        `set_vent_valve` is the cabin's own vent and repress valve, not an overboard dump. The
+        interlock list is empty on review: a dump hazards navigation rather than the vehicle, and
+        the phase list keeps it out of powered flight and entry
+
 # --------------------------------------------------------------------------------------
 # Deliberately absent.
 # --------------------------------------------------------------------------------------

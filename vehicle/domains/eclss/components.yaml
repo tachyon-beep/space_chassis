@@ -54,7 +54,7 @@ reads: [o2_csm, o2_lm, absorber_capacity_csm, absorber_capacity_lm, crew_state,
         cabin_zone_t, lm_cabin_zone_t, command_executive, load_shed_state, fc_o2_draw]
 writes: [cabin_atm, lm_cabin_atm, cabin_regulator, cabin_o2_supply_csm,
          cabin_o2_supply_lm, co2_removal_csm, co2_removal_lm, cabin_leak_csm, cabin_leak_lm,
-         o2_tank_heaters, o2_surge_csm, cabin_o2_surge_supply_csm]
+         o2_tank_heaters, o2_surge_csm, cabin_o2_surge_supply_csm, overboard_vent]
 
 # Five states on the `internal` sentinel, so their order is a declaration rather than the alphabet's,
 # and the sentinel is advanced after every node.
@@ -852,6 +852,45 @@ state:
         `flow` argument moves nothing yet: the regulator's flow is its nominal demand, and the
         `low`/`nominal`/`high` settings have no published rates. The one-second dwell each way is
         chosen, as `suit_fan`'s is, for a valve's transit
+  - id: overboard_vent
+    method: discrete
+    node: overboard_vent
+    unit: "map[source,enum[open,closed]]"
+    initial: {waste_water: closed, urine: closed, o2: closed}
+    initial_provenance:
+      basis: chosen
+      reason: >-
+        chosen: a dump is a scheduled event in the flight plan, a few minutes long, so no path is open
+        at the start of a coast. No checklist position at TLI was read
+    moved_by: ["command:set_overboard_dump"]
+    command_value:
+      - verb: set_overboard_dump
+        argument: state
+        key: source
+        why: >-
+          one element per dump path; the command opens or closes that path's overboard valve and the
+          others keep their positions
+    dwell:
+      min_on_s: 1
+      min_off_s: 1
+    provenance:
+      basis: chosen
+      reason: >-
+        the three paths are the coordinator's request for GNC's navigation model. Waste water and
+        urine are sourced as navigation hazards (quoted in `sources/gnc-nav.md`): A8-MR p. 7-3,
+        "Waste water dumps and fuel cell purges were scheduled at specific times ... to preclude
+        trajectory dispersions prior to a maneuver and to prevent ejected ice particles from
+        obscuring the star field"; A8-MR p. 5-4, about 8 hours of tracking to recover the orbit
+        after each venting period; A13-MR pp. 5-13 and 8-13, the one auxiliary urine dump that
+        clouded the hatch window, after which the ground inhibited all overboard dumps for the rest
+        of the flight. The `o2` element is the request's, not a source's: no source this lane has
+        read names a CSM oxygen overboard dump valve (the nearest are the fuel cells' O2 purge,
+        power's, and the cryogenic tank's relief valve, which relieves overboard on its own at
+        about 1000 psi, A13RB p. 4-6). **Not modelled:** the mass each path takes (no waste water
+        or urine stock exists, and the oxygen path's flow is unsourced), the main versus auxiliary
+        urine nozzle (the auxiliary one is the one that clouded the window), the dump nozzle
+        heaters, and a telemetry channel; the state is what GNC's edge reads. The one-second
+        dwell each way is chosen, as `suit_fan`'s is, for a valve's transit
   - id: suit_loop_flow_cfm
     # **The compressor as flow** (`domains/eclss/rules.py`). The rule relaxes the flow toward
     # `rated_flow_cfm` while the CSM suit compressor is commanded on (`suit_fan`) and its load is
