@@ -250,6 +250,18 @@ nodes:
     kind: flow
     unit: kg O2/s
     note: "the LM's, over a smaller leak and two crew rather than three"
+  # The CM's surge tank (ECLSS lane, 2026-10-17): the command module's own oxygen, the store the
+  # crew had left once the S/M oxygen was gone (A13RB p. 4-28), and the regulator's flow from it.
+  o2_surge_csm:
+    domain: eclss
+    kind: stock
+    unit: kg
+    preloaded: "the surge tank is charged from the S/M supply before launch: 3.7 lb at 900 psig (AOH ECS p. 2.7-7). Its refill in flight is not modelled, so after MET 0 it only drains, and only while the CSM's source is `surge`"
+  cabin_o2_surge_supply_csm:
+    domain: eclss
+    kind: flow
+    unit: kg O2/s
+    note: "the CSM regulator's flow while it draws on the surge tank; `cabin_o2_surge_supply_csm_kg_s` states it"
   # The CO2 each cabin's absorber removes. `co2_removal_kg_s` was a single algebraic state on the
   # `internal` sentinel reading *both* counters — so a surface crew's CO2 spent the CSM element's
   # man-hours, the same defect round 42 fixed one layer down when the counters were split. A flow is
@@ -932,6 +944,18 @@ edges:
     to: cabin_o2_supply_csm
     kind: rate
     advances: cabin_o2_supply_csm_kg_s
+  - id: E-O2-SUPPLY-SURGE
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "kg O2 per kg O2"
+      basis: derived
+      relation: "as E-O2-SUPPLY-CSM, from the CM's surge tank: every kilogram the regulator admits from it leaves the tank"
+      at: "regulator flow"
+    from: o2_surge_csm
+    to: cabin_o2_surge_supply_csm
+    kind: rate
+    advances: cabin_o2_surge_supply_csm_kg_s
   - id: E-O2-SUPPLY-LM
     sensitivity:
       value: 1.0
@@ -1077,6 +1101,13 @@ edges:
     to: cabin_atm
     kind: rate
     sensitivity: {value: 1.0, unit: "kg O2 per kg O2", basis: derived, relation: "the regulator's flow enters the cabin whole: one unit in, one unit out", at: nominal}
+  - id: E-O2-SURGE-ECLSS
+    # as E-O2-ECLSS, from the surge tank's side of the regulator
+    advances: csm_cabin_o2_kg
+    from: cabin_o2_surge_supply_csm
+    to: cabin_atm
+    kind: rate
+    sensitivity: {value: 1.0, unit: "kg O2 per kg O2", basis: derived, relation: "the regulator's flow enters the cabin whole whichever store feeds it: one unit in, one unit out", at: nominal}
   - id: E-LM-O2-ECLSS
     # as E-O2-ECLSS, at the second compartment
     advances: lm_cabin_o2_kg

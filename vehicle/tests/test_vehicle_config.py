@@ -6398,8 +6398,9 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
     # environment's derivation is the hot hold's figure, `sun_hold_w` (ADR 0003 item 9).
     converted = {
         "environment_heat_w": "solar_flux_w_m2",
-        "cabin_o2_supply_csm_kg_s": "leak_kg_per_h",
-        "cabin_o2_supply_lm_kg_s": "leak_kg_per_h",
+        # `cabin_o2_supply_csm_kg_s` left with the surge tank and `cabin_o2_supply_lm_kg_s` with
+        # the LM's switches: a rule routes each demand by `o2_source` and `o2_flow`, and
+        # `check_metabolic_rules` still holds both `nominal_kg_s`.
         "co2_removal_csm_kg_s": "co2_kg_per_crew_day",
         "co2_removal_lm_kg_s": "co2_kg_per_crew_day",
         "fc_h2_draw_kg_s": "per_amp_kg_s",
@@ -8273,7 +8274,7 @@ def test_an_edge_says_which_state_it_advances(tmp_path):
 
     # The four gas masses of one compartment now have four different answers, where before they
     # had one list between them.
-    assert incoming("csm_cabin_o2_kg") == ["E-O2-ECLSS"]
+    assert incoming("csm_cabin_o2_kg") == ["E-O2-ECLSS", "E-O2-SURGE-ECLSS"]
     assert incoming("csm_cabin_co2_kg") == ["E-CREW-ATM"]
     assert incoming("csm_cabin_n2_kg") == [], (
         "nothing supplies nitrogen, and now nothing pretends to"
@@ -12845,6 +12846,8 @@ def test_every_stock_declares_where_it_starts():
         "impulse_total",
         "gyro_bias",
         "o2_supply_pressure_psi",
+        "o2_source",
+        "o2_flow",
         "suit_fan",
         "suit_loop_flow_cfm",
         "dps_throttle_pct",
@@ -12892,7 +12895,9 @@ def test_every_stock_declares_where_it_starts():
     # is the reason the value assertions below name their states rather than ranging over the map.
     # The four switch maps are maps, which a set cannot hold, so they are asserted by name below.
     switch_maps = {k for k, v in seeded_integrators["internal"].items() if isinstance(v, dict)}
-    assert switch_maps == {"coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan"}, (
+    assert switch_maps == {
+        "coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan", "o2_source", "o2_flow",
+    }, (
         switch_maps
     )
     assert {v for k, v in seeded_integrators["internal"].items() if k not in switch_maps} == {
@@ -14286,27 +14291,18 @@ def test_the_cabin_oxygen_supplies_are_derived_from_the_losses(tmp_path):
     definition = copy_definition(tmp_path / "derivation")
     path = definition / "domains" / "eclss" / "components.yaml"
     text = path.read_text()
-    # The rule is a `derivation` now, whose inputs are the leak, the crew size and the metabolic
-    # rate by dotted path rather than three numbers restated in an expression. The needle moves
-    # with the spelling and the break is the same break: drop the per-hour-to-per-second step.
-    anchor = (
-        'expression: "(leak_kg_per_h + crew * o2_kg_per_crew_day / hours_per_day) '
-        '/ seconds_per_hour"'
-    )
-    assert anchor in text, "the fixture no longer matches the CSM supply rule"
-    # The break multiplies by the seconds instead of dividing by them — a wrong *value* rather
-    # than a wrong shape. Dropping the term entirely leaves `seconds_per_hour` bound and unused,
-    # which the derivation rule refuses first and for a different reason.
-    path.write_text(
-        text.replace(anchor, anchor.replace("/ seconds_per_hour", "* seconds_per_hour"), 1)
-    )
+    # Both supplies are rules now (PR #64), which route the demand by `o2_source` and `o2_flow`, so
+    # neither is a `derivation`; `check_metabolic_rules` holds each `nominal_kg_s` to the leak, the
+    # crew size and the metabolic rate. The break forgets the per-hour-to-per-second step on the
+    # LM's figure — a wrong *value* rather than a wrong shape.
+    anchor = "nominal_kg_s: 2.736470e-05"
+    assert text.count(anchor) == 1, "the fixture no longer matches the LM supply"
+    path.write_text(text.replace(anchor, "nominal_kg_s: 9.851292e-02", 1))
 
     result = run_linter(definition)
     assert result.returncode == 1
-    # `check_declared_derivation`'s wording, which is the rule a `derivation` is held by. The
-    # message says "no longer re-derives" where `rederive` — still used by an edge's `sums_to_h`
-    # and the tick arithmetic — says "does not re-derive".
-    assert "no longer re-derives" in result.stdout
+    assert "state cabin_o2_supply_lm_kg_s" in result.stdout
+    assert "The regulator replaces what the cabin loses" in result.stdout
 
 
 def test_the_water_cycle_edges_have_the_right_way_round(tmp_path):
@@ -15696,18 +15692,20 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
 
 
 def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
-    """ADR 0004 §Direction, amended 2026-10-17: `set_o2_source`'s hazard is its `source` and its `flow`
-    together. A cabin losing pressure is fed by cutting its oxygen (an isolated source, or a flow of
-    `off`), and the service module's reserve is spent only by a flow drawn from `primary`, so neither
-    guard can name its direction with one argument. A condition may list its arguments and name the
+    """ADR 0004 §Direction, amended 2026-10-17: `set_o2_source`'s hazard is its `vehicle` and its
+    `source` together. A cabin losing pressure is fed by cutting its oxygen (an isolated source; a
+    flow of `off` is `set_o2_flow`'s to refuse), each cabin under its own caution, and the service
+    module's reserve is spent only by the CSM's `primary`, so the guards are written over both. A condition may list its arguments and name the
     combinations it applies to; the linter reads each combination as it reads a single value, and HELP
     prints them."""
     o2 = yaml.safe_load((VEHICLE / "domains" / "consumables" / "commands.yaml").read_text())
     verb = next(v for v in o2["commands"] if v["verb"] == "set_o2_source")
-    caution, reserve = verb["interlocks_when"]
-    assert caution["argument"] == reserve["argument"] == ["source", "flow"]
-    assert ["primary", "nominal"] not in caution["values"] and ["isolated", "high"] in caution["values"]
-    assert reserve["values"] == [["primary", "low"], ["primary", "nominal"], ["primary", "high"]]
+    caution, lm_caution, reserve = verb["interlocks_when"]
+    # Over `vehicle` and `source` since PR #64: `flow` moves nothing, and each guard reads one
+    # vehicle's cabin or store.
+    assert caution["argument"] == lm_caution["argument"] == reserve["argument"] == ["vehicle", "source"]
+    assert caution["values"] == [["csm", "isolated"]] and lm_caution["values"] == [["lm", "isolated"]]
+    assert reserve["values"] == [["csm", "primary"]]
 
     generated = subprocess.run(
         [sys.executable, str(VEHICLE / "tools" / "generate_help.py"), "--dir", str(VEHICLE)],
@@ -15715,9 +15713,9 @@ def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
         text=True,
         check=False,
     ).stdout
-    assert "`o2_reserve_10` — only when (`source`, `flow`) is one of (`primary`, `low`)" in generated, generated[-800:]
+    assert "`o2_reserve_10`, `eclss.o2_supply_low` — only when (`vehicle`, `source`) is one of (`csm`, `primary`)" in generated, generated[-800:]
 
-    block = "        values:\n          - [primary, low]\n          - [primary, nominal]\n          - [primary, high]\n"
+    block = "        argument: [vehicle, source]\n        values:\n          - [csm, primary]\n"
 
     def refusal(name: str, old: str, new: str, needle: str) -> None:
         definition = copy_definition(fixture_dir(tmp_path, name))
@@ -15728,17 +15726,17 @@ def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
         out = run_linter(definition).stdout
         assert needle in out, out[-1400:]
 
-    refusal("o2-one", block, block.replace("[primary, low]", "[primary]"), "not a list of 2 values")
-    refusal("o2-bad", block, block.replace("[primary, low]", "[primary, max]"), "which those arguments cannot take")
-    refusal("o2-twice", block, block.replace("[primary, nominal]", "[primary, low]"), "name each combination once")
-    every = "        values:\n" + "".join(
-        f"          - [{s}, {f}]\n" for s in ("primary", "surge", "isolated") for f in ('"off"', "low", "nominal", "high")
+    refusal("o2-one", block, block.replace("[csm, primary]", "[csm]"), "not a list of 2 values")
+    refusal("o2-bad", block, block.replace("[csm, primary]", "[csm, max]"), "which those arguments cannot take")
+    refusal("o2-twice", block, block + "          - [csm, primary]\n", "name each combination once")
+    every = "        argument: [vehicle, source]\n        values:\n" + "".join(
+        f"          - [{v}, {s}]\n" for v in ("csm", "lm") for s in ("primary", "surge", "isolated")
     )
-    refusal("o2-every", block, every, "names every combination of ['source', 'flow']")
+    refusal("o2-every", block, every, "names every combination of ['vehicle', 'source']")
     refusal(
         "o2-argument",
-        "        argument: [source, flow]\n        values:\n          - [primary, low]",
-        "        argument: [source, vehicle_note]\n        values:\n          - [primary, low]",
+        block,
+        block.replace("[vehicle, source]", "[vehicle, source_note]"),
         "which is not an enum argument of this verb",
     )
 
@@ -15838,7 +15836,9 @@ def test_a_command_value_says_which_argument_carries_the_value():
     # Five quantity states joined the eight mode ones this round, and one keyed state declares
     # nothing but its key. 17 -> 21 with ADR 0003: thermal's `coolant_pump`, `evaporator_feed` and
     # `radiator_bypass` and power's `load_enabled`, each keyed; 22 with ECLSS's `suit_fan`.
-    assert declared == 22, declared
+    # 22 -> 24 with `o2_source`, which `set_o2_source`'s `source` moves, and `o2_flow`, which
+    # `set_o2_flow`'s `flow` moves.
+    assert declared == 24, declared
     assert sorted(constants) == [
         "rcs.thruster_valve.isolate_rcs_manifold",
         "structure.pyro_fired.execute_event",
@@ -16281,7 +16281,8 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     # 14 -> 20 with ADR 0003: `set_coolant_pump`, `set_evaporator_feed`, `set_radiator_bypass`
     # (thermal), `set_load` (power), `set_power_amplifier` and `play_recorder` (comms); 21 with
     # `set_suit_fan` (ECLSS).
-    assert len(applied) == 21, applied
+    # 21 -> 23 with `set_o2_source` and `set_o2_flow`, which move `o2_source` and `o2_flow` now.
+    assert len(applied) == 23, applied
     assert "select_antenna" in applied
     # 7 -> 5: `set_coolant_pump` and `set_power_amplifier` stopped owing (ADR 0003): the pump's speed
     # selects `coolant_pump` (thermal) and the amplifier's power selects `transmitter_on` (comms).
@@ -18392,7 +18393,7 @@ def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     definition = copy_definition(tmp_path / "status-line")
     path = definition / "README.md"
     text = path.read_text()
-    # The sentence is hard-wrapped between "142" and "thresholds", so the anchor is the half that
+    # The sentence is hard-wrapped between "144" and "thresholds", so the anchor is the half that
     # fits on one line. A fixture that matched the whole clause would fail on a reflow rather than
     # on the value it is about — the same distinction the reader itself makes.
     old = live_text(text, r"thresholds, \d+ verbs and \d+ classified events")
@@ -20135,8 +20136,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
-    # 27 -> 28 with ECLSS's `suit_fan`.
-    assert len(values["internal"]) == 28, sorted(values["internal"])
+    # 27 -> 28 with ECLSS's `suit_fan`, and 30 with `o2_source` and `o2_flow`.
+    assert len(values["internal"]) == 30, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
@@ -20745,7 +20746,7 @@ def test_a_node_sourced_channel_is_published_in_the_unit_its_channel_declares():
     # **The supply-tank pressure used to be the omitted one, and round 32 gave it a producer.** Its
     # source is no longer a mass: `eclss.o2_supply_pressure_psi` reads `o2_supply_pressure_psi`, the
     # state the ECS study guide's working pressure sizes, and the frame carries it at 900 psig — inside
-    # the channel's own 750-950 band, which the note below holds.
+    # the channel's own 800-975 band, which the note below holds.
     assert values["eclss.o2_supply_pressure_psi"] == pytest.approx(900.0)
     low, high = channels["eclss.o2_supply_pressure_psi"]["range"]
     assert low <= values["eclss.o2_supply_pressure_psi"] <= high
@@ -20973,7 +20974,7 @@ def test_the_ledger_block_names_channels_that_nothing_publishes(tmp_path):
 def test_the_oxygen_supply_pressure_is_a_state_with_a_published_starting_value(tmp_path):
     """A watched channel had a mass for a producer; the ECS guide publishes what belongs there.
 
-    `eclss.o2_supply_pressure_psi` is apollo's 750-950 psi indication — a low-pressure event and a
+    `eclss.o2_supply_pressure_psi` is apollo's psi indication, banded at the AOH's 800-975 caution pair, — a low-pressure event and a
     >5 psi/min fall, four declared faults perturbing it, and the channel that corroborates a leak by
     falling while the cabin pressure is held. It read `o2_csm`, the shared oxygen *stock*, in
     kilograms: a pressure is not a function of a mass, so round 30 omitted it rather than publishing
@@ -21017,7 +21018,9 @@ def test_the_oxygen_supply_pressure_is_a_state_with_a_published_starting_value(t
     # It is on the sentinel, so its order is declared — and the declared order names every sentinel
     # state, which is the rule the linter holds.
     sentinel = [s["id"] for s in eclss["state"] if s.get("node") == "internal"]
-    assert sorted(sentinel) == ["o2_supply_pressure_psi", "suit_fan", "suit_loop_flow_cfm"], sentinel
+    assert sorted(sentinel) == [
+        "o2_flow", "o2_source", "o2_supply_pressure_psi", "suit_fan", "suit_loop_flow_cfm",
+    ], sentinel
     assert sorted(eclss["internal_order"]) == sorted(sentinel)
     assert eclss["internal_order_note"]
 
