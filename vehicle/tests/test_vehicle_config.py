@@ -3654,8 +3654,8 @@ def test_the_engines_the_mission_is_flown_on_are_one_set_of_figures(tmp_path):
     # is the component's line after it.
     refusal(
         "domains/rcs/components.yaml",
-        "    isp_s: 277.8\n    count: 44\n",
-        "    count: 44\n",
+        "    isp_s: 277.8\n    count: 32\n",
+        "    count: 32\n",
         "declares no `isp_s`",
     )
     # And the fields the first version of this check left out, which is the defect it was written
@@ -4078,7 +4078,7 @@ def test_an_edge_whose_value_is_another_declaration_s_function(tmp_path):
     )
     broken(
         "thruster",
-        [("domains/rcs/components.yaml", "    isp_s: 277.8\n    count: 44\n", "    isp_s: 295\n    count: 44\n")],
+        [("domains/rcs/components.yaml", "    isp_s: 277.8\n    count: 32\n", "    isp_s: 295\n    count: 32\n")],
         ["E-RCSP-RCS.sensitivity.derivation"],
     )
     broken(
