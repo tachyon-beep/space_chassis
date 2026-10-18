@@ -14,6 +14,10 @@
 # puts both in front of the same ten agents.
 
 domain: thermal
+# `fleet_class` (the arc review's item 3, same delegation): `onboard` for a fault the service
+# answers itself (`response.kind: service`), `precursor` for one that grows slowly enough for the
+# fleet to see and act on (every advisory here; the fastest is minutes), `out_of_scope` for one
+# out of the fleet's reach, of which thermal has none.
 faults:
   - id: TCS-01-pump-stall
     component: pump_1
@@ -22,7 +26,7 @@ faults:
     seeding:
       on_demand_p: 1.0e-4
       trigger: "any bus voltage below the contactor hold threshold"
-    perturbs: ["thermal.pump_[n]_speed_rpm", thermal.primary_flow_l_min, thermal.pump_1_current_a,
+    perturbs: ["thermal.pump_[n]_speed", thermal.primary_flow_l_min, thermal.pump_1_current_a,
                thermal.coolant_return_c, thermal.avionics_plate_c, thermal.comm_amp_c]
     detection:
       evidence: >-
@@ -32,6 +36,7 @@ faults:
       false_positive_risk: >-
         a closed bypass valve produces the same flow signature with the pump running normally,
         which the speed channel separates
+    fleet_class: onboard
     response: {kind: service, note: "the contactor re-closes when the bus recovers. The service does not hold the pump off, because a coolant pump that chatters is better than one that stays stopped (review-findings.md #7)"}
     provenance:
       basis: apollo
@@ -46,12 +51,13 @@ faults:
       hazard: 2.0e-5
       unit: per_h
       condition: "x2 while running above its rated duty"
-    perturbs: ["thermal.pump_[n]_speed_rpm", thermal.primary_flow_l_min, thermal.pump_1_current_a,
+    perturbs: ["thermal.pump_[n]_speed", thermal.primary_flow_l_min, thermal.pump_1_current_a,
                thermal.coolant_return_c, thermal.avionics_plate_c]
     detection:
       evidence: "speed falling with an unchanged command, and current rising with a falling speed — a disagreement between three channels that were previously consistent"
       latency: "tens of minutes, and it is the fault that most rewards an agent who trends rather than thresholds"
       false_positive_risk: "a rising coolant temperature raises the current too, so the two have to be separated by the speed"
+    fleet_class: precursor
     response: {kind: advisory, note: "the second pump exists; switching to it is a decision with an electrical cost, which is why it is an agent's call rather than the service's"}
     provenance:
       basis: chosen
@@ -71,6 +77,7 @@ faults:
       evidence: "the rejection falls while the inlet temperature rises, and the loop's heat balance no longer closes. The published rejection is an estimate and the discrepancy is the evidence"
       latency: "10-30 min, on the loop rather than on any component"
       false_positive_risk: "an evaporator that is working looks similar from the loop's side; the evaporator's own rejection channel separates them"
+    fleet_class: precursor
     response: {kind: advisory, note: "the answer is a manoeuvre, and a manoeuvre costs propellant and RCS duty. That trade is the experiment"}
     provenance:
       basis: apollo
@@ -93,6 +100,7 @@ faults:
         is evidence, and an agent watching only the water level sees the opposite of a problem
       latency: "minutes to tens of minutes"
       false_positive_risk: "a commanded evaporator feed off is identical from the rejection channel, and the command record is the only separation"
+    fleet_class: precursor
     response: {kind: advisory, note: "the evaporator is the loop's second rejection path; losing it is survivable until it is not, and the crossover is the decision"}
     provenance:
       basis: chosen
@@ -111,6 +119,7 @@ faults:
       evidence: "a zone warming with the heater commanded off, and a bus load that does not fall when the load is switched off"
       latency: "the heater's own zone responds in a time constant; in the service bay that is two hours"
       false_positive_risk: "an unexpected heat input from electronics looks the same; the bus current separates them"
+    fleet_class: onboard
     response: {kind: service, note: "thermal_diode.md:780-797 requires upstream isolation for a stuck heater: the service opens the feed rather than commanding the heater off, because a relay that will not open does not care what it is told"}
     provenance:
       basis: chosen
@@ -137,6 +146,7 @@ faults:
       evidence: "a supply-to-return delta that shrinks at constant load, and a pump drawing less current for the same speed. Both are quiet; the loud one comes last"
       latency: "hours, and it is the slowest fault in the vehicle"
       false_positive_risk: "a falling heat load produces a shrinking delta too. Separating them needs the pump's current, which is why it is a perturbed channel rather than an afterthought"
+    fleet_class: precursor
     response: {kind: advisory}
     provenance:
       basis: chosen
@@ -155,6 +165,7 @@ faults:
       evidence: "the transport temperature lags further behind the supply: the delay itself grows before the flow falls, and only a channel that exists *because* of the delay can show it"
       latency: "the lag is the signal, so the detection time is the growing transit — tens of minutes"
       false_positive_risk: "a slowing pump grows the transit too, and the pump's speed channel is the separation"
+    fleet_class: precursor
     response: {kind: advisory, note: "the remedy is heat, and the heat has to come from somewhere the loop is not reaching"}
     provenance:
       basis: apollo
@@ -180,6 +191,7 @@ faults:
         published rejection and the measured delta-T part company
       latency: "hours — and the correct conclusion is about the sensor, not the loop"
       false_positive_risk: "the whole fault is false-positive-shaped. An agent that reacts to it by reconfiguring the loop has misdiagnosed a sensor as a leak"
+    fleet_class: precursor
     response: {kind: advisory, note: "quality stays GOOD. A silently biased sensor stays GOOD until a real diagnostic catches it (apollo_diode.md:688), and the diagnostic here is redundancy, which the CSM loop lacks — so the discovery has to come from the physics not closing"}
     provenance:
       basis: apollo
@@ -199,6 +211,7 @@ faults:
       evidence: "a bypass command accepted and the loop's behaviour unchanged; the supply temperature keeps rising while the radiator's inlet does not"
       latency: "one time constant of the loop, then the zones follow"
       false_positive_risk: "a radiator that cannot reject because it is sunlit looks the same from the supply channel; the inlet channel separates them"
+    fleet_class: onboard
     response: {kind: service, note: "the valve position is service state and is published as commanded rather than achieved, so the disagreement is visible rather than silent"}
     provenance:
       basis: chosen
@@ -220,6 +233,7 @@ faults:
         stuck current sensor
       latency: "until something else changes, which is the definition of an instrument fault that hides a hardware one"
       false_positive_risk: "none from the flow channel; the discovery mechanism is entirely cross-channel"
+    fleet_class: onboard
     response: {kind: service, note: "the flow channel acquires SUSPECT on a frozen-sensor diagnostic and only on one: the simulator's own knowledge of the fault never reaches a quality code (plant.md §7)"}
     provenance:
       basis: chosen
@@ -233,11 +247,12 @@ faults:
       hazard: 2.0e-4
       unit: per_h
     perturbs: [thermal.primary_flow_l_min, thermal.loop_transport_c, thermal.coolant_return_c,
-               "thermal.pump_[n]_speed_rpm"]
+               "thermal.pump_[n]_speed"]
     detection:
       evidence: "flow falling with the pump at speed and current *rising* — the pump is working harder to move less. The current-versus-flow disagreement is the whole diagnosis"
       latency: "tens of minutes"
       false_positive_risk: "a failing pump raises current while flow falls as well, and the speed channel is the only separation: a restricted loop does not slow the pump, it loads it"
+    fleet_class: precursor
     response: {kind: advisory}
     provenance:
       basis: chosen

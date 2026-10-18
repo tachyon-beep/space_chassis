@@ -789,7 +789,7 @@ def test_every_state_in_a_declared_order_is_actually_advanced():
     # follows its speed") while the speed itself is commanded by `set_coolant_pump` — and no edge
     # carried that. `E-CMD-PUMP` does, and it carries no figure: the notice is gone and the figure
     # is owed instead, which is what the plant's own build order still reports.
-    assert "no inbound edge advances 'pump_1_speed_rpm'" not in result.stdout
+    assert "no inbound edge advances 'pump_1_speed_frac'" not in result.stdout
 
 
 def test_the_build_order_is_the_ticks_own_gap_list():
@@ -1577,10 +1577,12 @@ def test_the_linter_reaches_every_node_a_command_moves(tmp_path):
     # And the pump's driver is the one edge that advances a named state.
     pump = [
         e for e in coupling["edges"]
-        if str(e.get("advances")) == "pump_1_speed_rpm"
+        if str(e.get("advances")) == "pump_1_speed_frac"
     ]
     assert len(pump) == 1 and pump[0]["id"] == "E-CMD-PUMP", pump
-    assert pump[0]["sensitivity"]["value"] == "UNCONFIGURED"
+    # It owed the rated rpm until the speed became a fraction of the rated speed (ADR 0003 item 4,
+    # 2026-10-17); the rating is the unit now, so the command is the target one for one.
+    assert pump[0]["sensitivity"]["value"] == 1.0
 
     def refusal(name: str, rel: str, old: str, new: str, needle: str) -> None:
         definition = copy_definition(tmp_path / name)
@@ -1980,7 +1982,8 @@ def test_the_linter_holds_the_conventions_the_corpus_declares_once(tmp_path):
     linter.check_conventions(documents["vehicle.yaml"], registry, documents, report)
     assert report.refusals == [], report.refusals
     exceptions = documents["vehicle.yaml"]["conventions"]["units_exceptions"]
-    assert len(exceptions) == 11, sorted(exceptions)
+    # 11 -> 10 on 2026-10-17: `rpm` went with the pump's speed channel, now a fraction of rated.
+    assert len(exceptions) == 10, sorted(exceptions)
     # Every channel unit is SI, dimensionless, discrete, or one of the declared exceptions.
     for row in registry.values():
         unit = str(row.get("unit") or "")
@@ -2051,16 +2054,16 @@ def test_the_linter_holds_the_conventions_the_corpus_declares_once(tmp_path):
     refusal(
         "si-exception",
         "vehicle.yaml",
-        '    rpm: "pump speed is published in revolutions per minute and no source gives rad/s"\n',
-        '    rpm: "pump speed is published in revolutions per minute and no source gives rad/s"\n'
+        '    Wh: "battery energy is published in watt-hours and the load budget states it that way; `battery_charge_j` converts once, with `initial_factor: 3600`"\n',
+        '    Wh: "battery energy is published in watt-hours and the load budget states it that way; `battery_charge_j` converts once, with `initial_factor: 3600`"\n'
         '    kg: "declared an exception although it is the SI unit of mass"\n',
         "and it is an SI unit or",
     )
     refusal(
         "unused-exception",
         "vehicle.yaml",
-        '    rpm: "pump speed is published in revolutions per minute and no source gives rad/s"\n',
-        '    rpm: "pump speed is published in revolutions per minute and no source gives rad/s"\n'
+        '    Wh: "battery energy is published in watt-hours and the load budget states it that way; `battery_charge_j` converts once, with `initial_factor: 3600`"\n',
+        '    Wh: "battery energy is published in watt-hours and the load budget states it that way; `battery_charge_j` converts once, with `initial_factor: 3600`"\n'
         '    furlong: "declared and used by no channel"\n',
         "declares 'furlong' as an exception and no channel publishes it",
     )
@@ -10369,7 +10372,8 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # owing the code that would set it: `telemetry_rate` and `bus_tie_closed`, whose
     # `command_value` mappings name profiles and a mode no source prices.
     # One more moved in with the pump: its `on` mapping is an owed rated speed, so what blocks
-    # `pump_1_speed_rpm` is named to a field rather than to the code that would drive it.
+    # `pump_1_speed_rpm` is named to a field rather than to the code that would drive it. (It left
+    # again on 2026-10-17 as `pump_1_speed_frac`, a fraction of the rated speed: ADR 0003 item 4.)
     # Four more moved in when a `computed` effect began naming its input: `link_snr`, `tx_power`,
     # `instrumentation_power` and `nav_solution` are blocked by a field now rather than by the
     # rule that would compute them.
@@ -14789,46 +14793,45 @@ def test_every_thermal_zone_has_a_driver_and_the_exemption_list_is_empty(tmp_pat
     assert "stale exemption" in result.stdout
 
 
-def test_the_bay_conductances_owe_one_scalar_each_not_two(tmp_path):
+def test_the_bay_conductances_follow_from_one_chosen_start_each(tmp_path):
     """`G = C/tau` with `tau` declared means the conductance and the mass are one obligation.
 
     The two bays' time constants are **chosen** where the cabin's is derived — the cabin's relation
     gives `C = 400 kg x 900 J/kg-K = 360,000 J/K` and `G = 125 W/K`, and `tau = C/G` follows. The
-    bays have a tau and a qualitative reason ("the propellant is the mass and the tank wall is the
-    path") and nothing else, so their edges carried `UNCONFIGURED` and the debt was vague.
+    bays had a tau and a qualitative reason ("the propellant is the mass and the tank wall is the
+    path") and nothing else, so they owed one scalar each, and `thermal_diode.md:965`'s refusal to
+    publish thermal constants is why no source closed it.
 
-    Naming *both* the mass and the conductance would be two debts for one unknown, since either
-    determines the other given tau — so the states declare `lumped_mass_kg` alone and the edges'
-    relations say how `1/G` follows from it. What is owed is one scalar per bay: the mass of the
-    propellant and structure the reason already names. `thermal_diode.md:965`'s refusal to publish
-    thermal constants is why it is owed rather than derived, and it is why a plausible number would
-    be exactly the invented figure that document refuses.
+    ADR 0003 item 11 closes it with a choice, labelled as one (2026-10-17): each bay starts in the
+    middle of its declared limits, its conductance is its powered heat over its rise above its
+    loop's supply at that start, and its capacity is that conductance times the tau it carried. So
+    the choice is still one number per bay, and the other two follow from it by arithmetic this test
+    redoes.
     """
     thermal = yaml.safe_load((VEHICLE / "domains" / "thermal" / "components.yaml").read_text())
-    coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
+    vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
     states = {str(s["id"]): s for s in thermal["state"]}
-    edges = {str(e["id"]): e for e in coupling["edges"]}
+    zones = {z["id"]: z for z in vehicle["thermal"]["zones"]}
+    loops = {x["id"]: x for x in vehicle["thermal"]["loops"]}
 
-    for state_id, edge_id, tau in (
-        ("zone_csm_service_t", "E-BAY-HEAT-CSM", 7200),
-        ("zone_lm_descent_t", "E-BAY-HEAT-LM", 10800),
+    for state_id, zone, loop, heat_w, tau, rounded in (
+        ("zone_csm_service_t", "csm_service_bay", "loop_primary", 630, 7200, False),
+        ("zone_lm_descent_t", "lm_descent_bay", "loop_lm", 180, 10800, True),
     ):
         state = states[state_id]
-        assert state["tau_s"] == tau
-        assert state["lumped_mass_kg"] == "UNCONFIGURED"
-        # One obligation, not two: the conductance follows from the mass and tau by division.
-        assert "conductance_w_per_k" not in state, f"{state_id} declares the same unknown twice"
-        assert edges[edge_id]["sensitivity"]["value"] == "UNCONFIGURED"
-        assert "G = C/tau" in edges[edge_id]["sensitivity"]["relation"], edge_id
-        # **And the relation is a derivation now.** The round that found `lumped_mass_kg` read by
-        # nothing made both edges name the scalar and the division, so the edge is no longer a
-        # second count of the zone's unknown: `check_declared_derivation` skips an owed input and
-        # the debt stays where the quantity lives.
-        sensitivity = edges[edge_id]["sensitivity"]
-        assert sensitivity["basis"] == "derived", edge_id
-        assert sensitivity["derivation"]["expression"] == (
-            "tau_s / (lumped_mass_kg * specific_heat_j_per_kg_k)"
-        ), edge_id
+        low, high = zones[zone]["limit_c"]
+        assert state["initial"] == pytest.approx((low + high) / 2 + 273.15), state_id
+        rise = state["initial"] - (loops[loop]["supply_c"] + 273.15)
+        conductance = heat_w / rise
+        if rounded:
+            conductance = round(conductance)
+        assert state["conductance_w_per_k"] == pytest.approx(conductance, rel=1e-12), state_id
+        capacity = state["conductance_w_per_k"] * tau
+        assert state["lumped_mass_kg"] * state["specific_heat_j_per_kg_k"] == pytest.approx(
+            capacity, rel=1e-12
+        ), state_id
+        # And the bound the reason states: the steady rise keeps the bay under its upper limit.
+        assert heat_w / state["conductance_w_per_k"] < high - loops[loop]["supply_c"], state_id
 
     # The cabin's, by contrast, is derived from both — which is what makes the pair the template.
     cabin = states["zone_csm_cabin_t"]
@@ -15380,7 +15383,9 @@ def test_the_plant_counts_a_regime_table_as_a_declared_sensitivity():
         "the integrator multiplies by a value and a table is not one; if this ever becomes True the "
         "stock integrator will start applying a mode selection as a gain"
     )
-    assert by_id["E-CMD-PUMP"].usable is False, "the pump edge owes its rated speed"
+    # The pump edge owed its rated speed until 2026-10-17, when the speed became a fraction of rated
+    # (ADR 0003 item 4) and its sensitivity 1.0 per command.
+    assert by_id["E-CMD-PUMP"].usable is True
     assert by_id["E-GEOM-LINK"].usable is True
 
     # And the headline is the count of *declared* edges, which is the two forms together.
@@ -16492,7 +16497,7 @@ def test_a_computed_effect_names_the_input_the_command_changes(tmp_path):
     assert sorted(resolved) == [
         "comms.link_snr <- select_antenna",
         "comms.tx_power <- set_power_amplifier",
-        "thermal.pump_1_speed_rpm <- set_coolant_pump",
+        "thermal.pump_1_speed_frac <- set_coolant_pump",
     ], resolved
     assert resolved["comms.link_snr <- select_antenna"][1] == "antenna_selection"
     # The two halves agree, which is what the check enforces and what makes the effect performable.
@@ -18250,10 +18255,11 @@ def test_the_linter_refuses_a_registry_census_that_has_drifted_from_the_registry
     text = path.read_text()
     # 44/14 -> 43/15 in round 33, when `prop.dps_throttle_pct`'s operating band became a scale: the
     # census follows the registry, and the fixture below moves it by one channel rather than by a
-    # kind, which is the smallest change the reader has to catch.
-    old = "58 channels carry the field — 43 `band`, 15 `scale`"
+    # kind, which is the smallest change the reader has to catch. 43/15 -> 42/16 on 2026-10-17, when
+    # `thermal.pump_[n]_speed` became a fraction of rated speed, a scale.
+    old = "58 channels carry the field — 42 `band`, 16 `scale`"
     assert old in text, "the fixture no longer matches the range_kind census"
-    path.write_text(text.replace(old, "57 channels carry the field — 43 `band`, 14 `scale`", 1))
+    path.write_text(text.replace(old, "57 channels carry the field — 42 `band`, 15 `scale`", 1))
     result = run_linter(definition)
     assert result.returncode == 1
     assert "states the `range_kind` census as 57 channels" in result.stdout, result.stdout[-900:]
@@ -18888,24 +18894,25 @@ def test_a_zones_time_constant_is_its_lump_over_its_conductance(tmp_path):
     assert plate["conductance_w_per_k"] == 120 and plate["provenance"]["basis"] == "chosen"
     assert 60 * 900 / 120 == 450 and "C/G = 450 s" in plate["provenance"]["reason"]
 
-    # The two bays keep their owed mass, and it is now the *one* scalar between the zone and a
-    # closed edge: both edges carry the division that reads it.
+    # The two bays left the `lag` class on 2026-10-17 the same way (ADR 0003 item 11): a lag driven
+    # in K per W relaxes toward `Q x tau / (m x c_p)` measured from 0 K, which no mass in the bays'
+    # bands could make a temperature. Each is a heat balance on its loop now, with a chosen C and G
+    # whose ratio is the time constant it carried, and its heat edge is the identity in W per W.
     coupling = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
     edges = {e["id"]: e for e in coupling["edges"]}
-    for edge_id, zone in (
-        ("E-BAY-HEAT-CSM", "zone_csm_service_t"),
-        ("E-BAY-HEAT-LM", "zone_lm_descent_t"),
+    for edge_id, zone, tau in (
+        ("E-BAY-HEAT-CSM", "zone_csm_service_t", 7200),
+        ("E-BAY-HEAT-LM", "zone_lm_descent_t", 10800),
     ):
-        assert states[zone]["lumped_mass_kg"] == "UNCONFIGURED", zone
-        assert states[zone]["specific_heat_j_per_kg_k"] == 900, zone
+        state = states[zone]
+        assert state["method"] == "dynamics" and "tau_s" not in state, zone
+        assert state["specific_heat_j_per_kg_k"] == 900, zone
+        assert state["provenance"]["basis"] == "chosen", zone
+        capacity = state["lumped_mass_kg"] * state["specific_heat_j_per_kg_k"]
+        assert capacity / state["conductance_w_per_k"] == tau, zone
         sensitivity = edges[edge_id]["sensitivity"]
-        assert sensitivity["basis"] == "derived", edge_id
-        assert sensitivity["derivation"]["expression"] == (
-            "tau_s / (lumped_mass_kg * specific_heat_j_per_kg_k)"
-        ), edge_id
-        assert sensitivity["derivation"]["inputs"]["lumped_mass_kg"] == (
-            f"domains/thermal/components.yaml:state.{zone}.lumped_mass_kg"
-        ), edge_id
+        assert (sensitivity["value"], sensitivity["unit"]) == (1.0, "W per W"), edge_id
+        assert edges[edge_id]["kind"] == "rate", edge_id
 
     # A lump that disagrees with its own time constant is refused.
     definition = copy_definition(tmp_path / "lump")
@@ -18930,8 +18937,11 @@ def test_the_thermal_bays_refuse_a_source_from_the_wrong_vehicle_or_an_unverifie
     source = VEHICLE / "domains" / "thermal" / "components.yaml"
     clean = yaml.safe_load(source.read_text())
     states = {state["id"]: state for state in clean["state"]}
-    assert states["zone_csm_service_t"]["lumped_mass_kg"] == "UNCONFIGURED"
-    assert states["zone_lm_descent_t"]["lumped_mass_kg"] == "UNCONFIGURED"
+    # The bays carry chosen lumps now (ADR 0003 item 11), and the audit says what a sourced one
+    # would need: the chosen values do not certify a source.
+    for zone in ("zone_csm_service_t", "zone_lm_descent_t"):
+        assert states[zone]["provenance"]["basis"] == "chosen", zone
+        assert "source_audit" in states[zone]["provenance"], zone
     for name, old, new in (
         ("cross_vehicle", "candidate_document: TIR 580-S-7159", "candidate_document: LM0-510-1036"),
         ("false_effectivity", "candidate_effectivity: LM-3 only; LM-5 applicability unverified", "candidate_effectivity: LM-5"),
@@ -18963,6 +18973,10 @@ def test_an_edge_that_names_where_its_value_comes_from_is_not_a_second_debt(tmp_
     an edge `derived` from an owed field appeared twice in the headline. Two edges reached that state
     the moment their derivations landed, and the count is the figure a reader plans against.
 
+    Those two were the bays' heat edges, which became the identity when the bays became heat
+    balances with chosen lumps (2026-10-17), so the live vehicle has none left and the case is a
+    broken copy: the descent bay's mass owed again, and its edge derived from it.
+
     Skipping them is not a hole: a derivation whose inputs are all numbers resolves, and
     `check_declared_derivation` refuses it for carrying nothing to hold it against — this test drives
     that direction too, so the skip cannot become a way to owe a value quietly.
@@ -18974,28 +18988,42 @@ def test_an_edge_that_names_where_its_value_comes_from_is_not_a_second_debt(tmp_
         if (e.get("sensitivity") or {}).get("value") == "UNCONFIGURED"
         and (e.get("sensitivity") or {}).get("derivation")
     ]
-    assert derived == ["E-BAY-HEAT-CSM", "E-BAY-HEAT-LM"], derived
-    result = run_linter(VEHICLE, strict=True)
-    for edge_id in derived:
-        assert f"coupling.yaml:edge {edge_id}:" not in result.stdout, (
-            f"{edge_id} is counted as a debt of its own as well as where its input lives"
+    assert derived == [], derived
+
+    def owed_edge(name: str, inputs: str) -> Path:
+        definition = copy_definition(tmp_path / name)
+        components = definition / "domains" / "thermal" / "components.yaml"
+        text = components.read_text()
+        old = "    lumped_mass_kg: 768\n"
+        assert old in text, "the fixture no longer matches the descent bay's lump"
+        components.write_text(text.replace(old, "    lumped_mass_kg: UNCONFIGURED\n", 1))
+        path = definition / "coupling.yaml"
+        text = path.read_text()
+        start = text.index("  - id: E-BAY-HEAT-LM\n")
+        end = text.index("    from: descent_bay_heat\n", start)
+        path.write_text(
+            text[:start]
+            + "  - id: E-BAY-HEAT-LM\n    sensitivity:\n      value: UNCONFIGURED\n"
+            + '      unit: "W per W"\n      basis: derived\n      derivation:\n'
+            + "        expression: lumped_mass_kg / lumped_mass_kg\n        inputs:\n"
+            + inputs
+            + '      relation: "a fixture: one owed input, divided by itself"\n'
+            + '      at: "descent bay, lumped"\n'
+            + text[end:]
         )
+        return definition
+
+    reference = "domains/thermal/components.yaml:state.zone_lm_descent_t.lumped_mass_kg"
+    definition = owed_edge("owed", f"          lumped_mass_kg: {reference}\n")
+    result = run_linter(definition, strict=True)
+    assert "coupling.yaml:edge E-BAY-HEAT-LM:" not in result.stdout, (
+        "E-BAY-HEAT-LM is counted as a debt of its own as well as where its input lives"
+    )
     # And the input is still counted, exactly once.
-    assert result.stdout.count("lumped_mass_kg: is UNCONFIGURED") == 2, result.stdout[-900:]
+    assert result.stdout.count("lumped_mass_kg: is UNCONFIGURED") == 1, result.stdout[-900:]
 
     # The other direction: an evaluable derivation with nothing to hold it against is refused.
-    definition = copy_definition(tmp_path / "evaluable")
-    path = definition / "coupling.yaml"
-    text = path.read_text()
-    old = (
-        "          tau_s: domains/thermal/components.yaml:state.zone_lm_descent_t.tau_s\n"
-        "          lumped_mass_kg: domains/thermal/components.yaml:state.zone_lm_descent_t.lumped_mass_kg\n"
-        "          specific_heat_j_per_kg_k: domains/thermal/components.yaml:state.zone_lm_descent_t.specific_heat_j_per_kg_k\n"
-    )
-    assert old in text, "the fixture no longer matches E-BAY-HEAT-LM's derivation"
-    path.write_text(
-        text.replace(old, "          tau_s: 10800\n          lumped_mass_kg: 400\n          specific_heat_j_per_kg_k: 900\n", 1)
-    )
+    definition = owed_edge("evaluable", "          lumped_mass_kg: 400\n")
     result = run_linter(definition)
     assert result.returncode == 1
     assert "which there is nothing to hold it against" in result.stdout, result.stdout[-900:]
@@ -20325,17 +20353,17 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     # channel's until round 34 converted it, which is exactly the drift this fixture exists to
     # notice — the needle is now the pump's commanded row, which is prose and declares nothing owed.
     old = (
-        "  - channel: thermal.pump_1_commanded\n    from: pump_1_speed_rpm\n    layer: service\n"
+        "  - channel: thermal.pump_1_commanded\n    from: pump_1_speed_frac\n    layer: service\n"
         '    derivation: "the commanded state, not the achieved one"\n'
     )
     assert old in points, "the fixture no longer matches the pump's commanded point row"
     new = (
-        "  - channel: thermal.pump_1_commanded\n    from: pump_1_speed_rpm\n    layer: service\n"
+        "  - channel: thermal.pump_1_commanded\n    from: pump_1_speed_frac\n    layer: service\n"
         "    derivation:\n"
-        '      expression: "speed_rpm / rated_rpm"\n'
+        '      expression: "speed / rated"\n'
         "      inputs:\n"
-        "        speed_rpm: pump_1_speed_rpm\n"
-        "        rated_rpm: 12000\n"
+        "        speed: pump_1_speed_frac\n"
+        "        rated: 1\n"
     )
     path.write_text(points.replace(old, new, 1))
     result = run_linter(definition)
@@ -20590,17 +20618,16 @@ def test_every_integrator_declares_where_its_value_starts(tmp_path):
     # where the decision and what would close it are written.
     unannotated = copy_definition(fixture_dir(tmp_path, "lag-note"))
     path = unannotated / "domains" / "thermal" / "components.yaml"
-    # `comm_amp_t` was the state until ADR 0003 item 10 derived its start; the CSM service bay's
-    # temperature is still owed, with the note that says why.
-    start = components.index("  - id: zone_csm_service_t")
-    end = components.index("  - id: zone_lm_cabin_t")
-    block = components[start:end]
-    assert "    initial_note: >-\n" in block
-    # The note *only* comes out — the state's provenance stays, so this fixture isolates one refusal
-    # rather than three, and the pattern takes the key line and its block scalar's own continuation.
-    stripped = re.sub(r"(?m)^    initial_note: >-\n(?:^      .*\n)+", "", block)
-    assert "initial_note" not in stripped and "initial: UNCONFIGURED" in stripped
-    path.write_text(components[:start] + stripped + components[end:])
+    # `comm_amp_t` was the state until ADR 0003 item 10 derived its start, and the CSM service bay
+    # until 2026-10-17, when it got a chosen one (and it is `dynamics` now, which this rule does not
+    # read). No integrator owes its start now, so the fixture makes the LM cabin's lag owe it: the
+    # value becomes `UNCONFIGURED` and its source comes out, leaving an owed start with no note.
+    lag = (
+        "    initial: 295\n"
+        "    initial_source: vehicle.yaml:thermal.zones.lm_cabin.nominal_temperature_k\n"
+    )
+    assert lag in components, "the fixture no longer matches the LM cabin's start"
+    path.write_text(components.replace(lag, "    initial: UNCONFIGURED\n", 1))
     result = run_linter(unannotated)
     assert result.returncode == 1
     assert "is UNCONFIGURED with no `initial_note`" in result.stdout, result.stdout[-900:]
@@ -21245,7 +21272,8 @@ def test_no_published_frame_value_sits_outside_its_channel_s_band():
                 if isinstance(precision, (int, float)) and precision > 0:
                     decimals = max(0, int(round(-math.log10(precision))))
                 bands[str(row["id"])] = (float(rng[0]), float(rng[1]), decimals)
-    assert len(bands) == 43, len(bands)
+    # 43 -> 42 on 2026-10-17: the pump's speed channel is a scale now, a fraction of rated.
+    assert len(bands) == 42, len(bands)
 
     world = plant.load_world(VEHICLE)
     started = plant.initial_values(world)
@@ -21386,9 +21414,9 @@ def test_a_prose_row_says_whether_it_is_a_chore_or_a_debt(tmp_path):
     # aimed at the wrong row.
     moved = fixture(
         "owed-count",
-        '  - channel: thermal.pump_1_commanded\n    from: pump_1_speed_rpm\n    layer: service\n'
+        '  - channel: thermal.pump_1_commanded\n    from: pump_1_speed_frac\n    layer: service\n'
         '    derivation: "the commanded state, not the achieved one"\n',
-        '  - channel: thermal.pump_1_commanded\n    from: pump_1_speed_rpm\n    layer: service\n'
+        '  - channel: thermal.pump_1_commanded\n    from: pump_1_speed_frac\n    layer: service\n'
         '    derivation: "the commanded state, not the achieved one"\n'
         "    owed: >-\n      a fixture row that declares itself owed, with a sentence long enough to\n"
         "      pass the length rule and short enough to read, naming what would close it\n",
@@ -21470,7 +21498,7 @@ def test_the_mechanical_conversions_land_on_the_declarations_that_sized_them():
     # And a channel whose derivation is still prose is omitted rather than filled with its source's
     # number, which is the property those two used to demonstrate.
     assert frame["avionics.computer_mode"] == "idle"
-    assert "thermal.pump_1_speed_rpm" not in frame
+    assert "thermal.pump_1_current_a" not in frame
 
     # The nine, by the registry's own count of evaluable derivations.
     lint = run_linter(VEHICLE)
