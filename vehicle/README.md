@@ -19613,6 +19613,49 @@ view of exit 4) is the chassis's, after this merges.
 |---|---:|---:|
 | referee tests | 537 | **564** |
 
+## The forty-four thrusters have a place and a direction, and the CM's twelve are a different engine (#44, WP03)
+
+**What was wrong.** `domains/rcs` owed "the unit thrust direction and lever arm of each of the 44
+thrusters", so the allocator had no wrench matrix, and `thruster_100lbf` declared all forty-four as
+one 100 lbf, 277.8 s article, the CM's twelve included.
+
+**The two halves.** The vehicle's half is `domains/rcs/components.yaml#geometry`: three jet tables,
+each in a frame `vehicle.yaml#mass_properties.frames` declares (`APOLLO_XA`, the new `CM_XC`,
+`LM_XE`), each jet keyed `SM-<n>`, `CM-<n>` or `LM-<n>` so the three tables' overlapping source
+numbers cannot collide in the per-thruster maps. The sources' half is the research record,
+`docs/evidence/wp03-rcs-geometry.md` (G-1 to G-7), every value cited by document and page: the
+CSM Data Book (SNA-8-D-027(I) Rev 3), the Operational Data Book Vol. III, the AOH, GSOP R-577
+s. 3 and s. 6, GSOP R-567 s. 6 and TN D-7151. `check_rcs_geometry` holds the tables to them.
+
+| what | before | after | the check that holds it |
+|---|---|---|---|
+| SM jets | owed | 16 jets on quads A-D with AOH names, station 958.97 in, radii 82.36 / 83.00 in, offset -7.25 deg, cant 10 deg | torque and translation from r x F; names; the five placement figures held to their published values |
+| CM jets | owed | engines 11-16, 21-26, positions and thrust vectors rebuilt from Data Book Fig 4.4-2's angles | each vector rebuilt to 0.001 and its torque sign checked; the exact engine numbers; three-vectors |
+| LM jets | owed | 16 jets in LM_XE from R-567, matching the ODB's 254.0 / 66.1 / 61.5 in | the ODB arms; exhaust away from the cluster; each jet in its quad numeral's quadrant |
+| CM engine | the SM article, 445 N, 277.8 s | `thruster_cm`, 427 N (96.0 lb), 272.0 s, DB1 Table 4.4-1 | the vehicle_keys join, counts 32 + 12 |
+| CM impulse capacity | 305,120 N*s | **298,750 N*s** | |
+
+**The mistakes the round made.** The first pass read OCR text layers, which had lost the signs of
+LM jets 1, 4 and 13 and of several CM components; the exhaust-outward rule predicted all three LM
+signs before the rendered pages confirmed them. The record first said the CM's cross-axis torques
+cancel when both subsystems fire; recomputed about the check point, only the pitch pairs cancel, and
+a yaw or roll pair leaves 6-9 % cross-axis torque, which is now the confounder the record names.
+The first version of the rule checked only signs, so a wrong station, cant or radius, or the LM table
+turned 180 deg, composed; the review rounds (Codex, and the project's reviewer) added the value,
+quadrant, identity and shape checks.
+
+**Still owed.** The SM roll lines' 0.94 in fore-aft offset (adds no decision), the CM forward pitch
+engines' undimensioned tilt, the CM nozzle extensions' alignment angles, each configuration's centre
+of mass, and the CM's own propellant coefficient on `E-RCSP-RCS`, which debits CM firings 2.1 % low
+(an open debt, the GNC and RCS lane's).
+
+| figure | before | after |
+|---|---:|---:|
+| RCS jet-table refusal cases (one test) | 0 | **19** |
+| declared debts (main before this follow-up) | 263 | **264** |
+| thruster articles | 1 | **2** |
+| declared frames | 2 | **3** (`CM_XC`) |
+
 ## The invariants, and which of them are enforced
 
 

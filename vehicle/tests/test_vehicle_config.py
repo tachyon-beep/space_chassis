@@ -18153,7 +18153,7 @@ def test_the_linter_refuses_a_debt_about_a_coupling_edge_that_has_stopped_owing(
     definition = copy_definition(tmp_path / "senseless-debt")
     path = definition / "vehicle.yaml"
     text = path.read_text()
-    old = "each unit thrust direction and lever arm from the centre of mass."
+    old = "so the allocator still cannot select jets and the deadband still has no derivation."
     assert old in text, "the fixture no longer matches the thruster-geometry debt"
     path.write_text(
         text.replace(old, old + " Without them E-BUS-PUMP has no sensitivity.", 1)
@@ -18581,8 +18581,75 @@ def test_the_linter_refuses_an_rcs_jet_table_that_breaks_its_cross_check(tmp_pat
     The LM table is a simulator's, and its positions must reproduce the Operational Data Book's
     66.1 in moment arm; its jet 4 sign is derived from the rule that a jet exhausts away from its
     own cluster, so flipping it back to the printed +Y must be refused.
+
+    Signs cannot see scale or placement, so the breaks that keep every sign are here too: a wrong
+    SM station or cant, a CM table with no stated relation to the Apollo frame, and the whole LM
+    table turned 180 deg about X, which keeps every arm and every exhaust direction. And the
+    breaks that keep every relation but lose identity or shape: a CM engine renumbered, a
+    two-element position (which crashed the rule rather than refusing), a frame the vehicle does
+    not declare or a declared but wrong one, an LM jet renumbered, an LM table whose thruster_ids
+    collide with the SM's, a second CM_XC transform, and a mass_properties that is not a mapping.
     """
+
+    def rotate_lm(doc):
+        for jet in doc["geometry"]["rcs_lm"]["jets"]:
+            p = jet["position_m"]
+            jet["position_m"] = [p[0], -p[1], -p[2]]
+            axis = jet["force_axis"]
+            if axis[1] in "YZ":
+                jet["force_axis"] = ("-" if axis[0] == "+" else "+") + axis[1]
+
     for name, break_entry, expected in (
+        (
+            "sm-station-misread",
+            lambda doc: doc["geometry"]["rcs_sm"].update(quad_station_xa_in=958.0),
+            "rcs_sm.quad_station_xa_in: declares 958.0",
+        ),
+        (
+            "sm-cant-misread",
+            lambda doc: doc["geometry"]["rcs_sm"].update(cant_deg=5.0),
+            "rcs_sm.cant_deg: declares 5.0",
+        ),
+        (
+            "cm-frame-unstated",
+            lambda doc: doc["geometry"]["rcs_cm"].pop("frame_to_apollo_xa"),
+            "rcs_cm.frame_to_apollo_xa: declares None",
+        ),
+        (
+            "lm-table-rotated-180",
+            rotate_lm,
+            "rcs_lm.jets.1: is 'IV-U' and sits at Y, Z signs",
+        ),
+        (
+            "cm-engine-renumbered",
+            lambda doc: doc["geometry"]["rcs_cm"]["jets"][2].update(id=33),
+            "must list the CM's twelve engines by their AOH numbers",
+        ),
+        (
+            "cm-position-short",
+            lambda doc: doc["geometry"]["rcs_cm"]["jets"][0].update(position_in=[32.3, 51.9]),
+            "rcs_cm.jets.11: needs a numeric three-vector position_in",
+        ),
+        (
+            "lm-frame-undeclared",
+            lambda doc: doc["geometry"]["rcs_lm"].update(frame="LM_XX"),
+            "rcs_lm.frame: is 'LM_XX', which vehicle.yaml:mass_properties.frames does not declare",
+        ),
+        (
+            "lm-frame-wrong-declared",
+            lambda doc: doc["geometry"]["rcs_lm"].update(frame="APOLLO_XA"),
+            "rcs_lm.frame: is 'APOLLO_XA'; the rcs_lm jet positions are read in LM_XE",
+        ),
+        (
+            "lm-jet-renumbered",
+            lambda doc: doc["geometry"]["rcs_lm"]["jets"][5].update(id=17),
+            "rcs_lm: must list jets 1 to 16 in order",
+        ),
+        (
+            "lm-ids-collide-with-sm",
+            lambda doc: doc["geometry"]["rcs_lm"].update(thruster_id_prefix="SM"),
+            "rcs_lm.thruster_id_prefix: is 'SM'",
+        ),
         (
             "sm-jet-on-wrong-quad",
             lambda doc: doc["geometry"]["rcs_sm"]["jets"][0].update(quad="A"),
@@ -18626,6 +18693,32 @@ def test_the_linter_refuses_an_rcs_jet_table_that_breaks_its_cross_check(tmp_pat
         rcs = yaml.safe_load(path.read_text())
         break_entry(rcs)
         path.write_text(yaml.safe_dump(rcs, sort_keys=False))
+        result = run_linter(broken)
+        assert result.returncode == 1
+        assert expected in result.stdout, result.stdout[-1500:]
+
+    # The frames the tables are read in live in vehicle.yaml, so the frame relation breaks there.
+    def second_transform(doc):
+        frame = next(f for f in doc["mass_properties"]["frames"] if f["id"] == "CM_XC")
+        frame["axial_transforms"].append({**frame["axial_transforms"][0], "origin_in": 0.0})
+
+    for name, break_vehicle, expected in (
+        (
+            "cm-frame-second-transform",
+            second_transform,
+            "CM_XC: must carry exactly one axial transform",
+        ),
+        (
+            "mass-properties-not-a-mapping",
+            lambda doc: doc.update(mass_properties=["frames"]),
+            "rcs_sm.frame: is 'APOLLO_XA', which vehicle.yaml:mass_properties.frames does not declare",
+        ),
+    ):
+        broken = copy_definition(tmp_path / name)
+        path = broken / "vehicle.yaml"
+        vehicle = yaml.safe_load(path.read_text())
+        break_vehicle(vehicle)
+        path.write_text(yaml.safe_dump(vehicle, sort_keys=False))
         result = run_linter(broken)
         assert result.returncode == 1
         assert expected in result.stdout, result.stdout[-1500:]
@@ -19299,7 +19392,7 @@ def test_the_docked_configuration_s_mass_properties_re_derive_from_the_data_book
     vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
     block = vehicle["mass_properties"]
     frames = {f["id"]: f for f in block["frames"]}
-    assert sorted(frames) == ["APOLLO_XA", "LM_XE"], sorted(frames)
+    assert sorted(frames) == ["APOLLO_XA", "CM_XC", "LM_XE"], sorted(frames)
     frame = frames["APOLLO_XA"]
     # The datum itself: without this transformation a station is a number against nothing.
     assert "SNA-8-D-027" in frame["provenance"]["source"], frame["provenance"]["source"]
@@ -19434,7 +19527,7 @@ def test_the_other_three_configurations_mass_properties_re_derive_from_their_own
     vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
     block = vehicle["mass_properties"]
     frames = {f["id"] for f in block["frames"]}
-    assert frames == {"APOLLO_XA", "LM_XE"}
+    assert frames == {"APOLLO_XA", "CM_XC", "LM_XE"}
 
     tables = {t["id"]: t for t in block["tables"]}
     kg_per_lb, in_to_m, slug_ft2_to_kg_m2 = 0.45359237, 0.0254, 1.355817948330809

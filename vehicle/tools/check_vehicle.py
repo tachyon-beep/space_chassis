@@ -13281,6 +13281,26 @@ RCS_AXES = {
 }
 # Each SM quad's angle from +Y_c towards +Z_c in the DAP's control axes (R-577 s. 3.2).
 RCS_SM_QUAD_ANGLE_DEG = {"B": 0.0, "C": 90.0, "D": 180.0, "A": 270.0}
+# The SM quad placement as published: Data Book SNA-8-D-027(I) Fig 4.3-2 and ODB Fig 2-5 (station,
+# both radii, 10 deg cant, 7 deg 15' offset), restated by R-577 s. 6.4.1.3 (station, negative
+# rotation about +X, CANT 10.0). The torque-sign check is blind to all five, so each is held here.
+RCS_SM_PUBLISHED = {
+    "frame": "APOLLO_XA",
+    "quad_station_xa_in": 958.97,
+    "pitch_yaw_radius_in": 82.36,
+    "roll_radius_in": 83.00,
+    "quad_offset_deg": -7.25,
+    "cant_deg": 10.0,
+}
+# The CM frame against the Apollo frame (R577-6 s. 6.11.2, CG 1045.1 in "Apollo coordinates"
+# against X_C 45.1), and each LM cluster's Y and Z signs by its quad numeral (R-567 s. 6.4.1.4).
+RCS_CM_FRAME = {"x_offset_in": 1000.0, "axes": "parallel"}
+# The CM engines by their AOH Figure 2.5-1 numbers, and each table's thruster_id prefix.
+RCS_CM_ENGINE_IDS = [11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26]
+RCS_THRUSTER_ID_PREFIX = {"rcs_sm": "SM", "rcs_cm": "CM", "rcs_lm": "LM"}
+RCS_TABLE_FRAME = {"rcs_sm": "APOLLO_XA", "rcs_cm": "CM_XC", "rcs_lm": "LM_XE"}
+RCS_CM_FRAME_TRANSFORM = {"configuration": "all", "scale": 1, "origin_in": 1000.0, "lateral_rotation": "none"}
+RCS_LM_QUAD_SIGNS = {"I": (False, True), "II": (False, False), "III": (True, False), "IV": (True, True)}
 
 
 def rcs_sm_jet_vector(jet: dict[str, Any], cant_deg: float) -> tuple[float, float, float]:
@@ -13316,13 +13336,26 @@ def check_rcs_cm_vectors(
         21: theta.get("G", 0.0) - alpha,
         22: theta.get("G", 0.0) + beta,
     }
-    check_point = cm.get("torque_check_point_in") or [0.0, 0.0, 0.0]
+    def vector3(value: Any) -> bool:
+        return (
+            isinstance(value, list)
+            and len(value) == 3
+            and all(type(v) in (int, float) for v in value)
+        )
+
+    check_point = cm.get("torque_check_point_in")
+    if not vector3(check_point):
+        report.refuse(f"{where}.torque_check_point_in", "must be a numeric three-vector in inches")
+        return
     index = {"roll": 0, "pitch": 1, "yaw": 2}
     for jet in jets:
         jid, position = jet.get("id"), jet.get("position_in")
         declared, torque = jet.get("thrust_unit"), str(jet.get("torque", ""))
-        if not isinstance(position, list) or not isinstance(declared, list) or torque[1:] not in index:
-            report.refuse(f"{where}.jets.{jid}", "needs a position, a thrust_unit and a function")
+        if not vector3(position) or not vector3(declared) or torque[1:] not in index:
+            report.refuse(
+                f"{where}.jets.{jid}",
+                "needs a numeric three-vector position_in and thrust_unit, and a function",
+            )
             continue
         if jid in roll_exhaust:
             angle = math.radians(roll_exhaust[jid])
@@ -13358,36 +13391,106 @@ def check_rcs_cm_vectors(
 def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
     """The RCS jet tables must reproduce the sources that cross-check them.
 
-    `domains/rcs/components.yaml#geometry` lands two jet tables (`docs/evidence/
-    wp03-rcs-geometry.md`). Each was transcribed by hand from an OCR text layer, so each carries
-    a relation it must satisfy, and a transcription error breaks it:
+    `domains/rcs/components.yaml#geometry` lands three jet tables (`docs/evidence/
+    wp03-rcs-geometry.md`). Each was transcribed by hand from a source page, so each carries a
+    relation it must satisfy, and a transcription error breaks it:
 
       - **SM.** The table is the CSM digital autopilot's selection tables (R-577 s. 3,
         Tables 3.2-III to 3.2-X) placed on quads. Every jet's declared torque and translation is
         re-derived from tau = r x F at its quad's centreline intersection, and a jet whose geometry
         would turn or push the vehicle the other way is refused. Four jets per quad, two
         rotational and two roll, sixteen in all.
+      - **CM.** Each subsystem turns the CM both ways about every axis, and every thrust vector
+        is rebuilt from the Data Book drawing's angles and its torque sign checked
+        (`check_rcs_cm_vectors`).
       - **LM.** The simulator's positions must reproduce the Operational Data Book's three
         flight-hardware dimensions (254.0 in cluster plane, 66.1 and 61.5 in effective moment
         arms) to their printed tenth of an inch, and every jet must exhaust away from its own
         cluster's centre, which is the rule that decides jet 4's unread sign.
+
+    Signs alone are blind to scale and placement: a wrong station, radius, cant or offset, or a
+    whole LM table turned 180 deg about X, keeps every torque sign. So the SM's five placement
+    figures are held to their published values (`RCS_SM_PUBLISHED`), the CM frame to its stated
+    offset from the Apollo frame, and each LM jet to the quadrant its quad numeral names.
     """
     raw_rcs = documents.get("domains/rcs/components.yaml")
     rcs = raw_rcs if isinstance(raw_rcs, dict) else {}
     geometry = rcs.get("geometry")
     where = "domains/rcs/components.yaml:geometry"
     if not isinstance(geometry, dict):
-        report.refuse(where, "is absent; the SM and LM jet tables live here")
+        report.refuse(where, "is absent; the SM, CM and LM jet tables live here")
         return
+
+    # Every table's frame is one the vehicle declares, and every jet has a thruster_id that no
+    # other table's jet shares.
+    raw_vehicle = documents.get("vehicle.yaml")
+    mass_properties = raw_vehicle.get("mass_properties") if isinstance(raw_vehicle, dict) else None
+    raw_frames = mass_properties.get("frames") if isinstance(mass_properties, dict) else None
+    declared_frames = {
+        str(f.get("id")): f for f in (raw_frames if isinstance(raw_frames, list) else []) if isinstance(f, dict)
+    }
+    thruster_ids: dict[str, str] = {}
+    for key, prefix in RCS_THRUSTER_ID_PREFIX.items():
+        table = geometry.get(key)
+        if not isinstance(table, dict):
+            continue
+        if table.get("frame") not in declared_frames:
+            report.refuse(
+                f"{where}.{key}.frame",
+                f"is {table.get('frame')!r}, which vehicle.yaml:mass_properties.frames does not "
+                f"declare ({sorted(declared_frames)}); a position in it is a number against nothing",
+            )
+        elif table.get("frame") != RCS_TABLE_FRAME[key]:
+            report.refuse(
+                f"{where}.{key}.frame",
+                f"is {table.get('frame')!r}; the {key} jet positions are read in "
+                f"{RCS_TABLE_FRAME[key]}, and a declared but different frame moves every jet",
+            )
+        if table.get("thruster_id_prefix") != prefix:
+            report.refuse(
+                f"{where}.{key}.thruster_id_prefix",
+                f"is {table.get('thruster_id_prefix')!r}; the {key} table's thruster_ids are {prefix}-<id>",
+            )
+            continue
+        for jet in table.get("jets") or []:
+            if not isinstance(jet, dict):
+                continue
+            tid = f"{prefix}-{jet.get('id')}"
+            if tid in thruster_ids:
+                report.refuse(f"{where}.{key}.jets.{jet.get('id')}", f"repeats thruster_id {tid!r}")
+            thruster_ids[tid] = key
+    cm_frame = declared_frames.get("CM_XC") or {}
+    transforms = cm_frame.get("axial_transforms")
+    if (
+        not isinstance(transforms, list)
+        or len(transforms) != 1
+        or not isinstance(transforms[0], dict)
+        or {k: transforms[0].get(k) for k in RCS_CM_FRAME_TRANSFORM} != RCS_CM_FRAME_TRANSFORM
+    ):
+        report.refuse(
+            "vehicle.yaml:mass_properties.frames CM_XC",
+            f"must carry exactly one axial transform, {RCS_CM_FRAME_TRANSFORM!r}: X_A = X_C + "
+            f"{RCS_CM_FRAME['x_offset_in']} in for every configuration with parallel axes, the relation "
+            "the CM jet table is combined with SM positions by",
+        )
 
     sm = geometry.get("rcs_sm")
     sm_where = f"{where}.rcs_sm"
     sm_jets = sm.get("jets") if isinstance(sm, dict) else None
-    if not isinstance(sm_jets, list) or [j.get("id") for j in sm_jets if isinstance(j, dict)] != list(
-        range(1, 17)
+    if (
+        not isinstance(sm_jets, list)
+        or not all(isinstance(j, dict) for j in sm_jets)
+        or [j.get("id") for j in sm_jets] != list(range(1, 17))
     ):
         report.refuse(sm_where, "must list the DAP's jets 1 to 16 in order")
     else:
+        for field, published in RCS_SM_PUBLISHED.items():
+            if sm.get(field) != published:
+                report.refuse(
+                    f"{sm_where}.{field}",
+                    f"declares {sm.get(field)!r}; the Data Book and ODB Fig 2-5 publish {published!r}, "
+                    "and the torque-sign check cannot see this figure, so it is held to the source",
+                )
         cant = float(sm.get("cant_deg", 0.0))
         radii = {
             "pitch_yaw": float(sm.get("pitch_yaw_radius_in", 0.0)),
@@ -13446,8 +13549,16 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
     cm = geometry.get("rcs_cm")
     cm_jets = cm.get("jets") if isinstance(cm, dict) else None
     wanted = {f"{sign}{axis}" for sign in "+-" for axis in ("roll", "pitch", "yaw")}
-    if not isinstance(cm_jets, list) or not all(isinstance(j, dict) for j in cm_jets):
-        report.refuse(f"{where}.rcs_cm", "must list the CM's twelve jets")
+    if (
+        not isinstance(cm_jets, list)
+        or not all(isinstance(j, dict) for j in cm_jets)
+        or sorted(j.get("id") for j in cm_jets if type(j.get("id")) is int) != RCS_CM_ENGINE_IDS
+        or len(cm_jets) != len(RCS_CM_ENGINE_IDS)
+    ):
+        report.refuse(
+            f"{where}.rcs_cm",
+            f"must list the CM's twelve engines by their AOH numbers {RCS_CM_ENGINE_IDS}, once each",
+        )
     else:
         for subsystem in (1, 2):
             jets = [j for j in cm_jets if j.get("subsystem") == subsystem]
@@ -13461,13 +13572,25 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
                     f"each, odd-numbered jets positive (AOH Figure 2.5-1); it declares {torques}",
                 )
         check_rcs_cm_vectors(cm, cm_jets, f"{where}.rcs_cm", report)
+        if cm.get("frame") != "CM_XC" or cm.get("frame_to_apollo_xa") != RCS_CM_FRAME:
+            report.refuse(
+                f"{where}.rcs_cm.frame_to_apollo_xa",
+                f"declares {cm.get('frame_to_apollo_xa')!r} for frame {cm.get('frame')!r}; CM_XC is "
+                f"APOLLO_XA moved 1000 in along X with parallel axes ({RCS_CM_FRAME!r}), and a CM "
+                "position cannot be combined with an SM one without it",
+            )
 
     lm = geometry.get("rcs_lm")
     lm_where = f"{where}.rcs_lm"
     lm_jets = lm.get("jets") if isinstance(lm, dict) else None
     odb = lm.get("odb_check_in") if isinstance(lm, dict) else None
-    if not isinstance(lm_jets, list) or len(lm_jets) != 16 or not isinstance(odb, dict):
-        report.refuse(lm_where, "must list sixteen jets and the ODB figure's check dimensions")
+    if (
+        not isinstance(lm_jets, list)
+        or not all(isinstance(j, dict) for j in lm_jets)
+        or [j.get("id") for j in lm_jets] != list(range(1, 17))
+        or not isinstance(odb, dict)
+    ):
+        report.refuse(lm_where, "must list jets 1 to 16 in order and the ODB figure's check dimensions")
         return
     in_per_m = 1 / 0.0254
     clusters: dict[tuple[int, int], list[dict[str, Any]]] = {}
@@ -13476,6 +13599,13 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
         if not isinstance(position, list) or len(position) != 3 or jet.get("force_axis") not in RCS_AXES:
             report.refuse(f"{lm_where}.jets.{jet.get('id')}", "needs a 3-vector position and a signed axis")
             return
+        numeral = str(jet.get("name", "")).split("-")[0]
+        if RCS_LM_QUAD_SIGNS.get(numeral) != (position[1] > 0, position[2] > 0):
+            report.refuse(
+                f"{lm_where}.jets.{jet.get('id')}",
+                f"is {jet.get('name')!r} and sits at Y, Z signs ({position[1]:+.2f}, {position[2]:+.2f}) m; "
+                f"quad {numeral} is on the {RCS_LM_QUAD_SIGNS.get(numeral)!r} (Y > 0, Z > 0) side",
+            )
         clusters.setdefault((position[1] > 0, position[2] > 0), []).append(jet)
     if len(clusters) != 4 or any(len(group) != 4 for group in clusters.values()):
         report.refuse(lm_where, "must place four jets in each of the four Y-Z quadrants")
