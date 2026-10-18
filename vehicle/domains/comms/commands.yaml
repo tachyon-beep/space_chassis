@@ -79,8 +79,8 @@ commands:
     execution_class: declarative
     maximum_queue_age_s: 30
     help: >-
-      Choose which of the four antennas carries the link. The members are 26.7 dB and 2 dB apart,
-      so this is a 25 dB decision: the high gain needs pointing and carries 51.2 kbit/s, and the
+      Choose which of the four antennas carries the link. The members are 25.7 dB and 0 dB apart,
+      so this is a 26 dB decision: the high gain needs pointing and carries 51.2 kbit/s, and the
       omnis need nothing and carry very little. `omnib` is a separate argument value from `omni_a`
       rather than one "omni" option because the second one is the reason antenna selection has a
       safety-relevant alternative at all — a stuck switch, a failed feed, and the vehicle still
@@ -92,8 +92,8 @@ commands:
       ref: "apollo_diode.md:243"
       note: >-
         apollo's verb; the four members are `vehicle.yaml#comms.antennas`, and the linter refuses
-        a mismatch with `comm.antenna`'s enum. `sband_steerable` is the LM's, declared with both
-        of its figures owed rather than invented
+        a mismatch with `comm.antenna`'s enum. `sband_steerable` is the LM's, with TN D-6723's
+        20.5 dB transmit gain and its beamwidth owed rather than invented
 
   - verb: point_hga
     argument_schema:
@@ -249,7 +249,7 @@ not_implemented:
     why: >-
       the gain is a property of the dish, not a setting. A verb that could change it would let a
       fleet improve its link by asserting that the antenna is better than it is, and nothing
-      downstream could detect it — `comm.snr_db` would agree with the assertion, because the
+      downstream could detect it — `comm.link_margin_db` would agree with the assertion, because the
       assertion would be an input to it. `vehicle.yaml#comms.antennas` carries the gains and they
       are the two sourced figures in this domain; the derived beamwidths follow from them by the
       gain-beamwidth product, which is a physical identity rather than a preference.
@@ -265,7 +265,7 @@ not_implemented:
     why: >-
       refused because `comm.blackout_state` is not a flag, it is a geometric fact. A verb that
       could set it would let a fleet declare that the Moon is not there, and the consequence is
-      precise: it would defeat the `gated_by` clause on `snr_loss` and `carrier_lock_loss`, so the
+      precise: it would defeat the `gated_by` clause on `link_margin_loss` and `carrier_lock_loss`, so the
       vehicle would alarm on its own orbit — which is the failure the gate exists to prevent. The
       state is derived from the vehicle's own position and Earth's, and the way to change it is to
       change where the vehicle is.

@@ -9,7 +9,7 @@
 # structured result block) — but it is a different document wearing the domain's name.
 #
 # So the domain is authored from `apollo_diode.md:161-168` (eight channels), `:786-790` (the
-# attitude → pointing → SNR coupling), `:243` (five verbs), `:885-903` (five telemetry profiles
+# attitude → pointing → link coupling), `:243` (five verbs), `:885-903` (five telemetry profiles
 # and the rule that a degraded link must actually choose what arrives), and
 # `vehicle.yaml#comms` (the antennas, rates, transmitters and VHF figures already sourced from
 # the Apollo 11 references). That is a complete bill of materials, which is why this is the one
@@ -49,7 +49,7 @@
 domain: comms
 
 # 1 Hz: the rate of the link's published state. The RF layer has no meaningful faster cadence on
-# a vehicle whose slowest physical process is a 9.4-degree beam crossing a 2-degree error band.
+# a vehicle whose slowest physical process is a 4.4-degree beam crossing a 2-degree error band.
 natural_rate_hz: 1
 
 reads: [bus_a, coldplate_t, vehicle_dynamics, command_executive]
@@ -74,21 +74,23 @@ components:
     # Which relation governs the two figures below. Declared in both files, so `check_comms_bindings`
     # compares it for free: what the vehicle-level file and this component must agree about is not
     # only the gain and the width but what kind of pair they are.
-    pattern: aperture
-    gain_db: 26.7
-    beamwidth_deg: 9.4
+    pattern: measured
+    gain_db: 25.7
+    beamwidth_deg: 4.4
     steerable: true
     provenance:
       basis: historical
-      source: "vehicle.yaml#comms.antennas.high_gain — NR ch.18's four 31-inch parabolas with 9.2/20.7/26.7 dB wide/medium/narrow feeds"
+      source: "vehicle.yaml#comms.antennas.high_gain — NASA TN D-6723 printed p. 10, Table I: four 31-inch parabolas and an 11-inch horn, transmit 8.0/18.0/25.7 dB at 40.0/11.3/4.4 deg wide/medium/narrow"
       note: >-
-        the beamwidth was 1.0 in the first version of `vehicle.yaml` and is 9.4 here because the
-        gain-beamwidth product says so: `G = 41253 / theta^2`, so 26.7 dB is a 9.4-degree beam and
-        a 1.0-degree beam would need 46 dB. The corrected figure is what makes apollo's own
-        threshold coherent — 0-2 degrees is a good link (`apollo_diode.md:163`) only if 2 degrees
-        off boresight is a fraction of a dB down, and against a 1-degree beam it would be 48 dB
-        down, which is a range in which no link exists. This is the domain that surfaced it
-        because the beamwidth is what the pointing channel and `E-GEOM-LINK` scale against
+        the beamwidth was 1.0 in the first version of `vehicle.yaml`, then 9.4 derived from NR's
+        26.7 dB through the ideal-aperture product, and it is 4.4 now because the primary source
+        publishes it: TN D-6723 gives gain and width side by side, and the four-dish array is
+        about 17 % efficient against an ideal aperture of its width, so neither earlier figure
+        could have been derived. What the published pair makes true is operational: 2 degrees off
+        boresight is 2.5 dB down, just inside the 2.2-degree half-power edge, so apollo's 0-2
+        degree "good link" (`apollo_diode.md:163`) is a margin the pointing spends. This is the
+        domain that surfaced it because the beamwidth is what the pointing channel and
+        `E-GEOM-LINK` scale against
 
   - id: omni
     kind: state
@@ -99,7 +101,7 @@ components:
     # selectable antennas and is not a quantity either file states twice.
     vehicle_keys: [omni_a, omni_b]
     pattern: near_isotropic
-    gain_db: 2
+    gain_db: 0
     count: 4
     provenance:
       basis: historical
@@ -174,24 +176,26 @@ components:
   - id: recorder
     kind: stock
     class: storage
-    # In bits, the unit `state recorder` counts. Owed, and the quiet-coast episode does not need it
-    # to advance: playback only drains, so the stock never meets its ceiling, and ADR 0003 item 7
-    # (B2) bounds the task volume D1 + D2 below this unknown capacity instead.
-    capacity_bit: UNCONFIGURED
+    # In bits, the unit `state recorder` counts: the CM PCM record at the high bit rate, 30 minutes
+    # of tape at 15 in/s x 51,200 bit/s. The same tape holds 2 hours at 3-3/4 in/s, which at
+    # 1,600 bit/s is 11.52 Mbit, so the capacity in bits depends on the rate recorded; the figure is
+    # the high-rate one because the high-rate dump is what the vehicle plays back (`playback_rate`).
+    # The quiet-coast episode's task volume D1 + D2 is the same 92.16 Mbit: a full tape.
+    capacity_bit: 92160000
+    capacity_provenance:
+      basis: historical
+      source: "CSM AOH Block II Vol 1 (SM2A-03-BLOCK II-(1), 15 Oct 1969) §2.8, printed 2.8-24A/B: '2250 feet of tape giving record times of 2 hours at 3-3/4 ips and 30 minutes at 15 ips'; printed 2.8-60: 'If PCM HIGH is selected, the record speed will be 15 ips ... High-bit rate PCM is dumped at 15 ips (1:1)'"
     provenance:
       basis: apollo
       ref: "apollo_diode.md:903"
       note: >-
         the on-board record. Apollo could "record telemetry via the CSM, and later retransmit
         stored information", which is what makes a lunar occultation an operational condition
-        rather than a data loss. Capacity is owed and matters: it is the bound on how long a
-        blackout can last before the vehicle starts choosing what to forget, and nobody has
-        published a figure for either spacecraft's recorder in the sources reached. Searched for
-        the block II data storage equipment (DSE) in the quiet-coast pass: TN D-7598 p. 7 gives
-        only "14 tracks on 1-inch tape at 15 in/sec" for the development flight instrumentation
-        recorders, and TN D-7684 p. 2 says only that "the CSM could record data for later
-        transmission" (`09-quiet-coast-episode.md` §9). What would answer it is the CSM/LM
-        Systems Handbook telecom section or AOH Vol 1 §2.8
+        rather than a data loss. Capacity matters: it is the bound on how long a blackout can
+        last before the vehicle starts choosing what to forget. The quiet-coast pass did not find
+        it (TN D-7598 and TN D-7684 describe the recorder without a size); AOH Vol 1 §2.8 has it,
+        as `capacity_provenance` quotes. What the vehicle still does not model is the record side:
+        nothing fills this stock while the link is down, so the fill only falls
 
   - id: gimbal
     kind: discrete
@@ -201,7 +205,7 @@ components:
     provenance:
       basis: UNCONFIGURED
       note: >-
-        the mechanism that keeps a 9.4-degree beam on Earth while the vehicle rotates underneath
+        the mechanism that keeps a 4.4-degree beam on Earth while the vehicle rotates underneath
         it, and the component F-11 fails. Both parameters are owed: the Apollo HGA's gimbal range
         and slew rate are what decide whether a pointing error is a control problem (the gimbal has
         not caught up) or an attitude problem (the vehicle is not where it thinks), and
@@ -220,30 +224,58 @@ components:
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [comm_mode, antenna_selection, carrier_lock, telemetry_rate, recorder_play, blackout, frame_loss]
+internal_order: [blackout, light_time_s, comm_mode, antenna_selection, telemetry_rate, recorder_play, frame_loss]
 internal_order_note: >-
-  the link chain: the mode selects the antenna, the antenna decides whether the carrier locks,
-  the lock decides the rate, and the playback switch follows the rate it plays at; the blackout
-  state and the frame-loss counter are what the chain costs, last because they count the states
-  above them. The recorder left the sentinel for `data_recorder` when playback made it a stock
-  with an edge, because no edge can reach the sentinel.
+  the geometry, then the link chain: whether the Moon hides the Earth, and how long light takes
+  to cross the range, come first because both are read off this tick's orbit and nothing on the
+  sentinel moves them; then the mode selects the antenna, the rate follows the mode, and the
+  playback switch follows the rate it plays at; the frame-loss counter is what the chain costs,
+  last because it counts the states above it. The recorder left the sentinel for `data_recorder`
+  when playback made it a stock with an edge, because no edge can reach the sentinel, and
+  `carrier_lock` left it for `link` so that another domain can read it: a sentinel state is
+  readable only inside its own domain, and GNC's uplink navigation reset needs the lock.
 
 state:
 
-  - id: link_snr
+  - id: link_margin_db
     node: link
     method: algebraic
     unit: dB
     moved_by:
       - "command:select_antenna"
       - "command:point_hga"
+    # The rule's parameters (`domains/comms/rules.py:link_margin_db`).
+    received_carrier_dbm:
+      high_gain: -97.1
+      omni: -119.5
+    reference_range_m: 398180000
+    power_amplifier_off_db: -20.0
+    required_carrier_dbm:
+      "1600": -120.0
+      "51200": -109.0
+    hga_beamwidth_deg: 4.4
+    pattern_loss_db_at_beamwidth: 12
+    parameter_provenance:
+      basis: historical
+      source: "NASA CR-125670 (Bellcomm TM-71-2034-3, Schroeder, 30 Dec 1971), Table II PDF p. 51: received carrier power Pr at R = 215,000 n mi, CSM PM mode, 85-ft station, -127.1 dBW HGA(N) and -149.5 dBW omni (0 dB) with the PA on, both 20.0 dB lower with it off; Pmin -139.0 dBW for 51.2 kbit/s telemetry with voice and -150.0 dBW for 1.6 kbit/s. PDF pp. 6-7 (printed): the power margin is 'the magnitude by which the receiver input signal power could be reduced to achieve a circuit margin just equal to zero', and 'Circuit Margins and Power Margins are not directly related because the noise in the USB receivers is a function of the receiver input signal power'"
+      note: >-
+        dBW is converted to dBm (+30). 215,000 n mi is 398,180,000 m (1,852 m per n mi). The
+        amplifier's 20.0 dB is Table II's own step between its PA-on and PA-off rows, kept so the
+        rule moves the same reference it scales; TN D-6723 PDF pp. 17-18 gives the assembly 11.2 W in PM
+        and 0.125 W in bypass, which is 19.5 dB, half a decibel less. The 210-ft
+        stations receive 8.0 dB more in every row of the same table; the vehicle evaluates the
+        85-ft case because no state says which station is tracking. `hga_beamwidth_deg` is the
+        narrow beam of `vehicle.yaml#comms.antennas.high_gain`, the beam Bellcomm's HGA(N) row is,
+        and `pattern_loss_db_at_beamwidth` is the 12 dB of the quadratic pattern
+        `E-GEOM-LINK` states, so the rule and the edge give the same slope.
+        `tests/test_comms_rules.py` holds the copies equal
     command_value:
       - verb: select_antenna
         argument: antenna
         selects: antenna_selection
         computed: >-
           the link budget closes in one tick from the selected antenna's gain, its pointing loss,
-          the range and the receiver's threshold — `comms.link_snr` is algebraic for exactly that
+          the range and the receiver's threshold — `comms.link_margin_db` is algebraic for exactly that
           reason, and its own note says three edges meet here. This command changes which antenna
           the budget is evaluated for; it does not carry a dB
         why: >-
@@ -254,29 +286,54 @@ state:
         argument: target
         computed: >-
           as `select_antenna`: pointing loss is a term in the same budget, and the gimbal's target
-          changes it rather than setting the signal-to-noise ratio
+          changes it rather than setting the margin
         why: >-
           `point_hga` is authority A1 and declarative; what it changes is where the high-gain
-          antenna looks, and the SNR follows
+          antenna looks, and the margin follows
         selects: UNCONFIGURED
         note: >-
           the gimbal's target and mode have no state. `antenna_pointing` is on `antenna_geometry`
           and is computed from the vehicle's attitude and the Earth's direction, and it has no
           command mover at all; what this verb sets is the *requested* target (`earth`,
           `moon_limb`, `csm`, `inertial`) and the mode (`auto`, `manual`), and nothing holds it. So
-          a vehicle pointed at the Moon's limb cannot say that it is, and `link_snr` is computed
+          a vehicle pointed at the Moon's limb cannot say that it is, and `link_margin_db` is computed
           from a geometry the command chose but did not record
     provenance:
       basis: apollo
       ref: "apollo_diode.md:164"
       note: >-
-        `comm.snr_db` with apollo's band 8-30 dB and its two events, "<8 degraded" and "<3 loss".
+        `comm.link_margin_db` is the corpus's `comm.snr_db` row with the quantity it can source: the
+        corpus gave an SNR band of 8-30 dB marked **Sim**, and the only Apollo prediction reachable
+        gives power margins, which the same report says are not an SNR (`parameter_provenance`).
+        The channel's band and both thresholds were re-based on the margin, and the 12.5 dB that
+        once turned one into the other is gone, because no source joins them.
         The state is *algebraic* rather than dynamic because the link budget closes in one tick:
         transmit power, antenna gain, pointing loss, range and the receiver's threshold are all
         known at the same instant, and a lag on a quantity with no memory would invent a
         transient the physics does not have. Three edges land on `link` — E-BUS-COMM (a sagging
         bus), E-PLATE-COMM (a hot amplifier) and E-GEOM-LINK (pointing loss) — and this state is
-        where they meet, which is why it is one number rather than three
+        where they meet, which is why it is one number rather than three.
+
+        **The budget is a calibrated prediction scaled by range, not a sum of terms.** No CSM
+        design-control table or circuit-loss table was reachable (the North American circuit-
+        margin ICDs MH01-13001-414 and MH01-13021-414 are not on NTRS), so the rule starts from
+        Bellcomm's Apollo 14 prediction, which was built on them, and moves it by the three
+        things the vehicle changes: range (20 log of the range ratio), the power amplifier
+        (20.0 dB) and the high-gain antenna's pointing loss. The received power checks against
+        flight: JPL TM 33-452 Vol. II Table 20 logs the Apollo 11 CSM on the high-gain antenna at
+        -87 to -95 dBm at the Goldstone 210-ft, against -89.1 dBm predicted. At lunar range the
+        margins are Table II's own: +11.9 dB for high-rate telemetry on the high-gain antenna with
+        the amplifier on, -8.1 dB with it off, and on an omni -10.5 dB at the high rate and +0.5 dB
+        at the low rate — Bellcomm's finding that only 1.6 kbit/s closes on an omni at the Moon.
+
+        What it does not carry, and each is a confounder the sources support: the station's
+        nonlinearity above -70 dBm (TN D-6852 p. 8), so near the Earth the margin is a budget the
+        receiver could not use; the Moon in the ground beam (about 0.3-0.7 dB, SP-87 p. 52); an
+        omni's gain varying with look angle (about +/-10 dB in the Apollo 11 logs); and
+        E-PLATE-COMM, whose dB per K no source gives. **It is defined in every mode and behind the
+        Moon**, as the budget of the configured S-band link: whether a carrier reaches the ground
+        is `blackout`'s and `comm_mode`'s, and `link_margin_loss` is gated on the occultation, so
+        a planned blackout raises no alarm and the published value never goes stale behind a gap
 
   - id: tx_power
     node: link
@@ -418,7 +475,7 @@ state:
         apollo's enum with its "unexpected switch" event, and the four members are exactly the
         antennas `vehicle.yaml#comms.antennas` declares — the linter refuses a mismatch, the same
         discipline the phase, posture and crew-station vocabularies get. Ten seconds of dwell
-        (chosen) because the members are 26.7 dB and 2 dB apart: a selection that can be
+        (chosen) because the members are 25.7 dB and 0 dB apart: a selection that can be
         re-commanded every tick is one whose outage a fleet cannot attribute, since the antenna
         changed twice while the link was down
 
@@ -461,25 +518,32 @@ state:
         descent and is invisible in a single "comms is up" boolean
 
   - id: carrier_lock
-    node: internal
-    method: discrete
+    node: link
+    method: algebraic
     unit: bool
     moved_by:
-      - "logic:the receiver's own statement that it holds the carrier"
-    dwell:
-      min_on_s: 2
-      min_off_s: 2
+      - "logic:an S-band mode is selected and the Moon does not hide the Earth"
+    # The rule's parameter (`domains/comms/rules.py:carrier_lock`).
+    moon_radius_m: 1737400
+    parameter_provenance:
+      basis: historical
+      source: "vehicle.yaml#environment.moon_mean_radius_km (1,737.4 km), `blackout`'s and `link_ok`'s own parameter; `tests/test_comms_rules.py` holds the copies equal"
     provenance:
       basis: apollo
       ref: "apollo_diode.md:162"
       note: >-
         apollo's `comm.carrier_lock`, "true nominal", with a "lock loss" event. The receiver's
         statement that it has found the signal, which is a *different* fact from having a usable
-        link: a carrier can lock at an SNR far too low to carry data, so this channel and
-        `comm.snr_db` together separate "the receiver has lost the vehicle" from "the receiver
-        can hear it and cannot read it". Two seconds of dwell in both directions because lock
-        acquisition is a search rather than an instant, and a lock bit that flickered on every
-        acquisition would make every pointing maneuver look like a comms fault
+        link: a carrier can lock at a power far too low to carry data, so this channel and
+        `comm.link_margin_db` together separate "the receiver has lost the vehicle" from "the
+        receiver can hear it and cannot read it". It carries the no-carrier cases — `vhf`, `none`,
+        and the Moon between the vehicle and the Earth — so that the margin can stay defined in all
+        of them rather than going stale behind a gap. **It is on `link` rather than the sentinel**
+        because GNC's uplink navigation reset reads it, and a sentinel state is readable only inside
+        its own domain. It is algebraic, a function of this tick's mode and orbit, for the reason
+        `blackout` is non-latching: no frame is read, so there is nothing to debounce. The two
+        seconds of dwell it carried were a command guard on a state no command moves, and the
+        acquisition search they stood for is owed with the carrier loop's own threshold
 
   - id: telemetry_rate
     node: internal
@@ -555,10 +619,22 @@ state:
     method: discrete
     unit: "enum[clear,occulted]"
     moved_by:
-      - "logic:the geometric occultation, computed from the orbit and the Earth's disc"
-    dwell:
-      min_on_s: 60
-      min_off_s: 60
+      - "logic:the geometric occultation, computed from the orbit and the Moon's radius"
+    # The rule's parameter (`domains/comms/rules.py:blackout`).
+    moon_radius_m: 1737400
+    parameter_provenance:
+      basis: historical
+      source: "vehicle.yaml#environment.moon_mean_radius_km (1,737.4 km), the radius the trajectory's own flyby check uses; `mission.yaml#comms_blackout.moon_radius_km` carries the same figure, and so does `link_ok`, which evaluates the same occultation. `tests/test_comms_rules.py` holds the four equal"
+    # A geometric fact rather than a latch, so neither a band nor a floor: the state is a function
+    # of where the vehicle and the Moon are this tick, and it changes twice a revolution.
+    non_latching: true
+    non_latching_reason: >-
+      the sixty-second dwell this state carried was argued from the link fading through the limb
+      ("a state that flipped on the first dropped frame would report the antenna's noise as the
+      Moon's shadow"). That argument is about a state *inferred from frames*, and this one is
+      computed from the orbit: no frame is read, so there is no noise to debounce, and a dwell would
+      only move loss and acquisition of signal sixty seconds off the geometry. The fade through the
+      limb belongs to the link margin, which is where a soft edge has a quantity to act on
     provenance:
       basis: derived
       relation: "the Moon occults the Earth when the angle between the vehicle->Moon-centre and vehicle->Earth directions is less than arcsin(R_moon / r_orbit). At a 100 km circular lunar orbit that is arcsin(1737.4/1837.4) = 71.0 deg half-angle, so 39.5 % of each revolution; over a 117.8 min period that is 46.5 min"
@@ -572,6 +648,36 @@ state:
         transition is a geometric event with a soft edge: the link does not stop at an instant,
         it fades through the limb, and a state that flipped on the first dropped frame would
         report the antenna's noise as the Moon's shadow
+
+  - id: light_time_s
+    node: internal
+    method: algebraic
+    unit: s
+    moved_by:
+      - "logic:the vehicle's range from the Earth over the speed of light"
+    # The rule's parameter (`domains/comms/rules.py:light_time_s`).
+    speed_of_light_m_s: 299792458
+    parameter_provenance:
+      basis: historical
+      source: "the SI definition of the metre (17th CGPM, 1983): the speed of light in vacuum is 299,792,458 m/s exactly"
+    provenance:
+      basis: derived
+      relation: >-
+        |r| / c, with r the vehicle's Earth-centred position (`gnc.orbital_state.position_m`,
+        EARTH_J2000) this tick. On the declared trajectory that is 0.022 s at MET 0 (6,563 km),
+        0.058 s at the end of the quiet-coast episode (40 min, 17,335 km), 0.70 s at 24 h and
+        1.32 s at arrival (397,000 km)
+      note: >-
+        **This replaces `vehicle.yaml#environment.earth_moon_light_time_s`, a 1.3 s constant that
+        nothing read.** The constant is right only near the Moon: for the first day of the coast
+        the delay is a few hundredths to a few tenths of a second, and an experiment that applied
+        1.3 s there would hand the fleet a lunar-distance lag the vehicle does not have. Decided
+        by the coordinator under John's delegation of 2026-10-17 13:48Z ("preference more fidelity
+        where it doesn't start creating significant delivery risk"): the vehicle publishes the
+        computed delay (`comm.light_time_s`), and applying it to what crosses the window is the
+        window's change (`apollo_diode.md:526` makes the Earth-link delay "a simulation setting").
+        The ground end is the Earth's centre until the MSFN stations' coordinates are sourced; a
+        station on the surface moves the figure by at most 6,378 km, 0.021 s
 
   - id: recorder
     node: data_recorder
@@ -636,10 +742,16 @@ state:
     moved_by:
       - "logic:the episode's link predicate over the commanded link configuration"
     high_rate_bps: 51200
+    moon_radius_m: 1737400
     parameter_provenance:
       basis: apollo
       ref: "apollo_diode.md:165"
-      note: "the high telemetry profile's 51,200 bit/s, `vehicle.yaml#comms.rates.high`"
+      note: >-
+        `high_rate_bps` is the high telemetry profile's 51,200 bit/s, `vehicle.yaml#comms.rates.high`.
+        `moon_radius_m` is `blackout`'s own parameter, `vehicle.yaml#environment.moon_mean_radius_km`:
+        this predicate evaluates the occultation itself (`rules.py:occulted`, the one function both
+        states call) rather than reading `blackout`, because `blackout` is on the sentinel, which
+        advances after `ground_received`, and a logic-moved state on it has no value at tick 0
     provenance:
       basis: chosen
       reason: >-
@@ -647,9 +759,12 @@ state:
         the link budget's constant terms are owed (`open_debts`), so the episode declares it as a
         boundary. True exactly when `antenna_selection` is `high_gain`, `comm_mode` is
         `sband_high`, `telemetry_rate` is the high profile's 51,200 bit/s and `transmitter_on` is
-        `on` (`domains/comms/rules.py:link_ok`). `blackout` is not read: translunar coast is
-        outside `mission.yaml#comms_blackout.phases_affected`, and its rule is owed. Private
-        truth, published nowhere
+        `on` (`domains/comms/rules.py:link_ok`) — and the Moon is not between the vehicle and
+        the Earth, the occultation `blackout` publishes, evaluated from this tick's orbit. That
+        term is what makes the recorder's job real outside the quiet coast: playback stops at loss
+        of signal and resumes at acquisition, so a crew that wants a dump to finish has to start it
+        with a contact period left. The quiet-coast episode is near the Earth and never occulted,
+        so the term changes none of its runs. Private truth, published nowhere
 
   - id: playback_rate
     node: ground_received
@@ -659,11 +774,12 @@ state:
       - "logic:the playback rate while the recorder plays over an ok link"
     play_rate_bps: 51200
     parameter_provenance:
-      basis: chosen
-      reason: >-
-        ADR 0003 item 7 (B2a): the DSE's playback rate was not found, so playback runs at the
-        published high bit rate, 51.2 kbit/s (`apollo_diode.md:165`, "the high-rate/low-rate
-        telemetry distinction was 51.2 and 1.6 kbit/s"; `09-quiet-coast-episode.md` §1)
+      basis: historical
+      source: "CSM AOH Block II Vol 1 §2.8, printed 2.8-60: 'High-bit rate PCM is dumped at 15 ips (1:1) while low-bit rate PCM is dumped at 120 ips (32:1)', so a high-rate record plays back at its own 51,200 bit/s"
+      note: >-
+        ADR 0003 item 7 (B2a) chose the published high bit rate (`apollo_diode.md:165`) because
+        the DSE's playback rate was not found; the AOH confirms it for a high-rate record. A
+        low-rate record dumps at 32 x 1,600 = 51,200 bit/s too, so the rate is the same either way
     provenance:
       basis: chosen
       reason: >-
@@ -697,8 +813,9 @@ state:
 # --------------------------------------------------------------------------------------
 open_debts:
 
-  - "Recorder capacity in bits (`components[recorder].capacity_bit`), the figure `comm.recorder_fill_pct` is a percentage of. Not published for either spacecraft in the sources reached, and it is the bound on how long a blackout can last before the vehicle chooses what to forget."
+  - "The carrier loop's own threshold and its acquisition time. `carrier_lock` is the mode and the occultation, so a carrier that is transmitted and not occulted locks at any received power. CR-125670 defines the down-carrier's minimum power (eq. 46, Pmin(dc), the power at which the carrier channel's circuit margin is zero) and tabulates only the data channels' Pmin (Table II), so what is owed is that figure for the 85-ft station's carrier loop, and the receiver's acquisition search time, which the two-second dwell this state used to carry stood in for."
+  - "**The occultation the phase table says cannot happen.** `blackout` is computed from the orbit, and on the declared free return it is `occulted` from MET 72.78 h to 73.23 h — 27 minutes at closest approach, which is where Apollo flew its lunar-orbit insertion burns, out of contact (`tests/test_comms_rules.py`). `translunar_coast` ends at 73.0 h, and `mission.yaml#comms_blackout.not_affected` lists it. The block budgets a circular 100 km orbit per phase (`plant.py --blackout`), so it cannot see a flyby, and adding the phase to `phases_affected` would budget 73 hours of revolutions that are not flown. What is owed is the LOI timing against the arrival: whether the coast ends before, at or after loss of signal is the ladder's choice, and the burn that ends it is the propulsion lane's."
   - "Gimbal range and slew rate. Both owed, and both needed to separate a pointing error the gimbal can still fix from one it cannot — which is the difference between `point_hga` being a control action and being a message nobody can act on."
   - "`E-BUS-COMM`'s dB per volt, and `E-PLATE-COMM`'s dB per kelvin. Both need the amplifier's gain-versus-supply and gain-versus-temperature curves, which are not published. They stay UNCONFIGURED and they are the two edges that make the flagship cycle quantitative rather than qualitative."
-  - "The LM steerable S-band antenna's gain and beamwidth (`vehicle.yaml#comms.antennas.sband_steerable`). Owed rather than picked, because a gain invented there propagates into `E-GEOM-LINK` and from there into every SNR a fleet ever reads."
-  - "The link budget's constant terms: the receiver threshold, the range loss at lunar distance, and the CSM/LM relay geometry during the docked and rendezvous phases. `comm.snr_db`'s 8-30 dB band is apollo's and is a *range*, not a budget — the derivation that would turn transmit power, antenna gain and range into an SNR is the one piece of this domain that is physics rather than configuration."
+  - "The LM steerable S-band antenna's beamwidth and its received-power prediction (`vehicle.yaml#comms.antennas.sband_steerable`). TN D-6723 publishes its 20.5 dB transmit gain but no half-power width, and the width cannot be derived from the gain without guessing the dish's efficiency; `link_margin_db` names it as a gap rather than scaling the CSM's prediction to a different antenna."
+  - "The link budget's missing terms. `link_margin_db` scales Bellcomm's Apollo 14 lunar-range prediction (CR-125670 Table II) by range, the amplifier and pointing loss, because the North American circuit-margin ICDs it was built on (MH01-13001-414, MH01-13021-414) were not reachable. Still owed: which station is tracking (the 210-ft adds 8.0 dB and no state says when it is in view), the stations as the ground end, for link_ok, light time and the margin's range (GSFC TM X-68818 has the 85-ft sites, on local datums, but on the declared trajectory and the arbitrary `mission.yaml#met_epoch_utc` none of them sees the vehicle from MET 0 to 0.49 h, which would fail the quiet-coast episode for an accident of the epoch; Apollo covered that phase with the 30-ft sites, ships and ARIA aircraft, so what is owed is their coordinates or an epoch chosen to match a historical TLI's station geometry, and the coordinator kept the Earth's centre under delegation on 2026-10-17), the ground receiver's noise rising above -125 dBm and saturating above -70 dBm, the Moon in the ground beam, an omni's gain with look angle, the medium and wide beams (the budget assumes the narrow), and the CSM/LM relay geometry during the docked and rendezvous phases."

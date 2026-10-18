@@ -530,8 +530,10 @@ nodes:
       record, the quiet-coast episode's completion oracle. Nothing draws from it because nothing
       aboard can — the data has left the vehicle — so it only rises, and the conservation it closes
       is `recorder + delivered_bits` = the task volume
-    # The most the ground can receive is what the tape can hold, so the counter's rating is the
-    # recorder's capacity — owed (`domains/comms/components.yaml:components[recorder].capacity_bit`).
+    # Owed, and not the tape's capacity even now that it is sourced (92.16 Mbit,
+    # `domains/comms/components.yaml:components[recorder].capacity_bit`, AOH §2.8): one tape bounds
+    # one dump, and a mission dumps the tape many times, so what the ground can receive is bounded by
+    # the mission rather than the recorder.
     exhausted_at: UNCONFIGURED
     state_order: [link_ok, playback_rate, delivered_bits]
     state_order_note: >-
@@ -549,17 +551,18 @@ nodes:
     # every thermal edge on the vehicle.
     unit: dB
     apollo: "164"
-    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_snr]
+    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_margin_db, carrier_lock]
     state_order_note: >-
       **the case that made this check worth writing.** Transmit power is a term in the link
-      budget, so the signal-to-noise ratio has to be computed from the power of this tick — and
-      the lexicographic tiebreak sorts `link_snr` before `tx_power`, which would have made every
-      SNR a function of one-tick-old transmit power. On a nominal link that is a 20 ms error;
+      budget, so the link margin has to be computed from the power of this tick — and
+      the lexicographic tiebreak sorts `link_margin_db` before `tx_power`, which would have made every
+      margin a function of one-tick-old transmit power. On a nominal link that is a 20 ms error;
       across `set_power_amplifier` it is a 6 dB step reported a tick late, which is exactly the
       transient a fleet is watching for. `transmitter_on` is first because the draw and the
       amplifier's dissipation are both functions of the switch: it is on this node rather than the
       sentinel so that `power` and `thermal`, which both declare `link` in `reads:`, can gate the
-      amplifier's load and heat on it
+      amplifier's load and heat on it. `carrier_lock` is last because nothing on the node reads it,
+      and it is here for the same reason `transmitter_on` is: another domain (GNC) reads it
 
   # --- propulsion and RCS -------------------------------------------------------------
   engine_main:
@@ -1991,7 +1994,7 @@ edges:
     at: "hot end, plate > 323 K",
     note: "avionics_plate_c event is >50 C (apollo_diode.md:105). Near zero nominally."}
   - id: E-PLATE-COMM
-    advances: link_snr   # the amplifier's temperature enters the link budget as a loss, not as a transmitted power
+    advances: link_margin_db   # the amplifier's temperature enters the link budget as a loss, not as a transmitted power
     from: coldplate_t
     to: link
     kind: lag
@@ -2057,8 +2060,8 @@ edges:
         is the debt: what belongs here is the rejection law and not a slope."
   - id: E-AMP-LOAD
     # **The state this flux reads, on a node that carries two.** `link` holds the transmit power and
-    # the signal-to-noise ratio, so the node publishes no key; the edge's own unit is `A per W` and
-    # the quantity it multiplies is the power the amplifier is putting out. `link_snr` is the other
+    # the link margin, so the node publishes no key; the edge's own unit is `A per W` and
+    # the quantity it multiplies is the power the amplifier is putting out. `link_margin_db` is the other
     # candidate and it is a decibel — a ratio of the same link, not an input to its load.
     reads: tx_power
     from: link
@@ -2290,20 +2293,41 @@ edges:
         `comm.hga_pointing_error_deg` — the quantity the 2 deg threshold actually watches.
         Collapsing the two would have made a gimbal failure indistinguishable from a vehicle
         pointing the wrong way.
+  - id: E-DYN-RECV
+    # **An ordering edge with a value.** `link_ok` evaluates the occultation from the orbit, and
+    # without an edge the frozen tiebreak scheduled `ground_received` before `vehicle_dynamics`, so
+    # the predicate read last tick's orbit while its docstring said this tick's.
+    reads: orbital_state
+    advances: link_ok
+    from: vehicle_dynamics
+    to: ground_received
+    kind: algebraic
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "-"
+      basis: derived
+      relation: "the coupling is the signal itself; the edge carries the orbit one for one, and `domains/comms/rules.py:link_ok` turns it into the occultation term of the predicate"
+      at: nominal
+      note: >-
+        the orbit into the episode's link predicate. One for one because the edge carries a
+        position rather than transforming one, as `E-DYN-GNC` carries it into the estimator; what
+        the predicate does with it is the rule's. What the edge buys is the schedule: loss and
+        acquisition of signal land on the tick the geometry says, not one tick after
   - id: E-GEOM-LINK
-    advances: link_snr   # antenna geometry is a pointing loss, and the loss lands in the signal-to-noise ratio
+    advances: link_margin_db   # antenna geometry is a pointing loss, and the loss lands in the link margin
     from: antenna_geometry
     to: link
     kind: algebraic
     sensitivity:
-      value: -0.54
+      value: -2.48
       unit: "dB per deg"
       basis: derived
-      relation: "the standard quadratic pattern near boresight, G(theta) = G0 - 12*(theta/theta_3dB)^2 dB, whose slope is dG/dtheta = -24*theta/theta_3dB^2. At the 2 deg operating point with theta_3dB = 9.4 deg (vehicle.yaml#comms.antennas.high_gain, itself derived from the gain-beamwidth product) that is -0.54 dB per deg"
+      relation: "the standard quadratic pattern near boresight, G(theta) = G0 - 12*(theta/theta_3dB)^2 dB, whose slope is dG/dtheta = -24*theta/theta_3dB^2. At the 2 deg operating point with theta_3dB = 4.4 deg (vehicle.yaml#comms.antennas.high_gain, TN D-6723 Table I's narrow transmit beam) that is -2.48 dB per deg"
       # The two numbers in that relation, bound by name rather than inlined — which is the whole
       # difference between this and a `computation`. The beamwidth is a figure `vehicle.yaml` owns,
-      # and since the last round the linter ties it to the gain through the ideal-aperture product,
-      # so this edge is now two closures deep: gain to beamwidth to slope. The operating point was
+      # published beside the gain in TN D-6723 rather than derived from it (the array is not an
+      # ideal aperture), so this edge is one closure deep: beamwidth to slope. The operating point was
       # the last of the three living only inside a sentence, which is the shape `mu_moon` had in
       # `mission.yaml#comms_blackout` before it became a field.
       derivation:
@@ -2316,7 +2340,9 @@ edges:
         where the antenna's *shape* becomes a number, and it is quadratic rather than linear —
         which is what apollo_diode.md:163 means by "the gain is steep near the beam edge and flat
         at boresight". The consequence is worth stating because it is counter-intuitive: at 1 deg
-        the loss is 0.14 dB, at 2 deg it is 0.54, at 5 deg it is 3.4 and at 9.4 deg it is 12. A
+        the loss is 0.62 dB, at 2 deg it is 2.5, at 2.2 deg (the half-power edge) it is 3, and at
+        3 deg it is 5.6. apollo's 2-degree warning therefore sits just inside the beam's half-power
+        edge. A
         fleet watching the pointing error therefore sees almost nothing for a long time and then
         loses the link over the last few degrees, and a linear edge could not express that.
 
@@ -2593,7 +2619,7 @@ edges:
   - id: E-LINK-TEL
     # The other role on the same node: what a link delivers is set by how good it is, and the
     # quantity that says so is the ratio — `tx_power` is the input the amplifier's load already reads.
-    reads: link_snr
+    reads: link_margin_db
     from: link
     to: published_evidence
     kind: rate
@@ -2695,7 +2721,7 @@ cycles:
       The delay is on the bus-to-link edge, and the choice is physical rather than conventional.
       The amplifier's draw follows from the *commanded* transmitter state, which is a service
       state and therefore exogenous; the bus is a stiff regulated source that responds to its
-      load within the tick; and the link's signal-to-noise ratio is a consequence of both. So
+      load within the tick; and the link's margin is a consequence of both. So
       `comms` precedes `power` in the schedule, the load is known before the bus is solved, and
       the link reads the bus voltage as it stood one tick ago. Twenty milliseconds of lag on a
       stiff 28 V bus is not a modelling compromise — and the alternative, solving six members
@@ -2707,7 +2733,7 @@ cycles:
       hysteresis_required: false
       note: >-
         the loop gain through this pair alone is nominally zero, because the draw is driven by the
-        commanded state and not by the link's signal-to-noise ratio — a lower bus voltage does not
+        commanded state and not by the link's margin — a lower bus voltage does not
         make the amplifier draw less, which is the positive-feedback path and it runs through the
         *thermal* route rather than this one. That path is `C-AMP-BUS-PUMP`, and it carries the
         hysteresis requirement for both.
@@ -2816,7 +2842,7 @@ failure_chains:
     secondary: "attitude rate + excess propellant use"
     third_order: "high-gain antenna leaves beam -> communication degradation"
     first_published_clue: gnc.body_rate_xyz_deg_s
-    observable_clues: ["rcs.thruster_[n]_valve", "rcs.thruster_[n]_pressure_switch", structure.accel_xyz_g, gnc.body_rate_xyz_deg_s, comm.snr_db]
+    observable_clues: ["rcs.thruster_[n]_valve", "rcs.thruster_[n]_pressure_switch", structure.accel_xyz_g, gnc.body_rate_xyz_deg_s, comm.link_margin_db]
     scenario_use: crisis
     # The faults that can start this chain. `tools/faults.py` read "primary" as the fault rather than as
     # the chain because the two were joined by nothing but prose; this is the link, and it is held:
@@ -2903,7 +2929,7 @@ failure_chains:
     secondary: "pointing error grows"
     third_order: "telemetry gaps -> controllers lose evidence during another anomaly"
     first_published_clue: comm.hga_pointing_error_deg
-    observable_clues: [comm.hga_pointing_error_deg, comm.snr_db, comm.rx_frame_loss_pct]
+    observable_clues: [comm.hga_pointing_error_deg, comm.link_margin_db, comm.rx_frame_loss_pct]
     scenario_use: degraded
     # The faults that can start this chain. `tools/faults.py` read "primary" as the fault rather than as
     # the chain because the two were joined by nothing but prose; this is the link, and it is held:

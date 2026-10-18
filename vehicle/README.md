@@ -220,7 +220,7 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 164 states over 66 scheduled nodes, 144
+**All eleven domains have landed** — 149 channels, 165 states over 66 scheduled nodes, 144
 thresholds, 59 verbs and 128 classified events across the eleven directories, with every debt
 named. Those are the corpus's declarations, and the linter holds each of them against the files
 (`check_readme_figures`); they move when a domain adds a channel, a state or a verb, not when one
@@ -3614,7 +3614,7 @@ ability to observe**. `apollo_diode.md:901` is the sentence it is built around: 
 communications degrade, the simulator should actually have to choose which data arrives. Do not
 merely set `comm.degraded=true` while delivering every telemetry field normally." Every other
 domain models a quantity; this one models a constraint on observation, and it is the only place
-in the vehicle where the experiment's epistemology has a bandwidth. It declares 16 states, 9
+in the vehicle where the experiment's epistemology has a bandwidth. It declares 17 states, 9
 thresholds, 6 verbs, 11 faults, and four things worth reading:
 
 - **The blackout is derived, planned, and deliberately not alarmed.** The Moon occults the Earth

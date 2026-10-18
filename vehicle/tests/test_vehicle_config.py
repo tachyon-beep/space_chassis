@@ -2958,7 +2958,7 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     path.write_text(without_block(path.read_text(), "coverage"))
     result = run_linter(definition)
     assert result.returncode == 0, result.stdout[-900:]
-    assert "declares 148 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
+    assert "declares 149 registered channel(s) and no census block" in result.stdout, result.stdout[-900:]
     assert "derived here as 20 unperturbed, 15 of them `service`" in result.stdout
     # One block deleted is one debt added, so the ablation is the corpus's own count plus one.
     assert f"COMPOSES, with {corpus_debts() + 1} declared debt(s)." in result.stdout
@@ -3695,7 +3695,7 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
     — `gain_db`, `beamwidth_deg`, `steerable`, `dc_w` and `rf_w` — were compared by no tool.
 
     It matters more than a duplicate usually does because the copies have already been *used*.
-    `E-GEOM-LINK`'s -0.54 dB per degree is computed from the 9.4-degree beamwidth and its relation
+    `E-GEOM-LINK`'s -2.48 dB per degree is computed from the 4.4-degree beamwidth and its relation
     cites `vehicle.yaml#comms.antennas.high_gain` by name; `E-AMP-LOAD`'s 0.0357 A per watt is
     applied to "the 36 W transceiver and the 72 W power amplifier", which its relation places in
     `vehicle.yaml#comms.transmitters`. So the vehicle-level copy is the one the graph's arithmetic
@@ -3750,10 +3750,10 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
     drift(
         dom,
         [
-            ("    gain_db: 26.7\n", "    gain_db: 25.0\n"),
-            ("    beamwidth_deg: 9.4\n    steerable: true\n", "    beamwidth_deg: 9.4\n    steerable: false\n"),
+            ("    gain_db: 25.7\n", "    gain_db: 25.0\n"),
+            ("    beamwidth_deg: 4.4\n    steerable: true\n", "    beamwidth_deg: 4.4\n    steerable: false\n"),
             (
-                "    vehicle_keys: [omni_a, omni_b]\n    pattern: near_isotropic\n    gain_db: 2\n",
+                "    vehicle_keys: [omni_a, omni_b]\n    pattern: near_isotropic\n    gain_db: 0\n",
                 "    vehicle_keys: [omni_a, omni_b]\n    pattern: near_isotropic\n    gain_db: 3.0\n",
             ),
             ("    dc_w: 36\n", "    dc_w: 40\n"),
@@ -3773,9 +3773,9 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
             ),
         ],
         [
-            "declares gain_db 25.0 at `hga` and vehicle.yaml#comms.antennas.high_gain declares 26.7",
+            "declares gain_db 25.0 at `hga` and vehicle.yaml#comms.antennas.high_gain declares 25.7",
             "declares steerable False at `hga` and vehicle.yaml#comms.antennas.high_gain declares True",
-            "declares gain_db 3.0 at `omni` and vehicle.yaml#comms.antennas.omni_a declares 2",
+            "declares gain_db 3.0 at `omni` and vehicle.yaml#comms.antennas.omni_a declares 0",
             "declares dc_w 40 at `sband_transceiver` and vehicle.yaml#comms.transmitters.sband_transceiver declares 36",
             "declares rf_w 12.0 at `sband_power_amplifier` and vehicle.yaml#comms.transmitters.sband_power_amplifier declares 11.2",
             "declares dc_w 25 at `lm_sband.levels.lm_sband_low` and vehicle.yaml#comms.transmitters.lm_sband_low declares 20",
@@ -3789,9 +3789,9 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
     # figure moves it under every domain component that claims it, and this asserts the one.
     refusal(
         "vehicle.yaml",
-        "      beamwidth_deg: 9.4\n      steerable: true\n",
+        "      beamwidth_deg: 4.4\n      steerable: true\n",
         "      beamwidth_deg: 12.0\n      steerable: true\n",
-        "declares beamwidth_deg 9.4 at `hga` and vehicle.yaml#comms.antennas.high_gain declares 12.0",
+        "declares beamwidth_deg 4.4 at `hga` and vehicle.yaml#comms.antennas.high_gain declares 12.0",
     )
     # The link itself, in both directions, and the level that a claimed entry has to have.
     refusal(dom, "    vehicle_keys: [omni_a, omni_b]\n", "", "declares no `vehicle_keys`")
@@ -3810,7 +3810,7 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
 
     # The reverse direction is a debt rather than a refusal, and it is not vacuous: the LM's
     # steerable antenna is declared by `vehicle.yaml`, offered by `select_antenna`, and claimed by
-    # no component of the comms domain — which is why its gain and beamwidth are owed in one file
+    # no component of the comms domain — which is why its beamwidth is owed in one file
     # and the other file has no object to name while it waits.
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
@@ -3827,29 +3827,62 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
 def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
     """The corpus states the gain-beamwidth product in three files and evaluates it in none.
 
-    `vehicle.yaml`'s note on the high-gain antenna is the sentence this test exists for: "the gains
-    are sourced and the beamwidths are **derived**, because the first version of this entry carried
-    `beamwidth_deg: 1.0` and that number is not physically possible beside a 26.7 dB gain. Any
-    aperture antenna obeys the gain-beamwidth product `G = 41253 / theta^2`". So the folder already
-    knew the relation, already caught one impossible number with it, and left it as prose — in that
-    note, in the domain component's note, and in `E-GEOM-LINK`'s relation, which computes its
-    -0.54 dB per degree as `-24 * 2 / 9.4^2`.
+    `vehicle.yaml`'s note on the high-gain antenna was the sentence this test was written for: "the
+    gains are sourced and the beamwidths are **derived**, because the first version of this entry
+    carried `beamwidth_deg: 1.0` and that number is not physically possible beside a 26.7 dB gain.
+    Any aperture antenna obeys the gain-beamwidth product `G = 41253 / theta^2`". So the folder
+    already knew the relation, already caught one impossible number with it, and left it as prose —
+    in that note, in the domain component's note, and in `E-GEOM-LINK`'s relation.
 
-    That last one is why it matters. The beamwidth this identity determines is what every pointing
-    loss the fleet reads is scaled by, and the antenna is declared in two files, so the *join* can
-    catch a divergence between them — this is the only thing that can catch the vehicle-level pair
-    drifting together, which is the case the second fixture below sets up.
+    That last one is why it matters. The beamwidth is what every pointing loss the fleet reads is
+    scaled by, and the antenna is declared in two files, so the *join* can catch a divergence
+    between them — this is the only thing that can catch the vehicle-level pair drifting together,
+    which is the case the second fixture below sets up.
 
     The rule needs one declaration to be universal, and the corpus already makes the case for it:
-    the omni's 180 degrees is not a half-power width. 2 dBi against the product would be 161
-    degrees, and the vehicle's own note says the product "is meaningless this close to isotropic".
-    So every antenna that declares both figures declares which relation governs them, `aperture` or
-    `near_isotropic`, and the second is a claim that carries its reason — the discipline
-    `state_order: independent` gets, arriving at the one quantity on this vehicle where a wrong
-    number was already found.
+    the omni's 180 degrees is not a half-power width, and the vehicle's own note says the product
+    "is meaningless this close to isotropic". So every antenna that declares both figures declares
+    which relation governs them, `aperture`, `measured` or `near_isotropic`, and the last is a claim
+    that carries its reason — the discipline `state_order: independent` gets.
+
+    **The vehicle's own high-gain antenna is now `measured`**: TN D-6723 publishes 25.7 dB at 4.4
+    degrees, about 17 % of an ideal aperture of that width, and the 9.4 degrees the product derived
+    from NR's 26.7 dB was wrong by a factor of two. So the `aperture` half of the rule is held on a
+    fixture that puts NR's ideal-aperture figures back (`aperture`, below), and the `measured` half
+    on the vehicle as it stands.
     """
 
-    def refusal(name: str, edits: list[tuple[str, str, str]], needles: list[str]) -> None:
+    dom = "domains/comms/components.yaml"
+
+    def aperture(definition: Path) -> None:
+        """Re-declare the high-gain antenna as NR's ideal aperture in both files, consistently."""
+        for rel, old, new in [
+            (
+                "vehicle.yaml",
+                "      pattern: measured\n      gain_db: 25.7\n      beamwidth_deg: 4.4\n",
+                "      pattern: aperture\n      gain_db: 26.7\n      beamwidth_deg: 9.4\n",
+            ),
+            (
+                "vehicle.yaml",
+                "        - {id: wide, gain_db: 8.0, beamwidth_deg: 40.0}\n"
+                "        - {id: medium, gain_db: 18.0, beamwidth_deg: 11.3}\n"
+                "        - {id: narrow, gain_db: 25.7, beamwidth_deg: 4.4}\n",
+                "        - {id: wide, gain_db: 9.2, beamwidth_deg: 70.4}\n"
+                "        - {id: medium, gain_db: 20.7, beamwidth_deg: 18.7}\n"
+                "        - {id: narrow, gain_db: 26.7, beamwidth_deg: 9.4}\n",
+            ),
+            (
+                dom,
+                "    pattern: measured\n    gain_db: 25.7\n    beamwidth_deg: 4.4\n",
+                "    pattern: aperture\n    gain_db: 26.7\n    beamwidth_deg: 9.4\n",
+            ),
+        ]:
+            path = definition / rel
+            text = path.read_text()
+            assert old in text, f"the fixture no longer matches {old!r}"
+            path.write_text(text.replace(old, new, 1))
+
+    def refusal(name: str, edits: list[tuple[str, str, str]], needles: list[str], *, ideal: bool = True) -> str:
         """Break several independent declarations at once and demand every refusal by name.
 
         Independent because they are different figures, or different antennas: the linter reports
@@ -3857,6 +3890,8 @@ def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
         fixtures does not cost six linter runs.
         """
         definition = copy_definition(tmp_path / name)
+        if ideal:
+            aperture(definition)
         for rel, old, new in edits:
             path = definition / rel
             text = path.read_text()
@@ -3865,9 +3900,13 @@ def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
         out = run_linter(definition).stdout
         for needle in needles:
             assert needle in out, f"{needle!r} did not fire:\n{out[-1500:]}"
+        return out
 
-    dom = "domains/comms/components.yaml"
     product = "the ideal-aperture product `G = 41253 / theta^2` puts the half-power width of a"
+    # The ideal-aperture fixture itself composes as far as the antenna rule goes: NR's pairs sit on
+    # the product, so the rule has nothing to say about the declared antenna.
+    out = refusal("ideal", [], [])
+    assert not [line for line in out.splitlines() if "comms.antennas.high_gain" in line and product in line], out[-1500:]
     # The gain, moved on the vehicle side only. Both refusals fire and they are different
     # complaints: the pair no longer closes, and the two files no longer agree about the gain.
     refusal(
@@ -3899,7 +3938,7 @@ def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
         ],
         [
             "and no `pattern`, so nothing says whether the two are one figure or two",
-            "declares 2 dB with a 180-degree beamwidth, and the ideal-aperture product",
+            "declares 0 dB with a 180-degree beamwidth, and the ideal-aperture product",
         ],
     )
     # A claim that exempts itself from a rule carries its reason, the discipline
@@ -3913,46 +3952,35 @@ def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
         ["without a `pattern_note`"],
     )
     # A measured pair: both figures published, held to the bound rather than to equality. The
-    # high-gain antenna's own pair sits on the ideal product, so declared measured on its
-    # `historical` basis it raises nothing; a beam wider than the ideal for its gain is impossible
-    # either way, and the claim on another basis is refused.
-    measured = "      pattern: measured\n      gain_db: 26.7\n"
-    definition = copy_definition(tmp_path / "measured")
-    for rel, old, new in [
-        ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
-        (dom, "    pattern: aperture\n    gain_db: 26.7\n", "    pattern: measured\n    gain_db: 26.7\n"),
-    ]:
-        path = definition / rel
-        path.write_text(path.read_text().replace(old, new, 1))
-    out = run_linter(definition).stdout
-    assert not [line for line in out.splitlines() if line.startswith("vehicle.yaml:comms.antennas.high_gain")], out[-1500:]
+    # vehicle's own high-gain antenna is TN D-6723's measured pair on a `historical` basis and
+    # raises nothing; a beam wider than the ideal for its gain is impossible either way, and the
+    # claim on another basis is refused.
+    out = run_linter(VEHICLE).stdout
+    assert not [line for line in out.splitlines() if line.strip().startswith("- vehicle.yaml:comms.antennas.high_gain")], out[-1500:]
     refusal(
         "measured_wide",
         [
-            ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
-            ("vehicle.yaml", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 18.7}", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 20.0}"),
-            ("vehicle.yaml", "    - id: omni_a\n      pattern: near_isotropic\n", "    - id: omni_a\n      pattern: measured\n"),
+            ("vehicle.yaml", "        - {id: medium, gain_db: 18.0, beamwidth_deg: 11.3}", "        - {id: medium, gain_db: 18.0, beamwidth_deg: 30.0}"),
         ],
-        [
-            "declares 20.7 dB with a 20.0-degree beamwidth, wider than the",
-            "declares 2 dB with a 180-degree beamwidth, wider than the",
-        ],
+        ["declares 18.0 dB with a 30.0-degree beamwidth, wider than the"],
+        ideal=False,
     )
     refusal(
         "measured_unsourced",
         [
-            ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
-            ("vehicle.yaml", "        basis: historical\n        source: \"NR ch.18: four", "        basis: chosen\n        source: \"NR ch.18: four"),
+            ("vehicle.yaml", "        basis: historical\n        source: \"NASA TN D-6723 (Apollo", "        basis: chosen\n        source: \"NASA TN D-6723 (Apollo"),
         ],
         ["declares its pattern measured on a 'chosen' provenance"],
+        ideal=False,
     )
     # One gap, one refusal: the missing declaration above is one fact about the antenna, and the
     # high-gain entry has four pairs it governs.
-    definition = copy_definition(tmp_path / "once")
-    path = definition / "vehicle.yaml"
-    text = path.read_text()
-    path.write_text(text.replace("      pattern: aperture\n      gain_db: 26.7\n", "      gain_db: 26.7\n", 1))
-    out = run_linter(definition).stdout
+    out = refusal(
+        "once",
+        [("vehicle.yaml", "      pattern: measured\n      gain_db: 25.7\n", "      gain_db: 25.7\n")],
+        [],
+        ideal=False,
+    )
     assert len([line for line in out.splitlines() if "and no `pattern`" in line]) == 1, out[-900:]
 
 
@@ -3965,11 +3993,11 @@ def test_an_edge_whose_value_is_another_declaration_s_function(tmp_path):
     expression are copies.** They are read from nowhere, so they cannot be held to the declaration they
     came from, and the check can only catch an edge that disagrees with itself.
 
-    9.4 is `vehicle.yaml#comms.antennas.high_gain`'s half-power beamwidth — which the previous round
-    tied to the gain through the ideal-aperture product — and 2 was the operating point, which existed
-    only inside a sentence. Re-rate the antenna from 26.7 dB to 28 dB **in both files and
-    consistently**, so that no join can complain and the product check cannot either: the beamwidth
-    becomes 8.1 degrees and the edge goes on scaling every pointing loss the fleet reads by the slope
+    The beamwidth is `vehicle.yaml#comms.antennas.high_gain`'s half-power width (9.4 degrees when this
+    test was written, TN D-6723's measured 4.4 now) and 2 was the operating point, which existed only
+    inside a sentence. Re-rate the antenna **in both files and consistently** — 26.5 dB at 4.1 degrees,
+    a measured pair inside the ideal-aperture bound — so that no join can complain and the pattern
+    check cannot either, and the edge goes on scaling every pointing loss the fleet reads by the slope
     of a beam that no longer exists. That is the first fixture, and before this round it composed.
 
     So a sensitivity may declare a `derivation`: an arithmetic expression over named inputs, each
@@ -4001,12 +4029,10 @@ def test_an_edge_whose_value_is_another_declaration_s_function(tmp_path):
     broken(
         "rerated",
         [
-            ("vehicle.yaml", "      gain_db: 26.7\n", "      gain_db: 28\n"),
-            ("vehicle.yaml", "      beamwidth_deg: 9.4\n", "      beamwidth_deg: 8.1\n"),
-            (dom, "    gain_db: 26.7\n", "    gain_db: 28\n"),
-            (dom, "    beamwidth_deg: 9.4\n    steerable: true\n", "    beamwidth_deg: 8.1\n    steerable: true\n"),
+            ("vehicle.yaml", "      gain_db: 25.7\n      beamwidth_deg: 4.4\n", "      gain_db: 26.5\n      beamwidth_deg: 4.1\n"),
+            (dom, "    gain_db: 25.7\n    beamwidth_deg: 4.4\n", "    gain_db: 26.5\n    beamwidth_deg: 4.1\n"),
         ],
-        ["E-GEOM-LINK.sensitivity.derivation: derives -0.731596"],
+        ["E-GEOM-LINK.sensitivity.derivation: derives -2.85544"],
     )
     # One published figure, four edges that bind it.
     broken(
@@ -5150,15 +5176,15 @@ def test_the_linter_refuses_a_multi_state_node_with_no_declared_order(tmp_path):
     """Ten nodes are advanced by more than one state, and the tiebreak silently decided all ten.
 
     This is not ambiguity, it is a wrong answer waiting to happen: the frozen lexicographic rule
-    sorts `link_snr` before `tx_power`, and transmit power is a term in the link budget — so the
-    derived order would compute every signal-to-noise ratio from last tick's power. Each node
+    sorts `link_margin_db` before `tx_power`, and transmit power is a term in the link budget — so the
+    derived order would compute every link margin from last tick's power. Each node
     with more than one producing state now declares either its order or that it has none, and
     `independent` is a permitted answer that has to carry a reason.
     """
     definition = copy_definition(tmp_path / "vehicle")
     path = definition / "coupling.yaml"
     text = path.read_text()
-    anchor = "    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_snr]\n"
+    anchor = "    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_margin_db, carrier_lock]\n"
     assert anchor in text, "the fixture no longer matches the `link` node"
     path.write_text(text.replace(anchor, "", 1))
 
@@ -5191,7 +5217,7 @@ def test_the_linter_refuses_a_state_order_that_is_not_the_group(tmp_path):
 
 
 def test_the_derived_order_puts_transmit_power_before_the_link_budget(tmp_path):
-    """The order is derived, so it is checkable: `tx_power` advances before `link_snr`.
+    """The order is derived, so it is checkable: `tx_power` advances before `link_margin_db`.
 
     The `--order` view is the artifact `plant.md:71` promises, and the intra-node order is the
     part the tiebreak would have got wrong. Asserting the pair rather than the whole 39-node list
@@ -5213,8 +5239,8 @@ def test_the_derived_order_puts_transmit_power_before_the_link_budget(tmp_path):
     marker = _re.search(r"^\s*\d+\. link\b.*$", result.stdout, _re.M)
     assert marker is not None, result.stdout[-2000:]
     section = result.stdout[marker.start() :]
-    assert "tx_power" in section and "link_snr" in section, result.stdout[-2000:]
-    assert section.index("tx_power") < section.index("link_snr"), (
+    assert "tx_power" in section and "link_margin_db" in section, result.stdout[-2000:]
+    assert section.index("tx_power") < section.index("link_margin_db"), (
         "transmit power has to advance before the link budget it is a term of"
     )
     assert "[order undeclared]" not in result.stdout, (
@@ -8644,7 +8670,7 @@ def test_the_linter_refuses_a_read_that_names_a_state_on_another_node(tmp_path):
     # boundary between the two rules is written down rather than implied.
     swapped = copy_definition(fixture_dir(tmp_path, "reads-wrong-quantity"))
     path = swapped / "coupling.yaml"
-    path.write_text(path.read_text().replace("    reads: tx_power\n", "    reads: link_snr\n", 1))
+    path.write_text(path.read_text().replace("    reads: tx_power\n", "    reads: link_margin_db\n", 1))
     assert run_linter(swapped).returncode == 0
 
 
@@ -10403,7 +10429,7 @@ def test_the_build_order_is_derived_and_partitions_the_vehicle():
     # `command_value` mappings name profiles and a mode no source prices.
     # One more moved in with the pump: its `on` mapping is an owed rated speed, so what blocks
     # `pump_1_speed_rpm` is named to a field rather than to the code that would drive it.
-    # Four more moved in when a `computed` effect began naming its input: `link_snr`, `tx_power`,
+    # Four more moved in when a `computed` effect began naming its input: `link_margin_db`, `tx_power`,
     # `instrumentation_power` and `nav_solution` are blocked by a field now rather than by the
     # rule that would compute them.
     # Six left `value` in round 8 — the two cabins' gas stocks, which took the initials the four-gas
@@ -10473,7 +10499,7 @@ def test_the_plant_advances_a_node_s_states_in_the_order_the_node_declares(tmp_p
     ran the flow before the pump speed that drives it.
 
     `link` is the one to look at, because `plant.md` already names it: the frozen lexicographic
-    tiebreak "gets `link` wrong — `link_snr` sorts before `tx_power`, and transmit power is a term
+    tiebreak "gets `link` wrong — `link_margin_db` sorts before `tx_power`, and transmit power is a term
     in the link budget". The corpus *declares* the right order and the plant was not reading the
     declaration, so this was not even the tiebreak being wrong; it was a third order, the order the
     YAML happened to be written in, deciding silently.
@@ -10495,7 +10521,13 @@ def test_the_plant_advances_a_node_s_states_in_the_order_the_node_declares(tmp_p
         )
     # And the two independent nodes still get a frozen order, which is the tiebreak rather than a
     # declaration — the plant must not read "independent" as "whatever the file said".
-    assert [s.id for s in world.states_on("link")] == ["transmitter_on", "tx_power", "amp_dissipation_w", "link_snr"]
+    assert [s.id for s in world.states_on("link")] == [
+        "transmitter_on",
+        "tx_power",
+        "amp_dissipation_w",
+        "link_margin_db",
+        "carrier_lock",
+    ]
     assert [s.id for s in world.states_on("engine_main")] == sorted(
         ["aps_state", "dps_state", "sps_state"]
     )
@@ -12531,14 +12563,14 @@ def test_the_registry_coverage_claim_is_data_rather_than_a_sentence(tmp_path):
     definition = copy_definition(tmp_path / "coverage")
     path = definition / "channels.yaml"
     text = path.read_text()
-    broken = text.replace("perturbed_service_layer: 42", "perturbed_service_layer: 117", 1)
+    broken = text.replace("perturbed_service_layer: 43", "perturbed_service_layer: 117", 1)
     assert broken != text, "the fixture no longer matches channels.yaml"
     path.write_text(broken)
 
     result = run_linter(definition)
     assert result.returncode == 1, result.stdout[-900:]
     assert "channels.yaml:coverage.perturbed_service_layer" in result.stdout, result.stdout[-900:]
-    assert "claims 117 and the policies give 42" in result.stdout, result.stdout[-900:]
+    assert "claims 117 and the policies give 43" in result.stdout, result.stdout[-900:]
 
 
 def test_a_configuration_cannot_declare_two_different_masses(tmp_path):
@@ -12915,10 +12947,10 @@ def test_every_stock_declares_where_it_starts():
         "evaporator_feed",
         "radiator_bypass",
     }, sorted(seeded_integrators["internal"])
-    # **And the five `algebraic` states the resolver adds**, the sentinel's half of the declared
-    # arithmetic: the bay heat rate, the cabin pressure differential, the two loops' collected loads
-    # and the RCS propellant estimate. (The bus load was the sixth, until ADR 0003's power rules
-    # moved it to the cells' node.) They are values a tick computes and a seed
+    # **And the six `algebraic` states the resolver adds**, the sentinel's half of the declared
+    # arithmetic: the bay heat rate, the cabin pressure differential, the two loops' collected loads,
+    # the RCS propellant estimate and comms' light time. (The bus load was a seventh, until ADR
+    # 0003's power rules moved it to the cells' node.) They are values a tick computes and a seed
     # cannot, which is why the map a tick starts from is a strict superset of what it seeds.
     assert set(seeded["internal"]) == set(seeded_integrators["internal"]) | {
         "avionics_bay_heat_w",
@@ -12926,6 +12958,7 @@ def test_every_stock_declares_where_it_starts():
         "loop_primary_load_w",
         "loop_lm_load_w",
         "propellant_estimate",
+        "light_time_s",
     }
     # Zero everywhere except the supply tank's pressure, which is the one seeded sentinel value that
     # is not an accumulator's origin — and, from round 67, `auto`, which is not a number at all and
@@ -14134,7 +14167,7 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
 
     `check_domains` requires a node advanced by two or more states to declare a `state_order` or
     to claim `independent`, and the comment beside it records what the requirement is for: the
-    frozen lexicographic tiebreak sorted `link_snr` before `tx_power`, on a node where transmit
+    frozen lexicographic tiebreak sorted `link_margin_db` before `tx_power`, on a node where transmit
     power is a term in the link budget, so the derived order computed this tick's ratio from last
     tick's power. *"Silence about them means the alphabet decides."*
 
@@ -15338,7 +15371,7 @@ def test_every_command_edge_lands_where_a_state_says_a_command_writes():
     # The four that were silent, named, because a future round that adds a fifth mover here should
     # have to say which state it is moving.
     assert written["instrumentation"] == ["avionics.instrumentation_power"]
-    assert written["link"] == ["comms.link_snr", "comms.tx_power", "comms.transmitter_on"]
+    assert written["link"] == ["comms.link_margin_db", "comms.tx_power", "comms.transmitter_on"]
     assert written["nav_state"] == ["gnc.nav_solution"]
     assert written["structure_config"] == ["structure.pyro_fired"]
 
@@ -16317,7 +16350,7 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     # **Fourteen apply and seven are owed**, and the eighth moved across in round 33: a
     # rule-computed state is changed through an *input*, and `select_antenna`'s input
     # (`comms.antenna_selection`) is a state that exists and declares the same verb — so the command
-    # stages it and leaves `link_snr` to the rule. The other five `computed` effects name
+    # stages it and leaves `link_margin_db` to the rule. The other five `computed` effects name
     # `UNCONFIGURED`, which is the honest answer for an input nobody has declared.
     # 14 -> 20 with ADR 0003: `set_coolant_pump`, `set_evaporator_feed`, `set_radiator_bypass`
     # (thermal), `set_load` (power), `set_power_amplifier` and `play_recorder` (comms); 21 with
@@ -16458,7 +16491,7 @@ def test_the_console_applies_the_effect_and_says_what_changed(tmp_path):
     guard the command and refuses it
     `INTERLOCK UNEVALUATED`; the tie stays `open` in the ring. And `set_coolant_pump`, the old
     NOT IMPLEMENTED case, declares interlocks too, so the owed-value refusal is proved on `point_hga`
-    — interlock-free, and its `link_snr.command_value.selects` is owed (`domains/comms/components.yaml`).
+    — interlock-free, and its `link_margin_db.command_value.selects` is owed (`domains/comms/components.yaml`).
     """
     console, _plant, world = console_tools()
     diode = tmp_path / "diode"
@@ -16487,7 +16520,7 @@ def test_the_console_applies_the_effect_and_says_what_changed(tmp_path):
     # A valid command the corpus cannot apply: refused by name, with the reason.
     pointed = run("point_hga target=earth mode=auto")
     assert "refused: NOT IMPLEMENTED" in pointed, pointed
-    assert "link_snr.command_value.selects" in pointed and "is owed" in pointed, pointed
+    assert "link_margin_db.command_value.selects" in pointed and "is owed" in pointed, pointed
     assert "does not simulate the effect" not in pointed, pointed
     # And setting what is already set changes nothing and says so.
     again = run("set_comm_mode mode=sband_low")
@@ -16499,7 +16532,7 @@ def test_a_computed_effect_names_the_input_the_command_changes(tmp_path):
 
     That made it a place a missing state could hide, and one of them hid with a *claim* attached.
     Six entries declare a `computed` effect across five verbs — `select_antenna` and `point_hga` on
-    `link_snr`, `set_power_amplifier` on `tx_power`, `set_instrumentation_mode` on
+    `link_margin_db`, `set_power_amplifier` on `tx_power`, `set_instrumentation_mode` on
     `instrumentation_power`, and `load_state_vector` and `select_nav_source` on `nav_solution` — and
     the input each command writes has a state for exactly one of them. For the other five the
     command's real effect is a state the corpus does not declare, which is a debt.
@@ -16532,18 +16565,18 @@ def test_a_computed_effect_names_the_input_the_command_changes(tmp_path):
     resolved = {k: v for k, v in computed.items() if v[1] != "UNCONFIGURED"}
     # ADR 0003 resolved two more: comms' `transmitter_on` and thermal's `coolant_pump`.
     assert sorted(resolved) == [
-        "comms.link_snr <- select_antenna",
+        "comms.link_margin_db <- select_antenna",
         "comms.tx_power <- set_power_amplifier",
         "thermal.pump_1_speed_rpm <- set_coolant_pump",
     ], resolved
-    assert resolved["comms.link_snr <- select_antenna"][1] == "antenna_selection"
+    assert resolved["comms.link_margin_db <- select_antenna"][1] == "antenna_selection"
     # The two halves agree, which is what the check enforces and what makes the effect performable.
     assert "command:select_antenna" in [
         str(m) for m in states["comms.antenna_selection"]["moved_by"]
     ]
     # The four that owe name no state, and the thing the false claim named is not a channel.
     assert {k for k, v in computed.items() if v[1] == "UNCONFIGURED"} == {
-        "comms.link_snr <- point_hga",
+        "comms.link_margin_db <- point_hga",
         "avionics.instrumentation_power <- set_instrumentation_mode",
         "gnc.nav_solution <- load_state_vector",
         "gnc.nav_solution <- select_nav_source",
@@ -18908,7 +18941,7 @@ def test_the_linter_refuses_an_unavailability_claim_that_names_no_document(tmp_p
     path.write_text(
         text[:note]
         + "      note: >-\n"
-        + "        the mechanism that keeps a 9.4-degree beam on Earth, and the component F-11\n"
+        + "        the mechanism that keeps a 4.4-degree beam on Earth, and the component F-11\n"
         + "        fails. Both parameters are owed: no source publishes the Apollo HGA's gimbal\n"
         + "        range or slew rate"
         + text[end:]
@@ -20087,9 +20120,9 @@ def test_every_domain_that_uses_the_sentinel_declares_the_order_it_advances_in()
     # domain declares an order now too.
     assert len(declared) == 10, sorted(declared)
     # The orders are the domains' own decisions, not one template: propulsion's is physics and
-    # comms' is a link chain, so no two need agree.
+    # comms' is the geometry and then a link chain, so no two need agree.
     assert declared["propulsion"][0] == "dps_throttle_pct"
-    assert declared["comms"][0] == "comm_mode"
+    assert declared["comms"][0] == "blackout"
 
 
 def test_the_linter_refuses_an_internal_order_with_no_reason(tmp_path):
@@ -20239,8 +20272,11 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
-    # 27 -> 28 with ECLSS's `suit_fan`, and 30 with `o2_source` and `o2_flow`.
-    assert len(values["internal"]) == 30, sorted(values["internal"])
+    # 27 -> 28 with ECLSS's `suit_fan`, 30 with `o2_source` and `o2_flow`, and 32 with comms'
+    # `light_time_s` and `blackout`: the first resolves at t=0 from the orbit, the second is computed
+    # in the tick and lands in the sub-map since #47's merge. `carrier_lock` left the sentinel for
+    # `link` in the same change.
+    assert len(values["internal"]) == 32, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
@@ -20285,8 +20321,8 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
     # 31 -> 32 when `load_enabled` joined `load_shed_state` (`power.load_shed_class`), and 32 -> 36
     # with ADR 0003's power rules: the bus loads and the module current joined the cells' power on
     # `fuel_cell`, so `bus_a_current_a`, `lcl_[n]_current_a`, `load_margin_w` and `source_1_current_a`
-    # read a crowded node again.
-    assert unnameable == 36, unnameable
+    # read a crowded node again. 36 -> 37 when `carrier_lock` joined `link` so that GNC can read it.
+    assert unnameable == 37, unnameable
 
     # The plant's half of the debt is closed: a frame's `values` keys are channel ids the registry
     # declares, and a channel that is *derived* from its source (a different unit) is omitted rather
@@ -20324,7 +20360,7 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
     # And the debt states both figures, because a number in prose with no reader is the next round's
     # finding — this is that reader.
     entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
-    assert "142 published points" in entry and "72 are *derived*" in entry
+    assert "143 published points" in entry and "72 are *derived*" in entry
 
 
 def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
@@ -20377,9 +20413,10 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     ), report)
     counts = _cv.CHANNEL_DERIVATION_COUNTS
     # 64/71 -> 63/72 with the comms quiet-coast model (7b22cd7), which moved the docstring too.
-    assert counts["same"] == 63, counts
+    # 63 -> 64 with `comm.light_time_s`, which publishes its state unchanged.
+    assert counts["same"] == 64, counts
     assert counts["derived"] == 72, counts
-    assert counts["total"] == 135, counts
+    assert counts["total"] == 136, counts
     assert not [r for r in report.refusals if "channels read from a state" in r], report.refusals
     doc = _cv.CHANNEL_DERIVATION_FIGURES.search(_cv.inspect.getdoc(_cv.check_channel_derivations) or "")
     assert doc is not None, "the docstring no longer states the figures this check computes"
@@ -20421,12 +20458,12 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     total_fixture = copy_definition(fixture_dir(tmp_path, "total-count"))
     path = total_fixture / "presentation.yaml"
     text = path.read_text()
-    assert "of the 135 channels read from a state" in text
-    path.write_text(text.replace("of the 135 channels read from a state", "of the 134 channels read from a state", 1))
+    assert "of the 136 channels read from a state" in text
+    path.write_text(text.replace("of the 136 channels read from a state", "of the 135 channels read from a state", 1))
     result = run_linter(total_fixture)
     assert result.returncode == 1, result.stdout[-900:]
     assert (
-        "states that 134 channels read from a state, and the registry now has 135" in result.stdout
+        "states that 135 channels read from a state, and the registry now has 136" in result.stdout
     ), result.stdout[-900:]
 
     # And the corpus's own sentence carries all the figures, which is what makes it a declaration.
@@ -20434,9 +20471,10 @@ def test_the_window_s_channels_are_counted_rather_than_described(tmp_path):
     entry = next(d for d in presentation["open_debts"] if "frame publishes channel ids now" in d)
     # 63 -> 64 in round 32: `eclss.o2_supply_pressure_psi` moved from the node-sourced set to the
     # state-sourced one, where its unit is its source's. 134 -> 135 in round 61, when the total was
-    # given a reader and the sentence it was read from turned out to be the stale copy.
-    assert "only 63 have the state's own unit" in entry
-    assert "of the 135 channels read from a state" in entry
+    # given a reader and the sentence it was read from turned out to be the stale copy. 63/135 ->
+    # 64/136 with `comm.light_time_s`, a channel that is its state.
+    assert "only 64 have the state's own unit" in entry
+    assert "of the 136 channels read from a state" in entry
     assert "The other 72 are *derived*" in entry
     assert "15 of the 72 now carry an evaluable `derivation`" in entry
 

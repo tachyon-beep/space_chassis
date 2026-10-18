@@ -236,12 +236,6 @@ environment:
     provenance:
       basis: historical
       source: "mean lunar albedo; a surface-phase thermal input"
-  - id: earth_moon_light_time_s
-    value: 1.3
-    unit: s
-    provenance:
-      basis: historical
-      source: "one-way light time; apollo_diode.md:526 makes the link delay a simulation setting of approximately 1-2 s one way, which brackets this"
   - id: tick_hz
     value: 50
     unit: Hz
@@ -1613,78 +1607,75 @@ comms:
         source: "PSR: LM S-band 18.6 W high power. The dc_w figure is chosen, as above"
   antennas:
     - id: high_gain
-      # `pattern` is the declaration `check_antenna_patterns` needs to be a rule rather than a rule
-      # with a silent exception in it: an aperture's half-power beamwidth is its gain's own
-      # consequence, and the three feeds below are feeds on this one aperture, so the declaration
-      # governs them too. Its own provenance note states the relation and does the arithmetic; this
-      # is the field that lets a tool do it on every run.
-      pattern: aperture
-      gain_db: 26.7
-      beamwidth_deg: 9.4
+      # `measured`: the gain and the half-power width are each a published figure, and the pair is
+      # held to the physical bound rather than to the ideal-aperture identity. TN D-6723's array of
+      # four 31-inch dishes is a 4.4-degree beam at 25.7 dB, which is 7.6 dB below what an ideal
+      # aperture of that width would give (efficiency about 17 %): the identity this entry used to
+      # obey derived a 9.4-degree beam from NR's 26.7 dB and was wrong by a factor of two in width.
+      pattern: measured
+      gain_db: 25.7
+      beamwidth_deg: 4.4
       steerable: true
       beams:
-        - {id: wide, gain_db: 9.2, beamwidth_deg: 70.4}
-        - {id: medium, gain_db: 20.7, beamwidth_deg: 18.7}
-        - {id: narrow, gain_db: 26.7, beamwidth_deg: 9.4}
+        - {id: wide, gain_db: 8.0, beamwidth_deg: 40.0}
+        - {id: medium, gain_db: 18.0, beamwidth_deg: 11.3}
+        - {id: narrow, gain_db: 25.7, beamwidth_deg: 4.4}
       provenance:
         basis: historical
-        source: "NR ch.18: four 31-inch parabolas plus an 11-inch horn, transmit gain 9.2/20.7/26.7 dB in wide/medium/narrow beam. The narrow-beam 26.7 dB figure is the one a pointing-error channel is meaningful against"
+        source: "NASA TN D-6723 (Apollo Experience Report: S-band system signal design and analysis, 1972), printed p. 10 (PDF p. 18), Table I, CSM high-gain antenna characteristics, transmit: 40.0 deg / 8.0 dB, 11.3 deg / 18.0 dB, 4.4 deg / 25.7 dB (receive: 40.0 / 3.1, 4.5 / 22.5, 4.5 / 23.0). Same page: 'an 11-inch-diagonal wide-beam horn flanked by an array of four 31-inch-diameter parabolic reflectors'"
         note: >-
-          the gains are sourced and the beamwidths are **derived**, because the first version of
-          this entry carried `beamwidth_deg: 1.0` and that number is not physically possible
-          beside a 26.7 dB gain. Any aperture antenna obeys the gain-beamwidth product
-          `G = 41253 / theta^2` with theta in degrees, so 26.7 dB (467.7 linear) is a 9.4 deg
-          beam — a 1.0 deg beam would need 46 dB. The error was invisible until `domains/comms/`
-          landed, because the beamwidth is what the pointing-error channel and `E-GEOM-LINK` both
-          scale against, and it is the *corrected* figure that makes apollo's own threshold
-          coherent: `apollo_diode.md:163` calls 0-2 deg a good link and warns above 2 deg, and at
-          2 deg off a 9.4 deg beam the quadratic pattern is only 0.54 dB down. Against a 1.0 deg
-          beam the same 2 deg would be 48 dB down, which would make apollo's "good link" range a
-          range in which no link exists
+          **This entry carried NR ch.18's 9.2/20.7/26.7 dB with beamwidths derived from the
+          ideal-aperture product, and the primary source refutes both.** TN D-6723 publishes the
+          gains and the transmit beamwidths side by side, and the narrow beam is 4.4 degrees at
+          25.7 dB, not 9.4 at 26.7. The consequence is the one that matters operationally: the
+          pointing loss at 2 degrees off boresight is 12 x (2/4.4)^2 = 2.5 dB rather than 0.54, so
+          apollo's "0-2 degrees good link" (`apollo_diode.md:163`) spends up to 2.5 dB of margin, and
+          `E-GEOM-LINK`'s slope steepens from -0.54 to -2.48 dB per degree. Pointing is a trade the
+          crew has to manage rather than a formality
     - id: omni_a
       pattern: near_isotropic
       pattern_note: >-
-        the gain-beamwidth product is meaningless this close to isotropic — it would put a 2 dB
-        radiator at 161 degrees — so the 180 here is a nominal coverage figure rather than a
+        the gain-beamwidth product is meaningless this close to isotropic — it would put a 0 dB
+        radiator at 203 degrees — so the 180 here is a nominal coverage figure rather than a
         half-power width, and the two figures are independent. The sentence used to live in the
         `provenance` note below, where the relation it is about is stated and nothing reads it; it
         is the justification for an exemption from a rule, so it belongs with the declaration of
         the exemption
-      gain_db: 2
+      gain_db: 0
       beamwidth_deg: 180
       steerable: false
       provenance:
         basis: historical
-        source: "NR: four flush omni helices rated 15 W continuous; the individual gain is chosen to a nominal 2 dB"
+        source: "NASA TN D-6723 printed p. 10 (PDF p. 18): four cavity-backed helices at 90 deg intervals, one excited at a time, 'providing a resultant gain and coverage of >=0 decibels over 80 percent of the sphere'. 0 dB is that guaranteed level; NR rates the helices 15 W continuous. It replaces a chosen nominal 2 dB"
     - id: omni_b
       pattern: near_isotropic
       pattern_note: >-
         the second of the four flush helices, identical to `omni_a` in every figure, so it carries
         the same declaration for the same reason: a nominal 180-degree coverage figure that the
-        gain-beamwidth product does not determine and would put at 161 degrees. Written out here
+        gain-beamwidth product does not determine and would put at 203 degrees. Written out here
         rather than pointed at, because a note whose content is another entry's is a note that
         reorders badly and reads as sourced either way
-      gain_db: 2
+      gain_db: 0
       beamwidth_deg: 180
       steerable: false
       provenance:
         basis: historical
-        source: "the second of the four flush omnis, so an antenna selection has a safety-relevant alternative"
+        source: "the second of the four flush omnis, so an antenna selection has a safety-relevant alternative; gain as `omni_a`, TN D-6723 printed p. 10"
     - id: sband_steerable
-      gain_db: UNCONFIGURED
+      gain_db: 20.5
       beamwidth_deg: UNCONFIGURED
       steerable: true
       vehicle: lm
       provenance:
-        basis: UNCONFIGURED
+        basis: historical
+        source: "NASA TN D-6723 printed p. 11 (PDF p. 19): the LM steerable antenna, 'a single paraboloid 26 inches in diameter', receive gain 16.5 dB and transmit gain 20.5 dB, tracking Earth by electronic conical scan"
         note: >-
           the LM's steerable S-band antenna, and the fourth member of the `comm.antenna` enum
-          (`apollo_diode.md:164`) that this block did not declare — the linter now refuses that
-          mismatch, the same discipline the phase and posture vocabularies get. Neither its gain
-          nor its beamwidth is published in any source reached: the LM's S-band is documented by
-          *power* (0.75 W low, 18.6 W high, `transmitters` below) and the antenna itself only as
-          steerable. Both values are owed rather than picked, because a gain invented here would
-          propagate into `E-GEOM-LINK` and from there into every SNR a fleet ever reads
+          (`apollo_diode.md:164`). Its transmit gain is published; its half-power width is not, and
+          the CSM array shows why it cannot be derived from the gain: an ideal-aperture width would
+          be a guess about this dish's efficiency. It stays owed, and what would answer it is a
+          pattern figure for the 26-inch dish, the LM communications experience report being the
+          likeliest source
   rates:
     # **The two profiles, and the link mode each one travels on.** `apollo_diode.md:161` declares
     # `comm.link_mode` and `:165` declares `comm.telemetry_rate_bps`, and its own prose says they are
