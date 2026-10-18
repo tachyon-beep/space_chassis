@@ -3412,24 +3412,23 @@ def test_the_linter_holds_every_draw_on_a_stock(tmp_path):
     assert report.refusals == [], report.refusals
     consumers = documents["domains/consumables/components.yaml"]["consumers"]
     assert len(consumers) == 12, f"{len(consumers)} consumers"
-    # Ten name an edge and two do not; the two with none say where the draw is carried. **One** rate
-    # is still owed — `pressurant_blowdown`, which needs the helium charge — where four were until
-    # the fuel cell's operating point landed: the three cell entries were one unknown under three
-    # names and they are now one division under three derivations.
+    # Ten name an edge and two do not; the two with none say where the draw is carried. **No** rate
+    # is owed: four were until the fuel cell's operating point landed (the three cell entries were
+    # one unknown under three names and they are now one division under three derivations), and
+    # `pressurant_blowdown` was the last, closed by the helium a newton of SPS thrust expels.
     named = [c for c in consumers if c.get("edge")]
     assert len(named) == 10, f"{len(named)} consumers name an edge"
     reasoned = [c for c in consumers if not c.get("edge") and (c.get("provenance") or {}).get("note")]
     assert len(reasoned) == 2, f"{len(reasoned)} edge-less consumers carry a reason"
     owed = [c["id"] for c in consumers if c.get("rate_kg_s") == "UNCONFIGURED"]
-    assert owed == [
-        "pressurant_blowdown",
-    ], owed
-    # And nine rates are held against their own arithmetic: the six that were, plus the three fuel
-    # cell entries the round that landed the operating point converted from owed to derived. A rate
-    # that states its inputs cannot disagree with the declarations it reads, which is the property
-    # the six were joined for and the reason the three joined them rather than being quoted.
+    assert owed == [], owed
+    # And ten rates are held against their own arithmetic: the six that were, the three fuel cell
+    # entries the round that landed the operating point converted from owed to derived, and the
+    # helium blowdown. A rate that states its inputs cannot disagree with the declarations it reads,
+    # which is the property the six were joined for and the reason the others joined them rather
+    # than being quoted.
     derived = [c for c in consumers if c.get("derivation")]
-    assert len(derived) == 9, f"{len(derived)} consumers declare a derivation"
+    assert len(derived) == 10, f"{len(derived)} consumers declare a derivation"
     assert next(c for c in consumers if c["id"] == "evaporator_water")["rate_kg_s"] == 9.5714e-4
 
     def refusal(name: str, old: str, new: str, needle: str) -> None:
@@ -5942,8 +5941,9 @@ def test_the_conflict_policy_is_first_valid_wins_and_the_loser_is_told(tmp_path)
     loser must be told)". The template makes it sharper than that — `prop.<engine>.run` is one
     domain per engine, so two agents stopping *different* engines must both be accepted.
 
-    **What changed (ADR 0001).** `start_burn` declares six interlocks and is refused
-    `INTERLOCK UNEVALUATED` under choice C, so it can no longer win a domain; `stop_burn` is
+    **What changed (ADR 0001).** `start_burn` declared six interlocks and was refused
+    `INTERLOCK UNEVALUATED` under choice C, so it could not win a domain (its guards read now, and
+    the fixture closes its gate instead); `stop_burn` is
     interlock-free and carries the same template, and a refused command never claims the domain
     (`:578` says first *valid*). And the old console exempted the *same verb* with different
     arguments (`winner != verb`), so `set_rcs_mode mode=manual` and `mode=free_drift` both applied in
@@ -5973,9 +5973,14 @@ def test_the_conflict_policy_is_first_valid_wins_and_the_loser_is_told(tmp_path)
     assert newest_frame(root)["values"]["rcs.mode"] == "manual"
 
     # Two verbs in one domain: the refused one never claims it, so the valid one is not superseded.
-    bodies = run(["start_burn engine=sps", "stop_burn engine=sps"])
+    # `start_burn`'s admission guards all read now (ADR 0004's 2026-10-17 amendment and #47), so it is
+    # refused here by its own gate, which this window closes.
+    clear_results(root)
+    submit(root, ["start_burn engine=sps", "stop_burn engine=sps"], {"burn_start_sps_enable": False})
+    executive.cycle()
+    bodies = results_of(root)
     assert len(bodies) == 2, bodies
-    assert any("INTERLOCK UNEVALUATED" in b and "'start_burn'" in b for b in bodies), bodies
+    assert any("burn_start_sps_enable is closed" in b and "'start_burn'" in b for b in bodies), bodies
     assert any("accepted" in b and "'stop_burn'" in b for b in bodies), bodies
     assert not any("CONFLICT_SUPERSEDED" in b for b in bodies), bodies
 
@@ -6551,7 +6556,7 @@ def test_an_engine_cannot_run_where_it_says_it_cannot(tmp_path):
     65-92.5 % a NON-OPERATING region"* — so the corpus quoted the sentence and contradicted it in
     the same breath.
 
-    `thrust_curve` states the truth as three segments ([10.5, 65], [65, 92.5], [92.5, 100]) and was
+    `thrust_curve` states the truth as three segments ([10, 65], [65, 92.5], [92.5, 100]) and was
     the last block in the corpus that no tool named. So the fix is not only to split the band: each
     segment declares `operating:` so the curve and the bands can be held against each other, which
     is what gives the block a reader.
@@ -6564,7 +6569,7 @@ def test_an_engine_cannot_run_where_it_says_it_cannot(tmp_path):
     propulsion = yaml.safe_load((VEHICLE / "domains" / "propulsion" / "components.yaml").read_text())
     engine = next(c for c in propulsion["components"] if c.get("id") == "dps")
 
-    assert engine["operating_band_pct"] == [[10.5, 65], [92.5, 100]], engine["operating_band_pct"]
+    assert engine["operating_band_pct"] == [[10, 65], [92.5, 100]], engine["operating_band_pct"]
     assert engine["non_operating_band_pct"] == [[65, 92.5]]
     (stopped,) = engine["non_operating_band_pct"]
     for low, high in engine["operating_band_pct"]:
@@ -6574,7 +6579,7 @@ def test_an_engine_cannot_run_where_it_says_it_cannot(tmp_path):
     assert "65-92.5 % a NON-OPERATING region" in engine["provenance"]["source"]
 
     segments = propulsion["thrust_curve"]["segments"]
-    assert [s["band_pct"] for s in segments] == [[10.5, 65], [65, 92.5], [92.5, 100]]
+    assert [s["band_pct"] for s in segments] == [[10, 65], [65, 92.5], [92.5, 100]]
     assert [s["operating"] for s in segments] == [True, False, True]
     assert [s["coefficients"] for s in segments] == ["UNCONFIGURED", None, "UNCONFIGURED"], (
         "a non-operating segment has no law to owe and says so with null; the others owe one"
@@ -6605,7 +6610,7 @@ def test_an_engine_cannot_run_where_it_says_it_cannot(tmp_path):
     result = broken(lambda d: segment(d, [65, 92.5]).update(operating=True, coefficients="UNCONFIGURED"))
     assert "which no operating band covers" in result.stdout
     assert "a hole wearing the same spelling as an answer" in broken(
-        lambda d: segment(d, [10.5, 65]).update(coefficients=None)
+        lambda d: segment(d, [10, 65]).update(coefficients=None)
     ).stdout
     assert "a claim about combustion in a region the design excludes" in broken(
         lambda d: segment(d, [65, 92.5]).update(coefficients=[0.0, 1.0])
@@ -6620,7 +6625,7 @@ def test_an_engine_cannot_run_where_it_says_it_cannot(tmp_path):
 
     # A segment that does not say whether the engine runs there, and the flat shape that made the
     # contradiction invisible in the first place.
-    assert "nothing to be joined to" in broken(lambda d: segment(d, [10.5, 65]).pop("operating")).stdout
+    assert "nothing to be joined to" in broken(lambda d: segment(d, [10, 65]).pop("operating")).stdout
     assert "the shape that let an operating band contain a non-operating one" in broken(
         lambda d: dps_of(d).update(operating_band_pct=[10.5, 92.5])
     ).stdout
@@ -7583,11 +7588,9 @@ def test_the_linter_refuses_a_counter_with_no_rating(tmp_path):
     definition = copy_definition(tmp_path / "held")
     path = definition / "coupling.yaml"
     text = path.read_text()
-    anchor = '    preloaded: "the helium charge is loaded at the pad'
+    anchor = '    apollo: "836-847"\n    preloaded: >-\n      the SPS bottles\' 87.6 lb of helium'
     assert anchor in text, "the fixture no longer matches the pressurant_he node"
-    head, _, tail = text.partition(anchor)
-    line, newline, rest = tail.partition("\n")
-    path.write_text(f"{head}{anchor}{line}{newline}    exhausted_at: 10\n{rest}")
+    path.write_text(text.replace(anchor, anchor.replace("preloaded", "exhausted_at: 10\n    preloaded"), 1))
 
     result = run_linter(definition)
     assert result.returncode == 1
@@ -10923,10 +10926,11 @@ def test_the_lag_integrator_applies_the_conversion_its_edge_declares():
     gaps: list = []
     plant.step(world, plant.initial_values(world), 0.02, gaps)
     assert "coolant_flow_kg_s" not in {g.state.id for g in gaps}
-    # And `thrust_main_n`'s debt moved from *the rule* to the *edge*, which is the truthful place:
-    # what it lacks is the propellant flow to relax toward, not the code that would relax it.
-    assert "thrust_main_n" in {s.id for s in buckets["edge"]}
-    assert "thrust_main_n" not in {s.id for s in buckets["rule"]}
+    # `thrust_main_n`'s debt moved from *the rule* to the *edge* in this test's round, because what
+    # it lacked was a driver to relax toward. The propulsion lane found that the edge it was waiting
+    # on, `E-PROP-ENG`, is the propellant tank's drain and never a cause of thrust, and made the state
+    # a rule on which engine is firing (`domains/propulsion/rules.py`): it is ready now.
+    assert "thrust_main_n" in {s.id for s in buckets["ready"]}
 
 
 def test_the_delay_integrator_hands_back_what_entered_one_pipe_ago(tmp_path):
@@ -12874,6 +12878,10 @@ def test_every_stock_declares_where_it_starts():
         "coolant_pump",
         "evaporator_feed",
         "radiator_bypass",
+        # The SPS pressurization rules: the propellant tanks' ullage pressure, loaded at 178 psia
+        # (ODB Table 3.3-10), and the feed as a percentage of the regulator's 186.
+        "pressurant_pressure_psi",
+        "feed_pressure_pct",
     }, sorted(seeded_integrators["internal"])
     # **And the five `algebraic` states the resolver adds**, the sentinel's half of the declared
     # arithmetic: the bay heat rate, the cabin pressure differential, the two loops' collected loads
@@ -12911,6 +12919,9 @@ def test_every_stock_declares_where_it_starts():
         "off",
         # The amplifier's lump at its MET-0 equilibrium, transmitter off (ADR 0003 item 10).
         283.35,
+        # The SPS tanks' loading pressure, and the feed it sets against the regulated 186 psia.
+        178.0,
+        100.0 * 178 / 186,
     }
     assert seeded["internal"]["o2_supply_pressure_psi"] == 900.0
     assert seeded["internal"]["suit_loop_flow_cfm"] == 35.0
@@ -15083,29 +15094,24 @@ def test_a_placeholder_inside_an_owed_entry_says_so(tmp_path):
     p_states = {str(s["id"]): s for s in propulsion["state"]}
     c_states = {str(s["id"]): s for s in consumables["state"]}
 
-    assert p_states["pressurant_pressure_psi"]["provenance"]["basis"] == "UNCONFIGURED"
-    assert "placeholder" in p_states["pressurant_pressure_psi"]["tau_s_placeholder"]
-    # **The helium entry is the case that moved.** It was the corpus's example of a placeholder
-    # inside a wholly-owed entry — `basis: UNCONFIGURED` with a `quantum_placeholder` beside a
-    # `quantum` — and round 13 landed its charge from the Operational Data Book, so its provenance
-    # is `historical` now. What is still owed is the *flow*, so the placeholder is still a
-    # placeholder and the entry still carries one obligation: the assertion that matters is the
-    # one that says the placeholder is attached to something unset.
-    assert c_states["pressurant_he_kg"]["min_flow_per_s"] == "UNCONFIGURED", (
-        "the placeholder's justification is that the smallest flow is owed; if that landed, this "
-        "entry no longer needs the note"
-    )
-    assert (
-        "picked because the helium feed is slow"
-        in c_states["pressurant_he_kg"]["quantum_placeholder"]
-    )
+    # **Both cases have moved, and the rule outlived them.** The pressurant's pressure is a rule
+    # now (`domains/propulsion/rules.py`) between sourced pressures, so its entry is `chosen` for the
+    # time constant alone, and it keeps the note that says the five seconds are a shape rather than
+    # a figure. The helium's flow is derived (`coupling.yaml#E-PRESS-PROP`), so the quantum has a
+    # flow to be finer than and no longer needs a note of its own.
+    assert p_states["pressurant_pressure_psi"]["provenance"]["basis"] == "chosen"
+    assert "chosen in shape" in p_states["pressurant_pressure_psi"]["tau_s_placeholder"]
+    assert isinstance(c_states["pressurant_he_kg"]["min_flow_per_s"], float)
+    assert "quantum_placeholder" not in c_states["pressurant_he_kg"]
 
     definition = copy_definition(tmp_path / "unmarked")
     path = definition / "domains" / "propulsion" / "components.yaml"
     text = path.read_text()
+    # The pressurant's entry as it was owed: `basis: UNCONFIGURED` with the time constant unmarked.
     i = text.index("    tau_s_placeholder: >-")
-    j = text.index("    provenance:", i)
-    path.write_text(text[:i] + text[j:])
+    j = text.index("    provenance:\n      basis: chosen\n", i)
+    rest = text[j:].replace("      basis: chosen\n", "      basis: UNCONFIGURED\n", 1)
+    path.write_text(text[:i] + rest)
 
     result = run_linter(definition)
     assert result.returncode == 1
@@ -15583,8 +15589,10 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
     arm = yaml.safe_load((VEHICLE / "domains" / "propulsion" / "commands.yaml").read_text())
     verb = next(v for v in arm["commands"] if v["verb"] == "arm_engine")
     assert verb["interlocks"] == ["pressurant_low", "feed_pressure_low", "prop_cutoff_guard_5"]
-    assert verb["interlocks_when"]["argument"] == "state"
-    assert verb["interlocks_when"]["values"] == ["armed"]
+    # The guards read the SPS's own feed, helium and propellant, so the condition names the engine
+    # as well as the direction (ADR 0004, amended 2026-10-18).
+    assert verb["interlocks_when"]["argument"] == ["engine", "state"]
+    assert verb["interlocks_when"]["values"] == [["sps", "armed"]]
     assert verb["interlocks_when"]["why"].strip()
     # `safe` is the value the guards do not apply to, and it is the one the help promises for.
     assert "never refused" in verb["help"]
@@ -15604,20 +15612,18 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
         text=True,
         check=False,
     ).stdout
-    assert "only when `state` is `armed`" in generated, generated[-800:]
+    assert "only when (`engine`, `state`) is one of (`sps`, `armed`)" in generated, generated[-800:]
 
+    # The one-argument form's refusals, on `start_burn`, whose condition names one argument.
     block = (
         "    interlocks_when:\n"
-        "      argument: state\n"
-        "      values: [armed]\n"
+        "      argument: engine\n"
+        "      values: [sps]\n"
         "      why: >-\n"
-        "        the three guards are about *arming*, and safing is not refused by any of them. `apollo_diode.md:241`\n"
-        "        lists arm and safe as two verbs and this vehicle merged them into one binary argument, so the\n"
-        "        asymmetry the merge was made to preserve has to be sayable here or it is lost: an armed engine\n"
-        "        on a failing feed is the hazard F-01 is about, and a *safe* command is how a crew ends that\n"
-        "        hazard. Declaring the three guards for the whole verb refused `safe` exactly when the feed was\n"
-        "        failing — the one moment it matters — and refusing to de-energise an engine because its feed is\n"
-        "        low is backwards\n"
+        "        the three admission guards read the service propulsion system's feed, helium and propellant,\n"
+        "        and the LM engines have none of those states here. Guarding a descent or ascent burn on them\n"
+        "        would refuse the LM's engine for an SPS failure, which is the Apollo 13 case backwards: there\n"
+        "        the SPS was not trusted and the descent engine flew the return burns\n"
     )
 
     def refusal(name: str, old: str, new: str, needle: str) -> None:
@@ -15629,12 +15635,12 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
         out = run_linter(definition).stdout
         assert needle in out, out[-1400:]
 
-    refusal("no-argument", block, block.replace("argument: state", "argument: throttle"),
+    refusal("no-argument", block, block.replace("argument: engine", "argument: throttle"),
             "which is not an enum argument of this verb")
-    refusal("bad-value", block, block.replace("values: [armed]", "values: [disarmed]"),
+    refusal("bad-value", block, block.replace("values: [sps]", "values: [lmde]"),
             "cannot take")
-    refusal("every-value", block, block.replace("values: [armed]", "values: [armed, safe]"),
-            "names every value 'state' takes")
+    refusal("every-value", block, block.replace("values: [sps]", "values: [sps, dps, aps]"),
+            "names every value 'engine' takes")
     refusal(
         "no-why",
         block,
@@ -19834,8 +19840,11 @@ def test_the_helium_charge_is_a_loading_requirement_and_not_a_mystery():
     # The claim that was false is gone, and the note now says what the table also publishes.
     assert "not published for either vehicle" not in stock["provenance"]["note"]
     assert "LM-II - Helium & Nitrogen" in stock["initial_note"]
-    # The regulated flow is a *different* quantity and is still owed — the table has pressures.
-    assert stock["min_flow_per_s"] == "UNCONFIGURED"
+    # The regulated flow is a *different* quantity, and it is derived now rather than owed: the
+    # helium a burn expels is the propellant volume it replaces at the regulated pressure
+    # (`coupling.yaml#E-PRESS-PROP`), and the SPS's rated thrust sets the coarsest flow.
+    assert stock["min_flow_derivation"]["expression"] == "thrust_n * per_newton"
+    assert stock["min_flow_per_s"] == pytest.approx(0.0528648, rel=1e-5)
 
 
 def test_the_linter_refuses_an_unavailability_claim_whose_search_is_the_contract(tmp_path):
@@ -19974,12 +19983,16 @@ def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     # test is about are still among the refusals.** The claim being asserted is about *these two*,
     # not about the tick's total: whatever else the plant learns to advance, a driver in the wrong
     # quantity must stay refused.
+    # **`thrust_main_n` left the pair when the propulsion lane made it a rule** on which engine is
+    # firing (`domains/propulsion/rules.py`): its driver was never `E-PROP-ENG`, which is the tank's
+    # drain, so it advances without reading that edge at all. `crew_workload` still has the wrong
+    # driver and is still refused for it.
     reasons = {g.state.id: (g.where, g.owed) for g in gaps}
-    assert "crew_workload" in reasons and "thrust_main_n" in reasons, sorted(reasons)[:8]
+    assert "crew_workload" in reasons, sorted(reasons)[:8]
+    assert "thrust_main_n" not in reasons, reasons.get("thrust_main_n")
     assert "coupling.yaml:edge E-CREW-WATER" in reasons["crew_workload"][0], reasons["crew_workload"]
-    assert "coupling.yaml:edge E-PROP-ENG" in reasons["thrust_main_n"][0], reasons["thrust_main_n"]
-    for state_id in ("crew_workload", "thrust_main_n"):
-        assert "driver" in reasons[state_id][1] or "quantity" in reasons[state_id][1], reasons[state_id]
+    owed = reasons["crew_workload"][1]
+    assert "driver" in owed or "quantity" in owed, reasons["crew_workload"]
 
 
 def test_every_domain_that_uses_the_sentinel_declares_the_order_it_advances_in():
@@ -20172,7 +20185,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
     # 27 -> 28 with ECLSS's `suit_fan`.
-    assert len(values["internal"]) == 28, sorted(values["internal"])
+    # 28 -> 30 with the SPS pressurization rules: `pressurant_pressure_psi` and `feed_pressure_pct`.
+    assert len(values["internal"]) == 30, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
@@ -26783,7 +26797,7 @@ def test_a_refusal_only_cycle_is_recorded_and_its_receipts_and_spend_delta_repla
     A refusal moves the window's receipt counter, and an accepted deferral moves the queue and the
     spend with no effect this tick; a record of effects alone would repeat window-local receipt numbers
     after a restart and forget the deferral. Tick 2's cycle here holds refusals only — an unknown
-    verb, a bus tie refused `INTERLOCK UNEVALUATED`, a burn refused the same way — and tick 3's holds
+    verb, a bus tie refused `INTERLOCK UNEVALUATED`, a burn load refused the same way — and tick 3's holds
     only bravo's accepted deferral. Both rows carry no effect and carry every receipt (global and
     window-local) and each window's spend delta, explicitly zero for the refusals; the deferral's row
     carries the queue entry it added and the settlement's row the one it removed.
@@ -26799,7 +26813,7 @@ def test_a_refusal_only_cycle_is_recorded_and_its_receipts_and_spend_delta_repla
     executive.attach("bravo")
     script = {
         0: {"alpha": ["set_rcs_mode mode=manual"]},
-        1: {"alpha": ["zzz_not_a_verb", "set_bus_tie tie=csm_tie_ab state=closed"], "bravo": ["start_burn engine=sps"]},
+        1: {"alpha": ["zzz_not_a_verb", "set_bus_tie tie=csm_tie_ab state=closed"], "bravo": ["load_burn engine=sps target=midcourse_translunar duration_s=5"]},
         2: {"bravo": ["request_imu_alignment source=star target=LVLH"]},
         3: {},
     }

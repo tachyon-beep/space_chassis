@@ -11,6 +11,7 @@ An operator's `--closed-interlock` still wins.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -144,7 +145,9 @@ def test_a_tripped_interlock_refuses_by_name_and_never_says_the_value(world, tmp
         built.close()
     assert "refused: INTERLOCK TRIPPED" in body and "coolant_supply_high" in body, body
     assert "thermal.coolant_supply_c" in body and "state=refused" in body
-    assert "290" not in body and "16.85" not in body and "500" not in body, body
+    # The state hash is hex and can contain any run of digits, so it is taken out before the check.
+    words = re.sub(r"\b[0-9a-f]{16,}\b", "", body)
+    assert "290" not in words and "16.85" not in words and "500" not in words, body
 
 
 # ADR 0004 §Direction: an interlock guards a direction of its verb, and the safing direction — the
@@ -342,7 +345,8 @@ def test_outside_a_scenario_the_safing_direction_is_taken_while_tripped(
 
 def test_every_readable_interlock_names_its_direction_or_is_whole_on_purpose(world):
     """A verb with a readable interlock declares `interlocks_when`, except the three ADR 0004 lists as
-    guarded whole because no argument value is plainly the recovery."""
+    guarded whole because no argument value is plainly the recovery (`start_burn` declares one too,
+    naming the engine its readings belong to rather than a direction)."""
     whole = {"request_translation", "start_burn", "select_nav_source"}
     for verb, spec in world.verbs.items():
         readable = [

@@ -38,17 +38,19 @@ natural_rate_hz: 10
 # because the executive can still command the mode directly. `nav_state` was declared in their place
 # and is one hop upstream of the mode that actually arrives here.
 reads: [prop_main, pressurant_he, nav_state, structure_config, guidance, command_executive]
-writes: [engine_main, thrust_main]
+writes: [engine_main, thrust_main, sps_thrust]
 
 # The order these states advance in. **Nothing on the sentinel advances today** — no edge
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [dps_throttle_pct, chamber_pressure_pct, feed_pressure_pct, pressurant_pressure_psi, accumulated_dv_m_s, sps_burn_count]
+internal_order: [dps_throttle_pct, chamber_pressure_pct, pressurant_pressure_psi, feed_pressure_pct, accumulated_dv_m_s, sps_burn_count]
 internal_order_note: >-
   the order the physics runs in: the throttle is set, the chamber pressure follows from it, the
-  feed pressure from the chamber, and the pressurant from the feed. The two registers come last
-  because they record what the burn did rather than feeding it.
+  tanks' regulated pressure is set by the helium, and the feed follows the tanks. The two registers
+  come last because they record what the burn did rather than feeding it. The tank pressure came
+  after the feed until the pressurization rules landed, on the reading that the pressurant follows
+  the feed; it is the other way round, because the feed is downstream of the tanks.
 
 state:
   - id: sps_state
@@ -65,6 +67,9 @@ state:
     command_value:
       - verb: arm_engine
         argument: state
+        # Each engine's state answers only the call that names it: unrouted, `arm_engine engine=sps`
+        # armed all three engines.
+        when: {engine: sps}
         maps:
           safe: standby
         why: >-
@@ -92,6 +97,7 @@ state:
     command_value:
       - verb: arm_engine
         argument: state
+        when: {engine: dps}
         maps:
           safe: standby
         why: >-
@@ -124,6 +130,7 @@ state:
     command_value:
       - verb: arm_engine
         argument: state
+        when: {engine: aps}
         maps:
           safe: "off"
         why: >-
@@ -148,12 +155,54 @@ state:
         translunar midcourse correction later in that phase. Zero is what the mission profile
         says rather than a placeholder for a figure nobody has
     node: thrust_main
-    method: lag
+    # **A rule rather than a lag, because the driver is a mode and not a quantity.** As a `lag` this
+    # relaxed toward its one incoming edge, `E-PROP-ENG`, which is the propellant tank's *drain*
+    # (kg/s per N) and not a cause of thrust: the plant refused it as a numerator naming a quantity
+    # the state is not, and it was right. What sets thrust is which engine is firing, which is a mode
+    # on `engine_main`, and a mode selection is a table and never a gain. So the rule
+    # (`domains/propulsion/rules.py`) relaxes toward the firing engine's rated thrust with the same
+    # half-second constant: `rated_thrust_n[engine]` while that engine's state is in `firing_states`,
+    # zero while none is. The DPS has no rated figure here, because its thrust at a throttle setting
+    # is `thrust_curve`'s owed law, so a firing DPS is a gap rather than a number; two engines firing
+    # at once is a gap too, because no configuration of this vehicle does it. `E-PROP-ENG` and
+    # `E-PRESS-PROP` drain the SPS's tanks from `sps_thrust_n`, the SPS's share, not from this state:
+    # read from here they spent the SPS's propellant and helium on an ascent-engine burn.
+    method: dynamics
     unit: N
     tau_s: 0.5
+    firing_states: [ignition, mainstage]
+    engine_states: {sps: sps_state, dps: dps_state, aps: aps_state}
+    rated_thrust_n: {sps: 91188, aps: 15569}
     provenance:
       basis: chosen
       reason: "thrust build-up and tailoff. apollo_diode.md:521 gives valve and motor mechanical transit as 'typically 0.1 to several seconds', and half a second sits inside that: long enough that a one-tick command cannot produce instant thrust, short enough that a burn's shape is dominated by its commanded duration rather than by its rise"
+      note: >-
+        `rated_thrust_n` is `components.sps.thrust_n` and `components.aps.thrust_n`, copied for the
+        rule and held equal to them by `tests/test_propulsion_rules.py`; their provenance is there.
+        `firing_states` counts `ignition` as firing because the build-up is this lag's job: an
+        engine in ignition is producing a rising thrust, and the half-second constant is the rise
+
+  - id: sps_thrust_n
+    initial: 0
+    initial_provenance:
+      basis: chosen
+      reason: "as `thrust_main_n`: the SPS is not firing at MET 0"
+    node: sps_thrust
+    # **The SPS's own thrust, for the edges that drain its tanks.** The same half-second relaxation as
+    # `thrust_main_n`, toward the SPS's rated thrust while `sps_state` is in `firing_states` and zero
+    # otherwise, so it equals `thrust_main_n` whenever the SPS is the engine firing (tail-off
+    # included) and stays at zero through a descent or ascent burn. It is a state of its own because
+    # a drain is read off a node, and `thrust_main` carries every engine's thrust for the dynamics.
+    method: dynamics
+    unit: N
+    tau_s: 0.5
+    firing_states: [ignition, mainstage]
+    engine_state: sps_state
+    rated_thrust_n: 91188
+    provenance:
+      basis: chosen
+      reason: "as `thrust_main_n`, whose constant and firing states this copies; `tests/test_propulsion_rules.py` holds the copies equal"
+      note: "`rated_thrust_n` is `components.sps.thrust_n`"
 
   - id: dps_throttle_pct
     initial: 0
@@ -161,7 +210,7 @@ state:
       basis: chosen
       reason: >-
         as `thrust_main_n`: the descent engine is not firing at MET 0, so its throttle actuator
-        sits at its closed stop. The engine's own `operating_band_pct` starts at 10.5 % and the
+        sits at its closed stop. The engine's own `operating_band_pct` starts at 10 % and the
         actuator's separate existence is what lets a command sit below the band it cannot use
     node: internal
     method: lag
@@ -180,54 +229,101 @@ state:
         gauge reads zero percent of nominal. This is the state whose 0.3 s filling time the
         launch sequence exercises, and it starts empty
     node: internal
-    method: lag
+    # **A rule rather than a lag**, for the reason its own provenance gives: it "follows thrust", and
+    # a state on the sentinel can be reached by no edge, so as a `lag` nothing could drive it. The
+    # rule relaxes toward `100 x thrust_main_n / rated_thrust_n[engine]` for the firing engine with
+    # the chamber's 0.3 s, and toward zero when none fires: apollo's own row, "0 off; 95-105 firing"
+    # (apollo_diode.md:135), with 100 the nominal of a pressure-fed engine at its rated thrust. Thrust
+    # is on `thrust_main`, scheduled before the sentinel, so the reading is this tick's. A firing DPS
+    # is a gap here for the same reason it is one on `thrust_main_n`.
+    method: dynamics
     unit: "% nominal"
     tau_s: 0.3
+    thrust_state: thrust_main_n
+    firing_states: [ignition, mainstage]
+    engine_states: {sps: sps_state, dps: dps_state, aps: aps_state}
+    rated_thrust_n: {sps: 91188, aps: 15569}
     provenance:
       basis: chosen
       reason: "chamber pressure follows thrust with the chamber's own filling time; faster than the valve because the chamber is small. apollo_diode.md:135 publishes it at 10 Hz with a 0.1 % precision, which is a fast channel and needs a fast state behind it"
-
-  - id: feed_pressure_pct
-    initial: UNCONFIGURED
-    initial_note: >-
-      the feed line's pressure at MET 0 as a percentage of nominal. Unlike the chamber it is
-      *not* zero: the propellant tanks are pressurized from before launch and the engine is in a
-      coast with its valves closed, so the starting figure is the regulator's locked-up pressure,
-      which nothing declares — `propulsion.components.yaml#pressurant_regulator` is a regulator
-      with no output pressure to its name. The search for one is recorded on
-      `pressurant_pressure_psi` below, and it answers both
-    node: internal
-    method: lag
-    unit: "% nominal"
-    tau_s: 0.2
-    provenance:
-      basis: chosen
-      reason: "feed pressure is downstream of the regulator and upstream of the injector, so it responds fastest of the three. It is the channel the F-08 stuck-sensor chain turns on, and a state slower than the sensor would make a stuck sensor undetectable by rate"
+      note: "`rated_thrust_n` is the same copy `thrust_main_n` carries, and the same test holds both to `components`"
 
   - id: pressurant_pressure_psi
-    initial: UNCONFIGURED
-    initial_note: >-
-      the helium regulator's downstream pressure at MET 0. **Searched:** ODB Vol III's loading
-      tables (Table 3.2-10 gives the *storage* pressures, 3,600/178/4,150 psia, and no
-      regulated pressure) and `mission_e_consumables.txt` (a regulator appears only as a 3 psi
-      unit in a different assembly) — the same search this state's `tau_s` note records, and the
-      reason its `basis` is UNCONFIGURED. What would close it: a propellant-tank pressurization
-      analysis, or a loading table that gives the tank's regulated pressure rather than the
-      bottle's charge
+    # **The SPS propellant tanks' ullage pressure: the regulated helium, as the tanks receive it.**
+    # AOH SM2A-03 Block II Vol. 1 §2.4.1 (p. 2.4-1) and §2.4.2.1.2 (p. 2.4-7): the helium valves
+    # "isolate the helium during nonthrusting periods", and in AUTO they are "automatically
+    # controlled by a thrust ON-OFF signal". So between burns nothing flows and the tanks hold what
+    # they had; during a burn the regulator holds its working pressure. The rule
+    # (`domains/propulsion/rules.py`) is that: hold while the SPS is not firing, relax toward
+    # `min(regulator_psia, bottle pressure)` while it is, so the tanks follow the bottles down once
+    # the bottles fall below the regulator (blowdown). The bottle pressure is `bottle_fill_psia x
+    # m / bottle_fill_kg` over `consumables.pressurant_he_kg`: isothermal at the loading point, and
+    # ideal-gas in its *ratio* (helium's compressibility at 3,600 psia is about 1.1, so the ratio
+    # reads high by up to that factor near empty; it matters only for blowdown, which the mission's
+    # own load never reaches: the full 18,508 kg burns 33.1 kg of the 39.7).
+    initial: 178
+    initial_provenance:
+      basis: historical
+      source: >-
+        ODB Vol III (SNA-8-D-027(III) Rev 2), Table 3.3-10 "Consumables Loading Requirements and
+        Tolerances", Helium and Nitrogen, PDF p. 431: "Helium - Fuel Tanks 178 [psia] 70 [F]" and
+        "Helium - N2O4 Tanks 178 70", 5.4 lb between them, actual 178 and 170 psia; the
+        Amendment 80 table at PDF p. 205 gives the same requirement with 181/181 actual. The SPS
+        fuel and oxidizer tanks are pressurized at the pad, so MET 0 starts at the loading
+        requirement
+      note: >-
+        **This entry said the ODB gives only storage pressures and no regulated one, and read the
+        178 as a bottle's.** The 178 psia line is the propellant tanks' own ullage charge: the next
+        line in the same table is "Helium - N2O4 Tanks", at the same pressure, and the two share
+        one 5.4 lb weight. It is below the regulator's 186 because the valves are closed until the
+        first burn, and above the 157 psia SPS PRESS light
     node: internal
-    method: lag
+    method: dynamics
     unit: psi
     tau_s: 5
     tau_s_placeholder: >-
-      the five seconds is **used** — `plant.py` integrates this lag with it and PRP-03 is seeded
-      against the state — so it is not merely recorded. It is a placeholder in *shape* rather than in
-      value: no source gives the regulator's transfer function, and a lag with no constant cannot be
-      integrated at all. Said here rather than left to the note, because `basis: UNCONFIGURED` on the
-      entry and a number in its `tau_s` read as a contradiction until a reader finds the sentence
-      that reconciles them
+      used, and chosen in shape: no source gives how fast the ullage comes up to the regulated
+      pressure when the valves open. It is the ullage's fill time rather than the regulator's
+      response (the regulator is fast; the ullage is a volume), and five seconds is the order the
+      thrust build-up is not, so the first seconds of a burn read below the regulated pressure
+    engine_state: sps_state
+    firing_states: [ignition, mainstage]
+    regulator_psia: 186
+    bottle_fill_psia: 3600
+    bottle_fill_kg: 39.73469
+    helium_state: pressurant_he_kg
     provenance:
-      basis: UNCONFIGURED
-      note: "the regulator's transfer function is not published for either vehicle — **searched:** ODB Vol III's loading tables (Table 3.2-10 gives the storage pressures, 3,600/178/4,150 psia, and no dynamics) and `mission_e_consumables.txt` (a regulator appears only as a 3 psi unit in a different assembly); apollo_diode.md:139 marks the channel vehicle-dependent. The five-second constant is a placeholder in shape only and the magnitudes are owed — PRP-03 is seeded against this and cannot be evaluated until they exist"
+      basis: chosen
+      reason: "the time constant above; every pressure it relaxes between is sourced, and the copies are held to their homes by tests/test_propulsion_rules.py"
+      note: >-
+        `regulator_psia` is `components.pressurant_regulator.working_psia`, `bottle_fill_psia` is
+        `components.helium_bottles.fill_psia`, and `bottle_fill_kg` is
+        `consumables.pressurant_he_kg.initial`, copied for the rule
+
+  - id: feed_pressure_pct
+    # **The feed as a percentage of the regulator's working pressure.** apollo_diode.md:138 gives
+    # the channel as "% nominal", 95-105 expected; the nominal is the pressure the system is built
+    # to deliver, which is the regulator's 186 psia (AOH p. 2.4-41). The rule relaxes it toward
+    # `100 x pressurant_pressure_psi / nominal_psia` with the line's 0.2 s, so at MET 0 the feed
+    # reads the tanks' 178 psia as 95.7 % — inside apollo's band, and below 100 because the valves
+    # have not yet opened — and during a burn it reads 100. What it does not model is any line drop
+    # between the tanks and the injector, because no SPS source gives one: `vehicle.yaml` said
+    # "engine inlet 165 psia", which the AOH and TN D-7375 do not support, and the 165 +/- 4 psia
+    # the LM AOH does publish is the *ascent engine's* trim-orifice outlet (LM AOH p. 2.3-43).
+    initial: 95.6989247311828
+    initial_provenance:
+      basis: derived
+      relation: "the tanks' loading pressure over the regulator's working pressure, 178 / 186 = 95.70 %; the linter evaluates `initial_derivation` on integrator states only, so `tests/test_propulsion_rules.py` holds this one to its two inputs"
+    node: internal
+    method: dynamics
+    unit: "% nominal"
+    tau_s: 0.2
+    tank_state: pressurant_pressure_psi
+    nominal_psia: 186
+    provenance:
+      basis: chosen
+      reason: "feed pressure is downstream of the regulator and upstream of the injector, so it responds fastest of the three. It is the channel the F-08 stuck-sensor chain turns on, and a state slower than the sensor would make a stuck sensor undetectable by rate"
+      note: "`nominal_psia` is `components.pressurant_regulator.working_psia`, copied for the rule"
 
   - id: accumulated_dv_m_s
     node: internal
@@ -299,20 +395,22 @@ components:
     thrust_min_n: 4671
     throttle_ratio: 10
     isp_s: 305
-    # Two operating intervals, not one. The DPS reaches 1,050 lbf at 10.5 % and its 9,710 lbf
+    # Two operating intervals, not one. The DPS reaches 1,050 lbf at 10 % and its 9,710 lbf
     # maximum at 92.5 %, and **65-92.5 % is a region it is not designed to run in** — the source
     # below says so in those words. Until this round `operating_band_pct` was the single interval
     # `[10.5, 92.5]`, which contains the non-operating one: a fleet asking whether 75 % is
     # commandable got yes from this field and no from the next, and neither was read by a tool.
+    # The floor was 10.5 %, which no source gives: 1,050 lbf is 10 % of the 10,500 lbf rating, and
+    # TN D-7143 and the LMAOH both put the minimum-throttle point at 10 % (below).
     operating_band_pct:
-      - [10.5, 65]
+      - [10, 65]
       - [92.5, 100]
     non_operating_band_pct:
       - [65, 92.5]
     vehicle_keys: [lm_dps]
     provenance:
       basis: historical
-      source: "the DPS experience report: 9,710 lbf operating maximum and 1,050 lbf minimum, 10:1 range, with 65-92.5 % a NON-OPERATING region. Isp 305 s is the NASA end-of-duty-cycle requirement; the 311 s in circulation traces only to Wikipedia"
+      source: "the DPS experience report: 9,710 lbf operating maximum and 1,050 lbf minimum, 10:1 range, with 65-92.5 % a NON-OPERATING region. TN D-7143 (Apollo Experience Report, Descent Propulsion System) p. 9: 'The minimum-throttle point was 10 percent of the rated thrust' (10,500 lb, p. 7). LMAOH LM-10 p. 2.1-155: the TTCA controls 'from 10% to 92.5 % of maximum thrust'; its p. 2.3-27 'Minimum engine thrust 1,280 pounds (12.2%)' is delivered thrust at that stop on LM-10 and later, not the commanded floor. Isp 305 s is the NASA end-of-duty-cycle requirement; the 311 s in circulation traces only to Wikipedia"
   - id: aps
     kind: discrete
     class: engine
@@ -341,13 +439,64 @@ components:
   - id: pressurant_regulator
     kind: flow
     class: regulator
+    working_psia: 186
+    working_tolerance_psi: 4
+    lockup_psia: 195
     provenance:
-      basis: UNCONFIGURED
-      note: "the helium regulator's outlet characteristic is unpublished; SPS bottles run 3,600 psia regulated to 186 with an engine inlet of 165 (NR, AJ10 report), which fixes the endpoints and not the behaviour between them"
+      basis: historical
+      source: >-
+        AOH SM2A-03 Block II Vol. 1, §2.4.3.1 Design Data, p. 2.4-41 (change 16 July 1969):
+        "Regulator Units (2) Working regulator, primary 186±4 psig, secondary 191±4 psig. Primary
+        lockup 195 psig. Secondary lockup 200 psig." Regulator pressures are referenced to a bellows
+        vented to ambient (§2.4.2.1.3, p. 2.4-7), so in vacuum psig reads as psia
+      note: >-
+        **this entry was UNCONFIGURED with the 186 in its own note**, attributed to "NR, AJ10
+        report" without a page; the AOH is the page. TN D-7375 (Apollo Experience Report, Service
+        Propulsion Subsystem, 1973, p. 3, PDF p. 7) says the design phase selected 4,400 psia helium
+        "regulated to 180 psia": that is the Block I selection, and the Block II handbook's
+        working figure is the one flown. What is still not declared is a transfer function between
+        lockup and flow; the rule treats the regulator as holding its working pressure while the
+        bottles stay above it, which is what a regulator is for
+  - id: helium_bottles
+    kind: flow
+    class: tank
+    count: 2
+    volume_ft3_each: 19.4
+    fill_psia: 3600
+    fill_tolerance_psi: 50
+    maximum_operating_psia: 4400
+    provenance:
+      basis: historical
+      source: >-
+        AOH SM2A-03 Block II Vol. 1, §2.4.3.1, p. 2.4-41: "Helium Tanks (2) 3600±50-psia nominal
+        fill pressure, 4400-maximum operating pressure. Capacity 19.4 cubic ft each". The charge,
+        87.6 lb at 3,600 psia and 70 F, is ODB Table 3.3-10's and is
+        `consumables.pressurant_he_kg.initial`
+  - id: sps_propellants
+    kind: flow
+    class: propellant
+    mixture_ratio: 1.6
+    reference_temperature_f: 70
+    fuel_density_g_cc: {at_0_c: 0.922904, per_c: 0.0009377}
+    oxidizer_density_g_cc: {at_0_c: 1.491539, per_c: 0.0022832}
+    provenance:
+      basis: historical
+      source: >-
+        Mixture ratio: TN D-7375 p. 6 (PDF p. 10), Block II "establishment of the operating propellant ratio as
+        1.6 pounds of oxidizer per pound of fuel", and since "the propellant-density ratio was
+        1.6:1" the fuel and oxidizer tanks are identical in size. Densities: ODB Vol III Rev 2,
+        Table 3.1-11 note 2, PDF p. 213: "Nominal fuel density = 0.922904 - 0.0009377 (°C)",
+        "Nominal oxidizer density = 1.491539 - 0.0022832 (°C)", g/cc at 14.7 psia. The reference
+        temperature is the AOH gauging tables' 70 F (Figures 2.4-14 and 2.4-15) and the ODB's
+        helium loading temperature
+      note: >-
+        what these are for: the helium a burn spends is the volume of propellant it expels, filled
+        at the regulated pressure, so `E-PRESS-PROP` is derived from them. At 70 F the fuel is 903.1
+        and the oxidizer 1,443.3 kg/m3, and at 1.6:1 a kilogram of propellant is 8.522e-4 m3
   - id: dps_throttle_actuator
     kind: discrete
     class: actuator
-    band_pct: [10.5, 92.5]
+    band_pct: [10, 92.5]
     non_operating_pct: [65, 92.5]
     provenance:
       basis: historical
@@ -360,7 +509,7 @@ thrust_curve:
 
   shape: "piecewise; monotone within each operating segment; zero outside the operating band"
   segments:
-    - band_pct: [10.5, 65]
+    - band_pct: [10, 65]
       operating: true
       model: "monotone, curvature unknown"
       coefficients: UNCONFIGURED

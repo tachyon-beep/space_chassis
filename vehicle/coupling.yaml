@@ -97,6 +97,7 @@ nodes:
     # — and the only edge out of the node had already made that choice: `E-PROP-ENG` derives its
     # rate from `vehicle.yaml:propulsion.sps.isp_s`, so the tank it drains is the SPS's.
     carries: [sps]
+    preloaded: "the SPS's 18,508 kg are loaded at the pad and nothing refills them; `E-PROP-ENG` drains the tank while the SPS thrusts. It owed this declaration while `E-PRESS-PROP` landed here as an inflow, which it never was"
     note: >-
       the choice the state's `initial_note` said nothing published, made explicit. Asking which
       tanks the graph carries turned up the other half of it: `vehicle.yaml#propulsion` declares six
@@ -121,7 +122,14 @@ nodes:
     kind: stock
     unit: kg
     apollo: "836-847"
-    preloaded: "the helium charge is loaded at the pad, and the bladder means it does not leave the tank either: the stock is constant for the whole mission and the coupling is a displacement rather than a consumption"
+    preloaded: >-
+      the SPS bottles' 87.6 lb of helium is loaded at the pad and nothing refills it. **It is spent,
+      not held**: this read "the bladder means it does not leave the tank either: the stock is
+      constant for the whole mission", and the SPS has no bladder. AOH SM2A-03 Block II Vol. 1
+      §2.4.1, p. 2.4-1: "The regulated helium enters the fuel and oxidizer storage tank,
+      pressurizing the storage tank propellants, and forces the propellant to an outlet", the
+      helium valves isolating the bottles between burns. So the bottles drain into the tanks'
+      ullage while the SPS thrusts, through `E-PRESS-PROP`
   # Two absorbers, two counters. This was one node called `absorber_capacity`, and the merging was
   # wrong in the way that matters: `E-ATM-ABSORB` runs from `cabin_atm` and `E-LM-ATM-ABSORB` from
   # `lm_cabin_atm`, and the second edge's own note says the difference between them "is the edge's
@@ -562,6 +570,10 @@ nodes:
       between them is the propellant they all draw — which is an edge to a consumables node rather
       than a state here
   thrust_main:       {domain: propulsion, kind: flow,     unit: N,    apollo: "135-137"}
+  # The SPS's share of the main-engine thrust, which is what drains the SPS's propellant and helium
+  # (`E-PROP-ENG`, `E-PRESS-PROP`). `thrust_main` is every engine's and pushes the vehicle; read as a
+  # drain it spent the SPS's tanks on an ascent-engine burn.
+  sps_thrust:        {domain: propulsion, kind: flow,     unit: N,    apollo: "135-137"}
   # Both of these nodes hold a single state whose `unit` is a `map[...]`, so their values are maps
   # of elements rather than one scalar — `key_space: by_state` says so rather than leaving it to be
   # read off the state's unit. `thruster_valve` is `map[thruster_id,bool]` and `thruster_thrust` is
@@ -1502,29 +1514,51 @@ edges:
         engine rather than of the propellant, and `domains/propulsion/` refuses to interpolate
         across it
     from: prop_main
-    to: thrust_main
+    to: sps_thrust
     kind: rate
   - id: E-PRESS-PROP
+    # **The helium a burn spends, and it is a drain on the bottles rather than an inflow to the
+    # propellant.** This edge ran `pressurant_he -> prop_main` as a `rate` with an unset value, which
+    # put a helium mass flux *into* the propellant tank and blocked `prop_main_kg` for it. The note
+    # called it a displacement held by a bladder; the SPS has none (AOH p. 2.4-1), and what the
+    # helium does is fill the volume the propellant leaves, at the regulated pressure. So it drains
+    # the bottles in proportion to the propellant expelled, and the propellant expelled is the SPS's
+    # thrust over `Isp g0` — the same driver `E-PROP-ENG` reads, on the same node, `sps_thrust`.
     from: pressurant_he
-    to: prop_main
+    to: sps_thrust
     kind: rate
     sensitivity:
-      value: UNCONFIGURED
-      unit: "kg prop displaced per kg He"
-      basis: UNCONFIGURED
-      at: nominal
+      value: 5.797339737652208e-07
+      derivation:
+        expression: "(p_psia * 6894.757293168) / ((8.314462618 / 0.004002602) * ((t_f - 32) * 5 / 9 + 273.15)) * ((r / (1 + r)) / ((ox_a - ox_b * ((t_f - 32) * 5 / 9)) * 1000) + (1 / (1 + r)) / ((fu_a - fu_b * ((t_f - 32) * 5 / 9)) * 1000)) / (isp_s * 9.80665)"
+        inputs:
+          p_psia: "domains/propulsion/components.yaml:components.pressurant_regulator.working_psia"
+          t_f: "domains/propulsion/components.yaml:components.sps_propellants.reference_temperature_f"
+          r: "domains/propulsion/components.yaml:components.sps_propellants.mixture_ratio"
+          ox_a: "domains/propulsion/components.yaml:components.sps_propellants.oxidizer_density_g_cc.at_0_c"
+          ox_b: "domains/propulsion/components.yaml:components.sps_propellants.oxidizer_density_g_cc.per_c"
+          fu_a: "domains/propulsion/components.yaml:components.sps_propellants.fuel_density_g_cc.at_0_c"
+          fu_b: "domains/propulsion/components.yaml:components.sps_propellants.fuel_density_g_cc.per_c"
+          isp_s: "vehicle.yaml:propulsion.sps.isp_s"
+      unit: "kg/s per N"
+      basis: derived
+      relation: >-
+        helium density at the regulated pressure and the propellants' temperature, times the volume
+        a kilogram of propellant occupies, times the propellant flow per newton: 186 psia at 70 F
+        is 2.0980 kg/m3 of helium (ideal gas; compressibility at 1.3 MPa is within 1 %); at 1.6:1
+        a kilogram of propellant is 8.5224e-4 m3 (fuel 903.1, oxidizer 1,443.3 kg/m3, ODB Table
+        3.1-11); so 1.7880e-3 kg of helium per kg of propellant, and at 1 / (314.5 x 9.80665) kg/s
+        per N, 5.7973e-7 kg/s per N
+      at: "regulated at 186 psia, 70 F"
       note: >-
-        a displacement, not a conservation, and it was declared `conserve` until the conservation
-        check learned to refuse an edge with an unset value — which is the right answer for the
-        wrong reason. The helium is held in a bladder or diaphragm and does not leave the tank, so
-        there is no mass crossing this edge one for one; what the charge does is occupy volume that
-        propellant would otherwise fill. The ratio is therefore set by the helium charge pressure
-        and the propellant's density, and the state that carries the pressure is
-        `propulsion.pressurant_pressure_psi` — a lag that is itself blocked on its own
-        `provenance.basis`. Closing this edge means closing that state first, and the coupling is
-        pressure-mediated, so the number here is a bridge between two quantities rather than a
-        property of either. The feed-pressure-sensor-stuck-high chain (apollo_diode.md:336) reads
-        this edge, which is why it is declared at all rather than left implied by the tank
+        **a check the mission can be held to**: the SPS's 18,508 kg expel 33.1 kg of helium, and the
+        bottles are loaded with 39.7 kg (ODB Table 3.3-10, 87.6 lb), so the load closes with 6.6 kg
+        left, a bottle pressure near 600 psia against the regulator's 186 and no blowdown on the
+        nominal mission. A helium leak (PRP-03's family) is what spends that margin, which is the
+        decision this edge exists to make readable: whether a leaking system still has the helium
+        for TEI. The feed-pressure-sensor-stuck-high chain (apollo_diode.md:336) still reads this
+        edge. What it does not model: the helium already in the ullage at launch (it is in the
+        tanks, not the bottles) and the bottles' cooling during a long burn
 
   - id: E-RCSP-RCS
     from: prop_rcs

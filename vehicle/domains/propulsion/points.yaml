@@ -76,7 +76,7 @@ points:
   - channel: prop.dps_throttle_pct
     from: dps_throttle_pct
     layer: service
-    derivation: "the commanded throttle, against a published operating band of 10.5-92.5 % with a non-operating region from 65 %"
+    derivation: "the commanded throttle, against a published operating band of 10-92.5 % with a non-operating region from 65 %"
   - channel: prop.cutoff_mode
     from: accumulated_dv_m_s
     layer: service

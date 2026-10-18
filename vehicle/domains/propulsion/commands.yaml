@@ -28,10 +28,14 @@ commands:
     gate: {kind: preference, variable: engine_<engine>_arm_enable}
     interlocks: [pressurant_low, feed_pressure_low, prop_cutoff_guard_5]
     interlocks_when:
-      argument: state
-      values: [armed]
+      argument: [engine, state]
+      values: [[sps, armed]]
       why: >-
-        the three guards are about *arming*, and safing is not refused by any of them. `apollo_diode.md:241`
+        the three guards read the service propulsion system's own tanks, helium and propellant
+        (`prop.feed_pressure_pct`, `prop.pressurant_pressure_psi`, and `prop_main`, the SPS load), so
+        they guard arming the SPS and nothing else: the LM engines have no tank, feed or pressurant
+        state here, and an SPS pressurant failure refusing the descent engine is the Apollo 13 case
+        backwards, where the LM's engine is what was left. The three guards are about *arming*, and safing is not refused by any of them. `apollo_diode.md:241`
         lists arm and safe as two verbs and this vehicle merged them into one binary argument, so the
         asymmetry the merge was made to preserve has to be sayable here or it is lost: an armed engine
         on a failing feed is the hazard F-01 is about, and a *safe* command is how a crew ends that
@@ -61,12 +65,27 @@ commands:
       target: {type: enum, values: [loi, doi, powered_descent, ascent, rendezvous, tei,
                                   midcourse_translunar, midcourse_transearth, custom]}
       duration_s: {type: number, minimum: 0.5}
-      throttle_pct: {type: number, optional: true}
+      # The same commanded range and no-go band as `set_throttle`'s, so a descent burn cannot be
+      # loaded at a throttle it could not then be flown at.
+      throttle_pct:
+        type: number
+        optional: true
+        minimum: 10
+        maximum: 92.5
+        refused_bands:
+          - {at_or_above: 65, below: 92.5, note: "the descent engine's 65-92.5 % non-operating region"}
       dv_target_m_s: {type: number, optional: true}
     authority: A2
     gate: {kind: preference, variable: burn_load_<engine>_enable}
-    interlocks: [prop_cutoff_guard_5, sps_burn_budget_guard, sps_total_burn_guard,
-                 dps_throttle_band]
+    interlocks: [prop_cutoff_guard_5, sps_burn_budget_guard, sps_total_burn_guard]
+    interlocks_when:
+      argument: engine
+      values: [sps]
+      why: >-
+        all three guards are the service propulsion system's: its propellant (`prop_main`), its 50
+        qualified restarts and its 750 s of burn. A descent or ascent burn spends none of them, so
+        none of them refuses one. No value is a recovery here; the condition says which engine the
+        readings belong to
     conflict_domain: prop.<engine>.plan
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast]
@@ -89,8 +108,25 @@ commands:
       engine: {type: enum, values: [sps, dps, aps]}
     authority: A2
     gate: {kind: preference, variable: burn_start_<engine>_enable}
-    interlocks: [chamber_pressure_low, feed_pressure_low, pressurant_low, thrust_discrepancy,
-                 prop_cutoff_guard_5, dps_throttle_band]
+    # **Admission guards only.** `chamber_pressure_low` and `thrust_discrepancy` were on this list
+    # and can only ever be read once the engine is running: both are `gated_by` the engine's state
+    # or a burn in progress, so admitting a burn on them refused every burn. They are in-burn
+    # monitors now, read while the engine is in mainstage, and they leave admission; ADR 0004's
+    # amendment of 2026-10-17 records it, decided by the coordinator under John's delegation of
+    # 13:48Z. `dps_throttle_band` left with them: it was the 65-92.5 % no-go region of the
+    # commanded throttle, not a reading, and it is now a refused band on `set_throttle`'s and
+    # `load_burn`'s `throttle_pct`.
+    interlocks: [feed_pressure_low, pressurant_low, prop_cutoff_guard_5]
+    # Still guarded whole in direction (ADR 0004: no value is the recovery, `stop_burn` is the
+    # safing verb); the condition says which engine the three readings belong to.
+    interlocks_when:
+      argument: engine
+      values: [sps]
+      why: >-
+        the three admission guards read the service propulsion system's feed, helium and propellant,
+        and the LM engines have none of those states here. Guarding a descent or ascent burn on them
+        would refuse the LM's engine for an SPS failure, which is the Apollo 13 case backwards: there
+        the SPS was not trusted and the descent engine flew the return burns
     conflict_domain: prop.<engine>.run
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast]
@@ -133,10 +169,21 @@ commands:
   - verb: set_throttle
     argument_schema:
       engine: {type: enum, values: [dps]}
-      throttle_pct: {type: number, minimum: 10.5, maximum: 92.5}
+      # **10 % to 92.5 %, with 65 % up to (not including) 92.5 % refused.** The TTCA gives "control
+      # over the throttle magnitude, from 10% to 92.5 % of maximum thrust" (LMAOH LM-10, p. 2.1-155),
+      # and the floor was 10.5 %, a figure no source gives: 1,050 lbf is 10 % of the 10,500 lbf
+      # rating. LMAOH p. 2.3-27's "Minimum engine thrust 1,280 pounds (12.2%)" is what an LM-10
+      # engine delivers at that stop, not the commanded floor. 92.5 % is the full-throttle position
+      # and is commandable; the band below it is the region the engine is not run in.
+      throttle_pct:
+        type: number
+        minimum: 10
+        maximum: 92.5
+        refused_bands:
+          - {at_or_above: 65, below: 92.5, note: "the descent engine's 65-92.5 % non-operating region"}
     authority: A2
     gate: {kind: preference, variable: throttle_<engine>_enable}
-    interlocks: [dps_throttle_band, chamber_pressure_low]
+    interlocks: [chamber_pressure_low]
     conflict_domain: prop.<engine>.throttle
     allowed_phases: [lunar_orbit, descent, surface, ascent_rendezvous]
     irreversible: false
@@ -144,9 +191,9 @@ commands:
     execution_class: declarative
     maximum_queue_age_s: 5
     help: >-
-      Set the descent engine's throttle. The range is published as 10.5 to 92.5 % and the
-      interlock refuses anything from 65 % upward inside that range, because the engine is not
-      designed to run there. Five seconds of queue age: a throttle command is a real-time
+      Set the descent engine's throttle. The range is 10 to 92.5 %, and a command from 65 % up
+      to but not including 92.5 %, the full-throttle position, is refused, because the engine is
+      not designed to run there. Five seconds of queue age: a throttle command is a real-time
       control and a stale one is a command to fly a burn that has already changed shape.
     provenance:
       basis: apollo
@@ -161,6 +208,13 @@ commands:
     authority: A2
     gate: {kind: preference, variable: cutoff_<engine>_enable}
     interlocks: [prop_cutoff_guard_5]
+    interlocks_when:
+      argument: engine
+      values: [sps]
+      why: >-
+        the guard reads `prop_main`, the SPS's own propellant, so it says nothing about choosing a
+        descent engine's cutoff. No value is a recovery here; the condition names the engine the
+        reading belongs to
     conflict_domain: prop.<engine>.cutoff
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast]
