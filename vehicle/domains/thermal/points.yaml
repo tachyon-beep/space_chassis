@@ -45,11 +45,11 @@ points:
       At equilibrium the two terms cancel and it reads the supply, 7.2 C — which is the physics and
       not a coincidence: a radiator that settles at the temperature its load implies passes exactly
       that load, so the loop returns what it was given. The default vehicle starts there: in
-      passive thermal control (`environment_heat_w.initial`, 1,086.9 W absorbed) the panel at its
-      MET-0 fixed point carries the whole 1,651 W load and the return reads the 7.2 C supply. Under
+      passive thermal control (`environment_heat_w.initial`, 1,285.5 W absorbed) the panel at its
+      MET-0 fixed point carries the whole 1,401 W load and the return reads the 7.2 C supply. Under
       the quiet-coast episode's sun-on-radiator hold (2,477 W, `scenarios/quiet_coast.yaml`) it does
-      not: the panel can take only ~506 W, the evaporator takes the rest downstream of this station,
-      and the return reads **~19.7 C**, above `radiator_outlet_c`'s 15 C — a reading rather than a
+      not: the panel can take only ~416 W, the evaporator takes the rest downstream of this station,
+      and the return reads **~18.0 C**, above `radiator_outlet_c`'s 15 C — a reading rather than a
       defect: a panel in full sun cannot reject, which is what the return channel's own >20 C
       warning is for, and F-13's radiator-isolation chain is the same fact taken further.
   - channel: thermal.primary_flow_l_min

@@ -185,8 +185,9 @@ def test_the_smoke_run_is_judged_on_its_own_trace_and_every_stock_conserves(smok
 
 def test_a_shed_by_command_is_not_mistaken_for_a_shed_with_no_rule(world, tmp_path):
     """Policy B's `set_load` writes `load_enabled`, which shares its node with `load_shed_class`.
-    The trace reads each state by its own key, so the switch map is not read as the ladder's
-    class and the smoke run is a clean `timeout`, with the shed loads off in the trace."""
+    The trace reads each state by its own key, so the switch map is not read as the class and the
+    smoke run is a clean `timeout`, with the shed loads off in the trace and the class reporting
+    them: both are P3, and the class is the crew's switches (no automatic shed, AOH p. 2.6-38)."""
     trace = tmp_path / "trace.jsonl.gz"
     episode_eval.run_episode(episode(world, "b"), trace, ticks=SMOKE_TICKS)
     record = judge(trace)
@@ -194,7 +195,9 @@ def test_a_shed_by_command_is_not_mistaken_for_a_shed_with_no_rule(world, tmp_pa
     _, rows = episode_eval.read_trace(trace)
     switches = rows[0]["s"]["load_enabled"]
     assert switches["csm_lighting"] == switches["csm_comm_heaters"] == "off"
-    assert all(row["s"].get("load_shed_class") is None for row in rows)
+    # A row carries only the states that changed, so the class appears once, at tick 0.
+    assert rows[0]["s"]["load_shed_class"] == "P3"
+    assert all("load_shed_class" not in row["s"] for row in rows[1:])
 
 
 def doctored(smoke: Path, tmp_path: Path, edit) -> Path:
@@ -264,13 +267,13 @@ def test_an_edited_level_is_an_apparatus_failure(smoke, tmp_path):
     assert any("water_cooling_kg" in line for line in record["apparatus"])
 
 
-def test_a_gap_on_the_path_and_a_shed_with_no_rule_are_apparatus_failures(smoke, tmp_path):
+def test_a_gap_on_the_path_and_a_trip_with_no_rule_are_apparatus_failures(smoke, tmp_path):
     def gap(lines):
         _rows(lines)[10]["g"] = ["bus_a_v"]
         return lines
 
     def shed(lines):
-        _rows(lines)[20]["s"]["load_shed_class"] = "P3"
+        _rows(lines)[20]["s"]["lcl_tripped"] = {"csm_lighting": "tripped"}
         return lines
 
     for edit, words in ((gap, "bus_a_v could not advance"), (shed, "a shed or trip with no rule")):

@@ -55,9 +55,18 @@ DEMAND = {row["id"]: row["demand_w"] for row in _POWER["loads"]}
 STATES = {row["id"]: row for row in _THERMAL["state"]}
 EVAPORATOR_W = next(c for c in _THERMAL["components"] if c["id"] == "evaporator_csm")["rejection_w"]
 
-# Power's MET-0 positions (rules-power, 2026-10-15): every CSM load on, every LM load off; the
-# amplifier's 72 W are dissipated only while comms' transmitter is on, and it starts off.
-MET0_ENABLED = {load: ("on" if load.startswith("csm_") else "off") for load in DEMAND}
+# Power's MET-0 positions, from its own `load_enabled` where it declares one: every CSM load on but
+# the standby coolant pump 2 (2026-10-17), every LM load off; the amplifier's 72 W are dissipated
+# only while comms' transmitter is on, and it starts off.
+_LOAD_ENABLED = next((row for row in _POWER["state"] if row["id"] == "load_enabled"), None)
+MET0_ENABLED = (
+    dict(_LOAD_ENABLED["initial"])
+    if _LOAD_ENABLED is not None
+    else {
+        load: ("on" if load.startswith("csm_") and load != "csm_coolant_pump_2" else "off")
+        for load in DEMAND
+    }
+)
 AMP_DISSIPATION_ON_W = 72.0 - 11.2  # comms: dc 72 W less 11.2 W RF (NR ch. 18)
 
 
@@ -196,10 +205,17 @@ def effect(verb, **arguments):
 
 
 def met0_loop_load_w() -> float:
-    """The CSM loop's collected load at MET 0: every CSM load on, the amplifier dissipating nothing."""
+    """The CSM loop's collected load at MET 0: the loads power starts on, the amplifier dissipating
+    nothing."""
     zones = ("csm_cabin", "csm_service_bay", "csm_avionics_bay")
     loads = [load for zone in zones for load in _THERMAL["heat_inputs"][zone]["loads"]]
-    return float(sum(DEMAND[load] for load in loads if load != "csm_sband_power_amplifier"))
+    return float(
+        sum(
+            DEMAND[load]
+            for load in loads
+            if load != "csm_sband_power_amplifier" and MET0_ENABLED[load] == "on"
+        )
+    )
 
 
 def panel_mean_newton(supply_k: float, load_w: float, capacity: float) -> float:
@@ -407,7 +423,12 @@ def test_evaporator_water_drained_is_duty_over_latent_heat_on_the_ledger(world):
     start = episode_start(world)
     values = run(world, start, 15_000, on_tick=on_tick)
     assert booked > 0
-    assert booked * quantum_kg == pytest.approx(expected_kg, abs=quantum_kg)
+    # The ledger books whole quanta and carries the remainder; what it owes is the residual, under
+    # one quantum, and the duty's own drift inside a tick is under one tick's water.
+    owed_kg = values["water_cooling_kg__residual"]["E-WATER-RAD"]
+    assert 0.0 <= owed_kg < quantum_kg
+    one_tick_kg = start["evaporator_duty_w"] * DT / LATENT_J_PER_KG
+    assert booked * quantum_kg + owed_kg == pytest.approx(expected_kg, abs=one_tick_kg)
     assert start["water_cooling_kg"] - values["water_cooling_kg"] == pytest.approx(
         booked * quantum_kg, abs=1e-12
     )
@@ -444,7 +465,12 @@ def test_set_coolant_pump_moves_the_flow_as_a_fraction_of_the_published_rate(wor
         world,
         off,
         1,
-        {0: [effect("set_coolant_pump", loop="loop_primary", pump="pump_2", state="on")]},
+        {
+            0: [
+                effect("set_load", load="csm_coolant_pump_2", state="on"),
+                effect("set_coolant_pump", loop="loop_primary", pump="pump_2", state="on"),
+            ]
+        },
     )
     on = run(world, on, 3000)
     assert on["coolant_flow_kg_s"] == pytest.approx(RATED_FLOW, rel=1e-3)

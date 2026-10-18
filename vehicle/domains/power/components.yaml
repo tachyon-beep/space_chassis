@@ -4,9 +4,9 @@
 # The design's build order (simulator-design.md:113) is "dictionary + linter, then a spike on
 # electrical → thermal → consumables". This is the first domain. It is deliberately the
 # hardest one to get wrong and the easiest to check: the topology is simple, the physics is
-# algebraic except for one stock and two lags, and `electrical_diode.md` supplies a
-# load-shed ladder that had to be **re-anchored** before it could be used (conflict
-# register C-01 — its tiers sit up to 2 V below the point apollo calls an event).
+# algebraic except for one stock and two lags. `electrical_diode.md` supplied an automatic
+# load-shed ladder (conflict register C-01); Apollo had none, and since 2026-10-17 the crew
+# sheds and `load_shed_class` reports what they shed.
 #
 # The vehicle has two separate electrical systems, and the separation is the point. The CSM
 # runs on three fuel cells fed from the cryogenic O2 inventory; the LM runs on batteries
@@ -23,10 +23,10 @@ natural_rate_hz: 50
 # Three reads were missing until the edge list was read against this line, and each is a dependency
 # the graph had and the declaration denied: `coldplate_t`, which `E-PLATE-BAT` derates the battery's
 # usable capacity by; `link`, which `E-AMP-LOAD` puts on `bus_a` at 1/28 A per W; and
-# `command_executive`, which `E-CMD-BUS` drives the load-shed ladder with. All three are *inputs*,
+# `command_executive`, which `E-CMD-LOAD` moves the load switches with. All three are *inputs*,
 # which is why they belong here rather than in `writes` — the nodes they land on are power's.
 reads: [o2_csm, h2_csm, coldplate_t, link, command_executive, o2_tank_heaters]
-writes: [fuel_cell, source_converter, bus_a, bus_b, battery_energy, bus_tie, load_shed_state,
+writes: [fuel_cell, bus_a, bus_b, battery_energy, bus_tie, load_shed_state,
          fc_o2_draw, fc_h2_draw, battery_usable_j]
 
 # --------------------------------------------------------------------------------------
@@ -38,9 +38,10 @@ writes: [fuel_cell, source_converter, bus_a, bus_b, battery_energy, bus_tie, loa
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [lcl_tripped, battery_thermal_state]
+internal_order: [source_enabled, lcl_tripped, battery_thermal_state]
 internal_order_note: >-
-  the trip state is a latch, and the battery's temperature is what the surviving load does to the
+  the source switches come first because `set_source` writes them before the tick and nothing on the
+  sentinel reads them; the trip state is a latch, and the battery's temperature is what the surviving load does to the
   pack — the same chain the power inventory's relationships describe, in the order they act. The
   load between them, `bus_a_load_w`, left the sentinel for the `fuel_cell` node, where the bus solve
   can read it in the same tick.
@@ -50,68 +51,37 @@ state:
     method: algebraic
     node: fuel_cell
     unit: W
-    # The field the arithmetic produces, named by the state's own id. 1,723 W is the reference
-    # operating point the linter re-derives against: every CSM load on and the transmitter on, which
-    # is `load_budget.csm_total_demand_w` split across the two buses.
+    # The reference operating point: every CSM load on and the transmitter on, which is
+    # `load_budget.csm_total_demand_w` split across the two buses, with no battery tied on.
     fuel_cell_power_w: 1723
+    # The rule's parameters (`domains/power/rules.py`): each bus's solve, as `fuel_cell_current_a`.
+    buses:
+      - {bus: csm_bus_a, load: bus_a_load_w, cells: [fc_1, fc_2, battery_csm_1]}
+      - {bus: csm_bus_b, load: bus_b_load_w, cells: [fc_3, battery_csm_2]}
+    cell_open_circuit_v: 32.30
+    cell_current_envelope_a: [12.903, 52.593]
+    below_envelope: extrapolate
+    resistance_of: {fc_1: fc_1_resistance_ohm, fc_2: fc_2_resistance_ohm, fc_3: fc_3_resistance_ohm}
+    batteries: [battery_csm_1, battery_csm_2]
+    isolated_sources: [battery_csm_3]
+    battery_open_circuit_v: 37.1
+    battery_resistance_ohm: 0.364
     note: >-
-      What the three modules deliver to the two main buses this tick: the two bus loads, summed. At
-      steady state the output is the load, so a load `set_load` turns off leaves this state in the
-      same tick. The margin a crew watches is the capacity headroom, three 1,420 W modules against
-      this figure, which is what `power.load_margin_w` means. The reactant draw is charged per
-      ampere of module current (`fuel_cell_current_a`), not per watt of this figure (ADR 0003 item 3)
+      What the three modules deliver to the two main buses this tick: the two bus loads, less what a
+      battery tied onto a bus carries. At steady state the output is the load, so a load `set_load`
+      turns off leaves this state in the same tick, and with no battery on the buses (the coast
+      configuration, TN D-7609) it is the two loads summed. The margin a crew watches is the
+      capacity headroom, three 1,420 W modules against this figure, which is what
+      `power.load_margin_w` means. The reactant draw is charged per ampere of module current
+      (`fuel_cell_current_a`), not per watt of this figure (ADR 0003 item 3)
     provenance:
       basis: derived
-      computes: fuel_cell_power_w
-      derivation:
-        expression: bus_a_load + bus_b_load
-        inputs:
-          bus_a_load: bus_a_load_w
-          bus_b_load: bus_b_load_w
       relation: >-
-        the cells generate what the buses draw, so this is the two bus loads read as one generation.
-        Until the quiet-coast power rules it summed the fourteen `demand_w` declarations directly, a
-        constant: now each bus sums the loads its switches leave connected (`domains/power/rules.py`)
-        and this state adds the two, so the electricity follows the switches. The node's
-        `state_order` puts both bus loads before it
-
-  - id: source_converter_v
-    method: lag
-    node: source_converter
-    unit: V
-    initial: 29
-    initial_source: vehicle.yaml:electrical.fuel_cells.output_v
-    initial_provenance:
-      basis: derived
-      relation: >-
-        the converter starts at the cells' declared output voltage, 29 V — the three modules are
-        activated before launch and rated at 29 +- 2 V each, so the bus is up before the mission
-        clock starts and the converter regulates around what they are already making
-    tau_s: UNCONFIGURED
-    evidence_question: >-
-      WP02 E-5 (docs/evidence/wp02-electrical.md). **The Apollo CSM has no source converter to
-      take a time constant from**: the fuel cells connect to the main buses through motor switches
-      and their terminal voltage falls with load (AOH SM2A-03-Block II-(1) pp. 2.6-2, 2.6-25,
-      2.6-38). The only figure in reach is electrical_diode.md:248's reference-design target,
-      "regulation transient <10 ms", which is a settling bound for hardware the vehicle does not
-      carry and is under one 20 ms tick. Owed to the operator as a model decision, not a value:
-      (a) replace this lag with the algebraic terminal relation V = E0 - R I on `fc_[n]` (E0
-      32.30 V, R 0.1008 ohm, both derived), or (b) keep a converter and take its tau from a
-      source for a converter. The slow effect Apollo does describe -- voltage recovering as the
-      stack's skin temperature follows the load (p. 2.6-25) -- has no published time constant
-    note: >-
-      Converter regulation lags its setpoint. electrical_diode.md:248 gives a 1.2 kW
-      converter with a >=94 % efficiency but no time constant — and its 24-32 V envelope is
-      re-anchored to apollo's 27.0-30.5 V band (C-01), so the parameter is owed rather than
-      inherited. **Off the episode path** (ADR 0003 item 1, option (a) above): `bus_a_v` and
-      `bus_b_v` solve the modules' terminal relation directly, and no edge from `source_converter`
-      reaches a bus or anything else, so the owed `tau_s` blocks nothing the quiet-coast episode
-      needs. The state stays declared, and stays owed, rather than being deleted or given a tau:
-      `tests/test_power_rules.py` holds that nothing reads it, so a reader added later has to
-      answer this question first.
-    provenance:
-      basis: chosen
-      reason: "a regulated converter is a first-order lag by construction; electrical_diode.md:248 gives its rating and efficiency but no time constant, so the class is chosen and the parameter is owed"
+        the cells generate what the buses draw less the batteries' share: each bus's load less
+        V x i for each battery connected to it, from that bus's solve (`domains/power/rules.py`).
+        Until the batteries could be tied on it was the derivation `bus_a_load + bus_b_load`, and it
+        still is that sum whenever none is. The node's `state_order` puts both bus loads and the
+        module resistances before it
 
   - id: bus_a_v
     method: algebraic
@@ -121,21 +91,37 @@ state:
     # 1 and 2 in parallel; the per-module terminal relation is `components.fc_[n]`'s, copied here
     # because a rule reads only its own state's declaration, and held to those components by
     # `tests/test_power_rules.py`.
-    cells_in_parallel: 2
+    # The modules that can feed this bus; the solve uses the ones `source_enabled` leaves on.
+    cells: [fc_1, fc_2, battery_csm_1]
     cell_open_circuit_v: 32.30
-    cell_resistance_ohm: 0.1008
     cell_current_envelope_a: [12.903, 52.593]
+    below_envelope: extrapolate
+    # Batteries A and B can be tied onto main buses A and B (MAIN BUS TIE BAT A/C, BAT B/C; AOH
+    # p. 2.6-38) by `set_source`, each a Thevenin source behind its diodes: open circuit 37.1 V and
+    # 0.364 ohm, the J-mission handout's secant (WP02 E-4, p. 2.6-19: 37.1 V open, 28 V at 25 A).
+    # Battery C feeds both buses through its diodes and is refused by name until the tie re-model.
+    batteries: [battery_csm_1, battery_csm_2]
+    isolated_sources: [battery_csm_3]
+    battery_open_circuit_v: 37.1
+    battery_resistance_ohm: 0.364
+    resistance_of: {fc_1: fc_1_resistance_ohm, fc_2: fc_2_resistance_ohm, fc_3: fc_3_resistance_ohm}
     solve_provenance:
       basis: derived
       relation: >-
         no source converter (ADR 0003 item 1; AOH SM2A-03-Block II-(1) pp. 2.6-2, 2.6-25): the bus is
         the terminals of the modules feeding it. Per module V = E0 - R i with E0 32.30 V and R
-        0.1008 ohm, `components.fc_1.open_circuit_intercept_v` and `source_resistance_ohm` (derived,
+        0.1008 ohm when healthy, `components.fc_1.open_circuit_intercept_v` and `source_resistance_ohm` (derived,
         WP02 E-2, the secant of the AOH p. 2.6-2 envelope). Two modules in parallel share the bus
-        current, so V = E0 - (R/2) I, and the rule solves P = V I for I at the bus load: the smaller
+        current, so V = E0 - (R/n) I for the n of them connected (at their own resistances this tick,
+        `fc_[n]_resistance_ohm`, so a degraded module carries less of it), and the rule solves P = V I for I at the bus load: the smaller
         root of (R/2) I^2 - E0 I + P = 0. The envelope is that secant's own range, 400 W / 31 V =
-        12.903 A to 1,420 W / 27 V = 52.593 A per module; outside it the relation is an
-        extrapolation and the rule returns no value, as it does for a load beyond E0^2 / (4 R/2)
+        12.903 A to 1,420 W / 27 V = 52.593 A per module; above it the relation is an
+        extrapolation and the rule returns no value, as it does for a load beyond E0^2 / (4 R/2).
+        **Below it the rule extrapolates** (`below_envelope: extrapolate`, a choice): a module under its
+        400 W normal minimum reads the secant between the 31 V envelope edge and the 32.30 V intercept,
+        so the error is bounded by that 1.3 V span, where a refusal would leave a bus the crew has
+        lightly loaded with no voltage at all. With the standby glycol pump off, bus A starts at 826 W,
+        26 W above its two modules' 800 W minimum, so one shed load reaches this branch
       routing: >-
         fuel cells 1 and 2 on main bus A: `components.fc_[1-2].normal_bus` (TN D-7609 p. 5; Apollo 15
         Mission Report 6.2)
@@ -157,10 +143,19 @@ state:
     method: algebraic
     node: bus_b
     unit: V
-    cells_in_parallel: 1
+    cells: [fc_3, battery_csm_2]
     cell_open_circuit_v: 32.30
-    cell_resistance_ohm: 0.1008
     cell_current_envelope_a: [12.903, 52.593]
+    below_envelope: extrapolate
+    # Batteries A and B can be tied onto main buses A and B (MAIN BUS TIE BAT A/C, BAT B/C; AOH
+    # p. 2.6-38) by `set_source`, each a Thevenin source behind its diodes: open circuit 37.1 V and
+    # 0.364 ohm, the J-mission handout's secant (WP02 E-4, p. 2.6-19: 37.1 V open, 28 V at 25 A).
+    # Battery C feeds both buses through its diodes and is refused by name until the tie re-model.
+    batteries: [battery_csm_1, battery_csm_2]
+    isolated_sources: [battery_csm_3]
+    battery_open_circuit_v: 37.1
+    battery_resistance_ohm: 0.364
+    resistance_of: {fc_1: fc_1_resistance_ohm, fc_2: fc_2_resistance_ohm, fc_3: fc_3_resistance_ohm}
     solve_provenance:
       basis: derived
       relation: "as `bus_a_v`, with one module: fuel cell 3 alone, so V = E0 - R I"
@@ -416,42 +411,142 @@ state:
       basis: chosen
       reason: "electrical_diode.md:254 supplies one controlled reclose then latch; a latched discrete with hysteresis is the only representation in which reclose-then-latch is expressible at all, and its band is the lcl_overcurrent band as a fraction of the load's rating"
 
+  # What the crew has shed. Apollo had no automatic DC load shed (AOH p. 2.6-38: the
+  # undervoltage caution "is for indication only"; the crew sheds by checklist), so this is a
+  # report of the switches rather than a ladder's position: John, 2026-10-17 (decision b, PR #43).
   - id: load_shed_class
     method: discrete
     node: load_shed_state
     unit: "enum[none,P3,P2,P1,P0]"
     moved_by:
-      - "logic:the undervoltage ladder's own position, which the bus thresholds drive"
-    hysteresis: {assert: 26.5, clear: 27.2, dwell_ms: 500}
-    band_on: power.dc_bus_a_v
-    band_value: UNCONFIGURED
-    evidence_question: >-
-      WP02 E-9. Not a value a source can give: Apollo shed load by crew procedure, not by an
-      automatic ladder. What the sources do give is the envelope the ladder sits in: the DC
-      undervoltage caution at 26.25 V (AOH p. 2.6-5; TN D-7609 p. 8), sustained operation
-      26.5-30.0 V and limits 26.5-31.0 V (J-mission handout p. 2.6-26), and "use batts only when
-      main bus volts < 24.5" in the emergency power-down (Apollo 15 CSM Systems Checklist
-      EMER/1-7). The rung-to-class map remains the decision coupling.yaml#open_debts names
+      - "logic:the crew's own switch positions, `load_enabled`, read against the loads on at MET 0"
+    # The rule's parameters (`domains/power/rules.py`): every load `load_enabled.initial` has on,
+    # with its `loads[].class`, copied because a rule reads only its own state's declaration and
+    # held to both by `tests/test_power_rules.py`. A load that is off at MET 0 (the standby pump,
+    # the LM) is not shed by staying off.
+    watched_class:
+      csm_sband_transceiver: P1
+      csm_sband_power_amplifier: P2
+      csm_suit_fan: P0
+      csm_cabin_fan: P1
+      csm_co2_scrubber: P0
+      csm_imu: P1
+      csm_guidance_computer: P1
+      csm_instrumentation: P2
+      csm_coolant_pump_1: P1
+      csm_heaters: P2
+      csm_rcs_heaters: P2
+      csm_comm_heaters: P3
+      csm_lighting: P3
+    severity_order: [none, P3, P2, P1, P0]
     note: >-
-      The ladder's position, and the one band of the four in profiles.yaml that the position
-      itself latches on: the top tier, `bus_a_undervoltage` — assert 26.5 V, clear 27.2 V. The
-      clear was 27.0 V until `check_band_on` read this entry's `band_on` against the threshold it
-      names, and the two statements about the same volts disagreed by 0.2 V: a bus recovering to
-      27.1 V released the ladder's position while `bus_a_undervoltage` was still asserted. The
-      per-tier dwells and the three tiers below stay in profiles.yaml, where the thresholds that
-      step through them carry them; what this entry owns is the latch, and a latch needs one band
-      rather than four. **`band_value` is `UNCONFIGURED`, and it is the sharpest thing this entry
-      owes.** By the rung map `coupling.yaml#open_debts` already records, `bus_a_undervoltage`
-      selects `none` — which is what the threshold's own provenance says when it calls this tier
-      one that "does not shed load" — so *both* outcomes of the one band this state declares are
-      the same member of its vocabulary. A band that makes the state `none` whichever way the bus
-      crosses it cannot move the state at all, and the three rungs that do move it are the other
-      `bus_a_*` thresholds, which this entry does not band. What is owed is the ladder's
-      rung-to-class map as a declaration a band can read, which is one decision with the missing
-      P1 rung rather than a value somebody can supply.
+      the most critical class among the loads on at MET 0 that `load_enabled` now has off: `none`
+      while nothing is, and `P0` once a survival load is. It moves when a `set_load` lands, in the
+      same tick, and reads nothing else: no bus voltage sheds a load in this vehicle, and an
+      undervoltage is a caution the crew answers (`bus_a_undervoltage`). The class vocabulary is
+      the inventory's P0-P3 factoring, chosen (`electrical_diode.md:847`); what the state reports
+      is the crew's switches, which is why it carries no hysteresis: a report of a position does not
+      cross anything. It was the position of an automatic four-rung ladder that no Apollo vehicle
+      had, whose band could not move it and which had no rung for P1 (WP02 E-9)
     provenance:
       basis: chosen
-      reason: "the ladder position is a mode, not a measurement, so it is latched; its band is the top tier's own band on power.dc_bus_a_v, which `band_on` names so the linter holds the two to the same volts"
+      reason: "Apollo shed load by crew procedure, not by an automatic ladder (AOH p. 2.6-38; WP02 E-9), so the published decision is the switch map and this state is its summary in the inventory's classes; `apollo_diode.md:48`'s \"any shed\" and \"any restore\" events are its changes"
+
+  # The connection of every source `set_source` names. Internal: power alone reads it.
+  - id: source_enabled
+    node: internal
+    method: discrete
+    unit: "map[source_id,enum[on,off]]"
+    initial:
+      fc_1: "on"
+      fc_2: "on"
+      fc_3: "on"
+      battery_csm_1: "off"
+      battery_csm_2: "off"
+      battery_csm_3: "off"
+      battery_lm_descent_1: "off"
+      battery_lm_descent_2: "off"
+      battery_lm_descent_3: "off"
+      battery_lm_descent_4: "off"
+      battery_lm_ascent_1: "off"
+      battery_lm_ascent_2: "off"
+    initial_provenance:
+      basis: historical
+      source: >-
+        TN D-7609 p. 5: "the normal configurations were with fuel cells 1 and 2 on main bus A and with
+        fuel cell 3 on main bus B", and the batteries off the main buses in coast (TN D-7609; Apollo 10
+        consumables analysis Table 8-I: two batteries in parallel only "during ascent and each SPS
+        maneuver"). The LM batteries are off because the LM is unpowered cargo in translunar coast
+      note: >-
+        the battery entries are positions `set_source` writes and no rule reads yet: the bus solve is
+        the fuel cells' alone, as `bus_a_v`'s note says. They are declared so the map is the verb's
+        whole argument space, and they become a reading when the batteries join the bus
+    moved_by: ["command:set_source"]
+    command_value:
+      - verb: set_source
+        argument: state
+        key: source
+        why: >-
+          identity: the verb's `state` argument is `on` or `off` and so is the element it writes, keyed
+          by the verb's `source` argument
+    note: >-
+      one position per source. A fuel cell set `off` is disconnected from its main bus: "one fuel cell
+      can be disconnected from the buses increasing the loads on the remaining fuel cells" (AOH
+      p. 2.6-28), and a module isolated after a malfunction is the AOH p. 2.6-23 case. The bus solve,
+      the module currents, the reactant draw and the bus A margin all follow it in the same tick,
+      because the command is applied before the tick walks the schedule (`plant.md` §9 step 1)
+    provenance:
+      basis: apollo
+      ref: "apollo_diode.md:237"
+      note: "apollo's `set_source` connects or disconnects a generating source; this is the position the verb writes, which until this state it wrote nowhere (`--apply`: 0 values changed)"
+
+  # Each module's source resistance: the hidden truth a degrading cell changes (PWR-02). Three
+  # scalars rather than one map, because the plant seeds a held `dynamics` state from a number.
+  - id: fc_1_resistance_ohm
+    node: fuel_cell
+    method: dynamics
+    unit: ohm
+    initial: 0.1008
+    initial_provenance:
+      basis: derived
+      relation: >-
+        `components.fc_1.source_resistance_ohm`, the secant of the AOH p. 2.6-2 normal envelope
+        (WP02 E-2): the module starts healthy
+    note: >-
+      a held boundary (`dynamics`, `dX/dt = 0`, as thermal's `environment_heat_w`), on the `fuel_cell`
+      node ahead of the solves and currents so they read this tick's value: the rule
+      returns what it carries, nothing aboard moves it, and a checkpoint restores it whole. **It is what
+      PWR-02 moves.** A module whose resistance rises carries less of its bus's current at the one bus
+      voltage, and its partner more ("one source current falls while the others rise"); its rating at
+      the 27 V envelope terminal falls as 1 / R, so the policy's "loses a third of its capacity and its
+      internal resistance rises" is one figure, R x 1.5. Apollo's own cue is in amperes: "a degradation
+      purge can be performed if power plant current output decreases approximately 3 to 5 amps" (AOH
+      p. 2.6-25). With R x 1.5 the module carries 0.4 of its bus's current instead of 0.5: a 4.6 A drop
+      at the flown 23 A a module (Apollo 14 Mission Report 7.2.2), 2.6 A at the model's lighter MET-0 bus A.
+      Not published: `points.yaml#not_published` keeps the resistance hidden truth
+    provenance:
+      basis: chosen
+      reason: >-
+        the degradation is represented as the module's source resistance because the bus solve's only
+        per-module parameter is the published secant's slope (WP02 E-2), and AOH p. 2.6-25 describes
+        degradation by its effect on the module's current output; no source gives a degraded
+        polarization curve, so the size of any degradation is the fault's or the scenario's to declare
+  - id: fc_2_resistance_ohm
+    node: fuel_cell
+    method: dynamics
+    unit: ohm
+    initial: 0.1008
+    initial_provenance: {basis: derived, relation: "as `fc_1_resistance_ohm`, from `components.fc_2.source_resistance_ohm`"}
+    note: "as `fc_1_resistance_ohm`, for fuel cell 2"
+    provenance: {basis: chosen, reason: "as `fc_1_resistance_ohm`"}
+  - id: fc_3_resistance_ohm
+    node: fuel_cell
+    method: dynamics
+    unit: ohm
+    initial: 0.1008
+    initial_provenance: {basis: derived, relation: "as `fc_1_resistance_ohm`, from `components.fc_3.source_resistance_ohm`"}
+    note: "as `fc_1_resistance_ohm`, for fuel cell 3"
+    provenance: {basis: chosen, reason: "as `fc_1_resistance_ohm`"}
 
   # The two bus loads and the cells' current. On the `fuel_cell` node, in the order its
   # `state_order` declares, because the cells deliver what the buses draw and everything downstream
@@ -464,6 +559,8 @@ state:
     # The reference operating point, the reading the linter re-derives `fuel_cell_power_w` against:
     # every load below on and the transmitter on. The tick computes it from the switches.
     bus_a_load_w: 1148
+    # The bus is dead, and its loads draw nothing, when none of these modules is connected.
+    cells: [fc_1, fc_2, battery_csm_1]
     # The rule's parameters (`domains/power/rules.py`): the loads `loads[].bus` puts on main bus A,
     # with their `demand_w`, copied because a rule reads only its own state's declaration and held to
     # the inventory by `tests/test_power_rules.py`.
@@ -500,6 +597,7 @@ state:
     node: fuel_cell
     unit: W
     bus_b_load_w: 575
+    cells: [fc_3, battery_csm_2]
     loads_w:
       csm_suit_fan: 85
       csm_cabin_fan: 60
@@ -520,11 +618,20 @@ state:
     # 12.9-52.6 A envelope.
     fuel_cell_current_a: 56.686
     buses:
-      - {bus: csm_bus_a, load: bus_a_load_w, cells_in_parallel: 2}
-      - {bus: csm_bus_b, load: bus_b_load_w, cells_in_parallel: 1}
+      - {bus: csm_bus_a, load: bus_a_load_w, cells: [fc_1, fc_2, battery_csm_1]}
+      - {bus: csm_bus_b, load: bus_b_load_w, cells: [fc_3, battery_csm_2]}
     cell_open_circuit_v: 32.30
-    cell_resistance_ohm: 0.1008
     cell_current_envelope_a: [12.903, 52.593]
+    below_envelope: extrapolate
+    # Batteries A and B can be tied onto main buses A and B (MAIN BUS TIE BAT A/C, BAT B/C; AOH
+    # p. 2.6-38) by `set_source`, each a Thevenin source behind its diodes: open circuit 37.1 V and
+    # 0.364 ohm, the J-mission handout's secant (WP02 E-4, p. 2.6-19: 37.1 V open, 28 V at 25 A).
+    # Battery C feeds both buses through its diodes and is refused by name until the tie re-model.
+    batteries: [battery_csm_1, battery_csm_2]
+    isolated_sources: [battery_csm_3]
+    battery_open_circuit_v: 37.1
+    battery_resistance_ohm: 0.364
+    resistance_of: {fc_1: fc_1_resistance_ohm, fc_2: fc_2_resistance_ohm, fc_3: fc_3_resistance_ohm}
     note: >-
       the three modules' summed current, which is what the reactants are charged by (ADR 0003 item 3):
       the J-mission EPS handout p. 2.6-21 publishes consumption per ampere per fuel cell, so the
@@ -534,12 +641,76 @@ state:
     provenance:
       basis: derived
       relation: >-
-        I = I_A + I_B, each the smaller root of (R/n) I^2 - E0 I + P = 0 for its bus's load P and its
-        n modules in parallel (`buses`). E0, R and the envelope are `components.fc_[n]`'s, copied as
+        I = I_A + I_B, each the smaller root of (R/n) I^2 - E0 I + P = 0 for its bus's load P and the
+        n of its modules (`buses`) that `source_enabled` leaves connected; a bus with none carries 0 A. E0, R and the envelope are `components.fc_[n]`'s, copied as
         `bus_a_v` copies them and held to them by `tests/test_power_rules.py`
 
+  # One module's own current, and the rated output bus A's connected modules can deliver. Both on the
+  # `fuel_cell` node, after the module current, because they are the same operating point read per
+  # module and per bus.
+  - id: fc_1_current_a
+    method: algebraic
+    node: fuel_cell
+    unit: A
+    # The reference operating point: bus A's 1,148 W on two modules is 37.767 A, half of it each.
+    fc_1_current_a: 18.884
+    cell: fc_1
+    buses:
+      - {bus: csm_bus_a, load: bus_a_load_w, cells: [fc_1, fc_2, battery_csm_1]}
+      - {bus: csm_bus_b, load: bus_b_load_w, cells: [fc_3, battery_csm_2]}
+    cell_open_circuit_v: 32.30
+    cell_current_envelope_a: [12.903, 52.593]
+    below_envelope: extrapolate
+    # Batteries A and B can be tied onto main buses A and B (MAIN BUS TIE BAT A/C, BAT B/C; AOH
+    # p. 2.6-38) by `set_source`, each a Thevenin source behind its diodes: open circuit 37.1 V and
+    # 0.364 ohm, the J-mission handout's secant (WP02 E-4, p. 2.6-19: 37.1 V open, 28 V at 25 A).
+    # Battery C feeds both buses through its diodes and is refused by name until the tie re-model.
+    batteries: [battery_csm_1, battery_csm_2]
+    isolated_sources: [battery_csm_3]
+    battery_open_circuit_v: 37.1
+    battery_resistance_ohm: 0.364
+    resistance_of: {fc_1: fc_1_resistance_ohm, fc_2: fc_2_resistance_ohm, fc_3: fc_3_resistance_ohm}
+    note: >-
+      what fuel cell 1 itself delivers, which `power.source_1_current_a` publishes: i_1 = (E0 - V) / R_1
+      at the bus voltage, so a module whose resistance has risen carries less and its partner more. Until this state
+      the channel was `fuel_cell_power_w / bus_a_v`, the three modules' watts over one bus's volts:
+      about 54 A at MET 0 for a module carrying 17.6 A, and a number that did not fall when the module
+      was taken off line. PWR-02's evidence is "one source current falls while the others rise", so
+      the channel has to be one module's. 0 A when the module is disconnected
+    provenance:
+      basis: derived
+      relation: >-
+        its bus's solve (the same as `fuel_cell_current_a`, `rules.solve_modules`): modules in parallel
+        share one terminal voltage, and under V = E0 - R_k i_k (`components.fc_[n]`, WP02 E-2) module k
+        carries (E0 - V) / R_k; healthy modules split the bus current equally. E0 and the envelope are
+        copied as `bus_a_v` copies them and held to them by `tests/test_power_rules.py`
+  - id: bus_a_rated_w
+    method: algebraic
+    node: fuel_cell
+    unit: W
+    # Both bus A modules connected: 2 x 1,420 W.
+    bus_a_rated_w: 2840
+    cells: [fc_1, fc_2]
+    rated_w: {fc_1: 1420, fc_2: 1420}
+    cell_resistance_ohm: 0.1008
+    resistance_of: {fc_1: fc_1_resistance_ohm, fc_2: fc_2_resistance_ohm}
+    note: >-
+      the rated output of the modules connected to main bus A, which `power.load_margin_w` subtracts
+      the bus's load from. The margin read the two modules' `rated_w` straight from the components
+      until this state, so a module taken off line left the margin where it was, the omission the
+      point's own provenance named ("a failed module (the routing is the normal one, not a switch
+      state)")
+    provenance:
+      basis: derived
+      relation: >-
+        the sum of `components.fc_[n].rated_w` (1,420 W, the top of the AOH p. 2.6-2 normal envelope,
+        WP02 E-1) over the bus A modules `source_enabled` leaves on, each scaled by R / R_k: a module's
+        rating is its power at the envelope's 27 V terminal, 27 (E0 - 27) / R_k, which is 1,420 W at the
+        healthy 0.1008 ohm and falls as 1 / R_k when the module's resistance rises (`fc_[n]_resistance_ohm`). The quantity is still ADR 0004
+        operator item 1's (John, 2026-10-16): available generation on bus A less its load
+
   # The switch position of every load in the inventory below, and the state `set_load` moves. It is
-  # on a coupling node, `load_shed_state` beside the ladder's class, rather than the sentinel, because
+  # on a coupling node, `load_shed_state` beside the shed class, rather than the sentinel, because
   # two domains read it: power sums the enabled loads onto each bus, and thermal sums the same loads'
   # heat. A state on the sentinel is readable by its own domain only (`plant.md` §2, D5).
   - id: load_enabled
@@ -556,7 +727,7 @@ state:
       csm_guidance_computer: "on"
       csm_instrumentation: "on"
       csm_coolant_pump_1: "on"
-      csm_coolant_pump_2: "on"
+      csm_coolant_pump_2: "off"
       csm_heaters: "on"
       csm_rcs_heaters: "on"
       csm_comm_heaters: "on"
@@ -575,10 +746,14 @@ state:
     initial_provenance:
       basis: chosen
       reason: >-
-        all inventory loads on at MET 0, matching the configured 1,723 W total, which TN D-7609 p.2
-        bounds to the flown 60–80 A coast band. The CSM loads are the fourteen whose `demand_w` sums to
-        `load_budget.csm_total_demand_w`, and 1,723 W at 28 V is 61.5 A, inside the 60-80 A that TN
-        D-7609 p. 2 gives "between SPS burns". The LM loads are off because the LM is unpowered cargo
+        every CSM inventory load on at MET 0 except the standby glycol pump: the primary loop runs on
+        one pump and the second is its standby (TN D-6718 p. 11, "the primary loop uses a centrifugal
+        pump to circulate 200 lb/hr"; thermal's `coolant_pump` has `pump_2` off), so its 250 W is
+        neither drawn nor dissipated (John, 2026-10-17: "off"). The thirteen loads that are on sum to
+        1,473 W, 52.6 A at 28 V, **below** the 60-80 A TN D-7609 p. 2 gives "between SPS burns": the
+        inventory omits loads Apollo carried (`load_budget.provenance`), and WP02 E-11 finds the glycol
+        pumps are AC loads of tens of watts rather than 250 W, so the shortfall is the inventory's, not
+        the switch map's. The LM loads are off because the LM is unpowered cargo
         in translunar coast (`docs/vehicle-completion/09-quiet-coast-episode.md` §4, in the
         repository root); its own bus is not a CSM bus and none of them reaches `bus_a` or `bus_b`
       note: >-
@@ -814,7 +989,7 @@ components:
     kind: state
     class: bus
     vehicle: csm
-    v_band: [27.0, 30.5]
+    v_band: [27.0, 31.0]
     # The band above is the *envelope*; this is the number every watt-to-amp conversion on the
     # vehicle divides by. Until this round the bus carried the band and no nominal, and three
     # edges wrote `1/28` — a figure that was a battery's `v_nominal`, the low end of a fuel
@@ -825,12 +1000,12 @@ components:
     provenance:
       basis: apollo
       ref: "apollo_diode.md:73"
-      note: "the band is apollo's, not electrical_diode.md:251's 24-32 V; C-01"
+      note: "the band is apollo's, not electrical_diode.md:251's 24-32 V; C-01. The 31.0 V ceiling is the ODB's nominal main bus operating range (Fig. 4.1-11), where the corpus row's 30.5 is marked Sim; `channels.yaml#power.dc_bus_a_v` says why"
   - id: csm_bus_b
     kind: state
     class: bus
     vehicle: csm
-    v_band: [27.0, 30.5]
+    v_band: [27.0, 31.0]
     v_nominal: 28
     provenance:
       basis: apollo

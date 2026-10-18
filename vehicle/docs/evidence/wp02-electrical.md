@@ -114,12 +114,21 @@ Corpus, cited and not edited: `apollo_diode.md:72-80` (the power channel table),
   belongs with E-6.
 - **Not derived.** A battery internal resistance from (OCV - V_loaded)/I gives 0.234 ohm (AOH)
   and 0.364 ohm (JEPS): the two handbooks disagree by 55 %, and the secant includes polarization.
-  Nothing was written to YAML from it.
+- **Decided (2026-10-17, power lane).** The bus solves take the JEPS secant, 37.1 V open circuit
+  and 0.364 ohm, for J-mission effectivity (CSM 112-114); recorded by the coordinator under John's
+  delegation of 13:48Z. Batteries A and B tie onto main buses A and B by `set_source`, each a
+  Thevenin source behind its diodes (`domains/power/rules.py:solve_sources`). Battery C's two-bus
+  feed and the charge it spends (`battery_charge_j`, whose charger edge `E-BUS-BAT` is still owed)
+  are not yet modelled.
 - **Consumer.** WP04 (battery on bus during burns, entry); none in the coast episode, where the
   batteries are off the main buses (D-7609; A10C: two batteries in parallel only "during ascent and
   each SPS maneuver").
 
-## E-5 `power.source_converter_v` tau_s (UNCONFIGURED; operator decision)
+## E-5 `power.source_converter_v` tau_s (closed: the state is retired)
+
+- **Decided.** John, 2026-10-17 (power lane, PR #43, decision c "retire"): option (a). The
+  converter state, its node, its edge `E-BUS-CONV` and its fault PWR-01 are removed; the bus solve
+  is the cells' terminal relation.
 
 - **Question.** The converter's regulation time constant.
 - **Finding.** Apollo has no source converter: fuel cells connect to the main buses through motor
@@ -166,8 +175,12 @@ Corpus, cited and not edited: `apollo_diode.md:72-80` (the power channel table),
   source.
 - **Decision owed.** Keep the model's A-B tie as electrical_diode.md:252's `TIE_AB` and define
   `auto`, or re-model the tie as Apollo's battery-to-main-bus tie.
+- **Decided.** Decision a "apollo", 2026-10-17 (power lane; recorded by the coordinator under John's
+  delegation of 13:48Z): re-model the tie as Apollo's battery-to-main-bus tie (MAIN BUS TIE BAT A/C,
+  BAT B/C), with fuel cell 2's cross-feed (AOH p. 2.6-38's six motor switches). Not yet built; the
+  battery resistance is JEPS's 0.364 ohm for J-mission effectivity (AOH prints 0.234 ohm).
 
-## E-9 `power.load_shed_class` `band_value` (UNCONFIGURED; model decision)
+## E-9 `power.load_shed_class` `band_value` (closed: no automatic ladder)
 
 - **Finding.** Apollo had no automatic shed ladder; the crew shed load by checklist. Published
   envelope: DC undervoltage caution below 26.25 V (AOH p. 2.6-5; D-7609 p. 8); sustained 26.5-30.0 V,
@@ -175,6 +188,13 @@ Corpus, cited and not edited: `apollo_diode.md:72-80` (the power channel table),
   (A15SC S/1-2); "use batts only when main bus volts < 24.5" (A15SC EMER/1-7). The model's 26.5 V
   top tier is apollo_diode.md:73's event, 0.25 V above the flown caution; that difference is a
   conflict-register matter and is not changed here.
+- **Decided.** Decision b "crew", 2026-10-17 (power lane, PR #43; John chose fidelity, and the
+  coordinator recorded the option under John's delegation of 13:48Z). The three chosen shed tiers
+  (25.5, 24.5 and 23.5 V) and `E-BUS-SHED` are retired. `bus_a_undervoltage` and
+  `bus_b_undervoltage` remain cautions, as AOH p. 2.6-38's "for indication only" caution was.
+  `load_shed_class` is now the most critical class among the loads on at MET 0 that the crew's
+  `load_enabled` has off, with no band, so `band_value` is no longer owed. The crew's 24.5 V
+  battery cue (A15SC EMER/1-7) belongs to the battery-on-the-bus work.
 
 ## E-10 Fuel-cell reactant rate (existing value, independently validated)
 

@@ -43,7 +43,7 @@ POWER_ONSET = """    moved_by: ["command:set_load", "fault:PWR-03-lcl-nuisance-t
         becomes: "off"
         provenance: {basis: chosen, reason: "a test fixture: the trip drops one load"}
 """
-THERMAL_ONSET = """    initial: 1086.9
+THERMAL_ONSET = """    initial: 1285.5
     moved_by: ["fault:TCS-03-radiator-isolation"]
     fault_value:
       - fault: TCS-03-radiator-isolation
@@ -78,7 +78,7 @@ def faulted_copy(destination: Path) -> Path:
     )
     replace(
         destination / "domains" / "thermal" / "components.yaml",
-        "    initial: 1086.9\n",
+        "    initial: 1285.5\n",
         THERMAL_ONSET,
     )
     return destination

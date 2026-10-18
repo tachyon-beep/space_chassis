@@ -2673,7 +2673,7 @@ def check_coupling(
     # An edge that drives a state has to say *which* state, whenever the node carries more than one
     # it could drive.
     #
-    # Eleven of the vehicle's 66 nodes hold more than one state, and the plant resolves a state's
+    # Eleven of the vehicle's 65 nodes hold more than one state, and the plant resolves a state's
     # drivers by node — so on `cabin_atm`, which holds four gas masses, `csm_cabin_o2_kg`,
     # `csm_cabin_n2_kg`, `csm_cabin_co2_kg` and `csm_cabin_h2o_kg` were all handed the same three
     # edges: the oxygen supply, the crew's CO2 production and a pressure/temperature relation. Every
@@ -14600,8 +14600,8 @@ def check_channel_derivations(
     """The window's channels: how many are their source state, and how many are a sentence.
 
     Round 23 built the frame's `values` from the points registry and found, by refusing to publish a
-    channel whose unit is not its source state's, that **only 63 of the 135 channels read from a state
-    are the state itself**. The other 72 are *derived* — a partial pressure from a mass and a volume,
+    channel whose unit is not its source state's, that **only 64 of the 135 channels read from a state
+    are the state itself**. The other 71 are *derived* — a partial pressure from a mass and a volume,
     a flow in litres per minute from a mass flow and a density — and their `derivation` is prose,
     which nothing can evaluate. The frame omits them, the debt says so, and the two figures lived in
     a sentence: exactly the shape this folder spends its rounds removing.
@@ -18819,6 +18819,11 @@ COUNT_WORDS = {
         ]
     )
 }
+# The round tens on their own: without them "fifty" read as no figure at all, so a claim of exactly
+# fifty, sixty, ... passed unread while "fifty-one" was refused.
+COUNT_WORDS.update(
+    {"thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90}
+)
 COUNT_WORDS.update(
     {
         f"{tens}-{unit}": tens_value + unit_value
