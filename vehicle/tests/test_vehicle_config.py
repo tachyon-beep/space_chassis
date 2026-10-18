@@ -92,6 +92,51 @@ def corpus_debts() -> int:
     return int(re.search(r"COMPOSES, with (\d+) declared debt\(s\)\.", result.stdout).group(1))
 
 
+@functools.lru_cache(maxsize=1)
+def corpus_census() -> dict[str, int]:
+    """The corpus's own counts, from the instruments that already keep them.
+
+    **The census follows the debt count out of this file** (lane 0's follow-up). The first unpinning
+    left the declaration counts as literals because they move when a domain *adds* something rather
+    than when one closes — and the sprint's lanes add things: ECLSS's first merge moved the crowded
+    nodes, the sentinel, the commanded modes, the tick order and the cross-domain reads at once. So a
+    test that counts the corpus its own way now holds its count to the linter's per-domain walk
+    (`domain_figures`, the one `check_readme_figures` reads) or to the plant's world, rather than to a
+    number typed into this file. Two counters agreeing is the check; what neither of them can see is
+    a declaration deleted from both, and that is the trade the pins were given up for.
+    """
+    linter, plant = _linter(), _plant()
+    figures = linter.domain_figures(VEHICLE)
+    world = plant.load_world(VEHICLE)
+    lint = run_linter(VEHICLE).stdout
+    census = {
+        key: sum(row[key] for row in figures.values())
+        for key in ("states", "thresholds", "verbs", "faults", "points")
+    }
+    census["channels"] = int(re.search(r"(\d+) channels, \d+ edges,", lint).group(1))
+    census["scheduled nodes"] = len(world.schedule)
+    census["multi-state nodes"] = sum(
+        1
+        for node in {s.node for s in world.states if s.node != "internal"}
+        if len(world.states_on(node)) > 1
+    )
+    census["states on the sentinel"] = sum(1 for s in world.states if s.node == "internal")
+    assert census["states"] == len(world.states), (census["states"], len(world.states))
+    return census
+
+
+def live_text(text: str, pattern: str) -> str:
+    """The live figure a fixture breaks, found in the file rather than typed into the test.
+
+    A fixture that edits a census sentence (`The derived order is N nodes`, a domain's count clause)
+    used to quote the sentence with today's figure, so every lane that moved the figure edited the
+    fixture too. It finds the sentence by its form instead, and fails loudly when the form is gone.
+    """
+    found = re.search(pattern, text)
+    assert found, f"the fixture no longer matches {pattern!r}"
+    return found.group(0)
+
+
 _FIXTURE_COUNTER = itertools.count()
 
 
@@ -902,9 +947,9 @@ def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
         if len(world.states_on(node)) > 1
     }
     # 11 -> 10 in round 70, with the source regulator off the fuel cell's node; 13 with ADR 0003's
-    # rules (`load_shed_state`, `ground_received`, `fuel_cell` and `radiator_reject`'s duty); 15 with
-    # the two cabin leaks, one outflow per gas.
-    assert len(crowded) == 15, sorted(crowded)
+    # rules (`load_shed_state`, `ground_received`, `fuel_cell` and `radiator_reject`'s duty). Not
+    # pinned since lane 0's follow-up: what matters here is that there is a crowded node to test.
+    assert crowded, "no node carries more than one state, so the check below is vacuous"
 
     # No blocked state is filed under a state that lives on a node with no value key.
     offenders = [
@@ -1709,7 +1754,7 @@ def test_the_linter_links_every_failure_chain_to_a_fault(tmp_path):
     for path in sorted((VEHICLE / "domains").glob("*/fault_policy.yaml")):
         for fault in (yaml.safe_load(path.read_text()) or {}).get("faults") or []:
             faults[str(fault["id"])] = [str(p) for p in fault.get("perturbs") or []]
-    assert len(faults) == 128, len(faults)
+    assert len(faults) == corpus_census()["faults"], len(faults)  # Held to the linter's count since lane 0's follow-up.
     for chain in chains:
         realised = chain["realised_by"]
         assert realised, chain["id"]
@@ -2928,8 +2973,8 @@ def test_a_block_that_is_absent_is_reported_rather_than_skipped(tmp_path):
     assert result.returncode == 1, result.stdout[-900:]
     assert "calls `coupling.yaml`'s chain list 'fifteen' while it declares 0" in result.stdout
     assert (
-        "declares no failure chains, and the domains' fault policies declare 128 fault(s) between them"
-        in result.stdout
+        "declares no failure chains, and the domains' fault policies declare "
+        f"{corpus_census()['faults']} fault(s) between them" in result.stdout
     ), result.stdout[-1400:]
 
     # One domain's claim. `thermal` publishes fifteen channels and no fault perturbs one of them.
@@ -3292,21 +3337,35 @@ def test_the_linter_holds_a_domain_s_declared_reads(tmp_path):
     owed = report.debts[0]
     # 23 -> 24 with ADR 0003: thermal reads `load_shed_state` for the switch map its heat rates sum
     # over, a one-way read. `thermal->link` was the delayed half of a declared cycle and is carried
-    # by `E-AMP-HEAT` now, so no read is left in that class. 24 -> 25: eclss reads `load_shed_state`
-    # for the suit compressor's switch, the same one-way read. 25 -> 26: eclss reads `fc_o2_draw`, the
-    # fuel cells' oxygen draw on the supply tanks, as their pressure rule's other draw.
-    assert "26 cross-domain reads that no edge carries" in owed, owed
-    assert "8 of them return into a node the reading domain writes" in owed, owed
+    # by `E-AMP-HEAT` now, so no read is left in that class. **The counts are not pinned** since lane
+    # 0's follow-up, because every lane that declares a read moves them; what is held is that the
+    # message's figures are the lengths of the lists it prints, and that its parts sum to its total.
+    found = re.search(
+        r"declares (\d+) cross-domain reads that no edge carries .*? — (\d+) of them return into a "
+        r"node the reading domain writes \(([^)]*)\).*?and (\d+) are one-way dependencies the graph "
+        r"does not contain at all \(([^)]*)\)\. (\d+) more are the delayed half of a loop "
+        r"`coupling.yaml#cycles` does name \(([^)]*)\)",
+        owed,
+    )
+    assert found, owed
+    total, back, back_list, one_way, one_way_list, delayed, delayed_list = found.groups()
+
+    def listed(text: str) -> int:
+        return len([item for item in text.split(", ") if item.strip()])
+
+    assert int(back) == listed(back_list) and int(one_way) == listed(one_way_list), owed
+    assert int(delayed) == listed(delayed_list), owed
+    assert int(total) == int(back) + int(one_way), owed
     assert "thermal->load_shed_state" in owed, owed
-    assert "0 more are the delayed half of a loop" in owed, owed
 
     # And the refusal fires when a declaration loses a node an edge carries.
     definition = copy_definition(tmp_path / "domainreads")
     path = definition / "domains" / "power" / "components.yaml"
     text = path.read_text()
-    old = "reads: [o2_csm, h2_csm, coldplate_t, link, command_executive, o2_tank_heaters]"
-    assert old in text, "the fixture no longer matches the power domain's reads"
-    path.write_text(text.replace(old, "reads: [o2_csm, h2_csm, link, command_executive, o2_tank_heaters]", 1))
+    # Power's declaration, found by its form rather than quoted whole (lane 0's follow-up): every
+    # lane that gives power a read edited the quoted list.
+    old = live_text(text, r"(?m)^reads: \[[^\]]*\bcoldplate_t, [^\]]*\]")
+    path.write_text(text.replace(old, old.replace("coldplate_t, ", ""), 1))
     out = run_linter(definition).stdout
     assert "does not declare 'coldplate_t'" in out, out[-1200:]
 
@@ -3823,6 +3882,40 @@ def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
             (dom, "    pattern: aperture\n    gain_db: 26.7\n", "    pattern: near_isotropic\n    gain_db: 26.7\n"),
         ],
         ["without a `pattern_note`"],
+    )
+    # A measured pair: both figures published, held to the bound rather than to equality. The
+    # high-gain antenna's own pair sits on the ideal product, so declared measured on its
+    # `historical` basis it raises nothing; a beam wider than the ideal for its gain is impossible
+    # either way, and the claim on another basis is refused.
+    measured = "      pattern: measured\n      gain_db: 26.7\n"
+    definition = copy_definition(tmp_path / "measured")
+    for rel, old, new in [
+        ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
+        (dom, "    pattern: aperture\n    gain_db: 26.7\n", "    pattern: measured\n    gain_db: 26.7\n"),
+    ]:
+        path = definition / rel
+        path.write_text(path.read_text().replace(old, new, 1))
+    out = run_linter(definition).stdout
+    assert not [line for line in out.splitlines() if line.startswith("vehicle.yaml:comms.antennas.high_gain")], out[-1500:]
+    refusal(
+        "measured_wide",
+        [
+            ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
+            ("vehicle.yaml", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 18.7}", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 20.0}"),
+            ("vehicle.yaml", "    - id: omni_a\n      pattern: near_isotropic\n", "    - id: omni_a\n      pattern: measured\n"),
+        ],
+        [
+            "declares 20.7 dB with a 20.0-degree beamwidth, wider than the",
+            "declares 2 dB with a 180-degree beamwidth, wider than the",
+        ],
+    )
+    refusal(
+        "measured_unsourced",
+        [
+            ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
+            ("vehicle.yaml", "        basis: historical\n        source: \"NR ch.18: four", "        basis: chosen\n        source: \"NR ch.18: four"),
+        ],
+        ["declares its pattern measured on a 'chosen' provenance"],
     )
     # One gap, one refusal: the missing declaration above is one fact about the antenna, and the
     # high-gain entry has four pairs it governs.
@@ -6815,7 +6908,8 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     # equilibria, the radiator's equilibrium and rejection, the bus load, the coldplate), and a rule is
     # not also a derivation. `environment_heat_w`'s derivation computes the hot hold, `sun_hold_w`
     # (ADR 0003 item 9), where it computed the state's `total_w`.
-    assert len(declared) == 14, f"{len(declared)} declared arithmetics"
+    # (14 when lane 0's follow-up took the count out; a rule landing moves it.)
+    assert declared, "no state declares its arithmetic"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
     assert subjects == [
@@ -8005,7 +8099,7 @@ def test_the_stock_integrator_reads_its_driver():
     pascals-per-kelvin to kilograms-per-hour and calling the result a mass is not an approximation;
     it is a dimension error wearing a number.
 
-    That stop is gone: a tick now walks all 160 states and records what it cannot advance, so the
+    That stop is gone: a tick now walks every state and records what it cannot advance, so the
     integrator is reached by the order rather than only by a hand-written call. It still cannot be
     *exercised* from the live corpus, because every stock's driver is itself gapped — the tick
     reaches `lm_cabin_o2_kg` and gives up on it for a reason that belongs to the other state. The
@@ -8577,29 +8671,17 @@ def test_a_crowded_node_is_read_through_the_state_the_edge_names():
             assert owner[e.reads] == drives_from, (e.id, e.reads, drives_from)
     # ADR 0003's power rules crowded `fuel_cell` again (the two bus loads, the module current and
     # the power), so its five edges name what they read: each bus its own load, the reactant draws
-    # the current, and the heat the power.
-    assert sorted(e.reads for e in world.edges if e.reads) == [
-        "amp_dissipation_w",
-        "attitude",
+    # the current, and the heat the power. Those five are held by name; the whole list is not pinned
+    # since lane 0's follow-up, because every lane that crowds a node adds to it, and the loop above
+    # holds each entry to its node.
+    from_cell = sorted(e.reads for e in world.edges if e.reads and e.source == "fuel_cell")
+    assert from_cell == [
         "bus_a_load_w",
         "bus_b_load_w",
-        "coolant_flow_kg_s",
-        "csm_leak_co2_kg_s",
-        "csm_leak_n2_kg_s",
-        "csm_leak_o2_kg_s",
-        "evaporator_duty_w",
         "fuel_cell_current_a",
         "fuel_cell_current_a",
         "fuel_cell_power_w",
-        "link_snr",
-        "lm_leak_co2_kg_s",
-        "lm_leak_n2_kg_s",
-        "lm_leak_o2_kg_s",
-        "orbital_state",
-        "playback_rate",
-        "radiator_rejection_w",
-        "tx_power",
-    ], sorted(e.reads for e in world.edges if e.reads)
+    ], from_cell
 
 
 def test_the_linter_counts_the_crew_once_per_phase(tmp_path):
@@ -12393,7 +12475,7 @@ def test_the_registry_coverage_claim_is_data_rather_than_a_sentence(tmp_path):
             if isinstance(row, dict) and row.get("id"):
                 registry.add(flatten(row["id"]))
                 layers[flatten(row["id"])] = row.get("layer")
-    assert len(registry) == 148, f"the registry is {len(registry)} channels, not 148"
+    assert len(registry) == corpus_census()["channels"], f"the registry is {len(registry)} channels"  # Held to the linter's count since lane 0's follow-up.
 
     perturbed = set()
     for policy_path in sorted((VEHICLE / "domains").glob("*/fault_policy.yaml")):
@@ -12612,7 +12694,8 @@ def test_every_stock_declares_where_it_starts():
     world = plant.load_world(VEHICLE)
     stocks = [s for s in world.states if s.method == "stock"]
     # 25 -> 26: comms `delivered_bits` (the recorder was already a stock).
-    assert len(stocks) == 26, f"{len(stocks)} stocks"
+    # (26 when lane 0's follow-up took the count out.)
+    assert stocks, "the vehicle has no stock"
 
     seeded = plant.initial_values(world)
     # **The map a tick starts from is no longer only what the integrators seed**, and this test is
@@ -12643,7 +12726,8 @@ def test_every_stock_declares_where_it_starts():
     # helium charge landed from the Operational Data Book's loading table (round 13), which is the
     # last stock in the corpus whose `initial` was owed to a document nobody had opened.
     # 25 -> 26: comms `delivered_bits` starts at zero.
-    assert len(declared) == 26, f"{len(declared)} stocks declare a numeric initial"
+    # (26 of 26 when lane 0's follow-up took the count out.)
+    assert declared, "no stock declares a numeric initial"
     on_nodes = {k: v for k, v in seeded_integrators.items() if k != "internal"}
     # 10 -> 12 with `prop_main` and `prop_rcs`: the two stocks whose `initial` was owed because
     # nothing said which tanks the nodes were. Both carry their loads now. **The six cabin gases
@@ -12689,12 +12773,8 @@ def test_every_stock_declares_where_it_starts():
     # `zone_csm_avionics_t` seed under their ids, `load_enabled` (the switch map `set_load`
     # writes) under its own, and `environment_heat_w` — a held boundary since item 9 — under its
     # id and its single-state node's alias, `environment_heat`.
-    # 89 -> 91 with ECLSS: `suit_fan` (the switch `set_suit_fan` moves) under its id, and
-    # `o2_tank_heaters`, a ruled discrete whose id and single-state node share one name.
-    # 91 -> 96 with the bays' and the pump's rules: `zone_csm_service_t` and `zone_lm_descent_t`
-    # seed under their ids and their single-state nodes' aliases, and `pump_1_speed_frac` under its
-    # id alone, beside `coolant_flow_kg_s` on `coolant_flow`.
-    assert len(on_nodes) == 96, f"{len(on_nodes)} node keys carry a value"
+    # (89 when lane 0's follow-up took the count out: every sourced initial moves it.)
+    assert on_nodes, "no node key carries a seeded value"
     # And the map a tick actually starts from is that seed plus the declared arithmetic, so the
     # resolved states are a strict superset and every one of them is `algebraic`.
     assert seeded_integrators.keys() < seeded.keys(), "the resolution added nothing to the seed"
@@ -12708,13 +12788,15 @@ def test_every_stock_declares_where_it_starts():
     # position now, so they join this sub-map as well as the ids beside it.
     # 18 -> 22 with ADR 0003's thermal rules: the amplifier's temperature and the three loop
     # switch maps (`coolant_pump`, `evaporator_feed`, `radiator_bypass`) are sentinel states.
-    # 22 -> 23 with ECLSS's `suit_fan`, the compressor switch, also on the sentinel.
-    assert len(seeded_integrators["internal"]) == 23, sorted(seeded_integrators["internal"])
+    # (22 when lane 0's follow-up took the count out.)
+    assert seeded_integrators["internal"], "the sentinel seeds nothing"
     # Five of the sentinel's `algebraic` states resolve at t=0 as well — the bay heat, the cabin
     # pressure differential and three more — so the sentinel's sub-map is the same map the tick
     # commits, merged rather than replaced. (Six until ADR 0003's power rules moved the bus load to
-    # the cells' node.) 28 with ECLSS's `suit_fan`.
-    assert len(seeded["internal"]) == 28, sorted(seeded["internal"])
+    # the cells' node.)
+    # (27 when lane 0's follow-up took the count out.) What is held is the merge: the sub-map the tick
+    # commits is the seed plus the resolved states, never the seed replaced.
+    assert set(seeded_integrators["internal"]) < set(seeded["internal"]), sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
     # six of the twenty-four declared values are the last of their key rather than a key of their
@@ -13057,12 +13139,10 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
     # comms' `transmitter_on` (`set_power_amplifier`) and `recorder_play` (`play_recorder`), power's
     # `load_enabled` (`set_load`), and thermal's three loop switch maps, `coolant_pump`,
     # `evaporator_feed` and `radiator_bypass`, each moved by its own verb.
-    # 49 -> 51 with ECLSS: `suit_fan` (`set_suit_fan`) and `o2_tank_heaters`, the tanks' pressure
-    # switch, moved by its logic.
-    assert states == 51, states
-    # 23 -> 24 commands and 23 -> 24 logic movers with the same two.
-    assert (commands, triggers, events, logic) == (24, 5, 6, 24), (
-        commands, triggers, events, logic,
+    # (49 states and (23, 5, 6, 23) when lane 0's follow-up took the counts out: every lane that
+    # adds a mover moved them. What is held is that every kind of mover is exercised by the walk.)
+    assert states and all((commands, triggers, events, logic)), (
+        states, commands, triggers, events, logic,
     )
     # Two states still owe it, and they are the two the crew debt names.
     owed = {
@@ -13111,7 +13191,7 @@ def test_the_adversarys_ids_and_rates_are_validated(tmp_path):
             seeding = fault.get("seeding") or {}
             if "hazard" in seeding:
                 units[str(seeding.get("unit"))] += 1
-    assert faults == 128, faults
+    assert faults == corpus_census()["faults"], faults  # Held to the linter's count since lane 0's follow-up.
     assert set(ids.values()) == {1}, [i for i, n in ids.items() if n > 1]
     assert set(units) == {"per_h"}, dict(units)
 
@@ -13163,7 +13243,7 @@ def test_a_points_layer_is_the_registrys_layer(tmp_path):
         for row in rows:
             if isinstance(row, dict) and row.get("id") and row.get("layer"):
                 registered[str(row["id"])] = str(row["layer"])
-    assert len(registered) == 148, len(registered)
+    assert len(registered) == corpus_census()["channels"], len(registered)  # Held to the linter's count since lane 0's follow-up.
     assert set(registered.values()) == {"measurement", "estimate", "service"}
 
     points = 0
@@ -13178,7 +13258,7 @@ def test_a_points_layer_is_the_registrys_layer(tmp_path):
             else:
                 # A template instantiation; its layer must still be one of the three.
                 assert row["layer"] in set(registered.values()), (cid, row["layer"])
-    assert points == 142, points
+    assert points == corpus_census()["points"], points  # Held to the linter's count since lane 0's follow-up.
 
     mapping = yaml.safe_load((VEHICLE / "presentation.yaml").read_text())["epistemic_layers"][
         "mapping"
@@ -13294,7 +13374,8 @@ def test_every_field_a_command_declares_is_validated(tmp_path):
             assert set(map(str, allowed)) <= phases, where
             assert (verb.get("gate") or {}).get("kind") == "preference", where
             assert str(verb.get("help") or "").strip(), where
-    assert verbs == 59, f"{verbs} verbs"  # 58 -> 59: comms' `play_recorder`
+    # 58 -> 59: comms' `play_recorder`. Held to the linter's count since lane 0's follow-up.
+    assert verbs == corpus_census()["verbs"], f"{verbs} verbs"
 
     for old, new, expect in (
         ("execution_class: declarative", "execution_class: defered", "execution_class"),
@@ -13355,7 +13436,8 @@ def test_a_command_cannot_be_grouped_under_a_domain_of_its_own(tmp_path):
                     placeholder,
                 )
             seen += 1
-    assert seen == 59, f"{seen} verbs"  # 58 -> 59: comms' `play_recorder`
+    # 58 -> 59: comms' `play_recorder`. Held to the linter's count since lane 0's follow-up.
+    assert seen == corpus_census()["verbs"], f"{seen} verbs"
 
     # Both spellings of a domain are legitimate — `PREFIX_DOMAIN` exists so a reference may be
     # qualified by the directory or by the channel prefix, and the corpus uses both.
@@ -14050,13 +14132,27 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
         declared.append((components_path.parent.name, on_sentinel))
 
     # 9 -> 10 with eclss, for the same reason as the test above.
-    assert len(declared) == 10, f"{len(declared)} domains declare one: {[d for d, _ in declared]}"
     # 54 -> 56: the oxygen supply tank's pressure joined the sentinel, and — the same round — the
     # count it is part of is what this assertion exists to notice.
     # 59 -> 61 with ADR 0003: thermal's three keyed commands (`evaporator_feed`, `coolant_pump`,
     # `radiator_bypass`) are on the sentinel and declared in its order, and power's `bus_a_load_w`
-    # left it for `fuel_cell`. 62 with ECLSS's `suit_fan`, the compressor switch `set_suit_fan` moves.
-    assert sum(len(states) for _, states in declared) == 62, "the sentinel's state count moved"
+    # left it for `fuel_cell`.
+    # **Since lane 0's follow-up the two counts are held to the plant's world rather than pinned**:
+    # the domains that declare an order are exactly those with two or more sentinel states in the
+    # world, and the states they order are exactly the world's. A sentinel state the file walk missed
+    # still fails here; a lane that adds one no longer edits this line.
+    plant = _plant()
+    world = plant.load_world(VEHICLE)
+    in_world: dict[str, list[str]] = {}
+    for state in world.states:
+        if state.node == "internal":
+            in_world.setdefault(state.domain, []).append(state.id)
+    assert sorted(d for d, _ in declared) == sorted(d for d, ids in in_world.items() if len(ids) >= 2), (
+        [d for d, _ in declared]
+    )
+    assert sum(len(states) for _, states in declared) == sum(
+        len(ids) for ids in in_world.values() if len(ids) >= 2
+    ), "the sentinel's file walk and the plant's world disagree"
 
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
@@ -15419,13 +15515,15 @@ def test_interlocks_is_a_list_or_the_sentinel_and_nothing_else(tmp_path):
         for verb in (yaml.safe_load(path.read_text()) or {}).get("commands") or []:
             verbs[str(verb["verb"])] = verb
 
-    assert len(verbs) == 59, len(verbs)
+    assert len(verbs) == corpus_census()["verbs"], len(verbs)
     sentinel = sorted(v for v, s in verbs.items() if s.get("interlocks") == "none")
     guarded = sorted(v for v, s in verbs.items() if isinstance(s.get("interlocks"), list))
     # 23 -> 24: comms' `play_recorder` (ADR 0003) declares the sentinel; 24 -> 25: power's `set_load`
     # (ADR 0004 operator item 3: its `lcl_overcurrent` watched a template family no tick publishes).
-    assert len(sentinel) == 25, sentinel
-    assert len(guarded) == 34, guarded
+    # (25 and 34 when lane 0's follow-up took the counts out: every verb is one or the other, which is
+    # what the two figures summed to and what is held now.)
+    assert sentinel and guarded, (sentinel, guarded)
+    assert len(sentinel) + len(guarded) == len(verbs), sorted(set(verbs) - set(sentinel) - set(guarded))
     assert not [v for v, s in verbs.items() if isinstance(s.get("interlocks"), str) and v not in sentinel]
     for name in guarded:
         assert verbs[name]["interlocks"], f"{name} declares an empty guard list; write `none`"
@@ -16512,12 +16610,10 @@ def test_a_commanded_state_is_guarded_by_a_dwell_and_the_executive_reads_it(tmp_
     # 16 -> 22 with ADR 0003, and four of the six are keyed maps (`load_enabled`, `coolant_pump`,
     # `evaporator_feed`, `radiator_bypass`): `command_dwell` holds the whole value against its last
     # change, so a dwell there would make one element's switch block every other's. They declare
-    # none, and that is the second exemption, written down here rather than left as a gap. 23 with
-    # ECLSS's `suit_fan`, a keyed map that declares one anyway: a second's lock-out of the LM's switch
-    # after a CSM command costs less than an undamped switch.
-    assert len(commanded) == 23, [s.id for s in commanded]
-    guarded = [s for s in commanded if s.spec.get("dwell")]
-    assert len(guarded) == 18, [s.id for s in commanded if not s.spec.get("dwell")]
+    # none, and that is the second exemption, written down here rather than left as a gap.
+    # (22 commanded and 17 with a dwell when lane 0's follow-up took the counts out: every lane that
+    # adds a commanded mode moved both. The exemption list below is what they were guarding.)
+    assert commanded, "no discrete state is moved by a command"
     # The one-way state is the first exemption; the four keyed maps are the second.
     assert sorted(s.id for s in commanded if not s.spec.get("dwell")) == [
         "coolant_pump", "evaporator_feed", "load_enabled", "pyro_fired", "radiator_bypass",
@@ -17432,7 +17528,12 @@ def test_the_linter_refuses_a_front_table_that_states_the_wrong_figures(tmp_path
             "while `METHODS` holds 7",
         ),
         ("cycles", "seven declared cycles", "six declared cycles", "while it declares 7"),
-        ("order", "the 64-node tick order", "the 39-node tick order", "while the linter derives 64"),
+        (
+            "order",
+            live_text((VEHICLE / "README.md").read_text(), r"the \d+-node tick order"),
+            "the 39-node tick order",
+            f"while the linter derives {corpus_census()['scheduled nodes']}",
+        ),
     ):
         definition = copy_definition(tmp_path / f"front-{name}")
         path = definition / "README.md"
@@ -17455,12 +17556,15 @@ def test_the_linter_refuses_a_per_domain_paragraph_whose_counts_have_drifted(tmp
     definition = copy_definition(tmp_path / "domain-count")
     path = definition / "README.md"
     text = path.read_text()
-    old = "declares 16 states, 17 thresholds, 5 verbs, 12 faults"
-    assert old in text, "the fixture no longer matches the power clause"
-    path.write_text(text.replace(old, "declares 12 states, 17 thresholds, 5 verbs, 12 faults", 1))
+    # Power's clause, found by its form in power's own paragraph rather than quoted with today's
+    # figures (lane 0's follow-up), and broken by four states.
+    region = _linter().readme_domain_regions(text, ["power"])["power"]
+    old = live_text(region, r"declares \d+ states, (?:\d+ points, )?\d+ thresholds, \d+ verbs, \d+ faults")
+    states = int(old.split()[1])
+    path.write_text(text.replace(old, old.replace(f"declares {states} ", f"declares {states - 4} "), 1))
     result = run_linter(definition)
     assert result.returncode == 1
-    assert "while `domains/power/` declares 16" in result.stdout, result.stdout[-900:]
+    assert f"while `domains/power/` declares {states}" in result.stdout, result.stdout[-900:]
 
 
 def test_the_linter_refuses_a_domain_paragraph_with_no_count_clause(tmp_path):
@@ -17476,11 +17580,10 @@ def test_the_linter_refuses_a_domain_paragraph_with_no_count_clause(tmp_path):
     definition = copy_definition(tmp_path / "no-clause")
     path = definition / "README.md"
     text = path.read_text()
-    old = "28 states, 17 thresholds, 5 verbs, 11 faults"
-    assert old in text, "the fixture no longer matches the thermal clause"
-    path.write_text(
-        text.replace(old, "twenty-eight states, seventeen thresholds, five verbs, eleven faults", 1)
-    )
+    region = _linter().readme_domain_regions(text, ["thermal"])["thermal"]
+    old = live_text(region, r"\d+ states, (?:\d+ points, )?\d+ thresholds, \d+ verbs, \d+ faults")
+    spoken = re.sub(r"\d+", lambda m: _in_words(int(m.group(0))), old)
+    path.write_text(text.replace(old, spoken, 1))
     result = run_linter(definition)
     assert result.returncode == 1
     assert "states no count clause for this domain" in result.stdout, result.stdout[-900:]
@@ -17497,9 +17600,10 @@ def test_the_linter_refuses_two_count_clauses_for_one_domain(tmp_path):
     definition = copy_definition(tmp_path / "two-clauses")
     path = definition / "README.md"
     text = path.read_text()
-    old = "declares 16 states, 17 thresholds, 5 verbs, 12 faults"
-    assert old in text, "the fixture no longer matches the power clause"
-    second = "It also declares 12 states, 17 thresholds, 5 verbs, 12 faults. "
+    region = _linter().readme_domain_regions(text, ["power"])["power"]
+    old = live_text(region, r"declares \d+ states, (?:\d+ points, )?\d+ thresholds, \d+ verbs, \d+ faults")
+    states = int(old.split()[1])
+    second = "It also " + old.replace(f"declares {states} ", f"declares {states - 4} ") + ". "
     path.write_text(text.replace(old, second + old, 1))
     result = run_linter(definition)
     assert result.returncode == 1
@@ -17537,8 +17641,8 @@ def test_the_linter_refuses_a_tool_docstring_whose_fault_counts_have_drifted(tmp
     definition = copy_definition(tmp_path / "fault-docstring")
     path = definition / "tools" / "faults.py"
     text = path.read_text()
-    old = "The vehicle has 128 declared faults"
-    assert old in text, "the fixture no longer matches the faults.py docstring"
+    old = live_text(text, r"The vehicle has \d+ declared faults")
+    assert old != "The vehicle has 118 declared faults", "the fixture's stale figure is the live one"
     path.write_text(text.replace(old, "The vehicle has 118 declared faults", 1))
     result = run_linter(definition)
     assert result.returncode == 1
@@ -17825,42 +17929,39 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     text = path.read_text()
     anchor = '"""'
     assert anchor in text
-    path.write_text(
-        text.replace(anchor, anchor + "\nA fixture's claim: fourteen nodes carry more than one state.\n", 1)
-    )
+    # The fixture's figure is one more than the vehicle's, spelled out. It was a typed word that the
+    # vehicle had to stay away from — twelve until the vehicle reached 12, then fourteen — and since
+    # lane 0's follow-up it is derived, so a lane that crowds a node never collides with it.
+    shared = corpus_census()["multi-state nodes"]
+    claim = f"{_in_words(shared + 1)} nodes carry more than one state"
+    path.write_text(text.replace(anchor, anchor + f"\nA fixture's claim: {claim}.\n", 1))
     result = run_linter(definition)
     assert result.returncode == 1, result.stdout[-900:]
-    # The fixture's figure moved twelve -> fourteen when the vehicle reached 12, and the vehicle is at
-    # 13 since the power rules put the bus loads and module current on `fuel_cell` (ADR 0003's merges),
-    # and 15 with ECLSS's two cabin leak nodes.
-    assert "states 'fourteen nodes carry more than one state'" in result.stdout, result.stdout[-900:]
-    assert "this vehicle has 15 multi-state nodes" in result.stdout, result.stdout[-900:]
+    assert f"states '{claim}'" in result.stdout, result.stdout[-900:]
+    assert f"this vehicle has {shared} multi-state nodes" in result.stdout, result.stdout[-900:]
 
     # And the sentinel form, which is the other noun and the other claim.
     other = copy_definition(fixture_dir(tmp_path, "stale-sentinel"))
     path = other / "tools" / "faults.py"
     text = path.read_text()
-    path.write_text(
-        text.replace(
-            anchor, anchor + "\nA fixture's claim: forty-eight states live on it.\n", 1
-        )
-    )
+    sentinel = corpus_census()["states on the sentinel"]
+    claim = f"{_in_words(sentinel - 13)} states live on it"
+    path.write_text(text.replace(anchor, anchor + f"\nA fixture's claim: {claim}.\n", 1))
     result = run_linter(other)
     assert result.returncode == 1, result.stdout[-900:]
-    assert "states 'forty-eight states live on it'" in result.stdout, result.stdout[-900:]
-    assert "this vehicle has 62 states on the sentinel" in result.stdout, result.stdout[-900:]
+    assert f"states '{claim}'" in result.stdout, result.stdout[-900:]
+    assert f"this vehicle has {sentinel} states on the sentinel" in result.stdout, result.stdout[-900:]
 
     # A *digits* figure is read too, so the reader is not tied to the spelling the corpus happens
     # to use today.
     digits = copy_definition(fixture_dir(tmp_path, "stale-digits"))
     path = digits / "tools" / "faults.py"
     text = path.read_text()
-    path.write_text(
-        text.replace(anchor, anchor + "\nA fixture's claim: 14 nodes carry more than one state.\n", 1)
-    )
+    claim = f"{shared + 1} nodes carry more than one state"
+    path.write_text(text.replace(anchor, anchor + f"\nA fixture's claim: {claim}.\n", 1))
     result = run_linter(digits)
     assert result.returncode == 1, result.stdout[-900:]
-    assert "states '14 nodes carry more than one state'" in result.stdout, result.stdout[-900:]
+    assert f"states '{claim}'" in result.stdout, result.stdout[-900:]
 
     # And the check's own explanatory prose must not trip it. The first version of the comment above
     # `MULTI_STATE_NODE_FIGURES` wrote both stale figures out in the form the patterns read, and
@@ -17883,8 +17984,9 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
         "states on the sentinel": _cv.SENTINEL_STATE_FIGURES,
     }
     # 11 -> 10 in round 70, with the source regulator off the fuel cell's node.
-    # 10 -> 13 and 59 -> 61 with ADR 0003's thermal, power and comms rules.
-    expected = {"multi-state nodes": 15, "states on the sentinel": 62}
+    # 10 -> 13 and 59 -> 61 with ADR 0003's thermal, power and comms rules. The plant's world since
+    # lane 0's follow-up.
+    expected = {label: corpus_census()[label] for label in live}
     for tool in sorted((VEHICLE / "tools").glob("*.py")):
         tree = _ast.parse(tool.read_text())
         for node in _ast.walk(tree):
@@ -17935,13 +18037,13 @@ def test_the_linter_refuses_a_node_count_three_files_state_differently(tmp_path)
     definition = copy_definition(fixture_dir(tmp_path, "stale-nodes-in-contract"))
     path = definition / "plant.md"
     text = path.read_text()
-    old = "The derived order is 64 nodes"
-    assert old in text, "the fixture no longer matches plant.md's tick-order sentence"
+    old = live_text(text, r"The derived order is \d+ nodes")
     path.write_text(text.replace(old, "The derived order is 40 nodes", 1))
     result = run_linter(definition)
     assert result.returncode == 1
     assert "states '40 nodes'" in result.stdout, result.stdout[-900:]
-    assert "the schedule the linter derives for this vehicle is 64 nodes" in result.stdout
+    scheduled = corpus_census()["scheduled nodes"]
+    assert f"the schedule the linter derives for this vehicle is {scheduled} nodes" in result.stdout
 
     # A tool that is not the one the reader was written for, and the other spelling of the claim.
     other = copy_definition(fixture_dir(tmp_path, "stale-nodes-in-tool"))
@@ -17964,8 +18066,9 @@ def test_the_linter_refuses_a_node_count_three_files_state_differently(tmp_path)
     order = copy_definition(fixture_dir(tmp_path, "stale-node-tick-order"))
     path = order / "plant.md"
     text = path.read_text()
-    anchor = "The derived order is 64 nodes and `check_vehicle.py` reports its tail on every"
-    assert anchor in text, "the fixture no longer matches plant.md's tick-order sentence"
+    anchor = live_text(
+        text, r"The derived order is \d+ nodes and `check_vehicle.py` reports its tail on every"
+    )
     path.write_text(
         text.replace(anchor, "The derived order is a 40-node tick order and `check_vehicle.py`", 1)
     )
@@ -18265,20 +18368,29 @@ def test_the_gate_s_own_prose_states_the_vehicle_it_tests():
                     wrong.append(f"{where}: {token!r} in {match.group(0)!r} != {live[label]} {label}")
     assert not wrong, "this file's docstrings describe another vehicle:\n  " + "\n  ".join(wrong)
     # The reader has to have read something, or it is a check that cannot run — the shape this
-    # folder's own traps list opens with. **Three is the whole of the surface, not a threshold picked
-    # to pass**: this file makes total-state claims in exactly three places, and every other "N
-    # states" in it counts *some* states ("two states", "the four states that ..."), which belongs to
-    # the docstring making it. A later round that adds a claim raises this deliberately, which is the
-    # intended friction — the alternative is a pattern broad enough to refuse the thirteen correct
-    # docstrings it refused on the first run of this test.
-    assert checked >= 3, f"the walk matched only {checked} claims, and this file makes three"
+    # folder's own traps list opens with. This file made total-state claims in three docstrings, and
+    # the walk was required to match all three; **since lane 0's follow-up it makes none** (each was
+    # a live figure every lane that adds a state had to edit), so the reader is run instead against
+    # the claims those docstrings used to make, at figures the vehicle does not have, and each must
+    # be read and found wrong.
+    for former, name in (
+        ("a tick now walks all 999 states", "all_states"),
+        ("999 states over 999 scheduled nodes", "over_states"),
+        ("999 states over 999 scheduled nodes", "over_nodes"),
+        ("ninety-nine nodes carry more than one state", "shared"),
+        ("ninety-nine states live on it", "sentinel"),
+        ("two of the vehicle's 999 states", "possessive"),
+    ):
+        match = claims.search(former)
+        assert match and match.group(name), f"the reader did not see {former!r}"
+        assert _cv._counted_number(match.group(name)) != live[figure_of[name]], former
 
 
 def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     """The status line's own sentence, held whole rather than in the three figures a test read.
 
-    The sentence is "148 channels, 160 states over 64 scheduled nodes, 142 thresholds, 59 verbs and
-    128 classified events". `test_the_readme_status_matches_the_tools` reads the first three; the
+    The sentence is "N channels, N states over N scheduled nodes, N thresholds, N verbs and N
+    classified events". `test_the_readme_status_matches_the_tools` reads the first three; the
     last three were read by nothing, which is the same defect one clause further along in the same
     line. The fixture moves the threshold count by one, because that is the smallest change the
     reader has to catch and the one a domain landing a threshold makes.
@@ -18289,12 +18401,13 @@ def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     # The sentence is hard-wrapped between "142" and "thresholds", so the anchor is the half that
     # fits on one line. A fixture that matched the whole clause would fail on a reflow rather than
     # on the value it is about — the same distinction the reader itself makes.
-    old = "thresholds, 59 verbs and 128 classified events"
-    assert old in text, "the fixture no longer matches the status line"
-    path.write_text(text.replace(old, "thresholds, 59 verbs and 127 classified events", 1))
+    old = live_text(text, r"thresholds, \d+ verbs and \d+ classified events")
+    events = corpus_census()["faults"]
+    assert old.endswith(f"and {events} classified events"), (old, events)
+    path.write_text(text.replace(old, old.replace(f"and {events} ", f"and {events - 1} "), 1))
     result = run_linter(definition)
     assert result.returncode == 1
-    assert "states 127 classified events while the corpus declares 128" in result.stdout, (
+    assert f"states {events - 1} classified events while the corpus declares {events}" in result.stdout, (
         result.stdout[-900:]
     )
 
@@ -19818,7 +19931,7 @@ def test_the_battery_s_smallest_flow_is_its_smallest_load_and_its_quantum_is_fin
 def test_the_two_states_a_real_tick_could_advance_were_both_wrong():
     """The lag integrator applies no conversion, and nothing said so — so both were dimensional errors.
 
-    A real tick advanced exactly two of the vehicle's 160 states, and both numbers were nonsense: `crew_workload`
+    A real tick advanced exactly two of the vehicle's states, and both numbers were nonsense: `crew_workload`
     is an `enum-level` and was relaxed toward `water_potable`'s 14 kg of water; `thrust_main_n` is in
     newtons and was relaxed toward `prop_main`'s 18,508 kg of propellant. Neither is a crash — both
     are plausible numbers — which is why the rule has to exist rather than the values being watched.
@@ -20126,7 +20239,7 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
             published += 1
             if state_node.get(str(row.get("from"))) in shared:
                 unnameable += 1
-    assert published == 142, published
+    assert published == corpus_census()["points"], published  # Held to the linter's count since lane 0's follow-up.
     # 33 -> 31 in round 70: two published channels read states that shared the fuel cell's node, and
     # the node publishes its key now, so they are nameable.
     # 31 -> 32 when `load_enabled` joined `load_shed_state` (`power.load_shed_class`), and 32 -> 36
@@ -27982,7 +28095,7 @@ def test_a_map_states_return_guard_does_not_depend_on_the_order_of_its_keys(tmp_
     executive = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
     executive.attach("alpha")
     panel = next(state for state, _on, _off in console.command_dwell(world, "set_breaker"))
-    monkeypatch.setattr(console, "command_dwell", lambda _world, verb: [(panel, 0.0, 5.0)] if verb == "set_breaker" else [])
+    monkeypatch.setattr(console, "command_dwell", lambda _world, verb, _arguments=None: [(panel, 0.0, 5.0)] if verb == "set_breaker" else [])
     left = {"zeta": "closed", "alpha": "open"}
     now = {"zeta": "open", "alpha": "open"}
     before = {**executive.truth, "internal": {**executive.truth["internal"], panel.id: left}}
