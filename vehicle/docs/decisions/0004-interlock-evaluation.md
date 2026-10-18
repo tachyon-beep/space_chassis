@@ -242,3 +242,15 @@ their batch classes through the window (`aurora/tests/test_quiet_coast_window.py
   (WP05)" sentence (`set_bus_tie`'s `tie_dv_limit`, `set_relief_valve`'s `cabin_dp_low`) now assert
   the link this decision names: a difference between buses, and `psid` against `psi`. The arm and
   fire refusals list only the unreadable interlocks, which for both verbs is all of them.
+
+## Amendment: `select_nav_source` gains a direction (2026-10-17)
+
+ADR 0005's navigation sources give `ground_uplink` a meaning: it takes the ground's vector and the
+ground's sigma, so it recovers from `estimator_divergence` rather than feeding it. The four onboard
+choices coast on the vector held and are what grow the sigma. So `select_nav_source` leaves the
+guarded-whole list above. It now declares `interlocks_when` on `source`:
+
+- refused while tripped: `imu_only`, `star_sighting`, `radar`, `blended`
+- the safing direction: `ground_uplink`
+
+Two verbs stay guarded whole: `request_translation` and `start_burn`.

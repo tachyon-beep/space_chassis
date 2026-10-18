@@ -67,6 +67,7 @@ faults:
         the two look identical over a single orbit. The separation is the drift's persistence
         across a thermal cycle, which is what `domains/avionics/`'s CUSUM accumulator on the
         `bus_source` group is for — the same mechanism, arriving from a different domain
+    fleet_class: onboard
     response:
       kind: service
       note: >-
@@ -113,6 +114,7 @@ faults:
         none, which is unusual and is the point: a coast is a fact about measurements, and there
         is no ambiguity about whether absolute updates have stopped. The ambiguity is entirely in
         what it *means*, and that is a function of the phase
+    fleet_class: onboard
     response:
       kind: service
       note: >-
@@ -153,6 +155,7 @@ faults:
         fatigue, by an occulted star and by a broken telescope are the same reading, and the
         separation is `domains/crew/`'s availability and `domains/comms/`'s blackout state —
         both published, and neither in this domain
+    fleet_class: precursor
     response:
       kind: advisory
       note: >-
@@ -195,6 +198,7 @@ faults:
         `set_radar`'s `acquire_altitude_m` — a radar searching the wrong altitude range finds
         nothing, reports nothing, and is indistinguishable from a broken one. That is why the
         acquisition altitude is an argument rather than a constant
+    fleet_class: onboard
     response:
       kind: service
       note: >-
@@ -236,6 +240,7 @@ faults:
         different fault* are indistinguishable from the sigma alone. The separation is the
         rejection reason: `innovation` rejections that continue past k of m are a model; a run of
         `redundancy` or `out_of_range` rejections is a sensor
+    fleet_class: onboard
     response:
       kind: service
       note: >-
@@ -279,6 +284,7 @@ faults:
         vehicle and `rcs.thruster_[n]_health` is where that shows. This fault is where the RCS
         domain's crisis meets the navigation domain's, and the two arrive in a fixed order:
         rate, then saturation, then a ladder that no longer knows the attitude
+    fleet_class: onboard
     response:
       kind: service
       note: >-
@@ -324,6 +330,7 @@ faults:
         and during a landing the surface is not flat. The separation is the *rate*: a range rate
         that is inconsistent with the vehicle's own accelerometer and throttle is a false lock,
         and the three-way comparison is what a fleet has to make
+    fleet_class: onboard
     response:
       kind: service
       note: >-
@@ -368,6 +375,7 @@ faults:
         produces the same signature and is a different fault in a different domain. The separation
         is a mass or impulse accounting: `domains/consumables/`'s ledger and
         `rcs.total_impulse_ns` will show a leak and will not show a gravity error
+    fleet_class: precursor
     response:
       kind: advisory
       note: >-
@@ -411,6 +419,7 @@ faults:
         a residual inside the mission's tolerance and outside a fleet's expectation is not an
         error. This is the one fault on the vehicle whose *threshold* is a mission decision rather
         than a physical limit, and `mission.yaml`'s objectives are where it would live
+    fleet_class: onboard
     response:
       kind: service
       note: >-
@@ -452,6 +461,7 @@ faults:
         The whole reason `domains/comms/` publishes its geometry is so that this fault is a plan
         rather than a surprise, and the two domains together are the best example on the vehicle
         of one domain's *expected condition* being another's *trigger*
+    fleet_class: onboard
     response:
       kind: service
       note: >-
@@ -495,6 +505,7 @@ faults:
         filter that converges slowly and correctly. Understating confidence is the dangerous
         direction, which is why `position_sigma_m` is an argument the fleet supplies rather than a
         default the vehicle assumes
+    fleet_class: precursor
     response:
       kind: advisory
       note: >-

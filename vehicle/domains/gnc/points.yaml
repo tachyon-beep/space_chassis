@@ -90,7 +90,7 @@ points:
       them.
 
   - channel: gnc.nav_position_sigma_m
-    from: nav_covariance
+    from: nav_position_sigma
     layer: estimate
     derivation: "the position block's uncertainty, as a 1-sigma radius"
     note: >-
@@ -102,7 +102,7 @@ points:
       growth to be arithmetic (`gnc.coast_elapsed_s`).
 
   - channel: gnc.nav_velocity_sigma_m_s
-    from: nav_covariance
+    from: nav_velocity_sigma
     layer: estimate
     derivation: "the velocity block's uncertainty, as a 1-sigma"
     note: >-

@@ -32,6 +32,9 @@ source converter, flown bus routing, reactants per ampere, pump as flow, three d
 interlock whose threshold, band, dwell and reading resolve is evaluated, with its dwell history in the
 truth; one that does not resolve is still refused unevaluated (accepted 2026-10-16 under D1; three
 operator items for the episode's unreadable interlocks decided by John 2026-10-16).
+[0005](0005-pointing-modes.md) — attitude as pointing modes behind `set_attitude_target`: a
+rate-limited eigenaxis slew on the DAP's couples, a rigid body with the docked inertia tensor, and
+the propellant each slew and each hold costs (proposed 2026-10-17, sprint lane 7).
 
 The table lists design questions, not extra product features. Link each
 record from its public work package. The roadmap can proceed through research

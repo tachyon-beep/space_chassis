@@ -659,16 +659,17 @@ def test_a_dynamics_state_starts_from_its_declared_vector(tmp_path):
     """
     copy = faulted_copy(tmp_path / "vehicle")
     components = copy / "domains" / "gnc" / "components.yaml"
+    # The GNC lane declares both since ADR 0005 (the PTC attitude and a body at rest), so the
+    # fixture moves the declared values rather than adding them.
     replace(
         components,
-        "  - id: attitude\n    node: vehicle_dynamics\n    method: dynamics\n",
-        "  - id: attitude\n    node: vehicle_dynamics\n    method: dynamics\n"
+        "    initial: [0.7071067811865476, 0.0, -0.6487577877061355, -0.2812709243605549]\n",
         "    initial: [0.7071067811865476, 0.0, -0.7071067811865476, 0.0]\n",
     )
     replace(
         components,
-        "  - id: body_rate\n    node: vehicle_dynamics\n    method: dynamics\n",
-        "  - id: body_rate\n    node: vehicle_dynamics\n    method: dynamics\n    initial: [0.0, 0.1, 0.0]\n",
+        "a midpoint step per tick (ADR 0005).\n    initial: [0.0, 0.0, 0.0]\n",
+        "a midpoint step per tick (ADR 0005).\n    initial: [0.0, 0.1, 0.0]\n",
     )
     vectored = plant.load_world(copy)
     values = plant.initial_values(vectored)
