@@ -22350,12 +22350,16 @@ def test_the_tick_can_read_what_the_build_order_promises():
     # `load_enabled`, not `bus_a_v`, so a tick advances it and it is in `ready`.
     assert "coolant_flow_kg_s" in advanced
     # `prop_rcs_kg`'s drain has its driver since ADR 0005 (`E-RCSP-RCS` reads `thrust_total_n`), so
-    # the build order files it under its edge. A tick from the bare corpus still leaves it dark: the
-    # slew law starts from the attitude vector and the held-target record, which the plant seeds
-    # once #47 lands, and until then the drain's driver has no value.
+    # the build order files it under its edge. The first tick from the bare corpus still leaves it
+    # dark: the plant seeds the slew law's attitude vector and held-target record since #47, but the
+    # thrust total is the law's own output and is not resolved at t=0, so the edge reads it before
+    # the tick has made it. The gap names that state (#47's blame rule), and the next tick drains.
     gap = next(gap for gap in gaps if gap.state.id == "prop_rcs_kg")
-    assert gap.needs == "rcs_thrust", gap.owed
+    assert gap.needs == "thrust_total_n", gap.owed
     assert "prop_rcs_kg" in {s.id for s in order["edge"]}
+    second: list = []
+    plant.step(world, plant.step(world, values, 1.0 / 50.0, []), 1.0 / 50.0, second)
+    assert "prop_rcs_kg" not in {gap.state.id for gap in second}
 
     # The t=0 resolution is what closed the first cause, and it is in the order the tick walks: a
     # state resolved here is one the tick then advances, and a reading that is not yet there is left

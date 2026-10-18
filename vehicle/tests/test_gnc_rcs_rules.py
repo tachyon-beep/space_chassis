@@ -5,9 +5,9 @@ The rules are exercised two ways. Directly, for the arithmetic that has a closed
 torque-free spin keeps its energy and momentum, the hold's limit cycle costs ten times as much at
 0.5 deg as at 5 deg, a malformed quaternion is refused). And through the real step loop, for the
 one claim that only the loop can make: a commanded slew reaches its target and the tank pays for
-it. The vectors are seeded through a scenario overlay because the plant seeds only scalar
-`dynamics` initials until #47 lands, and the commanded quaternion is written as its effect will
-write it until the engine carries array arguments.
+it. The vectors start from their declared `initial` (the plant seeds vectors and records since
+#47), and the commanded quaternion is written as its effect will write it until the engine carries
+array arguments.
 """
 
 from __future__ import annotations
@@ -110,9 +110,7 @@ def test_a_unit_quaternion_is_read_in_any_bracketing():
 
 
 def _seeded(world):
-    initial = {k: _spec(world, k)["initial"] for k in ("attitude", "body_rate", "held_target")}
-    initial["impulse_total"] = 0.0
-    return plant.initial_values(world, plant.Scenario(name="gnc_rcs_fixture", initial=initial))
+    return plant.initial_values(world)
 
 
 def _apply(values, delta):
