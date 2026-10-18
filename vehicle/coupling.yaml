@@ -694,17 +694,11 @@ edges:
       at: nominal
       note: >-
         the unit read `V per W` and that asked for a droop coefficient the architecture does not
-        have. electrical_diode.md:249 specifies the source regulator as a *regulated* output —
-        24-32 V over 25-100 % of a 1.2 kW rating, >=94 % efficient, with a regulation transient
-        under 10 ms — and a regulated source does not sag proportionally to its load. Reading the
-        envelope across the load band as a slope would give 8 V / 1.2 kW and would sag the bus 4 V
-        at full load, which contradicts both the word "regulated" and the undervoltage ladder in
-        domains/power/profiles.yaml, whose top rung asserts at 26.5 V on apollo's own event
-        (apollo_diode.md:73). The residual sag is the source's internal resistance, and that
-        number is genuinely unpublished and still owed — but it is a property of
-        `source_converter_v`, and it belongs in that state's relation, so it is recorded in
-        open_debts as a resistance rather than as a coefficient here. Closing this edge retires
-        the *coefficient* half of that debt and leaves the resistance half standing
+        have. The load-dependent sag is the modules' own source resistance, `fc_[n]_resistance_ohm`
+        (0.1008 ohm healthy, the secant of the AOH p. 2.6-2 envelope, WP02 E-2), and it lives in the
+        bus solve rather than on this edge. What is still unpublished is the feeder and motor-switch
+        drop between the terminals and the bus, which WP02 E-2 bounds at 0-1.0 V and `open_debts`
+        records with the tie's
   # **No `reads:` here, and round 72 removed the one round 71 put on it.** This edge leaves a
   # stock node, so `stock_flux` is handed its *target* as the driver — a discharge empties at the
   # rate its consumer sets — and `co2_removal_csm` carries one state and publishes its key. The
@@ -2893,7 +2887,7 @@ open_debts:
   # stock of joules cannot be an algebraic source of volts. There is no pack-voltage state, no
   # open-circuit-voltage curve and no bidirectional converter in the model, so the edge couples
   # from a node that cannot produce the quantity it carries. The fix is a state, not a number.
-  - "Source internal resistance (the residual sag on E-FC-BUS and the tie drop across E-TIE-BUSA). electrical_diode.md:247-251 gives ratings and efficiencies but no source or conductor resistance, and the droop is bounded rather than determined by what is published: the undervoltage ladder asserts at 26.5 V (apollo_diode.md:73), so a 28 V bus at the 1.2 kW rating cannot sag more than 1.5 V without a healthy converter tripping its own alarm — an upper bound of 1.25e-3 V per W. The bound is the useful half; the number is still owed."
+  - "Conductor resistance: the feeder and motor-switch drop between the fuel-cell terminals and the main buses, and the tie drop across E-TIE-BUSA. The modules' own source resistance is derived (`fc_[n]_resistance_ohm`, WP02 E-2) and in the bus solve; the conductors' is not published, and WP02 E-2 bounds the terminal-to-bus drop at 0-1.0 V against flown bus voltages. The bound is the useful half; the number is still owed."
   - "A pack-voltage state on `battery_energy` (E-BAT-BUS, and the reason that edge cannot close). The node advances stored energy and nothing else, so an algebraic edge from it to `bus_a` has no quantity to be a function of. What is missing is the chain stored energy -> open-circuit voltage -> bidirectional converter -> bus (electrical_diode.md:250 gives the converter as 20-36 V battery to 28 V bus, >=94 %), and the honest OCV is flat enough over most of the usable band that the regulated bus barely moves: the coupling is closer to *availability* than to volts. Declared here rather than guessed, because adding a state changes the schedule and the schedule is derived."
   - "Every thermal time constant and conductance (tau on E-PUMP-COOL, E-TRANSPORT-PLATE, E-PLATE-*). thermal_diode.md:965 declares them all UNSPECIFIED and refuses to infer them."
   - "Loop transit delay in ticks (E-COOL-TRANSPORT). Needs loop volume and flow; apollo_diode.md:97 gives ~24 gal/h."

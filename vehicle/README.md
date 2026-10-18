@@ -262,11 +262,10 @@ is only displayed stops being a debt.
 declares 22 states, 14 thresholds, 5 verbs, 11 faults. Two
 things in it are worth reading rather than skimming:
 
-- **The load-shed ladder is re-anchored.** `review-findings.md` recommends generalising
-  `electrical_diode.md:814-890` as the hysteresis template, and it cannot be used as written:
-  that ladder fires DEGRADED at `<25.5 V` while apollo fires an *event* at `<26.5 V for 0.5 s`.
-  `domains/power/profiles.yaml` puts apollo's threshold at the top of the ladder and the shed
-  tiers below it, each with a recovery gap wider than the load step it restores.
+- **The crew sheds load; the vehicle does not.** Apollo had no automatic DC load shed (AOH
+  p. 2.6-38), so the shed tiers that sat below apollo's `<26.5 V for 0.5 s` event are retired:
+  `bus_a_undervoltage` is a caution the crew answers with `set_load`, and `load_shed_class`
+  reports the most critical class among the loads on at MET 0 that their switches have off.
 - **Every fault names the channels it perturbs**, which is `review-findings.md` #11's
   fault-coverage rider made checkable: the linter refuses a fault that perturbs nothing
   observable, because such a fault cannot be diagnosed.

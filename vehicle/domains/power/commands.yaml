@@ -36,8 +36,9 @@ commands:
       values: ["off"]
       why: >-
         both guards are a bus short of power (ADR 0004 §Direction): disconnecting a source is what
-        makes it worse ("disconnecting the last source on a bus is refused by the interlock"), and
-        connecting one is the recovery, so `state=on` is never refused by them
+        makes it worse, and connecting one is the recovery, so `state=on` is never refused by them.
+        They read the bus before the command, so a healthy bus's last source can still be taken off:
+        the bus goes dead, its loads unpowered (`load_powered`), as a crew could make it by switch
     conflict_domain: power.source_<source>
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -45,7 +46,7 @@ commands:
     idempotent: true
     execution_class: declarative
     maximum_queue_age_s: 60
-    help: "connect or disconnect a generating source. Declarative and repeatable; disconnecting the last source on a bus is refused by the interlock, not by a count."
+    help: "connect or disconnect a generating source. Declarative and repeatable; disconnecting is refused while the bus is already undervolted or short of margin, and taking off a healthy bus's last source leaves that bus dead."
     provenance:
       basis: apollo
       ref: "apollo_diode.md:237"
