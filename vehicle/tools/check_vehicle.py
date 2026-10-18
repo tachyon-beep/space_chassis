@@ -8440,9 +8440,11 @@ RADIATIVE_COOLING = "space"
 # 26,000 to 35,000. So a measured pair is a plausibility check against `MEASURED_PRODUCT_CEILING`,
 # twice the estimate, which catches a transcribed gain or width a step out without claiming a bound
 # the physics does not set. The CSM S-band HGA's 25.7 dB with a 4.4-degree beam (TN D-6723
-# Table I) is such a pair, at about 17 % of the estimate. Its provenance is `historical`, because the claim is that both numbers came from a
-# source and the bound alone would let a guess through; the source that names both is its reason,
-# so it needs no `pattern_note` beside it.
+# Table I) is such a pair: its product sits 7.6 dB below the ideal-aperture product. That is a
+# comparison of beam solid angles, not the antenna's aperture efficiency. Its provenance is
+# `historical`, because the claim is that both numbers came from a source and the bound alone would
+# let a guess through; the source that names both is its reason, so it needs no `pattern_note`
+# beside it.
 ANTENNA_PATTERNS = {"aperture", "measured", "near_isotropic"}
 MEASURED_PRODUCT_CEILING = 2 * IDEAL_APERTURE_PRODUCT
 
