@@ -220,7 +220,7 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 160 states over 64 scheduled nodes, 142
+**All eleven domains have landed** — 148 channels, 161 states over 64 scheduled nodes, 142
 thresholds, 59 verbs and 128 classified events across the eleven directories, with every debt
 named. Those are the corpus's declarations, and the linter holds each of them against the files
 (`check_readme_figures`); they move when a domain adds a channel, a state or a verb, not when one
@@ -272,7 +272,7 @@ things in it are worth reading rather than skimming:
   observable, because such a fault cannot be diagnosed.
 
 `domains/thermal/` pays the debt `thermal_diode.md:965` created when it refused to infer a
-single TCS constant. It declares 28 states, 17 thresholds, 5 verbs, 11 faults — and the
+single TCS constant. It declares 29 states, 17 thresholds, 5 verbs, 11 faults — and the
 parameters are **derived** wherever a published geometry plus a standard material property
 determines them, with the relation stated so the linter can disagree:
 

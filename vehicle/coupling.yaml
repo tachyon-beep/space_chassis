@@ -367,11 +367,14 @@ nodes:
     kind: flow
     unit: kg/s
     apollo: "103"
-    state_order: [pump_1_speed_frac, coolant_flow_kg_s]
+    # `coolant_pump_running` is a map (which pump runs), published here for power's pump draw.
+    key_space: by_state
+    state_order: [pump_1_speed_frac, coolant_pump_running, coolant_flow_kg_s]
     state_order_note: >-
       the pump produces the flow. The frozen tiebreak would have put `coolant_flow_kg_s` first,
       which computes the loop's transport from a shaft speed that has not been updated yet — a
-      tick of lag on the quantity the whole thermal domain is built on
+      tick of lag on the quantity the whole thermal domain is built on. `coolant_pump_running`
+      reads only the switch and the load positions, so its place changes no value
   coolant_supply_t:  {domain: thermal, kind: state, unit: K, apollo: "101"}
   coldplate_t:       {domain: thermal, kind: state, unit: K, apollo: "105"}
   radiator_eq:

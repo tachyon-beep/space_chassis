@@ -188,6 +188,7 @@ RULED = {
     "zone_csm_service_t",
     "zone_lm_descent_t",
     "pump_1_speed_frac",
+    "coolant_pump_running",
 }
 
 
@@ -506,6 +507,24 @@ def test_pump_1_speed_follows_its_own_pump_and_not_the_loop_s_flow(world):
     on = run(world, on, 3000)
     assert on["coolant_flow_kg_s"] == pytest.approx(RATED_FLOW, rel=1e-3)
     assert on["pump_1_speed_frac"] < 1e-5
+
+
+def test_the_published_running_pump_is_the_selected_one_with_its_load_on(world):
+    """`coolant_pump_running` is what power gates each pump's draw on: selected and powered."""
+    values = run(world, episode_start(world), 1)
+    assert values["coolant_pump_running"] == {"pump_1": "on", "pump_2": "off", "pump_lm": "off"}
+    swap = {
+        0: [
+            effect("set_coolant_pump", loop="loop_primary", pump="pump_1", state="off"),
+            effect("set_coolant_pump", loop="loop_primary", pump="pump_2", state="on"),
+        ]
+    }
+    swapped = run(world, values, 1, swap)
+    assert swapped["coolant_pump_running"] == {"pump_1": "off", "pump_2": "on", "pump_lm": "off"}
+    # Selected but unpowered: shedding pump 2's load stops it with the switch still on pump 2.
+    shed = run(world, swapped, 1, {0: [effect("set_load", load="csm_coolant_pump_2", state="off")]})
+    assert shed["coolant_pump"]["pump_2"] == "on"
+    assert shed["coolant_pump_running"]["pump_2"] == "off"
 
 
 def test_a_shed_pump_load_stops_the_shaft_with_the_command_still_on(world):

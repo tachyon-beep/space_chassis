@@ -4507,7 +4507,8 @@ def test_the_linter_refuses_a_keyed_state_on_a_node_that_does_not_declare_its_ke
     text = (VEHICLE / coupling).read_text()
     on_nodes = re.findall(r"(?:^[ ]+|[,{][ ]*)key_space: by_state\b", text, re.M)
     # 5 -> 6: `load_shed_state` carries power's `load_enabled` switch map beside the ladder's class.
-    assert len(on_nodes) == 6, (
+    # 6 -> 7: `coolant_flow` carries thermal's `coolant_pump_running` map beside the flow scalars.
+    assert len(on_nodes) == 7, (
         f"{len(on_nodes)} nodes declare a key space; a keyed node lost its declaration, or gained "
         "one it does not need"
     )
@@ -4534,11 +4535,12 @@ def test_the_linter_refuses_a_keyed_state_on_a_node_that_does_not_declare_its_ke
     # the state's own id, so it names `lm_separation_state` rather than whichever of the three
     # machines happens to be written first.
     # The converse, because a `key_space` nothing contradicts is a claim rather than a fact:
-    # `coolant_flow` carries two scalars — a pump speed and a flow — so a node annotated for a keyed
-    # state it does not carry is annotating nothing.
+    # `radiator_reject` carries three scalars — a temperature, a rejection and a duty — so a node
+    # annotated for a keyed state it does not carry is annotating nothing. (`coolant_flow` was the
+    # example until it gained `coolant_pump_running`, a map.)
     refusal(
         "key_space_stale",
-        [(coupling, "  coolant_flow:", "  coolant_flow:\n    key_space: by_state")],
+        [(coupling, "  radiator_reject:", "  radiator_reject:\n    key_space: by_state")],
         "declares `key_space: by_state` and carries no state whose `unit` is a `map[...]`",
     )
     # And a new keyed state arriving on a node whose declaration has gone, which is the same rule

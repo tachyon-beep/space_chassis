@@ -686,6 +686,26 @@ state:
         the rule. The pumps are 200 V 3-phase ac machines (AOH SM2A-03 Vol. 1 p. 2.7-24), so the dc
         bus voltage does not set their speed: `E-BUS-PUMP`'s volts-to-flow gain is not read by
         this rule
+  - id: coolant_pump_running
+    # **Which pump is actually running, published for power.** `coolant_pump` is the switch's
+    # position and sits on the `internal` sentinel, so it is readable only inside this domain
+    # (plant.md §2). On Apollo both pump breakers stayed closed and the switch chose the pump, so
+    # power keeps both pump loads enabled and gates each one's draw on this state, the way it gates
+    # the amplifier on `comms.transmitter_on`. A pump runs while it is selected and its load is
+    # powered; the LM's pump declares no load, so it runs while it is selected.
+    method: algebraic
+    node: coolant_flow
+    unit: "map[pump_id,enum[on,off]]"
+    pump_state: coolant_pump
+    pump_loads:
+      pump_1: csm_coolant_pump_1
+      pump_2: csm_coolant_pump_2
+    provenance:
+      basis: derived
+      relation: >-
+        `coolant_pump`'s selection masked by `load_enabled`, the same test `coolant_flow_kg_s` and
+        `pump_1_speed_frac` apply through `flow_fraction`, so the published pump and the loop's flow
+        cannot disagree
   - id: pump_1_speed_frac
     # **The pump's speed as a fraction of its rated speed (ADR 0003 item 4).** It was
     # `pump_1_speed_rpm`, a lag that owed the rated rpm three times over: its `initial`, its `on`

@@ -63,6 +63,16 @@ def flow_fraction(pumps, enabled, pump_loads):
     return 0.0
 
 
+def _pump_running(inputs, params, dt):
+    """Each pump `on` while it is selected and its load, if it declares one, is powered."""
+    enabled = inputs["load_enabled"]
+    loads = params["pump_loads"]
+    return {
+        pump: "on" if state == "on" and (pump not in loads or enabled[loads[pump]] == "on") else "off"
+        for pump, state in sorted(inputs[params["pump_state"]].items())
+    }
+
+
 def _coolant_flow(inputs, params, dt):
     fraction = flow_fraction(
         inputs[params["pump_state"]], inputs["load_enabled"], params["pump_loads"]
@@ -248,6 +258,7 @@ RULES = {
     "cabin_eq_csm_k": _cabin_eq_on_loop,
     "cabin_eq_lm_k": _cabin_eq_on_declared_supply,
     "coolant_flow_kg_s": _coolant_flow,
+    "coolant_pump_running": _pump_running,
     "pump_1_speed_frac": _pump_speed,
     "radiator_eq_t": _radiator_eq,
     "radiator_rejection_w": _radiator_rejection,
