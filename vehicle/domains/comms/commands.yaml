@@ -92,8 +92,8 @@ commands:
       ref: "apollo_diode.md:243"
       note: >-
         apollo's verb; the four members are `vehicle.yaml#comms.antennas`, and the linter refuses
-        a mismatch with `comm.antenna`'s enum. `sband_steerable` is the LM's, declared with both
-        of its figures owed rather than invented
+        a mismatch with `comm.antenna`'s enum. `sband_steerable` is the LM's, with TN D-6723's
+        20.5 dB transmit gain and its beamwidth owed rather than invented
 
   - verb: point_hga
     argument_schema:

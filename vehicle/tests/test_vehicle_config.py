@@ -3663,7 +3663,7 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
     — `gain_db`, `beamwidth_deg`, `steerable`, `dc_w` and `rf_w` — were compared by no tool.
 
     It matters more than a duplicate usually does because the copies have already been *used*.
-    `E-GEOM-LINK`'s -0.54 dB per degree is computed from the 9.4-degree beamwidth and its relation
+    `E-GEOM-LINK`'s -2.48 dB per degree is computed from the 4.4-degree beamwidth and its relation
     cites `vehicle.yaml#comms.antennas.high_gain` by name; `E-AMP-LOAD`'s 0.0357 A per watt is
     applied to "the 36 W transceiver and the 72 W power amplifier", which its relation places in
     `vehicle.yaml#comms.transmitters`. So the vehicle-level copy is the one the graph's arithmetic
@@ -3718,10 +3718,10 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
     drift(
         dom,
         [
-            ("    gain_db: 26.7\n", "    gain_db: 25.0\n"),
-            ("    beamwidth_deg: 9.4\n    steerable: true\n", "    beamwidth_deg: 9.4\n    steerable: false\n"),
+            ("    gain_db: 25.7\n", "    gain_db: 25.0\n"),
+            ("    beamwidth_deg: 4.4\n    steerable: true\n", "    beamwidth_deg: 4.4\n    steerable: false\n"),
             (
-                "    vehicle_keys: [omni_a, omni_b]\n    pattern: near_isotropic\n    gain_db: 2\n",
+                "    vehicle_keys: [omni_a, omni_b]\n    pattern: near_isotropic\n    gain_db: 0\n",
                 "    vehicle_keys: [omni_a, omni_b]\n    pattern: near_isotropic\n    gain_db: 3.0\n",
             ),
             ("    dc_w: 36\n", "    dc_w: 40\n"),
@@ -3741,9 +3741,9 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
             ),
         ],
         [
-            "declares gain_db 25.0 at `hga` and vehicle.yaml#comms.antennas.high_gain declares 26.7",
+            "declares gain_db 25.0 at `hga` and vehicle.yaml#comms.antennas.high_gain declares 25.7",
             "declares steerable False at `hga` and vehicle.yaml#comms.antennas.high_gain declares True",
-            "declares gain_db 3.0 at `omni` and vehicle.yaml#comms.antennas.omni_a declares 2",
+            "declares gain_db 3.0 at `omni` and vehicle.yaml#comms.antennas.omni_a declares 0",
             "declares dc_w 40 at `sband_transceiver` and vehicle.yaml#comms.transmitters.sband_transceiver declares 36",
             "declares rf_w 12.0 at `sband_power_amplifier` and vehicle.yaml#comms.transmitters.sband_power_amplifier declares 11.2",
             "declares dc_w 25 at `lm_sband.levels.lm_sband_low` and vehicle.yaml#comms.transmitters.lm_sband_low declares 20",
@@ -3757,9 +3757,9 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
     # figure moves it under every domain component that claims it, and this asserts the one.
     refusal(
         "vehicle.yaml",
-        "      beamwidth_deg: 9.4\n      steerable: true\n",
+        "      beamwidth_deg: 4.4\n      steerable: true\n",
         "      beamwidth_deg: 12.0\n      steerable: true\n",
-        "declares beamwidth_deg 9.4 at `hga` and vehicle.yaml#comms.antennas.high_gain declares 12.0",
+        "declares beamwidth_deg 4.4 at `hga` and vehicle.yaml#comms.antennas.high_gain declares 12.0",
     )
     # The link itself, in both directions, and the level that a claimed entry has to have.
     refusal(dom, "    vehicle_keys: [omni_a, omni_b]\n", "", "declares no `vehicle_keys`")
@@ -3778,7 +3778,7 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
 
     # The reverse direction is a debt rather than a refusal, and it is not vacuous: the LM's
     # steerable antenna is declared by `vehicle.yaml`, offered by `select_antenna`, and claimed by
-    # no component of the comms domain — which is why its gain and beamwidth are owed in one file
+    # no component of the comms domain — which is why its beamwidth is owed in one file
     # and the other file has no object to name while it waits.
     result = run_linter(VEHICLE)
     assert result.returncode == 0, result.stdout[-900:]
@@ -3795,29 +3795,62 @@ def test_the_link_is_one_set_of_figures_in_two_files(tmp_path):
 def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
     """The corpus states the gain-beamwidth product in three files and evaluates it in none.
 
-    `vehicle.yaml`'s note on the high-gain antenna is the sentence this test exists for: "the gains
-    are sourced and the beamwidths are **derived**, because the first version of this entry carried
-    `beamwidth_deg: 1.0` and that number is not physically possible beside a 26.7 dB gain. Any
-    aperture antenna obeys the gain-beamwidth product `G = 41253 / theta^2`". So the folder already
-    knew the relation, already caught one impossible number with it, and left it as prose — in that
-    note, in the domain component's note, and in `E-GEOM-LINK`'s relation, which computes its
-    -0.54 dB per degree as `-24 * 2 / 9.4^2`.
+    `vehicle.yaml`'s note on the high-gain antenna was the sentence this test was written for: "the
+    gains are sourced and the beamwidths are **derived**, because the first version of this entry
+    carried `beamwidth_deg: 1.0` and that number is not physically possible beside a 26.7 dB gain.
+    Any aperture antenna obeys the gain-beamwidth product `G = 41253 / theta^2`". So the folder
+    already knew the relation, already caught one impossible number with it, and left it as prose —
+    in that note, in the domain component's note, and in `E-GEOM-LINK`'s relation.
 
-    That last one is why it matters. The beamwidth this identity determines is what every pointing
-    loss the fleet reads is scaled by, and the antenna is declared in two files, so the *join* can
-    catch a divergence between them — this is the only thing that can catch the vehicle-level pair
-    drifting together, which is the case the second fixture below sets up.
+    That last one is why it matters. The beamwidth is what every pointing loss the fleet reads is
+    scaled by, and the antenna is declared in two files, so the *join* can catch a divergence
+    between them — this is the only thing that can catch the vehicle-level pair drifting together,
+    which is the case the second fixture below sets up.
 
     The rule needs one declaration to be universal, and the corpus already makes the case for it:
-    the omni's 180 degrees is not a half-power width. 2 dBi against the product would be 161
-    degrees, and the vehicle's own note says the product "is meaningless this close to isotropic".
-    So every antenna that declares both figures declares which relation governs them, `aperture` or
-    `near_isotropic`, and the second is a claim that carries its reason — the discipline
-    `state_order: independent` gets, arriving at the one quantity on this vehicle where a wrong
-    number was already found.
+    the omni's 180 degrees is not a half-power width, and the vehicle's own note says the product
+    "is meaningless this close to isotropic". So every antenna that declares both figures declares
+    which relation governs them, `aperture`, `measured` or `near_isotropic`, and the last is a claim
+    that carries its reason — the discipline `state_order: independent` gets.
+
+    **The vehicle's own high-gain antenna is now `measured`**: TN D-6723 publishes 25.7 dB at 4.4
+    degrees, about 17 % of an ideal aperture of that width, and the 9.4 degrees the product derived
+    from NR's 26.7 dB was wrong by a factor of two. So the `aperture` half of the rule is held on a
+    fixture that puts NR's ideal-aperture figures back (`aperture`, below), and the `measured` half
+    on the vehicle as it stands.
     """
 
-    def refusal(name: str, edits: list[tuple[str, str, str]], needles: list[str]) -> None:
+    dom = "domains/comms/components.yaml"
+
+    def aperture(definition: Path) -> None:
+        """Re-declare the high-gain antenna as NR's ideal aperture in both files, consistently."""
+        for rel, old, new in [
+            (
+                "vehicle.yaml",
+                "      pattern: measured\n      gain_db: 25.7\n      beamwidth_deg: 4.4\n",
+                "      pattern: aperture\n      gain_db: 26.7\n      beamwidth_deg: 9.4\n",
+            ),
+            (
+                "vehicle.yaml",
+                "        - {id: wide, gain_db: 8.0, beamwidth_deg: 40.0}\n"
+                "        - {id: medium, gain_db: 18.0, beamwidth_deg: 11.3}\n"
+                "        - {id: narrow, gain_db: 25.7, beamwidth_deg: 4.4}\n",
+                "        - {id: wide, gain_db: 9.2, beamwidth_deg: 70.4}\n"
+                "        - {id: medium, gain_db: 20.7, beamwidth_deg: 18.7}\n"
+                "        - {id: narrow, gain_db: 26.7, beamwidth_deg: 9.4}\n",
+            ),
+            (
+                dom,
+                "    pattern: measured\n    gain_db: 25.7\n    beamwidth_deg: 4.4\n",
+                "    pattern: aperture\n    gain_db: 26.7\n    beamwidth_deg: 9.4\n",
+            ),
+        ]:
+            path = definition / rel
+            text = path.read_text()
+            assert old in text, f"the fixture no longer matches {old!r}"
+            path.write_text(text.replace(old, new, 1))
+
+    def refusal(name: str, edits: list[tuple[str, str, str]], needles: list[str], *, ideal: bool = True) -> str:
         """Break several independent declarations at once and demand every refusal by name.
 
         Independent because they are different figures, or different antennas: the linter reports
@@ -3825,6 +3858,8 @@ def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
         fixtures does not cost six linter runs.
         """
         definition = copy_definition(tmp_path / name)
+        if ideal:
+            aperture(definition)
         for rel, old, new in edits:
             path = definition / rel
             text = path.read_text()
@@ -3833,9 +3868,13 @@ def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
         out = run_linter(definition).stdout
         for needle in needles:
             assert needle in out, f"{needle!r} did not fire:\n{out[-1500:]}"
+        return out
 
-    dom = "domains/comms/components.yaml"
     product = "the ideal-aperture product `G = 41253 / theta^2` puts the half-power width of a"
+    # The ideal-aperture fixture itself composes as far as the antenna rule goes: NR's pairs sit on
+    # the product, so the rule has nothing to say about the declared antenna.
+    out = refusal("ideal", [], [])
+    assert not [line for line in out.splitlines() if "comms.antennas.high_gain" in line and product in line], out[-1500:]
     # The gain, moved on the vehicle side only. Both refusals fire and they are different
     # complaints: the pair no longer closes, and the two files no longer agree about the gain.
     refusal(
@@ -3867,7 +3906,7 @@ def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
         ],
         [
             "and no `pattern`, so nothing says whether the two are one figure or two",
-            "declares 2 dB with a 180-degree beamwidth, and the ideal-aperture product",
+            "declares 0 dB with a 180-degree beamwidth, and the ideal-aperture product",
         ],
     )
     # A claim that exempts itself from a rule carries its reason, the discipline
@@ -3881,46 +3920,35 @@ def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
         ["without a `pattern_note`"],
     )
     # A measured pair: both figures published, held to the bound rather than to equality. The
-    # high-gain antenna's own pair sits on the ideal product, so declared measured on its
-    # `historical` basis it raises nothing; a beam wider than the ideal for its gain is impossible
-    # either way, and the claim on another basis is refused.
-    measured = "      pattern: measured\n      gain_db: 26.7\n"
-    definition = copy_definition(tmp_path / "measured")
-    for rel, old, new in [
-        ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
-        (dom, "    pattern: aperture\n    gain_db: 26.7\n", "    pattern: measured\n    gain_db: 26.7\n"),
-    ]:
-        path = definition / rel
-        path.write_text(path.read_text().replace(old, new, 1))
-    out = run_linter(definition).stdout
-    assert not [line for line in out.splitlines() if line.startswith("vehicle.yaml:comms.antennas.high_gain")], out[-1500:]
+    # vehicle's own high-gain antenna is TN D-6723's measured pair on a `historical` basis and
+    # raises nothing; a beam wider than the ideal for its gain is impossible either way, and the
+    # claim on another basis is refused.
+    out = run_linter(VEHICLE).stdout
+    assert not [line for line in out.splitlines() if line.strip().startswith("- vehicle.yaml:comms.antennas.high_gain")], out[-1500:]
     refusal(
         "measured_wide",
         [
-            ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
-            ("vehicle.yaml", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 18.7}", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 20.0}"),
-            ("vehicle.yaml", "    - id: omni_a\n      pattern: near_isotropic\n", "    - id: omni_a\n      pattern: measured\n"),
+            ("vehicle.yaml", "        - {id: medium, gain_db: 18.0, beamwidth_deg: 11.3}", "        - {id: medium, gain_db: 18.0, beamwidth_deg: 30.0}"),
         ],
-        [
-            "declares 20.7 dB with a 20.0-degree beamwidth, wider than the",
-            "declares 2 dB with a 180-degree beamwidth, wider than the",
-        ],
+        ["declares 18.0 dB with a 30.0-degree beamwidth, wider than the"],
+        ideal=False,
     )
     refusal(
         "measured_unsourced",
         [
-            ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
-            ("vehicle.yaml", "        basis: historical\n        source: \"NR ch.18: four", "        basis: chosen\n        source: \"NR ch.18: four"),
+            ("vehicle.yaml", "        basis: historical\n        source: \"NASA TN D-6723 (Apollo", "        basis: chosen\n        source: \"NASA TN D-6723 (Apollo"),
         ],
         ["declares its pattern measured on a 'chosen' provenance"],
+        ideal=False,
     )
     # One gap, one refusal: the missing declaration above is one fact about the antenna, and the
     # high-gain entry has four pairs it governs.
-    definition = copy_definition(tmp_path / "once")
-    path = definition / "vehicle.yaml"
-    text = path.read_text()
-    path.write_text(text.replace("      pattern: aperture\n      gain_db: 26.7\n", "      gain_db: 26.7\n", 1))
-    out = run_linter(definition).stdout
+    out = refusal(
+        "once",
+        [("vehicle.yaml", "      pattern: measured\n      gain_db: 25.7\n", "      gain_db: 25.7\n")],
+        [],
+        ideal=False,
+    )
     assert len([line for line in out.splitlines() if "and no `pattern`" in line]) == 1, out[-900:]
 
 
@@ -3933,11 +3961,11 @@ def test_an_edge_whose_value_is_another_declaration_s_function(tmp_path):
     expression are copies.** They are read from nowhere, so they cannot be held to the declaration they
     came from, and the check can only catch an edge that disagrees with itself.
 
-    9.4 is `vehicle.yaml#comms.antennas.high_gain`'s half-power beamwidth — which the previous round
-    tied to the gain through the ideal-aperture product — and 2 was the operating point, which existed
-    only inside a sentence. Re-rate the antenna from 26.7 dB to 28 dB **in both files and
-    consistently**, so that no join can complain and the product check cannot either: the beamwidth
-    becomes 8.1 degrees and the edge goes on scaling every pointing loss the fleet reads by the slope
+    The beamwidth is `vehicle.yaml#comms.antennas.high_gain`'s half-power width (9.4 degrees when this
+    test was written, TN D-6723's measured 4.4 now) and 2 was the operating point, which existed only
+    inside a sentence. Re-rate the antenna **in both files and consistently** — 26.5 dB at 4.1 degrees,
+    a measured pair inside the ideal-aperture bound — so that no join can complain and the pattern
+    check cannot either, and the edge goes on scaling every pointing loss the fleet reads by the slope
     of a beam that no longer exists. That is the first fixture, and before this round it composed.
 
     So a sensitivity may declare a `derivation`: an arithmetic expression over named inputs, each
@@ -3969,12 +3997,10 @@ def test_an_edge_whose_value_is_another_declaration_s_function(tmp_path):
     broken(
         "rerated",
         [
-            ("vehicle.yaml", "      gain_db: 26.7\n", "      gain_db: 28\n"),
-            ("vehicle.yaml", "      beamwidth_deg: 9.4\n", "      beamwidth_deg: 8.1\n"),
-            (dom, "    gain_db: 26.7\n", "    gain_db: 28\n"),
-            (dom, "    beamwidth_deg: 9.4\n    steerable: true\n", "    beamwidth_deg: 8.1\n    steerable: true\n"),
+            ("vehicle.yaml", "      gain_db: 25.7\n      beamwidth_deg: 4.4\n", "      gain_db: 26.5\n      beamwidth_deg: 4.1\n"),
+            (dom, "    gain_db: 25.7\n    beamwidth_deg: 4.4\n", "    gain_db: 26.5\n    beamwidth_deg: 4.1\n"),
         ],
-        ["E-GEOM-LINK.sensitivity.derivation: derives -0.731596"],
+        ["E-GEOM-LINK.sensitivity.derivation: derives -2.85544"],
     )
     # One published figure, four edges that bind it.
     broken(
@@ -18805,7 +18831,7 @@ def test_the_linter_refuses_an_unavailability_claim_that_names_no_document(tmp_p
     path.write_text(
         text[:note]
         + "      note: >-\n"
-        + "        the mechanism that keeps a 9.4-degree beam on Earth, and the component F-11\n"
+        + "        the mechanism that keeps a 4.4-degree beam on Earth, and the component F-11\n"
         + "        fails. Both parameters are owed: no source publishes the Apollo HGA's gimbal\n"
         + "        range or slew rate"
         + text[end:]

@@ -67,8 +67,8 @@ thresholds:
         inside the 2.2-degree half-power edge, so the warning is where pointing starts to spend the
         link's margin. A fleet
         that treats it as a link alarm will chase a margin it has not lost; a fleet that ignores
-        it will discover the pattern's quadratic shape over the next seven degrees, where the
-        loss goes from 0.5 dB to 12. Two seconds to assert because the gimbal is chasing, ten to
+        it will discover the pattern's quadratic shape over the next two and a half degrees, where
+        the loss goes from 2.5 dB to 12. Two seconds to assert because the gimbal is chasing, ten to
         recover because a pointing error that has stopped growing is a gimbal that has caught up
   - id: hga_scan_limit
     acts: crew
@@ -112,9 +112,10 @@ thresholds:
     provenance:
       basis: chosen
       reason: >-
-        3 dB of power margin is what the high-gain beam loses at half its beamwidth
-        (`pattern_loss_db_at_beamwidth` 12 dB times 0.5 squared), so the caution arrives while a
-        pointing drift is still half a beam from the edge. apollo's "<8 degraded" was on an SNR and
+        3 dB is the high-gain beam's own half-power loss: a pointing error at the 2.2-degree edge
+        of TN D-6723's 4.4-degree beam spends exactly this much (`pattern_loss_db_at_beamwidth`
+        12 dB times 0.5 squared), so a link with less margin than this is one beam-edge excursion
+        from losing its data. apollo's "<8 degraded" was on an SNR and
         does not carry over to a power margin (`components.yaml#link_margin_db`), and no reachable
         Apollo document states a caution level on the power margin
       note: >-
