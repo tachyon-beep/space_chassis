@@ -291,6 +291,14 @@ nodes:
       three outflows of one leak, each a share of the same total computed from the same four stocks;
       none reads another, so there is no order to get wrong
     note: "the CSM cabin's leak to space, by gas"
+  # Which overboard dumps are open (ECLSS lane, 2026-10-17). A dump's particles block sextant
+  # sightings and its thrust perturbs the trajectory, so GNC reads this node and owns the edge.
+  overboard_vent:
+    domain: eclss
+    kind: discrete
+    unit: enum
+    key_space: by_state
+    note: "the CSM's overboard dump paths, open or closed: waste water, urine and the oxygen overboard path"
   # The S/M oxygen tanks' heater relay, a node rather than the sentinel because power reads it: each
   # tank's heaters and fans are a bus load while the switch is closed (E-O2-HTR-BUSA, -BUSB).
   o2_tank_heaters:
@@ -2394,6 +2402,12 @@ edges:
   - id: E-CMD-ATM
     from: command_executive
     to: cabin_regulator
+    kind: discrete
+    sensitivity: {value: 1.0, unit: "-", basis: derived, relation: "the coupling is the signal itself; one unit in, one unit out", at: nominal}
+  - id: E-CMD-VENT
+    # `set_overboard_dump`'s signal into the dump valves (ECLSS lane, 2026-10-17).
+    from: command_executive
+    to: overboard_vent
     kind: discrete
     sensitivity: {value: 1.0, unit: "-", basis: derived, relation: "the coupling is the signal itself; one unit in, one unit out", at: nominal}
   - id: E-CMD-ENG
