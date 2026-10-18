@@ -18153,7 +18153,7 @@ def test_the_linter_refuses_a_debt_about_a_coupling_edge_that_has_stopped_owing(
     definition = copy_definition(tmp_path / "senseless-debt")
     path = definition / "vehicle.yaml"
     text = path.read_text()
-    old = "each unit thrust direction and lever arm from the centre of mass."
+    old = "so the allocator still cannot select jets and the deadband still has no derivation."
     assert old in text, "the fixture no longer matches the thruster-geometry debt"
     path.write_text(
         text.replace(old, old + " Without them E-BUS-PUMP has no sensitivity.", 1)
@@ -19355,7 +19355,7 @@ def test_the_docked_configuration_s_mass_properties_re_derive_from_the_data_book
     vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
     block = vehicle["mass_properties"]
     frames = {f["id"]: f for f in block["frames"]}
-    assert sorted(frames) == ["APOLLO_XA", "LM_XE"], sorted(frames)
+    assert sorted(frames) == ["APOLLO_XA", "CM_XC", "LM_XE"], sorted(frames)
     frame = frames["APOLLO_XA"]
     # The datum itself: without this transformation a station is a number against nothing.
     assert "SNA-8-D-027" in frame["provenance"]["source"], frame["provenance"]["source"]
@@ -19490,7 +19490,7 @@ def test_the_other_three_configurations_mass_properties_re_derive_from_their_own
     vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
     block = vehicle["mass_properties"]
     frames = {f["id"] for f in block["frames"]}
-    assert frames == {"APOLLO_XA", "LM_XE"}
+    assert frames == {"APOLLO_XA", "CM_XC", "LM_XE"}
 
     tables = {t["id"]: t for t in block["tables"]}
     kg_per_lb, in_to_m, slug_ft2_to_kg_m2 = 0.45359237, 0.0254, 1.355817948330809
