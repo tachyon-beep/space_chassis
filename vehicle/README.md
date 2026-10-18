@@ -266,6 +266,9 @@ things in it are worth reading rather than skimming:
   p. 2.6-38), so the shed tiers that sat below apollo's `<26.5 V for 0.5 s` event are retired:
   `bus_a_undervoltage` is a caution the crew answers with `set_load`, and `load_shed_class`
   reports the most critical class among the loads on at MET 0 that their switches have off.
+  Nothing guards the sources either: `set_source` taking a bus's last source off line kills that
+  bus, and its loads lose power (`load_powered`) with their switches still on, as the CSM's main-bus
+  switches allowed.
 - **Every fault names the channels it perturbs**, which is `review-findings.md` #11's
   fault-coverage rider made checkable: the linter refuses a fault that perturbs nothing
   observable, because such a fault cannot be diagnosed.
