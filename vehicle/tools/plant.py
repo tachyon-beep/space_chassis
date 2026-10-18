@@ -3710,6 +3710,12 @@ def step(
     if faults:
         # Faults ahead of effects before a stable sort by stamp: equal stamps put the fault first.
         queue = sorted([*_stamped_faults(world, dt, faults), *queue], key=lambda row: row[0])
+        # Refused before anything is applied, so a repeat never leaves the tick half-advanced.
+        seen = set(values.get(FAULT_ONSETS) or {})
+        for onset in faults:
+            if onset.fault in seen:
+                raise repeated_onset(onset.fault)
+            seen.add(onset.fault)
 
     # 3. Advance to the next event boundary, one sub-interval at a time: §9's `horizon` for each
     #    segment is `min(remaining, time to next event)`, and the walk in between is the same walk.
@@ -3899,6 +3905,8 @@ def load_scenario(world: World, path: Path) -> Scenario:
             _stamped_faults(world, dt, [onset])
         except EffectRefused as exc:
             raise Unconfigured(at, str(exc)) from None
+        if any(o.fault == onset.fault for queued in faults.values() for o in queued):
+            raise Unconfigured(at, str(repeated_onset(onset.fault)))
         faults.setdefault(tick, []).append(onset)
     return Scenario(name=name, initial=initial, verbs=verbs, script=script, faults=faults)
 
@@ -4059,6 +4067,20 @@ def _stamped_faults(
 FAULT_ONSETS = "__fault_onsets"
 
 
+def repeated_onset(fault: str) -> EffectRefused:
+    """The refusal for a fault whose onset has already happened in this run.
+
+    **A fault happens once.** A `scale` row multiplies the value it finds, so a second onset of
+    PWR-02 would make the cell's resistance 2.25 times nominal rather than 1.5, a fault nobody
+    declared; and a `becomes` row repeated is no event at all. Clearing a fault is a repair, which
+    nothing models yet, and when something does it clears the onset record with it.
+    """
+    return EffectRefused(
+        f"plant.py:fault {fault}: its onset has already happened this run, and a second onset would "
+        "compound a `scale` it already applied; a fault happens once"
+    )
+
+
 def apply_fault(world: World, values: dict[str, Any], fault: str) -> dict[str, Any]:
     """A fault's onset, applied to the value map: what every declaring state becomes (WP09).
 
@@ -4073,6 +4095,8 @@ def apply_fault(world: World, values: dict[str, Any], fault: str) -> dict[str, A
         raise EffectRefused(
             f"plant.py:fault {fault}: no state declares what its onset does (`fault_value`)"
         )
+    if fault in (values.get(FAULT_ONSETS) or {}):
+        raise repeated_onset(fault)
     staged: dict[str, Any] = {}
     for state, row in world.fault_effects[fault]:
         where = f"domains/{state.domain}/components.yaml:state {state.id}.fault_value"
@@ -4425,6 +4449,10 @@ def command_effect(world: World, state: State, verb: str, arguments: dict[str, A
 NUMERIC_ARGUMENTS = ("integer", "number")
 
 
+NUMERIC_INTEGER = re.compile(r"[+-]?[0-9]+")
+NUMERIC_DECIMAL = re.compile(r"[+-]?[0-9]+(?:\.[0-9]+)?")
+
+
 def numeric_argument(verb: str, argument: str, raw: Any, declared: dict[str, Any]) -> int | float:
     """A numeric argument's value, parsed from the command text and held to its declared `range`.
 
@@ -4435,15 +4463,16 @@ def numeric_argument(verb: str, argument: str, raw: Any, declared: dict[str, Any
     is the plant deciding what the caller meant.
     """
     kind = declared.get("type")
-    text = str(raw).strip()
-    try:
-        value: int | float = int(text) if kind == "integer" else float(text)
-    except ValueError:
+    text = raw if isinstance(raw, str) else str(raw)
+    # **Plain decimals only.** Python's own parsers take `4_0`, `1e2`, ` 40 ` and `inf`, which are
+    # four commands a reader of the window's text would not take as forty, a hundred and infinity.
+    pattern = NUMERIC_INTEGER if kind == "integer" else NUMERIC_DECIMAL
+    if pattern.fullmatch(text) is None:
         raise EffectRefused(
-            f"plant.py:verb {verb}: {argument}={raw!r} is not {'an integer' if kind == 'integer' else 'a number'}"
-        ) from None
-    if isinstance(value, float) and not math.isfinite(value):
-        raise EffectRefused(f"plant.py:verb {verb}: {argument}={raw!r} is not finite")
+            f"plant.py:verb {verb}: {argument}={raw!r} is not "
+            f"{'an integer' if kind == 'integer' else 'a number'} written as plain decimal digits"
+        )
+    value: int | float = int(text) if kind == "integer" else float(text)
     low, high = numeric_bounds(declared)
     if (low is not None and value < low) or (high is not None and value > high):
         raise EffectRefused(
@@ -4537,6 +4566,24 @@ def apply_command(
     """
     if verb not in world.verbs:
         raise Unconfigured(f"plant.py:verb {verb}", "is not registered by any domain")
+    # **A route on an argument the call omits is refused, not taken as "no state".** `when` selects
+    # which sibling state a call moves (`arm_engine engine=sps`); a call without `engine` matched
+    # none of them, staged nothing, and read exactly like an effect that landed.
+    omitted = sorted(
+        {
+            str(name)
+            for state in command_targets(world, verb)
+            for entry in state.spec.get("command_value") or []
+            if isinstance(entry, dict) and str(entry.get("verb")) == verb
+            for name in (entry.get("when") if isinstance(entry.get("when"), dict) else {})
+            if str(name) not in arguments
+        }
+    )
+    if omitted:
+        raise EffectRefused(
+            f"`{verb}` routes its effect on {omitted}, which this call omits, so it would move no "
+            "state: name the argument"
+        )
     staged: dict[str, Any] = {}
     for state in command_targets(world, verb, arguments):
         try:

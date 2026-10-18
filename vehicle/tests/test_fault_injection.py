@@ -43,8 +43,7 @@ POWER_ONSET = """    moved_by: ["command:set_load", "fault:PWR-03-lcl-nuisance-t
         becomes: "off"
         provenance: {basis: chosen, reason: "a test fixture: the trip drops one load"}
 """
-THERMAL_ONSET = """    initial: 1086.9
-    moved_by: ["fault:TCS-03-radiator-isolation"]
+THERMAL_ONSET = """    moved_by: ["fault:TCS-03-radiator-isolation"]
     fault_value:
       - fault: TCS-03-radiator-isolation
         scale: 1.5
@@ -76,12 +75,21 @@ def faulted_copy(destination: Path) -> Path:
         '    moved_by: ["command:set_load"]\n',
         POWER_ONSET,
     )
-    replace(
-        destination / "domains" / "thermal" / "components.yaml",
-        "    initial: 1086.9\n",
-        THERMAL_ONSET,
+    after_initial(
+        destination / "domains" / "thermal" / "components.yaml", "environment_heat_w", THERMAL_ONSET
     )
     return destination
+
+
+def after_initial(path: Path, state_id: str, rows: str) -> None:
+    """Insert `rows` after `state_id`'s `initial:` line, found by the state's id, not its value."""
+    lines = path.read_text().splitlines(keepends=True)
+    start = lines.index(f"  - id: {state_id}\n")
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("  - id: ")), None)
+    initial = [i for i in range(start, end or len(lines)) if lines[i].startswith("    initial: ")]
+    assert len(initial) == 1, f"the fixture finds no one `initial:` for {state_id} in {path.name}"
+    lines.insert(initial[0] + 1, rows)
+    path.write_text("".join(lines))
 
 
 def replace(path: Path, old: str, new: str) -> None:
@@ -213,6 +221,23 @@ def test_a_fault_the_plant_cannot_fire_is_refused_by_name(world, tmp_path):
         plant.step(world, values, dt, faults=[TRIP])
 
 
+def test_a_fault_happens_once_so_a_scale_cannot_compound(world, tmp_path):
+    """A second onset of a `scale` fault would multiply again: 1.5 x 1.5, a fault nobody declared."""
+    with pytest.raises(plant.Unconfigured, match="a fault happens once"):
+        scenario(world, tmp_path, f"  - {{tick: 1, fault: {HEAT}}}\n  - {{tick: 4, fault: {HEAT}}}\n")
+    dt = plant.tick_seconds(world)
+    values = plant.initial_values(world)
+    onset = plant.FaultOnset(offset_us=0, fault=HEAT)
+    with pytest.raises(plant.EffectRefused, match="a fault happens once"):
+        plant.step(world, values, dt, faults=[onset, onset])
+    once = plant.step(world, values, dt, faults=[onset])
+    with pytest.raises(plant.EffectRefused, match="a fault happens once"):
+        plant.step(world, once, dt, faults=[onset])
+    with pytest.raises(plant.EffectRefused, match="a fault happens once"):
+        plant.apply_fault(world, once, HEAT)
+    assert once["environment_heat_w"] == pytest.approx(values["environment_heat_w"] * 1.5)
+
+
 def test_the_schedule_lands_on_the_tick_and_microsecond_its_decimal_names(world):
     tick_us = plant._tick_us(plant.tick_seconds(world))
     events = [
@@ -242,15 +267,82 @@ def test_the_scheduled_onsets_join_the_scripted_ones_and_fire(world, tmp_path):
     last = plant.run_scenario(world, both, 5)
     assert last[plant.FAULT_ONSETS] == {TRIP: 1, HEAT: 1}
     assert lighting(last) == "off"
+    # A Poisson schedule can draw one fault twice, and a guaranteed seed can land on a fault the
+    # rate also drew: the first onset is the failure, so the merge keeps it and drops the rest. The
+    # scripted HEAT at tick 4 is earlier than the scheduled one, so the script's stands.
+    repeated, _ = faults.injections(
+        world,
+        [{"met_h": 0.000006, "fault": TRIP}, {"met_h": 0.00006, "fault": TRIP}, {"met_h": 0.00003, "fault": HEAT}],
+    )
+    once = faults.with_schedule(run, repeated)
+    assert once.faults == {
+        1: [plant.FaultOnset(offset_us=1_600, fault=TRIP)],
+        4: [plant.FaultOnset(offset_us=0, fault=HEAT)],
+    }
+    assert plant.run_scenario(world, once, 12)[plant.FAULT_ONSETS] == {TRIP: 1, HEAT: 1}
 
 
-def test_the_window_run_refuses_a_scenario_that_carries_faults(world, faulted, tmp_path):
+def test_a_window_run_breaks_the_vehicle_on_the_step_batch_mode_does_and_replays_it(tmp_path):
+    """A scenario's `faults` reach the window: live, and in the record's replay."""
+    import checkpoint
     import console
 
+    # A checkpoint hashes the engine tools with the corpus, so this copy carries them too.
+    copy = faulted_copy(tmp_path / "vehicle")
+    shutil.copy(VEHICLE / "tools" / "plant.py", copy / "tools" / "plant.py")
+    world = plant.load_world(copy)
     path = tmp_path / "faulted_coast.yaml"
     path.write_text(f"scenario: faulted_coast\nfaults:\n  - {{tick: 3, fault: {TRIP}}}\n")
-    with pytest.raises(ValueError, match="carries `faults`"):
-        console.load_scenario_file(world, path)
+    named = console.load_scenario_file(world, path)
+    batch: dict[int, str] = {}
+    plant.run_scenario(
+        world, named.scenario, 6, on_tick=lambda t, v, _l, _g: batch.__setitem__(t, plant.state_hash(v))
+    )
+    state = tmp_path / "state"
+    executive = console.Executive(
+        world, tmp_path / "diode", phase="translunar_coast", state_dir=state, scenario_file=named
+    )
+    try:
+        executive.attach("alpha")
+        snapshot = checkpoint.capture_state(executive, checkpoint.Compatibility.current(world))
+        live: dict[int, str] = {}
+        for _ in range(6):
+            executive.cycle()
+            live[executive.tick] = plant.state_hash(executive.truth)
+        assert lighting(executive.truth) == "off"
+        assert executive.truth[plant.FAULT_ONSETS] == {TRIP: 1}
+    finally:
+        executive.close()
+    # Record tick `t` is batch row `t - 1`: the same step breaks the vehicle in both.
+    assert live == {t: batch[t - 1] for t in range(1, 7)}
+    replayed = console.replay_record(world, snapshot, console.read_record(state), scenario=named.scenario)
+    assert [(t, h) for t, h, _link in replayed.points] == sorted(live.items())
+    # A replay that does not carry the file's faults is not this world's history.
+    with pytest.raises(console.RecordRefused, match="compare-point"):
+        console.replay_record(world, snapshot, console.read_record(state))
+    # And a restart from a checkpoint taken before the onset replays the record past it (Codex on
+    # #74: the overlay used to be installed only after the replay, which then refused the record).
+    restart = tmp_path / "restart"
+    first = console.Executive(
+        world, restart / "diode", phase="translunar_coast", state_dir=restart / "state", scenario_file=named
+    )
+    try:
+        first.attach("alpha")
+        first.checkpoint()
+        for _ in range(6):
+            first.cycle()
+        ended = plant.state_hash(first.truth)
+    finally:
+        first.close()
+    loaded = checkpoint.choose_generation(restart / "state", checkpoint.Compatibility.current(world))
+    resumed, resumption = console.resume_executive(
+        world, restart / "diode", loaded, state_dir=restart / "state", scenario=named.scenario
+    )
+    try:
+        assert resumption.tick == 6 and plant.state_hash(resumed.truth) == ended
+        assert resumed.truth[plant.FAULT_ONSETS] == {TRIP: 1}
+    finally:
+        resumed.close()
 
 
 def run_linter(directory: Path) -> subprocess.CompletedProcess[str]:
@@ -309,6 +401,49 @@ def test_the_linter_refuses_an_onset_it_cannot_hold_to_the_state(tmp_path):
         assert needle in out, f"{needle!r} did not fire:\n{out[-3000:]}"
 
 
+def test_every_onset_row_is_held_to_its_state_and_a_quantity_takes_a_number(tmp_path):
+    """The plant applies every `fault_value` row, so the linter reads every one, not the first."""
+    broken = faulted_copy(tmp_path / "vehicle")
+    power = broken / "domains" / "power" / "components.yaml"
+    thermal = broken / "domains" / "thermal" / "components.yaml"
+    # A word on a heat load: composed once, staged, and aborted the next tick in the domain's rule.
+    replace(thermal, "        scale: 1.5\n", "        becomes: warm\n")
+    # A second row for the same fault: a second element is fine, the same element twice is not, and
+    # the second row's value is held to the vocabulary as the first's is.
+    second = (
+        "      - fault: PWR-03-lcl-nuisance-trip\n"
+        "        key: {key}\n"
+        "        becomes: {becomes}\n"
+        '        provenance: {{basis: chosen, reason: "a second row"}}\n'
+    )
+    anchor = '        provenance: {basis: chosen, reason: "a test fixture: the trip drops one load"}\n'
+    replace(
+        power,
+        anchor,
+        anchor
+        + second.format(key="csm_lighting", becomes='"off"')
+        + second.format(key="csm_lighting_2", becomes='"tripped"'),
+    )
+    # YAML's `7` and `"7"` are one element to the plant, which reads every key as text.
+    replace(
+        power,
+        anchor,
+        anchor + second.format(key="7", becomes='"off"') + second.format(key='"7"', becomes='"off"'),
+    )
+    out = run_linter(broken).stdout
+    for needle in (
+        "makes environment_heat_w 'warm', and its `unit` ('W') is a quantity",
+        "declares 'PWR-03-lcl-nuisance-trip' twice on element '7'",
+        "declares 'PWR-03-lcl-nuisance-trip' twice on element 'csm_lighting'",
+        "makes load_enabled 'tripped', which its `unit`",
+    ):
+        assert needle in out, f"{needle!r} did not fire:\n{out[-3000:]}"
+    # Nothing that is not a finite number: `null` composed and staged `None` for the next rule.
+    nulled = faulted_copy(tmp_path / "nulled")
+    replace(nulled / "domains" / "thermal" / "components.yaml", "        scale: 1.5\n", "        becomes: null\n")
+    assert "makes environment_heat_w None, and its `unit` ('W') is a quantity" in run_linter(nulled).stdout
+
+
 def test_a_discrete_state_a_domain_rule_advances_starts_from_its_declared_initial(tmp_path):
     """Seeding, beside the fault path: a ruled latch reads its own last value, so it needs one at t=0.
 
@@ -363,7 +498,36 @@ def test_a_numeric_argument_is_carried_as_its_number_and_refused_outside_its_ran
         "internal_order: [heater_duty_commanded, heater_bank_duty,",
     )
     out = run_linter(copy).stdout
-    assert "command_value[set_heater]" not in out, out[-3000:]
+    # The fixture's one refusal of its own is the dwell a discrete state owes; the carried number
+    # itself must pass every check, the completeness check included. The first line keeps this from
+    # passing on a linter that printed nothing.
+    mentions = [line for line in out.splitlines() if "heater_duty_commanded" in line]
+    assert mentions, out[-3000:]
+    assert all("neither hysteresis nor dwell" in line for line in mentions), mentions
+    # A keyed state the number is carried into must still say which element it sets.
+    unkeyed = faulted_copy(tmp_path / "unkeyed")
+    unkeyed_components = unkeyed / "domains" / "thermal" / "components.yaml"
+    replace(unkeyed_components, "\nstate:\n", "\n" + HEATER_DUTY.replace("        key: zone\n", ""))
+    replace(
+        unkeyed_components,
+        "internal_order: [heater_bank_duty,",
+        "internal_order: [heater_duty_commanded, heater_bank_duty,",
+    )
+    assert "declares no `key` for 'set_heater'" in run_linter(unkeyed).stdout
+    # A flag holds no number either, though its unit is not a vocabulary (Codex on #74).
+    flagged = faulted_copy(tmp_path / "flagged")
+    flagged_components = flagged / "domains" / "thermal" / "components.yaml"
+    replace(
+        flagged_components,
+        "\nstate:\n",
+        "\n" + HEATER_DUTY.replace("map[zone_id,%]", "map[zone_id,bool]").replace("{csm_cabin: 0}", "{csm_cabin: false}"),
+    )
+    replace(
+        flagged_components,
+        "internal_order: [heater_bank_duty,",
+        "internal_order: [heater_duty_commanded, heater_bank_duty,",
+    )
+    assert "and heater_duty_commanded holds only true or false" in run_linter(flagged).stdout
     heated = plant.load_world(copy)
     values = plant.initial_values(heated)
     staged = plant.apply_command(
@@ -374,7 +538,19 @@ def test_a_numeric_argument_is_carried_as_its_number_and_refused_outside_its_ran
     )
     assert staged["heater_duty_commanded"] == {"csm_cabin": 0, "csm_avionics_bay": 40}
     assert isinstance(staged["heater_duty_commanded"]["csm_avionics_bay"], int)
-    for bad, why in (("150", "outside its declared range"), ("40.5", "is not an integer")):
+    # `+40` is forty; Python's parsers would also take `4_0`, ` 40` and `1e1`, which are not.
+    signed = plant.apply_command(
+        heated, values, "set_heater", {"bank": "heater_bank_csm", "zone": "csm_cabin", "duty": "+40"}
+    )
+    assert signed["heater_duty_commanded"]["csm_cabin"] == 40
+    for bad, why in (
+        ("150", "outside its declared range"),
+        ("40.5", "is not an integer"),
+        ("4_0", "plain decimal digits"),
+        (" 40", "plain decimal digits"),
+        ("1e1", "plain decimal digits"),
+        ("", "plain decimal digits"),
+    ):
         with pytest.raises(plant.EffectRefused, match=why):
             plant.apply_command(
                 heated,
@@ -418,6 +594,11 @@ def test_a_refused_band_is_a_hole_in_a_numeric_argument_s_range(tmp_path):
     ):
         with pytest.raises(plant.EffectRefused, match=why):
             plant.numeric_argument("set_throttle", "throttle_pct", bad, declared)
+    # A number is plain decimals too: no exponent, no leading point, no `inf`.
+    for bad in ("1e1", ".5", "inf", "nan", "64."):
+        with pytest.raises(plant.EffectRefused, match="plain decimal digits"):
+            plant.numeric_argument("set_floor", "floor", bad, {"type": "number", "minimum": 0})
+    assert plant.numeric_argument("set_floor", "floor", "+0.5", {"type": "number", "minimum": 0}) == 0.5
     # A one-sided bound bounds one side.
     with pytest.raises(plant.EffectRefused, match=r"\[0, inf\]"):
         plant.numeric_argument("set_floor", "floor", "-1", {"type": "number", "minimum": 0})
@@ -471,9 +652,39 @@ def test_a_command_value_with_when_moves_only_the_state_its_call_names(tmp_path)
     assert {"sps_state", "dps_state", "aps_state"} <= {
         s.id for s in plant.command_targets(routed, "arm_engine")
     }
+    # A call that omits the routing argument is refused, not taken as moving no state.
+    with pytest.raises(plant.EffectRefused, match=r"routes its effect on \['engine'\], which this call omits"):
+        plant.apply_command(routed, values, "arm_engine", {"state": "armed"})
+    # And at the window, it is that command's refusal: the batch it came in still gets its results
+    # (sol on #74: the refusal escaped the console's staging and dropped the claimed batch).
+    import console
+
+    executive = console.Executive(routed, tmp_path / "diode", phase="translunar_coast")
+    try:
+        executive.attach("alpha")
+        window = tmp_path / "diode" / "alpha"
+        (window / "console.json").write_text(
+            json.dumps({"commands": ["arm_engine state=safe", "arm_engine engine=sps state=safe"], "variables": {}})
+        )
+        executive.cycle()
+        bodies = [path.read_text() for path in sorted((window / "output").glob("*.txt"))]
+    finally:
+        executive.close()
+    assert len(bodies) == 2, bodies
+    assert "which this call omits" in bodies[0] and "state=refused" in bodies[0], bodies[0]
+    assert "state=accepted" in bodies[1], bodies[1]
     # A route on a value the argument cannot take is refused by name.
     components.write_text(text.replace("when: {engine: aps}", "when: {engine: lmde}", 1))
     assert "is 'lmde', which 'engine' cannot take" in run_linter(copy).stdout
+    # And a route on an optional argument is refused, since a call may leave it out.
+    components.write_text(text)
+    commands = copy / "domains" / "propulsion" / "commands.yaml"
+    replace(
+        commands,
+        "      engine: {type: enum, values: [sps, dps, aps]}\n      state: {type: enum, values: [armed, safe]}\n",
+        "      engine: {type: enum, values: [sps, dps, aps], optional: true}\n      state: {type: enum, values: [armed, safe]}\n",
+    )
+    assert "names 'engine', an optional argument of 'arm_engine'" in run_linter(copy).stdout
 
 
 LEAK_SOURCES = """state:

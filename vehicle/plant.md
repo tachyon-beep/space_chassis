@@ -249,6 +249,10 @@ Consequences:
   is declared on the state it moves (`moved_by: [fault:<id>]` beside a `fault_value` row), never
   written into evidence (§8). At an equal stamp the fault lands before the command, and the truth
   records each arrival under `__fault_onsets`, so a replay and a resume carry it.
+  **A fault moves only its own domain's states**: the linter refuses a `fault:` mover naming
+  another domain's fault, and the onset reaches the other domains through the coupling on the same
+  tick, as every other change in the truth does. **And it happens once**: a second onset of a fault
+  already recorded is refused, because a `scale` row would multiply what it already scaled.
 
 ---
 

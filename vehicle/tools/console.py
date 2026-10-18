@@ -260,6 +260,7 @@ from plant import (  # noqa: E402
     NUMERIC_ARGUMENTS,
     Effect,
     EffectRefused,
+    FaultOnset,
     Scenario,
     UncomparableState,
     Unconfigured,
@@ -1280,17 +1281,37 @@ def lineage_link(previous: str, digest: str, effects: list[Effect]) -> str:
     return hashlib.sha256((previous + digest + effect_digest).encode("utf-8")).hexdigest()
 
 
+def scenario_faults(scenario: Scenario | None, tick: int) -> list[FaultOnset] | None:
+    """The scenario's fault onsets for the step that reaches record tick `tick`, or `None`.
+
+    The record's tick `t` is the state after `t` ticks, which is batch mode's row `t - 1`
+    (`episode_eval.trace_from_record`), so the step to tick `t` carries the onsets the file keys
+    under `tick: t - 1`: a window run and `plant.run_scenario` break the vehicle on the same step.
+    """
+    if scenario is None:
+        return None
+    return scenario.faults_at(tick - 1) or None
+
+
 def advance(
-    world: World, truth: dict[str, Any], head: str, effects: list[Effect], dt: float
+    world: World,
+    truth: dict[str, Any],
+    head: str,
+    effects: list[Effect],
+    dt: float,
+    faults: list[FaultOnset] | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     """One tick of the one world: `plant.step`, the compare-point, the lineage link — the live cycle's and replay's.
 
     Returns the stepped truth, its `state_hash` and the new link, and commits nothing: the caller
     commits all three together, so a state the compare-point refuses (`plant.UncomparableState`)
     leaves the caller at its last consistent tick. The hash is computed once and handed to the link
-    (before child 4 the journal hashed the truth a second time for its row).
+    (before child 4 the journal hashed the truth a second time for its row). `faults` are the
+    scenario file's onsets for this step (`scenario_faults`). They are not in the link's effect
+    digest: the file's hash is the world's identity, so they are fixed by it, and the onset record in
+    the truth (`__fault_onsets`) is in the `state_hash` the link carries.
     """
-    after = step(world, truth, dt, None, effects)
+    after = step(world, truth, dt, None, effects, faults=faults)
     digest = state_hash(after)
     return after, digest, lineage_link(head, digest, effects)
 
@@ -2464,7 +2485,14 @@ def _replay_window_delta(row: dict[str, Any], slug: str, delta: dict[str, Any], 
         row["arms"].pop(event, None)
 
 
-def replay_record(world: World, body: dict[str, Any], record: Record, *, through: int | None = None) -> Replayed:
+def replay_record(
+    world: World,
+    body: dict[str, Any],
+    record: Record,
+    *,
+    through: int | None = None,
+    scenario: Scenario | None = None,
+) -> Replayed:
     """Re-execute the record's ticks onto a checkpoint body (child 1), through the live cycle's own functions.
 
     `plant.md` §6: replay drives from the trace keyed by tick, not wall time. From the snapshot's tick
@@ -2575,7 +2603,7 @@ def replay_record(world: World, body: dict[str, Any], record: Record, *, through
                 )
             effects = [Effect(offset, verb, dict(arguments)) for offset, verb, arguments in row["effects"]]
             before = truth
-            truth, digest, link = advance(world, before, head, effects, dt)
+            truth, digest, link = advance(world, before, head, effects, dt, scenario_faults(scenario, tick))
             if digest != row["state_hash"]:
                 raise RecordRefused("state_hash", "the replayed truth's compare-point is not the recorded one", tick=tick, segment=segment.boot_id)
             if link != row["lineage"]:
@@ -4117,7 +4145,14 @@ class Executive:
         try:
             for j in range(1, k + 1):
                 before = truth
-                stepped = advance(self.world, before, head, effects if j == 1 else [], self.dt)
+                stepped = advance(
+                    self.world,
+                    before,
+                    head,
+                    effects if j == 1 else [],
+                    self.dt,
+                    scenario_faults(self.scenario_overlay, tick + j),
+                )
                 truth, head = stepped[0], stepped[2]
                 steps.append(stepped)
                 if j == 1:
@@ -4649,7 +4684,14 @@ class Executive:
         point = interlock.point
         source = str((self.world.points.get(point) or {}).get("from") or "")
         state = next((s for s in self.world.states if s.id == source), None)
-        assert state is not None  # resolve_interlock refuses a point read from no state
+        if state is None:
+            # `resolve_interlock` also accepts a coupling node as the point's source (a cross-domain
+            # read such as `prop.propellant_remaining_pct` from `prop_main`); its reading is the
+            # node's value this tick, and a node nothing drives this tick has none.
+            return (
+                f"`{name}` watches `{point}`, read from the coupling node `{source}`, which has no "
+                "value this tick"
+            )
         if state_level(self.truth, state) is None:
             if state.id in self.world.rules:
                 # A domain rule that returned its honest `None` (`params.no_value`): the rule exists
@@ -4812,6 +4854,10 @@ class Executive:
                 staged = apply_command(self.world, probe, verb, arguments)
             except Unconfigured as exc:
                 unconfigured = exc
+            except EffectRefused as exc:
+                # A call the plant refuses outright (one that omits the argument its `when` routes
+                # on) is this command's verdict. Escaping here dropped the whole claimed batch.
+                return refused(f"refused: {exc}. Nothing has been staged.\n")
         guard = self.dwell_refusal(verb, staged, arguments)
         if guard is not None:
             return refused(guard)
@@ -6010,7 +6056,9 @@ def load_scenario_file(world: World, path: Path) -> ScenarioFile:
     """The scenario file, read once and hashed from the bytes read; a `ValueError` naming why not.
 
     A scenario's `script` is batch mode's (`plant.run_scenario`): a window run takes its commands
-    through the window, so a file that carries one is refused rather than half-applied.
+    through the window, so a file that carries one is refused rather than half-applied. Its `faults`
+    are the vehicle's, not the crew's, and the window run injects them on the step batch mode does
+    (`scenario_faults`), live and in replay.
     """
     try:
         raw = Path(path).read_bytes()
@@ -6034,13 +6082,6 @@ def load_scenario_file(world: World, path: Path) -> ScenarioFile:
         raise ValueError(
             f"--scenario-file {path} carries a `script`, which is batch mode's: a window run takes its commands "
             "through the window, so the file is refused rather than half-applied"
-        )
-    if scenario.faults:
-        # WP09: the live cycle and its replay (`advance`, the lineage link) do not carry fault onsets
-        # yet, so a window world would run the scenario's faults as if they were not there.
-        raise ValueError(
-            f"--scenario-file {path} carries `faults`, which batch mode injects (`plant.run_scenario`) "
-            "and the window run does not yet: the file is refused rather than run without them"
         )
     return ScenarioFile(Path(path), scenario, digest)
 
@@ -6224,6 +6265,7 @@ def resume_executive(
     multiplier: Fraction | int | str | None = None,
     cycle_ticks: int | None = None,
     pacer: Pacer | None = None,
+    scenario: Scenario | None = None,
 ) -> tuple[Executive, Resumption]:
     """An executive resumed from a verified checkpoint (`checkpoint.choose_generation`) and the record after it.
 
@@ -6283,6 +6325,10 @@ def resume_executive(
         raise ResumeRefused(str(exc)) from exc
     except OSError as exc:
         raise ResumeRefused(_io_refusal(exc, Path(state_dir) if state_dir is not None else Path(diode_dir))) from exc
+    # **The named scenario, before the replay.** Its faults are part of the history the record holds:
+    # a checkpoint taken before an onset and a record past it replay to the record's hashes only
+    # with the onset in the step, so the overlay is installed here rather than after `_resume`.
+    executive.scenario_overlay = scenario
     named = (
         multiplier_text(parse_multiplier(multiplier) if isinstance(multiplier, str) else multiplier) if multiplier is not None else None,
         cycle_ticks,
@@ -6328,7 +6374,7 @@ def _resume(
         else:
             record = read_record(executive.state_dir or executive.journal.parent, dir_fd=executive.journal_dir_fd, anchor=anchor)
         with record:
-            replayed = replay_record(world, body, record)
+            replayed = replay_record(world, body, record, scenario=executive.scenario_overlay)
             unwritten = unwritten_results(record)
     except RecordRefused as exc:
         raise ResumeRefused(f"the record cannot continue {where}: {exc}") from exc
@@ -7164,12 +7210,13 @@ def main(argv: list[str] | None = None, *, pacer: Pacer | None = None) -> int:
                         cycle_ticks=args.cycle_ticks,
                         checkpoint_every=args.checkpoint_ticks,
                         pacer=pacer,
+                        # The named file was held to the checkpoint's identity above; its allow-list
+                        # and its faults hold again, from the replay on.
+                        scenario=scenario_file.scenario if scenario_file is not None else None,
                     )
                 except ResumeRefused as exc:
                     return refuse(f"{exc}. The executive does not start a fresh world over a saved one (ADR 0002 K)")
                 starting.closing(executive.close, state_path or diode_canonical.path)
-                # The named file was held to the checkpoint's identity above; its allow-list holds again.
-                executive.scenario_overlay = scenario_file.scenario if scenario_file is not None else None
                 # Addendum B3: a checkpoint at the recovered tick before anything is claimed — it makes the
                 # named run inputs durable and bounds the next resume's replay and re-publication.
                 try:

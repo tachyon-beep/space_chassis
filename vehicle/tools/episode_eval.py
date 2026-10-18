@@ -452,7 +452,15 @@ def trace_from_record(
                         return written
                     ledger = plant.Ledger()
                     gaps: list[plant.Gap] = []
-                    truth = plant.step(world, truth, dt, gaps, effects or None, ledger=ledger)
+                    truth = plant.step(
+                        world,
+                        truth,
+                        dt,
+                        gaps,
+                        effects or None,
+                        ledger=ledger,
+                        faults=episode.scenario.faults_at(row["tick"] - 1) or None,
+                    )
                     if plant.state_hash(truth) != row["state_hash"]:
                         writer._line(
                             {
