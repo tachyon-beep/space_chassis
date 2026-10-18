@@ -2196,6 +2196,13 @@ def stock_flux(
     # space, so this goes through it rather than through a second spelling of the same rule.
     named = next((s for s in world.states if s.id == edge.reads), None) if edge.reads else None
     driver = state_level(values, named) if named is not None else values.get(source)
+    if driver is None and named is not None:
+        label, needs = unread_driver(edge)
+        raise Unconfigured(
+            where,
+            f"drives {edge.target} and reads {label}, which has no value this tick",
+            needs=needs,
+        )
     if driver is None:
         # **A node that carries two states publishes no value under its own name.** `state_values`
         # writes the node key only when one state owns the node, and `_refuse_shared_node` says why:
@@ -2756,8 +2763,8 @@ def advance(
         if driver is None:
             raise Unconfigured(
                 f"{where}",
-                f"reads {incoming[0].source!r}, which nothing supplies",
-                needs=incoming[0].source,
+                f"reads {unread_driver(incoming[0])[0]}, which nothing supplies",
+                needs=unread_driver(incoming[0])[1],
             )
         # --------------------------------------------------------------------------------------
         # **The conversion the edge declares and this branch did not apply.**
@@ -2915,8 +2922,8 @@ def advance(
         if driver is None:
             raise Unconfigured(
                 f"{where}",
-                f"reads {driver_edge.source!r}, which nothing supplies",
-                needs=driver_edge.source,
+                f"reads {unread_driver(driver_edge)[0]}, which nothing supplies",
+                needs=unread_driver(driver_edge)[1],
             )
         current_level = state_level(values, state)
         if current_level is None:
@@ -3032,8 +3039,8 @@ def advance(
             if driver is None:
                 raise Unconfigured(
                     f"{where}",
-                    f"reads {driver_edge.source!r}, which nothing supplies",
-                    needs=driver_edge.source,
+                    f"reads {unread_driver(driver_edge)[0]}, which nothing supplies",
+                    needs=unread_driver(driver_edge)[1],
                 )
         else:
             raise Unconfigured(
@@ -3318,6 +3325,19 @@ def edge_driver(
         if named is not None:
             return state_level(values, named)
     return values.get(node or edge.source)
+
+
+def unread_driver(edge: Edge, source: str | None = None) -> tuple[str, str]:
+    """What an edge could not read, for a gap: its `reads:` state where it names one, else the node.
+
+    An edge that declares `reads:` and finds that state dark this tick is waiting on that state, and
+    a gap that named the node instead sent `blame` to whichever of the node's states sorts first, or
+    said the driver "was never declared" beside the declaration that names it.
+    """
+    if edge.reads:
+        return f"`{edge.reads}` (this edge's `reads:`)", str(edge.reads)
+    node = source or edge.source
+    return repr(node), node
 
 
 def _refuse_shared_node(world: World, state: State, where: str) -> None:
@@ -4938,6 +4958,7 @@ def blame(world: World, gaps: list[Gap]) -> dict[str, Gap]:
     )}
     for rows in by_node.values():
         rows.sort(key=lambda gap: order.get(gap.state.id, 0))
+    by_state = {gap.state.id: gap for gap in gaps}
     fixed: dict[str, Gap] = {}
     for gap in gaps:
         seen: set[str] = set()
@@ -4946,6 +4967,12 @@ def blame(world: World, gaps: list[Gap]) -> dict[str, Gap]:
             seen.add(current.state.id)
             if not current.needs or current.needs == current.state.node:
                 break
+            # **A `needs` that names a state is followed to that state's own gap**: an edge with
+            # `reads:` waits on the state it names, not on its node, so its sibling on a crowded node
+            # is never the root and the named state is.
+            if current.needs in by_state and current.needs not in world.nodes and current.needs != current.state.id:
+                current = by_state[current.needs]
+                continue
             # **A name that is a node carrying more than one state has no key in the value map**, so
             # no state on it can be the sibling that holds what this gap could not read. Stopping here
             # is what keeps the chain honest: the root an implementer is sent to must be a state whose
