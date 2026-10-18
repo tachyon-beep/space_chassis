@@ -236,21 +236,24 @@ def test_the_amplifier_s_interlocks_are_all_evaluated_and_it_is_taken(world, tmp
 
 
 def test_one_unreadable_interlock_still_refuses_the_command_as_unevaluated(world, tmp_path):
-    # `set_absorber_path` declares `co2_caution`, which reads, and `co2_absorber_low`, whose point is
-    # read from no state the plant advances. No scenario: the quiet coast's verbs do not include it.
+    # `set_vent_valve state=vent` is guarded by `cabin_pressure_emergency`, which reads, and by
+    # `structure.hatch_open_with_pressure`, whose point is read from no state the plant advances.
+    # (This used `set_absorber_path` until `co2_absorber_low` became readable through its coupling
+    # node; if the hatch guard becomes readable too, move this to a verb that still has an
+    # unreadable guard beside a readable one.) No scenario: the quiet coast's verbs do not include it.
     built = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
     built.attach("alpha")
     try:
-        submit(tmp_path / "diode" / "alpha", ["set_absorber_path vehicle=csm path=secondary"])
+        submit(tmp_path / "diode" / "alpha", ["set_vent_valve vehicle=csm state=vent"])
         built.cycle()
         (body,) = bodies(tmp_path / "diode" / "alpha")
     finally:
         built.close()
     assert "refused: INTERLOCK UNEVALUATED" in body, body
     assert "declares 1 interlock(s) this executive cannot evaluate" in body, body
-    assert "co2_absorber_low" in body, body
+    assert "structure.hatch_open_with_pressure" in body, body
     # The readable one is evaluated, not listed as unevaluable.
-    assert "co2_caution" not in body, body
+    assert "cabin_pressure_emergency" not in body, body
 
 
 def test_an_operator_s_closed_interlock_still_wins(world, tmp_path):
