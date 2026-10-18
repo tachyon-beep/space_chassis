@@ -25,26 +25,36 @@ Three things make this a schedule rather than a dice roll:
     python3 tools/faults.py --seed 20260912                # the run's schedule
     python3 tools/faults.py --seed 20260912 --json         # the same, as data
     python3 tools/faults.py --check                        # name-keying is not class-breaking
+    python3 tools/faults.py --seed 20260912 --inject       # where each event lands in the plant
+
+**And the schedule reaches the truth now (WP09).** `injections` turns each event's `met_h` into a
+tick and an integer-microsecond stamp and hands it to the plant as a `FaultOnset`, on the same
+sub-tick queue a command's effect uses; what the onset does is declared by the state it moves
+(`fault_value`). An event whose fault no state declares an onset for is reported as owing one rather
+than injected as a no-op.
 """
 
 from __future__ import annotations
 
 import argparse
 import collections
+import dataclasses
 import hashlib
 import json
 import math
 import random
 import sys
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import plant  # noqa: E402  (a sibling tool, not a package)
 from check_vehicle import in_seeding_pool  # noqa: E402  (the linter is the bottom of the graph)
-from plant import Unconfigured  # noqa: E402  (a sibling tool, not a package)
+from plant import Unconfigured  # noqa: E402
 
 # The mission's own duration, from `mission.yaml`'s phase ladder: eight phases summing to exactly
 # 192.0 h. Read from the file rather than repeated, because a schedule over a duration the mission
@@ -474,6 +484,55 @@ def scenario_report(
     }
 
 
+US_PER_HOUR = 3_600_000_000
+
+
+def injections(
+    world: plant.World, events: list[dict[str, Any]], *, met0_tick: int = 0
+) -> tuple[dict[int, list[plant.FaultOnset]], list[dict[str, Any]]]:
+    """The schedule as the plant takes it: run tick -> onsets, and the events that cannot fire.
+
+    **Integer microseconds, from the decimal the schedule printed.** `met_h` is rounded to six
+    places when it is scheduled, and that decimal is the event's time: it goes to microseconds as a
+    `Decimal`, so the tick and stamp are a function of the printed schedule and of nothing a float
+    could round differently on another run. MET is the mission's own tick count (`plant.md` §6);
+    `met0_tick` is the MET tick a run's tick 0 sits at, and an event before it happened before the
+    run began and is not injected into it.
+
+    An event whose fault no state declares an onset for (`fault_value`) is returned in the second
+    list rather than injected, because the plant refuses to fire a fault that would change nothing.
+    """
+    tick_us = plant._tick_us(plant.tick_seconds(world))
+    onsets: dict[int, list[plant.FaultOnset]] = {}
+    owed: list[dict[str, Any]] = []
+    for event in events:
+        if event["fault"] not in world.fault_effects:
+            owed.append(event)
+            continue
+        met_us = int(Decimal(repr(event["met_h"])) * US_PER_HOUR)
+        tick, offset_us = divmod(met_us, tick_us)
+        if tick < met0_tick:
+            continue
+        onsets.setdefault(tick - met0_tick, []).append(
+            plant.FaultOnset(offset_us=offset_us, fault=str(event["fault"]))
+        )
+    return onsets, owed
+
+
+def with_schedule(
+    scenario: plant.Scenario, onsets: dict[int, list[plant.FaultOnset]]
+) -> plant.Scenario:
+    """The scenario with the scheduled onsets added to its scripted ones, tick by tick.
+
+    Scripted first within a tick, then scheduled; the plant sorts a tick's onsets by stamp, stably,
+    so only two onsets at one microsecond keep this order.
+    """
+    merged = {tick: list(rows) for tick, rows in scenario.faults.items()}
+    for tick, rows in sorted(onsets.items()):
+        merged.setdefault(tick, []).extend(rows)
+    return dataclasses.replace(scenario, faults=merged)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--dir", default=str(Path(__file__).resolve().parent.parent))
@@ -482,6 +541,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="emit the schedule as JSON")
     parser.add_argument("--list", action="store_true", help="list every fault and its seeding form")
     parser.add_argument("--check", action="store_true", help="assert the streams are name-keyed")
+    parser.add_argument(
+        "--inject",
+        action="store_true",
+        help="print where each event lands in the plant (tick, microsecond) or what it owes",
+    )
     parser.add_argument(
         "--sensor-defect",
         action="store_true",
@@ -575,6 +639,20 @@ def main(argv: list[str] | None = None) -> int:
         return 3
     events = report["events"]
     armed = report.pop("_armed_faults")
+    if args.inject:
+        try:
+            world = plant.load_world(root)
+        except Unconfigured as exc:
+            sys.stderr.write(f"{exc}\n")
+            return 3
+        onsets, owed = injections(world, events)
+        landing = sum(len(rows) for rows in onsets.values())
+        print(f"master seed {args.seed}, posture {args.posture!r}: {len(events)} scheduled event(s)")
+        print(f"  {landing} fire in the plant; {len(owed)} owe a `fault_value` on the state they move")
+        for tick, rows in sorted(onsets.items()):
+            for onset in rows:
+                print(f"  tick {tick:>9} +{onset.offset_us:>5} us  {onset.fault}")
+        return 0
     if args.json:
         json.dump(
             report,

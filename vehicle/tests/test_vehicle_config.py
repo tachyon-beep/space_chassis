@@ -3882,6 +3882,40 @@ def test_the_gain_and_the_beamwidth_are_one_figure(tmp_path):
         ],
         ["without a `pattern_note`"],
     )
+    # A measured pair: both figures published, held to the bound rather than to equality. The
+    # high-gain antenna's own pair sits on the ideal product, so declared measured on its
+    # `historical` basis it raises nothing; a beam wider than the ideal for its gain is impossible
+    # either way, and the claim on another basis is refused.
+    measured = "      pattern: measured\n      gain_db: 26.7\n"
+    definition = copy_definition(tmp_path / "measured")
+    for rel, old, new in [
+        ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
+        (dom, "    pattern: aperture\n    gain_db: 26.7\n", "    pattern: measured\n    gain_db: 26.7\n"),
+    ]:
+        path = definition / rel
+        path.write_text(path.read_text().replace(old, new, 1))
+    out = run_linter(definition).stdout
+    assert not [line for line in out.splitlines() if line.startswith("vehicle.yaml:comms.antennas.high_gain")], out[-1500:]
+    refusal(
+        "measured_wide",
+        [
+            ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
+            ("vehicle.yaml", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 18.7}", "        - {id: medium, gain_db: 20.7, beamwidth_deg: 20.0}"),
+            ("vehicle.yaml", "    - id: omni_a\n      pattern: near_isotropic\n", "    - id: omni_a\n      pattern: measured\n"),
+        ],
+        [
+            "declares 20.7 dB with a 20.0-degree beamwidth, wider than the",
+            "declares 2 dB with a 180-degree beamwidth, wider than the",
+        ],
+    )
+    refusal(
+        "measured_unsourced",
+        [
+            ("vehicle.yaml", "      pattern: aperture\n      gain_db: 26.7\n", measured),
+            ("vehicle.yaml", "        basis: historical\n        source: \"NR ch.18: four", "        basis: chosen\n        source: \"NR ch.18: four"),
+        ],
+        ["declares its pattern measured on a 'chosen' provenance"],
+    )
     # One gap, one refusal: the missing declaration above is one fact about the antenna, and the
     # high-gain entry has four pairs it governs.
     definition = copy_definition(tmp_path / "once")
@@ -28021,7 +28055,7 @@ def test_a_map_states_return_guard_does_not_depend_on_the_order_of_its_keys(tmp_
     executive = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
     executive.attach("alpha")
     panel = next(state for state, _on, _off in console.command_dwell(world, "set_breaker"))
-    monkeypatch.setattr(console, "command_dwell", lambda _world, verb: [(panel, 0.0, 5.0)] if verb == "set_breaker" else [])
+    monkeypatch.setattr(console, "command_dwell", lambda _world, verb, _arguments=None: [(panel, 0.0, 5.0)] if verb == "set_breaker" else [])
     left = {"zeta": "closed", "alpha": "open"}
     now = {"zeta": "open", "alpha": "open"}
     before = {**executive.truth, "internal": {**executive.truth["internal"], panel.id: left}}
