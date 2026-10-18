@@ -111,7 +111,7 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   round for a `vehicle/README.md` section. The sprint's lane PRs have landed as runtime capability work ("one coherent,
   independently tested outcome per PR") and added none (#46, #58, #67 and #47 did not); no check enforces the section.
   This records what happened, not an exemption: a PR that is a configuration/refusal round still owes its section under
-  `vehicle/AGENTS.md`, which the vehicle line owns (#44's follow-up adds one). Raised by the reviewer in `pr-44.md`.
+  `vehicle/AGENTS.md`, which the vehicle line owns (#54 added one, and #44's follow-up adds one). Raised by the reviewer in `pr-44.md`.
 - **A guard reads truth, not a channel made for it** (D61, from 23:45). A guard on a state the crew cannot see uses
   the state-condition form of `interlocks_when`; a lane publishes a derived channel only for a quantity the crew would
   actually see.
