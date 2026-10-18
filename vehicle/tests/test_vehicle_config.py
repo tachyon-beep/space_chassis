@@ -947,8 +947,9 @@ def test_the_worklist_never_blames_a_state_whose_node_publishes_no_value():
         if len(world.states_on(node)) > 1
     }
     # 11 -> 10 in round 70, with the source regulator off the fuel cell's node; 13 with ADR 0003's
-    # rules (`load_shed_state`, `ground_received`, `fuel_cell` and `radiator_reject`'s duty). Not
-    # pinned since lane 0's follow-up: what matters here is that there is a crowded node to test.
+    # rules (`load_shed_state`, `ground_received`, `fuel_cell` and `radiator_reject`'s duty); 15 with
+    # the two cabin leaks, one outflow per gas. Not pinned since lane 0's follow-up (15 when it
+    # merged, at 9a0430a): what matters here is that there is a crowded node to test.
     assert crowded, "no node carries more than one state, so the check below is vacuous"
 
     # No blocked state is filed under a state that lives on a node with no value key.
@@ -3336,8 +3337,11 @@ def test_the_linter_holds_a_domain_s_declared_reads(tmp_path):
     owed = report.debts[0]
     # 23 -> 24 with ADR 0003: thermal reads `load_shed_state` for the switch map its heat rates sum
     # over, a one-way read. `thermal->link` was the delayed half of a declared cycle and is carried
-    # by `E-AMP-HEAT` now, so no read is left in that class. **The counts are not pinned** since lane
-    # 0's follow-up, because every lane that declares a read moves them; what is held is that the
+    # by `E-AMP-HEAT` now, so no read is left in that class. 24 -> 25: eclss reads `load_shed_state`
+    # for the suit compressor's switch, the same one-way read. 25 -> 26: eclss reads `fc_o2_draw`, the
+    # fuel cells' oxygen draw on the supply tanks, as their pressure rule's other draw.
+    # **The counts are not pinned** since lane 0's follow-up (26 and 8 when it merged, at 9a0430a),
+    # because every lane that declares a read moves them; what is held is that the
     # message's figures are the lengths of the lists it prints, and that its parts sum to its total.
     found = re.search(
         r"declares (\d+) cross-domain reads that no edge carries .*? — (\d+) of them return into a "
@@ -3356,6 +3360,33 @@ def test_the_linter_holds_a_domain_s_declared_reads(tmp_path):
     assert int(delayed) == listed(delayed_list), owed
     assert int(total) == int(back) + int(one_way), owed
     assert "thermal->load_shed_state" in owed, owed
+    # The corpus figures check only that the message agrees with itself, so the classification is
+    # held on a graph whose answer is known: `alpha` reads three of `beta`'s nodes, one closed by an
+    # edge from a node alpha writes that no cycle names (feedback), one nothing carries (one-way),
+    # and one closed by a named back-edge (declared). A rule that sorted every read one way, which
+    # the corpus half would let through, puts a trail in the wrong list here.
+    known = {
+        "coupling.yaml": {
+            "edges": [
+                {"id": "E-LOOP", "from": "a1", "to": "b1"},
+                {"id": "E-BACK", "from": "a1", "to": "b3"},
+            ],
+            "cycles": [{"back_edge": "E-BACK"}],
+        },
+        "domains/alpha/components.yaml": {"writes": ["a1"], "reads": ["b1", "b2", "b3"]},
+        "domains/beta/components.yaml": {"writes": ["b1", "b2", "b3"], "reads": ["a1"]},
+    }
+    sorted_out = linter.Report()
+    linter.check_domain_reads(known, sorted_out)
+    assert sorted_out.refusals == [], sorted_out.refusals
+    assert len(sorted_out.debts) == 1, sorted_out.debts
+    assert re.search(
+        r"declares 2 cross-domain reads .*? — 1 of them return into a node the reading domain "
+        r"writes \(alpha->b1\).*?and 1 are one-way dependencies the graph does not contain at all "
+        r"\(alpha->b2\)\. 1 more are the delayed half of a loop `coupling.yaml#cycles` does name "
+        r"\(alpha->b3\)",
+        sorted_out.debts[0],
+    ), sorted_out.debts[0]
 
     # And the refusal fires when a declaration loses a node an edge carries.
     definition = copy_definition(tmp_path / "domainreads")
@@ -3593,8 +3624,9 @@ def test_the_engines_the_mission_is_flown_on_are_one_set_of_figures(tmp_path):
         "    thrust_max_n: 43000",
         "described twice",
     )
-    # The arithmetic: 16 + 12 + 16 = 44, and each system's strings sum to that system.
-    refusal("domains/rcs/components.yaml", "    count: 44", "    count: 40", "total 44 thrusters")
+    # The arithmetic: 16 + 16 = 32 and 12, and each system's strings sum to that system.
+    refusal("domains/rcs/components.yaml", "    count: 32", "    count: 30", "total 32 thrusters")
+    refusal("domains/rcs/components.yaml", "    count: 12", "    count: 10", "total 12 thrusters")
     refusal(
         "domains/rcs/components.yaml",
         "  - id: rcs_string_cm\n    kind: discrete\n    class: string\n    thrusters: 12",
@@ -6400,8 +6432,9 @@ def test_a_derived_value_reads_the_declarations_it_names(tmp_path):
     # environment's derivation is the hot hold's figure, `sun_hold_w` (ADR 0003 item 9).
     converted = {
         "environment_heat_w": "solar_flux_w_m2",
-        "cabin_o2_supply_csm_kg_s": "leak_kg_per_h",
-        "cabin_o2_supply_lm_kg_s": "leak_kg_per_h",
+        # `cabin_o2_supply_csm_kg_s` left with the surge tank and `cabin_o2_supply_lm_kg_s` with
+        # the LM's switches: a rule routes each demand by `o2_source` and `o2_flow`, and
+        # `check_metabolic_rules` still holds both `nominal_kg_s`.
         "co2_removal_csm_kg_s": "co2_kg_per_crew_day",
         "co2_removal_lm_kg_s": "co2_kg_per_crew_day",
         "fc_h2_draw_kg_s": "per_amp_kg_s",
@@ -6910,7 +6943,7 @@ def test_a_computation_says_which_field_it_produces(tmp_path):
     # equilibria, the radiator's equilibrium and rejection, the bus load, the coldplate), and a rule is
     # not also a derivation. `environment_heat_w`'s derivation computes the hot hold, `sun_hold_w`
     # (ADR 0003 item 9), where it computed the state's `total_w`.
-    # (14 when lane 0's follow-up took the count out; a rule landing moves it.)
+    # (14 when lane 0's follow-up took the count out, at 9a0430a; a rule landing moves it.)
     assert declared, "no state declares its arithmetic"
     assert all(prov.get("computes") for _, _, _, prov in declared), "one names no subject"
     subjects = sorted({str(prov["computes"]) for _, _, _, prov in declared})
@@ -8280,7 +8313,7 @@ def test_an_edge_says_which_state_it_advances(tmp_path):
 
     # The four gas masses of one compartment now have four different answers, where before they
     # had one list between them.
-    assert incoming("csm_cabin_o2_kg") == ["E-O2-ECLSS"]
+    assert incoming("csm_cabin_o2_kg") == ["E-O2-ECLSS", "E-O2-SURGE-ECLSS"]
     assert incoming("csm_cabin_co2_kg") == ["E-CREW-ATM"]
     assert incoming("csm_cabin_n2_kg") == [], (
         "nothing supplies nitrogen, and now nothing pretends to"
@@ -12701,7 +12734,7 @@ def test_every_stock_declares_where_it_starts():
     world = plant.load_world(VEHICLE)
     stocks = [s for s in world.states if s.method == "stock"]
     # 25 -> 26: comms `delivered_bits` (the recorder was already a stock).
-    # (26 when lane 0's follow-up took the count out.)
+    # (26 when lane 0's follow-up took the count out, at 9a0430a.)
     assert stocks, "the vehicle has no stock"
 
     seeded = plant.initial_values(world)
@@ -12733,8 +12766,10 @@ def test_every_stock_declares_where_it_starts():
     # helium charge landed from the Operational Data Book's loading table (round 13), which is the
     # last stock in the corpus whose `initial` was owed to a document nobody had opened.
     # 25 -> 26: comms `delivered_bits` starts at zero.
-    # (26 of 26 when lane 0's follow-up took the count out.)
-    assert declared, "no stock declares a numeric initial"
+    # (26 of 26 when lane 0's follow-up took the count out, at 9a0430a.) What is held is the
+    # property the count stood for: every stock declares a numeric `initial`, so a stock that
+    # reverts to `UNCONFIGURED` (a debt the linter accepts) fails here by name.
+    assert {s.id for s in stocks} == declared_ids, sorted({s.id for s in stocks} - declared_ids)
     on_nodes = {k: v for k, v in seeded_integrators.items() if k != "internal"}
     # 10 -> 12 with `prop_main` and `prop_rcs`: the two stocks whose `initial` was owed because
     # nothing said which tanks the nodes were. Both carry their loads now. **The six cabin gases
@@ -12780,7 +12815,9 @@ def test_every_stock_declares_where_it_starts():
     # `zone_csm_avionics_t` seed under their ids, `load_enabled` (the switch map `set_load`
     # writes) under its own, and `environment_heat_w` — a held boundary since item 9 — under its
     # id and its single-state node's alias, `environment_heat`.
-    # (89 when lane 0's follow-up took the count out: every sourced initial moves it.)
+    # 89 -> 91 with ECLSS: `suit_fan` (the switch `set_suit_fan` moves) under its id, and
+    # `o2_tank_heaters`, a ruled discrete whose id and single-state node share one name.
+    # (91 when lane 0's follow-up took the count out, at 9a0430a: every sourced initial moves it.)
     assert on_nodes, "no node key carries a seeded value"
     # And the map a tick actually starts from is that seed plus the declared arithmetic, so the
     # resolved states are a strict superset and every one of them is `algebraic`.
@@ -12795,14 +12832,15 @@ def test_every_stock_declares_where_it_starts():
     # position now, so they join this sub-map as well as the ids beside it.
     # 18 -> 22 with ADR 0003's thermal rules: the amplifier's temperature and the three loop
     # switch maps (`coolant_pump`, `evaporator_feed`, `radiator_bypass`) are sentinel states.
-    # (22 when lane 0's follow-up took the count out.)
+    # 22 -> 23 with ECLSS's `suit_fan`, the compressor switch, also on the sentinel.
+    # (23 when lane 0's follow-up took the count out, at 9a0430a.)
     assert seeded_integrators["internal"], "the sentinel seeds nothing"
     # Five of the sentinel's `algebraic` states resolve at t=0 as well — the bay heat, the cabin
     # pressure differential and three more — so the sentinel's sub-map is the same map the tick
     # commits, merged rather than replaced. (Six until ADR 0003's power rules moved the bus load to
-    # the cells' node.)
-    # (27 when lane 0's follow-up took the count out.) What is held is the merge: the sub-map the tick
-    # commits is the seed plus the resolved states, never the seed replaced.
+    # the cells' node.) 28 with ECLSS's `suit_fan`.
+    # (28 when lane 0's follow-up took the count out, at 9a0430a.) What is held is the merge: the
+    # sub-map the tick commits is the seed plus the resolved states, never the seed replaced.
     assert set(seeded_integrators["internal"]) < set(seeded["internal"]), sorted(seeded["internal"])
     # The map is keyed by node and holds one value per key, so this is **not** a stock count and
     # stopped being one in round 8: four stocks share `cabin_atm` and four share `lm_cabin_atm`, so
@@ -12861,6 +12899,8 @@ def test_every_stock_declares_where_it_starts():
         "impulse_total",
         "gyro_bias",
         "o2_supply_pressure_psi",
+        "o2_source",
+        "o2_flow",
         "suit_fan",
         "suit_loop_flow_cfm",
         "dps_throttle_pct",
@@ -12910,9 +12950,11 @@ def test_every_stock_declares_where_it_starts():
     # and so are the crew lane's three per-person maps.
     switch_maps = {k for k, v in seeded_integrators["internal"].items() if isinstance(v, dict)}
     assert switch_maps == {
-        "coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan",
+        "coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan", "o2_source", "o2_flow",
         "crew_destination", "crew_roused", "crew_busy_s",
-    }, switch_maps
+    }, (
+        switch_maps
+    )
     assert {v for k, v in seeded_integrators["internal"].items() if k not in switch_maps} == {
         0.0,
         35.0,
@@ -13158,8 +13200,11 @@ def test_every_discrete_state_says_what_moves_it(tmp_path):
     # comms' `transmitter_on` (`set_power_amplifier`) and `recorder_play` (`play_recorder`), power's
     # `load_enabled` (`set_load`), and thermal's three loop switch maps, `coolant_pump`,
     # `evaporator_feed` and `radiator_bypass`, each moved by its own verb.
-    # (49 states and (23, 5, 6, 23) when lane 0's follow-up took the counts out: every lane that
-    # adds a mover moved them. What is held is that every kind of mover is exercised by the walk.)
+    # 49 -> 51 with ECLSS: `suit_fan` (`set_suit_fan`) and `o2_tank_heaters`, the tanks' pressure
+    # switch, moved by its logic; 23 -> 24 commands and 23 -> 24 logic movers with the same two.
+    # (51 states and (24, 5, 6, 24) when lane 0's follow-up took the counts out, at 9a0430a: every
+    # lane that adds a mover moved them. What is held is that every kind of mover is exercised by
+    # the walk.)
     assert states and all((commands, triggers, events, logic)), (
         states, commands, triggers, events, logic,
     )
@@ -14156,8 +14201,9 @@ def test_the_internal_sentinel_is_not_exempt_from_the_ordering_rule():
     # count it is part of is what this assertion exists to notice.
     # 59 -> 61 with ADR 0003: thermal's three keyed commands (`evaporator_feed`, `coolant_pump`,
     # `radiator_bypass`) are on the sentinel and declared in its order, and power's `bus_a_load_w`
-    # left it for `fuel_cell`.
-    # **Since lane 0's follow-up the two counts are held to the plant's world rather than pinned**:
+    # left it for `fuel_cell`. 62 with ECLSS's `suit_fan`, the compressor switch `set_suit_fan` moves.
+    # **Since lane 0's follow-up the two counts are held to the plant's world rather than pinned**
+    # (62 states when it merged, at 9a0430a):
     # the domains that declare an order are exactly those with two or more sentinel states in the
     # world, and the states they order are exactly the world's. A sentinel state the file walk missed
     # still fails here; a lane that adds one no longer edits this line.
@@ -14310,27 +14356,18 @@ def test_the_cabin_oxygen_supplies_are_derived_from_the_losses(tmp_path):
     definition = copy_definition(tmp_path / "derivation")
     path = definition / "domains" / "eclss" / "components.yaml"
     text = path.read_text()
-    # The rule is a `derivation` now, whose inputs are the leak, the crew size and the metabolic
-    # rate by dotted path rather than three numbers restated in an expression. The needle moves
-    # with the spelling and the break is the same break: drop the per-hour-to-per-second step.
-    anchor = (
-        'expression: "(leak_kg_per_h + crew * o2_kg_per_crew_day / hours_per_day) '
-        '/ seconds_per_hour"'
-    )
-    assert anchor in text, "the fixture no longer matches the CSM supply rule"
-    # The break multiplies by the seconds instead of dividing by them — a wrong *value* rather
-    # than a wrong shape. Dropping the term entirely leaves `seconds_per_hour` bound and unused,
-    # which the derivation rule refuses first and for a different reason.
-    path.write_text(
-        text.replace(anchor, anchor.replace("/ seconds_per_hour", "* seconds_per_hour"), 1)
-    )
+    # Both supplies are rules now (PR #64), which route the demand by `o2_source` and `o2_flow`, so
+    # neither is a `derivation`; `check_metabolic_rules` holds each `nominal_kg_s` to the leak, the
+    # crew size and the metabolic rate. The break forgets the per-hour-to-per-second step on the
+    # LM's figure — a wrong *value* rather than a wrong shape.
+    anchor = "nominal_kg_s: 2.736470e-05"
+    assert text.count(anchor) == 1, "the fixture no longer matches the LM supply"
+    path.write_text(text.replace(anchor, "nominal_kg_s: 9.851292e-02", 1))
 
     result = run_linter(definition)
     assert result.returncode == 1
-    # `check_declared_derivation`'s wording, which is the rule a `derivation` is held by. The
-    # message says "no longer re-derives" where `rederive` — still used by an edge's `sums_to_h`
-    # and the tick arithmetic — says "does not re-derive".
-    assert "no longer re-derives" in result.stdout
+    assert "state cabin_o2_supply_lm_kg_s" in result.stdout
+    assert "The regulator replaces what the cabin loses" in result.stdout
 
 
 def test_the_water_cycle_edges_have_the_right_way_round(tmp_path):
@@ -15539,8 +15576,8 @@ def test_interlocks_is_a_list_or_the_sentinel_and_nothing_else(tmp_path):
     guarded = sorted(v for v, s in verbs.items() if isinstance(s.get("interlocks"), list))
     # 23 -> 24: comms' `play_recorder` (ADR 0003) declares the sentinel; 24 -> 25: power's `set_load`
     # (ADR 0004 operator item 3: its `lcl_overcurrent` watched a template family no tick publishes).
-    # (25 and 34 when lane 0's follow-up took the counts out: every verb is one or the other, which is
-    # what the two figures summed to and what is held now.)
+    # (25 and 34 when lane 0's follow-up took the counts out, at 9a0430a: every verb is one or the
+    # other, which is what the two figures summed to and what is held now.)
     assert sentinel and guarded, (sentinel, guarded)
     assert len(sentinel) + len(guarded) == len(verbs), sorted(set(verbs) - set(sentinel) - set(guarded))
     assert not [v for v, s in verbs.items() if isinstance(s.get("interlocks"), str) and v not in sentinel]
@@ -15720,18 +15757,20 @@ def test_a_guard_that_applies_to_one_value_of_an_argument_says_so(tmp_path):
 
 
 def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
-    """ADR 0004 §Direction, amended 2026-10-17: `set_o2_source`'s hazard is its `source` and its `flow`
-    together. A cabin losing pressure is fed by cutting its oxygen (an isolated source, or a flow of
-    `off`), and the service module's reserve is spent only by a flow drawn from `primary`, so neither
-    guard can name its direction with one argument. A condition may list its arguments and name the
+    """ADR 0004 §Direction, amended 2026-10-17: `set_o2_source`'s hazard is its `vehicle` and its
+    `source` together. A cabin losing pressure is fed by cutting its oxygen (an isolated source; a
+    flow of `off` is `set_o2_flow`'s to refuse), each cabin under its own caution, and the service
+    module's reserve is spent only by the CSM's `primary`, so the guards are written over both. A condition may list its arguments and name the
     combinations it applies to; the linter reads each combination as it reads a single value, and HELP
     prints them."""
     o2 = yaml.safe_load((VEHICLE / "domains" / "consumables" / "commands.yaml").read_text())
     verb = next(v for v in o2["commands"] if v["verb"] == "set_o2_source")
-    caution, reserve = verb["interlocks_when"]
-    assert caution["argument"] == reserve["argument"] == ["source", "flow"]
-    assert ["primary", "nominal"] not in caution["values"] and ["isolated", "high"] in caution["values"]
-    assert reserve["values"] == [["primary", "low"], ["primary", "nominal"], ["primary", "high"]]
+    caution, lm_caution, reserve = verb["interlocks_when"]
+    # Over `vehicle` and `source` since PR #64: `flow` moves nothing, and each guard reads one
+    # vehicle's cabin or store.
+    assert caution["argument"] == lm_caution["argument"] == reserve["argument"] == ["vehicle", "source"]
+    assert caution["values"] == [["csm", "isolated"]] and lm_caution["values"] == [["lm", "isolated"]]
+    assert reserve["values"] == [["csm", "primary"]]
 
     generated = subprocess.run(
         [sys.executable, str(VEHICLE / "tools" / "generate_help.py"), "--dir", str(VEHICLE)],
@@ -15739,9 +15778,9 @@ def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
         text=True,
         check=False,
     ).stdout
-    assert "`o2_reserve_10` — only when (`source`, `flow`) is one of (`primary`, `low`)" in generated, generated[-800:]
+    assert "`o2_reserve_10`, `eclss.o2_supply_low` — only when (`vehicle`, `source`) is one of (`csm`, `primary`)" in generated, generated[-800:]
 
-    block = "        values:\n          - [primary, low]\n          - [primary, nominal]\n          - [primary, high]\n"
+    block = "        argument: [vehicle, source]\n        values:\n          - [csm, primary]\n"
 
     def refusal(name: str, old: str, new: str, needle: str) -> None:
         definition = copy_definition(fixture_dir(tmp_path, name))
@@ -15752,17 +15791,17 @@ def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
         out = run_linter(definition).stdout
         assert needle in out, out[-1400:]
 
-    refusal("o2-one", block, block.replace("[primary, low]", "[primary]"), "not a list of 2 values")
-    refusal("o2-bad", block, block.replace("[primary, low]", "[primary, max]"), "which those arguments cannot take")
-    refusal("o2-twice", block, block.replace("[primary, nominal]", "[primary, low]"), "name each combination once")
-    every = "        values:\n" + "".join(
-        f"          - [{s}, {f}]\n" for s in ("primary", "surge", "isolated") for f in ('"off"', "low", "nominal", "high")
+    refusal("o2-one", block, block.replace("[csm, primary]", "[csm]"), "not a list of 2 values")
+    refusal("o2-bad", block, block.replace("[csm, primary]", "[csm, max]"), "which those arguments cannot take")
+    refusal("o2-twice", block, block + "          - [csm, primary]\n", "name each combination once")
+    every = "        argument: [vehicle, source]\n        values:\n" + "".join(
+        f"          - [{v}, {s}]\n" for v in ("csm", "lm") for s in ("primary", "surge", "isolated")
     )
-    refusal("o2-every", block, every, "names every combination of ['source', 'flow']")
+    refusal("o2-every", block, every, "names every combination of ['vehicle', 'source']")
     refusal(
         "o2-argument",
-        "        argument: [source, flow]\n        values:\n          - [primary, low]",
-        "        argument: [source, vehicle_note]\n        values:\n          - [primary, low]",
+        block,
+        block.replace("[vehicle, source]", "[vehicle, source_note]"),
         "which is not an enum argument of this verb",
     )
 
@@ -15862,10 +15901,12 @@ def test_a_command_value_says_which_argument_carries_the_value():
     # Five quantity states joined the eight mode ones this round, and one keyed state declares
     # nothing but its key. 17 -> 21 with ADR 0003: thermal's `coolant_pump`, `evaporator_feed` and
     # `radiator_bypass` and power's `load_enabled`, each keyed; 22 with ECLSS's `suit_fan`.
-    # 22 -> 25 with the crew lane: `ask_crew` writes a person's `position` into `crew_destination`,
+    # 22 -> 24 with `o2_source`, which `set_o2_source`'s `source` moves, and `o2_flow`, which
+    # `set_o2_flow`'s `flow` moves.
+    # 24 -> 27 with the crew lane: `ask_crew` writes a person's `position` into `crew_destination`,
     # a constant `true` into `crew_roused` and a constant 120 s into `crew_busy_s`, each keyed by
     # `crew_id`.
-    assert declared == 25, declared
+    assert declared == 27, declared
     assert sorted(constants) == [
         "crew.crew_busy_s.ask_crew",
         "crew.crew_roused.ask_crew",
@@ -16309,8 +16350,10 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     # `UNCONFIGURED`, which is the honest answer for an input nobody has declared.
     # 14 -> 20 with ADR 0003: `set_coolant_pump`, `set_evaporator_feed`, `set_radiator_bypass`
     # (thermal), `set_load` (power), `set_power_amplifier` and `play_recorder` (comms); 21 with
-    # `set_suit_fan` (ECLSS), and 22 with `ask_crew`, which writes the crew lane's three records.
-    assert len(applied) == 22, applied
+    # `set_suit_fan` (ECLSS).
+    # 21 -> 23 with `set_o2_source` and `set_o2_flow`, which move `o2_source` and `o2_flow` now,
+    # and 24 with `ask_crew`, which writes the crew lane's three records.
+    assert len(applied) == 24, applied
     assert "select_antenna" in applied
     # 7 -> 5: `set_coolant_pump` and `set_power_amplifier` stopped owing (ADR 0003): the pump's speed
     # selects `coolant_pump` (thermal) and the amplifier's power selects `transmitter_on` (comms).
@@ -16634,9 +16677,12 @@ def test_a_commanded_state_is_guarded_by_a_dwell_and_the_executive_reads_it(tmp_
     # 16 -> 22 with ADR 0003, and four of the six are keyed maps (`load_enabled`, `coolant_pump`,
     # `evaporator_feed`, `radiator_bypass`): `command_dwell` holds the whole value against its last
     # change, so a dwell there would make one element's switch block every other's. They declare
-    # none, and that is the second exemption, written down here rather than left as a gap.
-    # (22 commanded and 17 with a dwell when lane 0's follow-up took the counts out: every lane that
-    # adds a commanded mode moved both. The exemption list below is what they were guarding.)
+    # none, and that is the second exemption, written down here rather than left as a gap. 23 with
+    # ECLSS's `suit_fan`, a keyed map that declares one anyway: a second's lock-out of the LM's switch
+    # after a CSM command costs less than an undamped switch.
+    # (23 commanded and 18 with a dwell when lane 0's follow-up took the counts out, at 9a0430a:
+    # every lane that adds a commanded mode moved both. The exemption list below is what they were
+    # guarding.)
     assert commanded, "no discrete state is moved by a command"
     # The one-way state is the first exemption; the four keyed maps are the second.
     assert sorted(s.id for s in commanded if not s.spec.get("dwell")) == [
@@ -17955,7 +18001,8 @@ def test_the_linter_refuses_a_shared_node_or_sentinel_count_that_has_drifted(tmp
     anchor = '"""'
     assert anchor in text
     # The fixture's figure is one more than the vehicle's, spelled out. It was a typed word that the
-    # vehicle had to stay away from — twelve until the vehicle reached 12, then fourteen — and since
+    # vehicle had to stay away from — twelve until the vehicle reached 12, then fourteen, the vehicle
+    # at 13 after ADR 0003's merges and 15 with ECLSS's two cabin leak nodes — and since
     # lane 0's follow-up it is derived, so a lane that crowds a node never collides with it.
     shared = corpus_census()["multi-state nodes"]
     claim = f"{_in_words(shared + 1)} nodes carry more than one state"
@@ -18422,7 +18469,7 @@ def test_the_linter_refuses_a_status_line_whose_figures_have_drifted(tmp_path):
     definition = copy_definition(tmp_path / "status-line")
     path = definition / "README.md"
     text = path.read_text()
-    # The sentence is hard-wrapped between "142" and "thresholds", so the anchor is the half that
+    # The sentence is hard-wrapped between "144" and "thresholds", so the anchor is the half that
     # fits on one line. A fixture that matched the whole clause would fail on a reflow rather than
     # on the value it is about — the same distinction the reader itself makes.
     old = live_text(text, r"thresholds, \d+ verbs and \d+ classified events")
@@ -18555,6 +18602,64 @@ def test_the_linter_refuses_one_rcs_command_on_time_for_three_systems(tmp_path):
     result = run_linter(broken)
     assert result.returncode == 1
     assert "must be a chosen zero-duration group policy" in result.stdout, result.stdout[-1500:]
+
+
+def test_the_linter_refuses_an_rcs_jet_table_that_breaks_its_cross_check(tmp_path):
+    """Each RCS jet table was hand-read from an OCR text layer and has one relation to keep.
+
+    The SM table is the CSM autopilot's jet-selection tables placed on quads, so a jet moved to
+    the wrong quad or given the wrong torque sign turns the vehicle the other way under r x F.
+    The LM table is a simulator's, and its positions must reproduce the Operational Data Book's
+    66.1 in moment arm; its jet 4 sign is derived from the rule that a jet exhausts away from its
+    own cluster, so flipping it back to the printed +Y must be refused.
+    """
+    for name, break_entry, expected in (
+        (
+            "sm-jet-on-wrong-quad",
+            lambda doc: doc["geometry"]["rcs_sm"]["jets"][0].update(quad="A"),
+            "declares '+pitch' and its geometry turns the vehicle the other way",
+        ),
+        (
+            "sm-roll-sign-flipped",
+            lambda doc: doc["geometry"]["rcs_sm"]["jets"][8].update(torque="-roll"),
+            "rcs_sm.jets.9: declares '-roll'",
+        ),
+        (
+            "sm-aoh-name-swapped",
+            lambda doc: doc["geometry"]["rcs_sm"]["jets"][0].update(aoh_name="C4"),
+            "is AOH engine 'C4'",
+        ),
+        (
+            "cm-subsystem-loses-an-axis",
+            lambda doc: doc["geometry"]["rcs_cm"]["jets"][4].update(torque="+pitch"),
+            "subsystem 1 must turn the CM both ways about every axis",
+        ),
+        (
+            "cm-roll-vector-swapped",
+            lambda doc: doc["geometry"]["rcs_cm"]["jets"][0].update(
+                thrust_unit=[0.0, -0.9992, -0.0405]
+            ),
+            "rcs_cm.jets.11: declares thrust",
+        ),
+        (
+            "lm-jet-4-as-printed",
+            lambda doc: doc["geometry"]["rcs_lm"]["jets"][3].update(force_axis="+Y"),
+            "rcs_lm.jets.4: pushes along +Y",
+        ),
+        (
+            "lm-arm-misread",
+            lambda doc: doc["geometry"]["rcs_lm"]["jets"][0]["position_m"].__setitem__(1, 1.70),
+            "effective moment arm is 66.1 in",
+        ),
+    ):
+        broken = copy_definition(tmp_path / name)
+        path = broken / "domains" / "rcs" / "components.yaml"
+        rcs = yaml.safe_load(path.read_text())
+        break_entry(rcs)
+        path.write_text(yaml.safe_dump(rcs, sort_keys=False))
+        result = run_linter(broken)
+        assert result.returncode == 1
+        assert expected in result.stdout, result.stdout[-1500:]
 
 
 def test_the_linter_refuses_a_same_as_naming_a_field_its_mapping_lacks(tmp_path):
@@ -18947,42 +19052,6 @@ def test_a_zones_time_constant_is_its_lump_over_its_conductance(tmp_path):
     result = run_linter(definition)
     assert result.returncode == 1
     assert "which is a time constant of 3600 s" in result.stdout, result.stdout[-900:]
-
-
-def test_the_thermal_bays_refuse_a_source_from_the_wrong_vehicle_or_an_unverified_capacity_claim(tmp_path):
-    """An LM-3 diagram citation was presented as the missing CSM and LM-5 bay masses.
-
-    LM0-510-1070 only cites LM0-510-1036; the latter scan has not been examined. Its title
-    limits it to LM-3, and no nodal diagram establishes this model's aggregate heat capacity
-    or conductance without an explicit node-to-zone reduction. Break a complete copy so the
-    provenance guard must read both bays and their source audit, not just the clean definition.
-    """
-    source = VEHICLE / "domains" / "thermal" / "components.yaml"
-    clean = yaml.safe_load(source.read_text())
-    states = {state["id"]: state for state in clean["state"]}
-    assert states["zone_csm_service_t"]["lumped_mass_kg"] == "UNCONFIGURED"
-    assert states["zone_lm_descent_t"]["lumped_mass_kg"] == "UNCONFIGURED"
-    for name, old, new in (
-        ("cross_vehicle", "candidate_document: TIR 580-S-7159", "candidate_document: LM0-510-1036"),
-        ("false_effectivity", "candidate_effectivity: LM-3 only; LM-5 applicability unverified", "candidate_effectivity: LM-5"),
-        ("false_verification", "evidence_status: citation_only", "evidence_status: verified"),
-        ("missing_audit", "        modeled_vehicle: CSM\n", ""),
-        ("malformed_audit", None, None),
-    ):
-        definition = copy_definition(tmp_path / name)
-        path = definition / "domains" / "thermal" / "components.yaml"
-        if name == "malformed_audit":
-            thermal = yaml.safe_load(path.read_text())
-            state = next(state for state in thermal["state"] if state["id"] == "zone_csm_service_t")
-            state["provenance"]["source_audit"] = "malformed"
-            path.write_text(yaml.safe_dump(thermal, sort_keys=False))
-        else:
-            text = path.read_text()
-            assert old in text, f"the {name} broken copy no longer matches the live source"
-            path.write_text(text.replace(old, new, 1))
-        result = run_linter(definition)
-        assert result.returncode == 1, (name, result.stdout[-1000:])
-        assert "thermal source audit" in result.stdout, (name, result.stdout[-1000:])
 
 
 def test_an_edge_that_names_where_its_value_comes_from_is_not_a_second_debt(tmp_path):
@@ -20210,9 +20279,9 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
-    # 27 -> 28 with ECLSS's `suit_fan`, and 28 -> 31 with the crew lane's `crew_destination`,
-    # `crew_roused` and `crew_busy_s`.
-    assert len(values["internal"]) == 31, sorted(values["internal"])
+    # 27 -> 28 with ECLSS's `suit_fan`, and 30 with `o2_source` and `o2_flow`; 30 -> 33 with the
+    # crew lane's `crew_destination`, `crew_roused` and `crew_busy_s`.
+    assert len(values["internal"]) == 33, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
@@ -20825,7 +20894,7 @@ def test_a_node_sourced_channel_is_published_in_the_unit_its_channel_declares():
     # **The supply-tank pressure used to be the omitted one, and round 32 gave it a producer.** Its
     # source is no longer a mass: `eclss.o2_supply_pressure_psi` reads `o2_supply_pressure_psi`, the
     # state the ECS study guide's working pressure sizes, and the frame carries it at 900 psig — inside
-    # the channel's own 750-950 band, which the note below holds.
+    # the channel's own 800-975 band, which the note below holds.
     assert values["eclss.o2_supply_pressure_psi"] == pytest.approx(900.0)
     low, high = channels["eclss.o2_supply_pressure_psi"]["range"]
     assert low <= values["eclss.o2_supply_pressure_psi"] <= high
@@ -21053,7 +21122,7 @@ def test_the_ledger_block_names_channels_that_nothing_publishes(tmp_path):
 def test_the_oxygen_supply_pressure_is_a_state_with_a_published_starting_value(tmp_path):
     """A watched channel had a mass for a producer; the ECS guide publishes what belongs there.
 
-    `eclss.o2_supply_pressure_psi` is apollo's 750-950 psi indication — a low-pressure event and a
+    `eclss.o2_supply_pressure_psi` is apollo's psi indication, banded at the AOH's 800-975 caution pair, — a low-pressure event and a
     >5 psi/min fall, four declared faults perturbing it, and the channel that corroborates a leak by
     falling while the cabin pressure is held. It read `o2_csm`, the shared oxygen *stock*, in
     kilograms: a pressure is not a function of a mass, so round 30 omitted it rather than publishing
@@ -21097,7 +21166,9 @@ def test_the_oxygen_supply_pressure_is_a_state_with_a_published_starting_value(t
     # It is on the sentinel, so its order is declared — and the declared order names every sentinel
     # state, which is the rule the linter holds.
     sentinel = [s["id"] for s in eclss["state"] if s.get("node") == "internal"]
-    assert sorted(sentinel) == ["o2_supply_pressure_psi", "suit_fan", "suit_loop_flow_cfm"], sentinel
+    assert sorted(sentinel) == [
+        "o2_flow", "o2_source", "o2_supply_pressure_psi", "suit_fan", "suit_loop_flow_cfm",
+    ], sentinel
     assert sorted(eclss["internal_order"]) == sorted(sentinel)
     assert eclss["internal_order_note"]
 

@@ -113,8 +113,8 @@ nodes:
     preloaded: "RCS propellant is loaded at the pad and nothing in the mission refills it. The RCS load is 4.9 % of the LM's ascent budget at the tightest point, so this is the tank whose margin a crew spends first"
     note: >-
       all three systems at one node, and that is the right lump rather than a convenience: the RCS
-      domain models **all forty-four thrusters as one article** (`thruster_100lbf`, with
-      `vehicle_keys: [rcs_sm, rcs_cm, rcs_lm]`), so the service the allocator commands is one
+      domain models the forty-four thrusters as two articles (`thruster_100lbf` for the SM and LM,
+      `thruster_cm` for the CM, whose Isp is 2 % lower), so the service the allocator commands is one
       service, and a fleet that has spent the SM's propellant has spent the vehicle's
   pressurant_he:
     domain: consumables
@@ -250,6 +250,18 @@ nodes:
     kind: flow
     unit: kg O2/s
     note: "the LM's, over a smaller leak and two crew rather than three"
+  # The CM's surge tank (ECLSS lane, 2026-10-17): the command module's own oxygen, the store the
+  # crew had left once the S/M oxygen was gone (A13RB p. 4-28), and the regulator's flow from it.
+  o2_surge_csm:
+    domain: eclss
+    kind: stock
+    unit: kg
+    preloaded: "the surge tank is charged from the S/M supply before launch: 3.7 lb at 900 psig (AOH ECS p. 2.7-7). Its refill in flight is not modelled, so after MET 0 it only drains, and only while the CSM's source is `surge`"
+  cabin_o2_surge_supply_csm:
+    domain: eclss
+    kind: flow
+    unit: kg O2/s
+    note: "the CSM regulator's flow while it draws on the surge tank; `cabin_o2_surge_supply_csm_kg_s` states it"
   # The CO2 each cabin's absorber removes. `co2_removal_kg_s` was a single algebraic state on the
   # `internal` sentinel reading *both* counters — so a surface crew's CO2 spent the CSM element's
   # man-hours, the same defect round 42 fixed one layer down when the counters were split. A flow is
@@ -939,6 +951,18 @@ edges:
     to: cabin_o2_supply_csm
     kind: rate
     advances: cabin_o2_supply_csm_kg_s
+  - id: E-O2-SUPPLY-SURGE
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "kg O2 per kg O2"
+      basis: derived
+      relation: "as E-O2-SUPPLY-CSM, from the CM's surge tank: every kilogram the regulator admits from it leaves the tank"
+      at: "regulator flow"
+    from: o2_surge_csm
+    to: cabin_o2_surge_supply_csm
+    kind: rate
+    advances: cabin_o2_surge_supply_csm_kg_s
   - id: E-O2-SUPPLY-LM
     sensitivity:
       value: 1.0
@@ -1084,6 +1108,13 @@ edges:
     to: cabin_atm
     kind: rate
     sensitivity: {value: 1.0, unit: "kg O2 per kg O2", basis: derived, relation: "the regulator's flow enters the cabin whole: one unit in, one unit out", at: nominal}
+  - id: E-O2-SURGE-ECLSS
+    # as E-O2-ECLSS, from the surge tank's side of the regulator
+    advances: csm_cabin_o2_kg
+    from: cabin_o2_surge_supply_csm
+    to: cabin_atm
+    kind: rate
+    sensitivity: {value: 1.0, unit: "kg O2 per kg O2", basis: derived, relation: "the regulator's flow enters the cabin whole whichever store feeds it: one unit in, one unit out", at: nominal}
   - id: E-LM-O2-ECLSS
     # as E-O2-ECLSS, at the second compartment
     advances: lm_cabin_o2_kg
@@ -1539,11 +1570,12 @@ edges:
     kind: rate
     sensitivity:
       value: 0.0003670684711943586
-      # The article, not a system: all forty-four thrusters are `thruster_100lbf`, whose Isp is
+      # The article, not a system: the SM and LM thrusters are `thruster_100lbf`, whose Isp is
       # declared **once** in `domains/rcs/components.yaml`, while `vehicle.yaml#propulsion` carries
-      # it three times — once per system that flies it. Binding the single declaration is the
-      # honest choice for a node (`prop_rcs`) that all three draw from, and round 106's join holds
-      # the domain's copy and the three vehicle entries equal in both directions either way.
+      # it twice — once per system that flies it. Binding the single declaration is the honest
+      # choice for the SM and LM, and round 106's join holds the domain's copy and the two vehicle
+      # entries equal in both directions. The CM's twelve engines draw from the same node at
+      # `thruster_cm`'s 272.0 s, 2 % more propellant per newton, which this one edge does not carry.
       derivation:
         expression: "1 / (isp_s * 9.80665)"
         inputs:
