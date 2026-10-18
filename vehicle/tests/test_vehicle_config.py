@@ -5145,14 +5145,14 @@ def test_the_linter_refuses_a_multi_state_node_with_no_declared_order(tmp_path):
 
     This is not ambiguity, it is a wrong answer waiting to happen: the frozen lexicographic rule
     sorts `link_margin_db` before `tx_power`, and transmit power is a term in the link budget — so the
-    derived order would compute every signal-to-noise ratio from last tick's power. Each node
+    derived order would compute every link margin from last tick's power. Each node
     with more than one producing state now declares either its order or that it has none, and
     `independent` is a permitted answer that has to carry a reason.
     """
     definition = copy_definition(tmp_path / "vehicle")
     path = definition / "coupling.yaml"
     text = path.read_text()
-    anchor = "    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_margin_db]\n"
+    anchor = "    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_margin_db, carrier_lock]\n"
     assert anchor in text, "the fixture no longer matches the `link` node"
     path.write_text(text.replace(anchor, "", 1))
 
@@ -10488,7 +10488,13 @@ def test_the_plant_advances_a_node_s_states_in_the_order_the_node_declares(tmp_p
         )
     # And the two independent nodes still get a frozen order, which is the tiebreak rather than a
     # declaration — the plant must not read "independent" as "whatever the file said".
-    assert [s.id for s in world.states_on("link")] == ["transmitter_on", "tx_power", "amp_dissipation_w", "link_margin_db"]
+    assert [s.id for s in world.states_on("link")] == [
+        "transmitter_on",
+        "tx_power",
+        "amp_dissipation_w",
+        "link_margin_db",
+        "carrier_lock",
+    ]
     assert [s.id for s in world.states_on("engine_main")] == sorted(
         ["aps_state", "dps_state", "sps_state"]
     )
@@ -20198,8 +20204,10 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # third modes.
     # 24 -> 28 with ADR 0003: thermal's three keyed commands and comms' `recorder_play`.
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
-    # 27 -> 28 with ECLSS's `suit_fan`, and 28 -> 29 with comms' `light_time_s`.
-    assert len(values["internal"]) == 29, sorted(values["internal"])
+    # 27 -> 28 with ECLSS's `suit_fan`, and 28 -> 30 with comms' `light_time_s` and `blackout`:
+    # the first resolves at t=0 from the orbit, the second is computed in the tick and lands in the
+    # sub-map since #47's merge. `carrier_lock` left the sentinel for `link` in the same change.
+    assert len(values["internal"]) == 30, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0
@@ -20244,8 +20252,8 @@ def test_the_frame_s_own_declaration_says_channel_ids_and_the_plant_sends_nodes(
     # 31 -> 32 when `load_enabled` joined `load_shed_state` (`power.load_shed_class`), and 32 -> 36
     # with ADR 0003's power rules: the bus loads and the module current joined the cells' power on
     # `fuel_cell`, so `bus_a_current_a`, `lcl_[n]_current_a`, `load_margin_w` and `source_1_current_a`
-    # read a crowded node again.
-    assert unnameable == 36, unnameable
+    # read a crowded node again. 36 -> 37 when `carrier_lock` joined `link` so that GNC can read it.
+    assert unnameable == 37, unnameable
 
     # The plant's half of the debt is closed: a frame's `values` keys are channel ids the registry
     # declares, and a channel that is *derived* from its source (a different unit) is omitted rather
