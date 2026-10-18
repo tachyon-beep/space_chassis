@@ -257,6 +257,7 @@ from faults import load_faults, load_postures, scenario_report  # noqa: E402
 from generate_help import generate as generate_help  # noqa: E402
 from generate_readme import generate as generate_readme  # noqa: E402
 from plant import (  # noqa: E402
+    NUMERIC_ARGUMENTS,
     Effect,
     EffectRefused,
     Scenario,
@@ -275,6 +276,7 @@ from plant import (  # noqa: E402
     interlock_tripped,
     load_scenario,
     load_world,
+    numeric_argument,
     point_reading,
     resolve_interlock,
     state_hash,
@@ -1323,7 +1325,13 @@ def _value_text(value: Any) -> str:
 
 
 def dwell_after_effect(
-    world: World, dwell: dict[str, Any], verb: str, now_us: int, before: dict[str, Any], after: dict[str, Any]
+    world: World,
+    dwell: dict[str, Any],
+    verb: str,
+    now_us: int,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    arguments: dict[str, Any] | None = None,
 ) -> list[str]:
     """Restart the dwell clock of every state a verb moved, and say what moved: the live cycle's and replay's.
 
@@ -1332,13 +1340,13 @@ def dwell_after_effect(
     Returns `node=level` (or `internal:id=level`) for each moved target, for the result's sentence.
     """
     changed: list[str] = []
-    for state in command_targets(world, verb):
+    for state in command_targets(world, verb, arguments):
         if value_of(before, state) == value_of(after, state):
             continue
         level = state_level(after, state)
         changed.append(f"internal:{state.id}={level}" if state.node == "internal" else f"{state.node}={level}")
     if changed:
-        for state, _, _ in command_dwell(world, verb):
+        for state, _, _ in command_dwell(world, verb, arguments):
             left = value_of(before, state)
             dwell[state.id] = {
                 "changed_at_us": now_us,
@@ -2573,7 +2581,9 @@ def replay_record(world: World, body: dict[str, Any], record: Record, *, through
             if link != row["lineage"]:
                 raise RecordRefused("lineage", "the replayed lineage link is not the recorded one", tick=tick, segment=segment.boot_id)
             for effect in effects:
-                dwell_after_effect(world, dwell, effect.verb, (tick - 1) * tick_us + effect.offset_us, before, truth)
+                dwell_after_effect(
+                    world, dwell, effect.verb, (tick - 1) * tick_us + effect.offset_us, before, truth, effect.arguments
+                )
             if row["receipt"] < receipt:
                 raise RecordRefused("row", f"the receipt counter goes back from {receipt} to {row['receipt']}", tick=tick, segment=segment.boot_id)
             receipt = row["receipt"]
@@ -4503,6 +4513,12 @@ class Executive:
                     f"refused: {name!r} is {size} bytes, past its {source} of {bound}. A value with "
                     "no size is a result file and a value map with no size either.\n"
                 )
+            if declared.get("type") in NUMERIC_ARGUMENTS:
+                # A number's range is the verb's declaration, and the plant holds the call to it.
+                try:
+                    numeric_argument(verb, name, value, declared)
+                except EffectRefused as exc:
+                    return f"refused: {exc}.\n"
             if declared.get("type") == "enum":
                 values = [str(v) for v in declared.get("values") or []]
                 if values and value not in values:
@@ -4566,7 +4582,9 @@ class Executive:
         """The current value(s) of a state, as text, wherever the map keeps them (`value_of`)."""
         return value_of(values, state)
 
-    def dwell_refusal(self, verb: str, staged: dict[str, Any] | None) -> str | None:
+    def dwell_refusal(
+        self, verb: str, staged: dict[str, Any] | None, arguments: dict[str, Any] | None = None
+    ) -> str | None:
         """The minimum-dwell guard, in simulated seconds, evaluated at the moment of effect.
 
         `min_on_s` is how long the state must hold a value before it may change; `min_off_s` is
@@ -4576,7 +4594,7 @@ class Executive:
         floor, because the vehicle starts with its machine where the configuration put it.
         """
         now_us = self.tick * self.tick_us
-        for state, min_on_s, min_off_s in command_dwell(self.world, verb):
+        for state, min_on_s, min_off_s in command_dwell(self.world, verb, arguments):
             last = self.dwell.get(state.id)
             if last is None:
                 continue
@@ -4794,7 +4812,7 @@ class Executive:
                 staged = apply_command(self.world, probe, verb, arguments)
             except Unconfigured as exc:
                 unconfigured = exc
-        guard = self.dwell_refusal(verb, staged)
+        guard = self.dwell_refusal(verb, staged, arguments)
         if guard is not None:
             return refused(guard)
         if unconfigured is not None:
@@ -4852,9 +4870,19 @@ class Executive:
                 f"accepted: {verb!r} armed {event!r} for window {window.slug!r}. Token: {token}\n"
                 "This is the only result on the vehicle that carries a token, and it is bound to "
                 "this window and this event: `execute_event` will refuse a token minted for a "
-                "different one, from a different window, or already consumed. Arming does nothing "
-                "physical — every guard is evaluated at the moment of effect, not now.\n"
+                "different one, from a different window, or already consumed. "
             )
+            if staged is None:
+                verdict.body += (
+                    "Arming does nothing physical — every guard is evaluated at the moment of "
+                    "effect, not now.\n"
+                )
+                return verdict
+            # A domain that declares the armed position (`command_value` for `arm_event`) gets it in
+            # the truth like any other command's effect; the guards on the event itself are still
+            # evaluated at the moment of `execute_event`, not now.
+            verdict.body += "The armed position is staged for this tick.\n"
+            verdict.effect = Effect(0, verb, arguments)
             return verdict
 
         verdict = self._verdict(window, command, "accepted", "", verb=verb, arguments=arguments)
@@ -4948,7 +4976,9 @@ class Executive:
         """
         verb = str(verdict.verb)
         now_us = verdict.tick * self.tick_us + verdict.effect.offset_us
-        changed = dwell_after_effect(self.world, self.dwell, verb, now_us, before, after)
+        changed = dwell_after_effect(
+            self.world, self.dwell, verb, now_us, before, after, verdict.effect.arguments
+        )
         if changed:
             return (
                 f"succeeded: {verb!r} applied at tick {verdict.tick}, offset 0 µs. "
@@ -6004,6 +6034,13 @@ def load_scenario_file(world: World, path: Path) -> ScenarioFile:
         raise ValueError(
             f"--scenario-file {path} carries a `script`, which is batch mode's: a window run takes its commands "
             "through the window, so the file is refused rather than half-applied"
+        )
+    if scenario.faults:
+        # WP09: the live cycle and its replay (`advance`, the lineage link) do not carry fault onsets
+        # yet, so a window world would run the scenario's faults as if they were not there.
+        raise ValueError(
+            f"--scenario-file {path} carries `faults`, which batch mode injects (`plant.run_scenario`) "
+            "and the window run does not yet: the file is refused rather than run without them"
         )
     return ScenarioFile(Path(path), scenario, digest)
 
