@@ -1,6 +1,6 @@
 # Programme status
 
-As of **2026-10-17 23:06 UTC**, `tachyon-beep/space_chassis` `main` @ `ee08d50`. Kept by the
+As of **2026-10-18 00:29 UTC**, `tachyon-beep/space_chassis` `main` @ `91bed2f`. Kept by the
 governance thread during the vehicle sprint (`decisions.md` D30) and refreshed after each merge,
 decision or lane event the coordinator relays. **Verify against the code and the PRs before trusting
 any line here.** This is the page a new agent reads to learn who owns what and what waits on whom;
@@ -11,7 +11,7 @@ the sprint's rules and history are in
 
 | | where | checked |
 |---|---|---|
-| `main` | `ee08d50` (governance #65); since 2026-10-15: #2–#9, #35–#38, #40 tranche 2 (`54257b7`), #41 recovery fix (`c1b244d`), #42, then the sprint's #45 and #46, governance #52, #53, #55, #57, #59, #60, #62 (`e18e022`), #61, #63 (`f4d576a`), #58 (`032d12c`) and #65 (`ee08d50`) | `git log --first-parent origin/main` |
+| `main` | `91bed2f` (aurora #67); since 2026-10-15: #2–#9, #35–#38, #40 tranche 2 (`54257b7`), #41 recovery fix (`c1b244d`), #42, then the sprint's #45 and #46, governance #52, #53, #55, #57, #59, #60, #62 (`e18e022`), #61, #63 (`f4d576a`), #58 (`032d12c`), #65 (`ee08d50`) and #67 (`91bed2f`) | `git log --first-parent origin/main` |
 | vehicle | 160 states, **86 ready**, 23 owe a value, 12 an edge, 39 a rule; **261** declared debts (152 / 74 / 265 before #46); a trial merge of nine sprint PRs measured 124 of 179 ready ([vehicle status report](https://claude.ai/code/artifact/d86a2e9b-4b1c-4be4-907e-ff5c8e65defe)) | `vehicle/tools/plant.py --build-order`; `check_vehicle.py` on `9a0430a` |
 | quiet-coast episode | accepted after #40 (policies A/B full success, C partial, D physical loss; restart at tick 60,000 reproduces every hash). A milestone, not a record: lanes may move its numbers (D29) | PR #40 |
 | CI | `required` rolls up lint, the aurora suite, the vehicle check on 3.12 and 3.13 (~50 min each), readiness and the quiet-coast episode jobs (hours); vehicle jobs skip when a change cannot touch `vehicle/` | `.github/workflows/ci.yml` |
@@ -164,7 +164,6 @@ Nothing in the sprint changes for it.
 |---|---|---|
 | `vehicle/tests/test_vehicle_config.py::test_a_sub_tick_effect_lands_where_a_short_tick_would_have_put_it` is deselected in `ci.yml` | it needs more than 13 GB; a hosted runner has 16 GB | the vehicle line makes it fit and the `--deselect` line goes |
 | the aurora suite is not held to zero skips | two tests skip by design (`aurora/tests/test_doc_claims.py`) | — |
-| a second tier-1 timing flake in the aurora suite (after #61's) | the watch stopped before every window had republished | [#67](https://github.com/tachyon-beep/space_chassis/pull/67) merges (test-only: the watch runs until every window republishes, 30 s cap; in review, merges on green plus a clear verdict) |
 | the live smoke stack is not a required check | `live.yml` builds the image and proves the world, not a change | run it by hand before any adoption merge |
 
 ## History
@@ -173,4 +172,4 @@ Nothing in the sprint changes for it.
 - 2026-10-15: three-stream restructure (#2); governance review; D1–D23.
 - 2026-10-17: tranche 2 (#40) accepted the quiet-coast episode; #41 and #42 merged; the vehicle
   sprint opened (D24–D31, [`records/2026-10-17-vehicle-sprint.md`](records/2026-10-17-vehicle-sprint.md));
-  governance batches #52, #53, #55, #57, #59, #60, #62, #63, #65 (D24–D60); #46, the first lane, merged; #58 merged.
+  governance batches #52, #53, #55, #57, #59, #60, #62, #63, #65 (D24–D60); #46, the first lane, merged; #58 merged; aurora #67 (second tier-1 flake) merged.
