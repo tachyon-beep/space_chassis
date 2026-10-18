@@ -13281,6 +13281,21 @@ RCS_AXES = {
 }
 # Each SM quad's angle from +Y_c towards +Z_c in the DAP's control axes (R-577 s. 3.2).
 RCS_SM_QUAD_ANGLE_DEG = {"B": 0.0, "C": 90.0, "D": 180.0, "A": 270.0}
+# The SM quad placement as published: Data Book SNA-8-D-027(I) Fig 4.3-2 and ODB Fig 2-5 (station,
+# both radii, 10 deg cant, 7 deg 15' offset), restated by R-577 s. 6.4.1.3 (station, negative
+# rotation about +X, CANT 10.0). The torque-sign check is blind to all five, so each is held here.
+RCS_SM_PUBLISHED = {
+    "frame": "APOLLO_XA",
+    "quad_station_xa_in": 958.97,
+    "pitch_yaw_radius_in": 82.36,
+    "roll_radius_in": 83.00,
+    "quad_offset_deg": -7.25,
+    "cant_deg": 10.0,
+}
+# The CM frame against the Apollo frame (R577-6 s. 6.11.2, CG 1045.1 in "Apollo coordinates"
+# against X_C 45.1), and each LM cluster's Y and Z signs by its quad numeral (R-567 s. 6.4.1.4).
+RCS_CM_FRAME = {"x_offset_in": 1000.0, "axes": "parallel"}
+RCS_LM_QUAD_SIGNS = {"I": (False, True), "II": (False, False), "III": (True, False), "IV": (True, True)}
 
 
 def rcs_sm_jet_vector(jet: dict[str, Any], cant_deg: float) -> tuple[float, float, float]:
@@ -13358,19 +13373,27 @@ def check_rcs_cm_vectors(
 def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
     """The RCS jet tables must reproduce the sources that cross-check them.
 
-    `domains/rcs/components.yaml#geometry` lands two jet tables (`docs/evidence/
-    wp03-rcs-geometry.md`). Each was transcribed by hand from an OCR text layer, so each carries
-    a relation it must satisfy, and a transcription error breaks it:
+    `domains/rcs/components.yaml#geometry` lands three jet tables (`docs/evidence/
+    wp03-rcs-geometry.md`). Each was transcribed by hand from a source page, so each carries a
+    relation it must satisfy, and a transcription error breaks it:
 
       - **SM.** The table is the CSM digital autopilot's selection tables (R-577 s. 3,
         Tables 3.2-III to 3.2-X) placed on quads. Every jet's declared torque and translation is
         re-derived from tau = r x F at its quad's centreline intersection, and a jet whose geometry
         would turn or push the vehicle the other way is refused. Four jets per quad, two
         rotational and two roll, sixteen in all.
+      - **CM.** Each subsystem turns the CM both ways about every axis, and every thrust vector
+        is rebuilt from the Data Book drawing's angles and its torque sign checked
+        (`check_rcs_cm_vectors`).
       - **LM.** The simulator's positions must reproduce the Operational Data Book's three
         flight-hardware dimensions (254.0 in cluster plane, 66.1 and 61.5 in effective moment
         arms) to their printed tenth of an inch, and every jet must exhaust away from its own
         cluster's centre, which is the rule that decides jet 4's unread sign.
+
+    Signs alone are blind to scale and placement: a wrong station, radius, cant or offset, or a
+    whole LM table turned 180 deg about X, keeps every torque sign. So the SM's five placement
+    figures are held to their published values (`RCS_SM_PUBLISHED`), the CM frame to its stated
+    offset from the Apollo frame, and each LM jet to the quadrant its quad numeral names.
     """
     raw_rcs = documents.get("domains/rcs/components.yaml")
     rcs = raw_rcs if isinstance(raw_rcs, dict) else {}
@@ -13383,11 +13406,20 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
     sm = geometry.get("rcs_sm")
     sm_where = f"{where}.rcs_sm"
     sm_jets = sm.get("jets") if isinstance(sm, dict) else None
-    if not isinstance(sm_jets, list) or [j.get("id") for j in sm_jets if isinstance(j, dict)] != list(
-        range(1, 17)
+    if (
+        not isinstance(sm_jets, list)
+        or not all(isinstance(j, dict) for j in sm_jets)
+        or [j.get("id") for j in sm_jets] != list(range(1, 17))
     ):
         report.refuse(sm_where, "must list the DAP's jets 1 to 16 in order")
     else:
+        for field, published in RCS_SM_PUBLISHED.items():
+            if sm.get(field) != published:
+                report.refuse(
+                    f"{sm_where}.{field}",
+                    f"declares {sm.get(field)!r}; the Data Book and ODB Fig 2-5 publish {published!r}, "
+                    "and the torque-sign check cannot see this figure, so it is held to the source",
+                )
         cant = float(sm.get("cant_deg", 0.0))
         radii = {
             "pitch_yaw": float(sm.get("pitch_yaw_radius_in", 0.0)),
@@ -13461,6 +13493,13 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
                     f"each, odd-numbered jets positive (AOH Figure 2.5-1); it declares {torques}",
                 )
         check_rcs_cm_vectors(cm, cm_jets, f"{where}.rcs_cm", report)
+        if cm.get("frame") != "CM_XC" or cm.get("frame_to_apollo_xa") != RCS_CM_FRAME:
+            report.refuse(
+                f"{where}.rcs_cm.frame_to_apollo_xa",
+                f"declares {cm.get('frame_to_apollo_xa')!r} for frame {cm.get('frame')!r}; CM_XC is "
+                f"APOLLO_XA moved 1000 in along X with parallel axes ({RCS_CM_FRAME!r}), and a CM "
+                "position cannot be combined with an SM one without it",
+            )
 
     lm = geometry.get("rcs_lm")
     lm_where = f"{where}.rcs_lm"
@@ -13476,6 +13515,13 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
         if not isinstance(position, list) or len(position) != 3 or jet.get("force_axis") not in RCS_AXES:
             report.refuse(f"{lm_where}.jets.{jet.get('id')}", "needs a 3-vector position and a signed axis")
             return
+        numeral = str(jet.get("name", "")).split("-")[0]
+        if RCS_LM_QUAD_SIGNS.get(numeral) != (position[1] > 0, position[2] > 0):
+            report.refuse(
+                f"{lm_where}.jets.{jet.get('id')}",
+                f"is {jet.get('name')!r} and sits at Y, Z signs ({position[1]:+.2f}, {position[2]:+.2f}) m; "
+                f"quad {numeral} is on the {RCS_LM_QUAD_SIGNS.get(numeral)!r} (Y > 0, Z > 0) side",
+            )
         clusters.setdefault((position[1] > 0, position[2] > 0), []).append(jet)
     if len(clusters) != 4 or any(len(group) != 4 for group in clusters.values()):
         report.refuse(lm_where, "must place four jets in each of the four Y-Z quadrants")

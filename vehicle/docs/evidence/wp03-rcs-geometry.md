@@ -112,7 +112,7 @@ therefore one that a flight-hardware document states independently, and the YAML
   says nothing about later LM changes to jet placement.
 - **Units.** m in the YAML, as printed; the ODB check is in inches.
 - **Home.** `geometry.rcs_lm` (frame `LM_XE`).
-- **Thrust.** 444.82 N is 100 lbf exactly and agrees with the 445 N already declared.
+- **Thrust.** 444.82 N is 100 lbf rounded to 0.01 N (444.822) and agrees with the 445 N already declared.
 - **Not printed.** No cant. R567-6 models every LM jet as pushing along one axis.
 
 ## G-4 LM jet 4's sign (filled)
@@ -153,14 +153,21 @@ therefore one that a flight-hardware document states independently, and the YAML
   15/25, -yaw 16/26, +roll 11/21, -roll 12/22, subsystem 1 = 11-16 (DB1's system A).
   Corroborated by AOH p. 2.3-32 (direct coils on all CM engines "except 13 and 23") and p. 2.5-39
   (the dump excludes "the two + pitch engines").
-- **Validation.** Every derived vector turns the CM the way its engine's function says, about the
-  R577-6 simulator CG (41.7, -0.4, 5.6 in), and the vectors reproduce R577-6 s. 6.11.2's
-  hybrid-simulator moment-arm table to 0.05 ft on ten of twelve jets. The two rows that differ
+- **Validation.** Every derived vector turns the CM the way its engine's function says about the
+  R577-6 s. 6.5.2 digital-simulator CG (41.7, -0.4, 5.6 in), which is the linter's check point.
+  About the s. 6.11.2 hybrid simulator's own CG (X_C 45.1, Y -0.4, Z 6.0 in), the vectors
+  reproduce that section's moment-arm table to 0.05 ft on ten of twelve jets. The two rows that differ
   (its jets 1 and 11) disagree with their own mirror jets, so the simulator table is read as wrong
   there. `check_rcs_geometry` rebuilds each vector from the angles and checks its torque sign.
-- **Fidelity.** Lands: every CM pitch and yaw jet also turns the CM a little about the other two
-  axes, and the two subsystems' couplings cancel only when both fire. A single-subsystem entry
-  therefore shows a cross-coupling that reads like a misaligned or failed jet: a confounder.
+- **Fidelity.** Lands: every CM jet also turns the CM about the other two axes, and firing both
+  subsystems does not cancel it except for pitch. About the check point, per pair at 427 N each:
+  the pitch pairs (13+23, 14+24) leave under 1 % cross-axis; a yaw pair (15+25 or 16+26) leaves
+  about 83 N·m roll, opposite in sign to its yaw, and 89 N·m nose-up pitch whichever way it yaws
+  (6 % and 6.5 % of its 1,350 N·m); a roll pair (11+21 or 12+22) leaves 96 N·m pitch and 120 N·m
+  yaw (7 % and 9 %). So a CM attitude hold in yaw or roll keeps feeding pitch, and a crew or
+  controller sees a drift that reads like a misaligned or failed jet: a confounder, with the
+  sizes moving with the real CG. (An earlier version of this record said the couplings cancel
+  when both subsystems fire; recomputed, that holds only for pitch.)
   Not modelled: the nozzle extensions' alignment angles (DB1 Table 4.4-3, 0.74-8.23 deg in vacuum)
   and the thrust's fall with altitude during entry (same table), both for the CM article's lane.
 - **Home.** `geometry.rcs_cm`.

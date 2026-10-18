@@ -98,8 +98,10 @@ capability:
       basis: derived
       relation: "mdot = F / (Isp * g0) = 445 / (277.8 * 9.80665) = 0.16335 kg/s per thruster"
       note: >-
-        all three systems share the 100 lbf thruster and the same 277.8 s, so one figure serves
-        them all. The inverse is the edge sensitivity: 277.8 * 9.80665 = 2724.3 N per kg/s.
+        the SM and LM share the 100 lbf thruster and the same 277.8 s, so one figure serves both.
+        The CM's own engine (`thruster_cm`, 427 N at 272.0 s) flows 427 / (272.0 * 9.80665) =
+        0.16008 kg/s; `E-RCSP-RCS` still debits it at this figure's coefficient, 2.1 % low, which
+        is that edge's to carry (G-7). The inverse is the edge sensitivity: 277.8 * 9.80665 = 2724.3 N per kg/s.
         **This is the number C-26 moved, and it is now the guide's own measurement reproduced**:
         `lm_propulsion_rcs_study_guide.pdf` PDF p. 90 gives the flow as 0.24 + 0.12 lb/s =
         0.163293 kg/s at 100 lbf, and 0.163345 is 0.03 % from it — where the 290 s this replaces
@@ -128,9 +130,9 @@ capability:
         the total impulse each load can produce if every kilogram is burned through its own
         thrusters — 1.656e6 N*s for the service module and 7.846e5 for the LM at C-26's 277.8 s,
         and 2.987e5 for the command module at its own engine's 272.0 s (it was 3.051e5 while the
-        CM engine was taken to be the SM article) (they were 1.729e6 / 3.185e5 / 8.191e5 at the unsourced
-        290 s: **the same tanks now price 4.2 % less impulse**, which is the direction the
-        decision moves the tightest load in the mission). It is an upper bound and the ceiling of `rcs.total_impulse_ns`, which is
+        CM engine was taken to be the SM article, and 1.729e6 / 3.185e5 / 8.191e5 at the unsourced
+        290 s before C-26: **the same tanks now price 4.2 % less impulse** in the SM and LM, which
+        is the direction the decision moves the tightest load in the mission). It is an upper bound and the ceiling of `rcs.total_impulse_ns`, which is
         what makes the published total impulse checkable against the published load: a total
         impulse above this figure is not a thruster that has been busy, it is a spent tank. Most
         of it will be attitude control rather than translation, so the figure prices an
@@ -207,8 +209,7 @@ capability:
         side rather than on this domain's unsourced 290 s
 
 # --------------------------------------------------------------------------------------
-# Geometry. Where each jet is and which way it pushes, for the SM and LM systems; the CM's
-# is still owed. The research record is `docs/evidence/wp03-rcs-geometry.md`; this block is
+# Geometry. Where each jet is and which way it pushes, for the SM, CM and LM systems. The research record is `docs/evidence/wp03-rcs-geometry.md`; this block is
 # the canonical home of every value it lands, and `check_rcs_geometry` holds it together.
 # --------------------------------------------------------------------------------------
 geometry:
@@ -296,6 +297,14 @@ geometry:
   # wrong way. Thrust and Isp are the CM article's, `thruster_cm` (G-7).
   rcs_cm:
     frame: CM_XC
+    # CM_XC is APOLLO_XA moved 1000 in along X, with the same axes: X_A = X_C + 1000 in,
+    # Y_A = Y_C, Z_A = Z_C, right-handed. R577-6 s. 6.11.2 gives the hybrid simulator's CG as
+    # X 1045.1 in "Apollo coordinates", and these vectors reproduce its moment-arm table about
+    # X_C 45.1 with no rotation (G-6). The SM jet table is in control axes, APOLLO_XA turned by
+    # its `quad_offset_deg` (-7.25 deg) about +X, so an SM vector is turned back by +7.25 deg
+    # before it is combined with a CM one; the CM's engines are placed by their own theta angles
+    # from Data Book Fig 4.4-2.
+    frame_to_apollo_xa: {x_offset_in: 1000.0, axes: parallel}
     aft_engine_angle_deg: 47.0
     roll_alpha_deg: 46.402778
     roll_beta_deg: 56.374444
@@ -340,8 +349,11 @@ geometry:
         `torque_check_point_in` is R-577 s. 6.5.2's simulator CM centre of gravity, used only to
         check torque signs, never as a mass property. The nozzle extensions' alignment angles
         (SNA-8-D-027(I) Table 4.4-3, 0.74-8.23 deg in vacuum) are not modelled. Every pitch and
-        yaw jet also turns the CM a little about the other two axes, and the two subsystems'
-        couplings cancel only when both fire: the confounder a single-subsystem entry shows (G-6)
+        yaw jet also turns the CM about the other two axes, and firing both subsystems does not
+        cancel it for the yaw and roll pairs: about this check point a yaw pair leaves about 6 %
+        of its yaw torque as roll and 6.5 % as nose-up pitch whichever way it yaws, and a roll pair
+        7 % as pitch and 9 % as yaw. Only the pitch pairs cancel to under 1 %. That is the
+        confounder a CM attitude hold shows (G-6)
 
   # The LM's sixteen jets, from the LUMINARY simulator's control data, whose three printed
   # dimensions the Operational Data Book's flight-hardware figure states independently.

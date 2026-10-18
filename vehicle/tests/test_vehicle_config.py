@@ -18581,8 +18581,41 @@ def test_the_linter_refuses_an_rcs_jet_table_that_breaks_its_cross_check(tmp_pat
     The LM table is a simulator's, and its positions must reproduce the Operational Data Book's
     66.1 in moment arm; its jet 4 sign is derived from the rule that a jet exhausts away from its
     own cluster, so flipping it back to the printed +Y must be refused.
+
+    Signs cannot see scale or placement, so the breaks that keep every sign are here too: a wrong
+    SM station or cant, a CM table with no stated relation to the Apollo frame, and the whole LM
+    table turned 180 deg about X, which keeps every arm and every exhaust direction.
     """
+
+    def rotate_lm(doc):
+        for jet in doc["geometry"]["rcs_lm"]["jets"]:
+            p = jet["position_m"]
+            jet["position_m"] = [p[0], -p[1], -p[2]]
+            axis = jet["force_axis"]
+            if axis[1] in "YZ":
+                jet["force_axis"] = ("-" if axis[0] == "+" else "+") + axis[1]
+
     for name, break_entry, expected in (
+        (
+            "sm-station-misread",
+            lambda doc: doc["geometry"]["rcs_sm"].update(quad_station_xa_in=958.0),
+            "rcs_sm.quad_station_xa_in: declares 958.0",
+        ),
+        (
+            "sm-cant-misread",
+            lambda doc: doc["geometry"]["rcs_sm"].update(cant_deg=5.0),
+            "rcs_sm.cant_deg: declares 5.0",
+        ),
+        (
+            "cm-frame-unstated",
+            lambda doc: doc["geometry"]["rcs_cm"].pop("frame_to_apollo_xa"),
+            "rcs_cm.frame_to_apollo_xa: declares None",
+        ),
+        (
+            "lm-table-rotated-180",
+            rotate_lm,
+            "rcs_lm.jets.1: is 'IV-U' and sits at Y, Z signs",
+        ),
         (
             "sm-jet-on-wrong-quad",
             lambda doc: doc["geometry"]["rcs_sm"]["jets"][0].update(quad="A"),
