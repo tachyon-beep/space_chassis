@@ -110,45 +110,50 @@ commands:
     argument_schema:
       vehicle: {type: enum, values: [csm, lm]}
       source: {type: enum, values: [primary, surge, isolated]}
-      flow: {type: enum, values: ["off", "low", "nominal", "high"]}
     authority: A2
     gate: {kind: preference, variable: o2_<vehicle>_<source>_enable}
-    interlocks: [eclss.cabin_pressure_caution, o2_reserve_10]
+    interlocks: [eclss.cabin_pressure_caution, eclss.lm_cabin_pressure_caution, o2_reserve_10,
+                 eclss.o2_supply_low]
     # Two arguments together (ADR 0004 §Direction, amended 2026-10-17): which way a command moves
-    # each hazard depends on the source *and* the flow, so each guard names the combinations it
-    # applies to. Owned by the ECLSS lane, which owns this verb's interlocks.
+    # each hazard depends on the vehicle *and* the source, so each guard names the combinations it
+    # applies to. The flow band is `set_o2_flow`'s (`eclss.o2_flow`), not an argument here. Owned by
+    # the ECLSS lane, which owns this verb's interlocks.
     interlocks_when:
       - interlocks: [eclss.cabin_pressure_caution]
-        argument: [source, flow]
+        argument: [vehicle, source]
         values:
-          - [isolated, "off"]
-          - [isolated, low]
-          - [isolated, nominal]
-          - [isolated, high]
-          - [primary, "off"]
-          - [surge, "off"]
+          - [csm, isolated]
         why: >-
           a cabin below its 4.5 psia caution is losing gas, and what makes it worse is cutting its
-          oxygen: an isolated supply, whatever the flow, or a flow of `off`, whatever the source.
-          Any flow from `primary` or `surge` admits oxygen and is the recovery, so it is never
-          refused by this guard; the emergency regulator's published job is exactly that, holding
-          the cabin above 3.5 psia for as long as the supply lasts (`apollo_diode.md:84`)
-      - interlocks: [o2_reserve_10]
-        argument: [source, flow]
+          oxygen: an isolated supply. `primary` and `surge` admit oxygen and are the recovery, so
+          they are never refused by this guard; the emergency regulator's published job is exactly
+          that, holding the cabin above 3.5 psia for as long as the supply lasts
+          (`apollo_diode.md:84`). The guard reads the CSM's cabin, so it guards the CSM's element
+      - interlocks: [eclss.lm_cabin_pressure_caution]
+        argument: [vehicle, source]
         values:
-          - [primary, low]
-          - [primary, nominal]
-          - [primary, high]
+          - [lm, isolated]
+        why: >-
+          the same hazard in the LM's cabin, which `eclss.cabin_o2_supply_lm_kg_s` stops feeding
+          when its source is `isolated`; a CSM caution neither licenses nor blocks it
+      - interlocks: [o2_reserve_10, eclss.o2_supply_low]
+        argument: [vehicle, source]
+        values:
+          - [csm, primary]
         why: >-
           the reserve this guard watches is the service module's cryogenic oxygen (`o2_csm`, through
-          `res.o2_remaining_kg`), and only a flow drawn from `primary` spends it. `csm_ecs_study_guide.pdf`
+          `res.o2_remaining_kg`), and only the CSM's `primary` spends it. `csm_ecs_study_guide.pdf`
           PDF p. 12 (printed p. 2-1, §2.1-2.2.1) places the two cryogenic tanks in the S/M and the
           3.7 lb surge tank in the command module's LH equipment bay, fed in parallel downstream of
           the S/M shut-off valve, so `surge` draws a different store and `isolated` draws none.
-          `primary` at `off`, `surge` and `isolated` are the recovery, and the surge tank's own
-          floor is not this guard's to hold. The vehicle does not yet model the surge store:
-          `set_o2_source` has no effect and `E-O2-SUPPLY-CSM` drains `o2_csm` whatever the source,
-          so until the surge stock lands `surge` is admitted here while the S/M tanks keep draining
+          `surge` and `isolated` are the recovery, and the surge tank's own floor is not this
+          guard's to hold. In the plant `surge` moves the regulator's draw to
+          `eclss.o2_surge_csm_kg` (`eclss.o2_source`), so the S/M tanks stop feeding the cabin.
+          `primary` is refused whatever the band, because the band is `set_o2_flow`'s;
+          `set_o2_flow flow=off` is the other recovery. The LM draws on its own store
+          (`consumables.o2_lm_kg`), which this guard does not watch. `eclss.o2_supply_low` is the
+          same store read as pressure (the S/M supply below 750 psi), so it guards the same choice;
+          it moved here from `set_o2_flow`, where it refused the surge tank after a primary loss
     conflict_domain: res.<vehicle>.o2_source
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]
@@ -157,14 +162,14 @@ commands:
     execution_class: declarative
     maximum_queue_age_s: 60
     help: >-
-      Select an oxygen source and a flow band. A flow band rather than a rate because the
-      regulator owns the rate; what an agent chooses is which tank the regulator draws from,
+      Select the oxygen source the cabin regulator draws from. How hard it draws is
+      `set_o2_flow`'s band; what an agent chooses here is which tank the regulator draws from,
       and a vehicle that has to reason about its own reserve should be able to say "spend this
       tank first".
     provenance:
       basis: apollo
       ref: "apollo_diode.md:238"
-      note: "apollo's set_o2_source; the flow band is added because the cabin regulator's mode is a separate control and a source with no flow control cannot be conserved against a leak"
+      note: "apollo's set_o2_source. It carried a flow band too until PR #64; the band is set_o2_flow's alone, because a second writer bypassed that verb's gate and fire and overpressure guards, and an argument that moved nothing was accepted as though it had"
 
   # `set_absorber_path` used to live here. It moved to `domains/eclss/` in round 6, and the
   # reason is the distinction that runs through the vehicle: **consumables owns the stock and
