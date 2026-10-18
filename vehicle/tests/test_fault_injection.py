@@ -43,8 +43,7 @@ POWER_ONSET = """    moved_by: ["command:set_load", "fault:PWR-03-lcl-nuisance-t
         becomes: "off"
         provenance: {basis: chosen, reason: "a test fixture: the trip drops one load"}
 """
-THERMAL_ONSET = """    initial: 1086.9
-    moved_by: ["fault:TCS-03-radiator-isolation"]
+THERMAL_ONSET = """    moved_by: ["fault:TCS-03-radiator-isolation"]
     fault_value:
       - fault: TCS-03-radiator-isolation
         scale: 1.5
@@ -76,12 +75,21 @@ def faulted_copy(destination: Path) -> Path:
         '    moved_by: ["command:set_load"]\n',
         POWER_ONSET,
     )
-    replace(
-        destination / "domains" / "thermal" / "components.yaml",
-        "    initial: 1086.9\n",
-        THERMAL_ONSET,
+    after_initial(
+        destination / "domains" / "thermal" / "components.yaml", "environment_heat_w", THERMAL_ONSET
     )
     return destination
+
+
+def after_initial(path: Path, state_id: str, rows: str) -> None:
+    """Insert `rows` after `state_id`'s `initial:` line, found by the state's id, not its value."""
+    lines = path.read_text().splitlines(keepends=True)
+    start = lines.index(f"  - id: {state_id}\n")
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("  - id: ")), None)
+    initial = [i for i in range(start, end or len(lines)) if lines[i].startswith("    initial: ")]
+    assert len(initial) == 1, f"the fixture finds no one `initial:` for {state_id} in {path.name}"
+    lines.insert(initial[0] + 1, rows)
+    path.write_text("".join(lines))
 
 
 def replace(path: Path, old: str, new: str) -> None:
