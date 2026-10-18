@@ -19,7 +19,7 @@ the sprint's rules and history are in
 
 ## Vehicle sprint: who holds what
 
-Merge order: ~~#45~~ (merged 14:46, `e990b25`) → ~~#46~~ (merged by 19:33, `9a0430a`) → ~~#58~~ (merged 22:18, `032d12c`) → ~~#47~~ (merged 00:56, `a8cb890`) **→ dependencies only** (from 00:56): #66, #43 and #64 merge on green after rebasing; #49 follows #43; #51 and #48 get a reviewer check of their post-rebase changes first; #50 waits for lane 9's C1; #54, #56 and #44 leave draft when ready. From 16:09 each PR also needs a non-blocking independent review verdict (D54) (rebase onto `main`, merge when `required` is green).
+Merge order: ~~#45~~ (merged 14:46, `e990b25`) → ~~#46~~ (merged by 19:33, `9a0430a`) → ~~#58~~ (merged 22:18, `032d12c`) → ~~#47~~ (merged 00:56, `a8cb890`) **→ dependencies only** (from 00:56): #66, #43 and #64 merge on green after rebasing; #49 follows #43; #51 and #48 get a reviewer check of their post-rebase changes first; #50 waits for lane 9's C1; #44 and #54 are reviewed clear and merge on green; #56 leaves draft when ready. From 16:09 each PR also needs a non-blocking independent review verdict (D54) (rebase onto `main`, merge when `required` is green).
 After the lanes merge: a light-touch fidelity calibration pass per station (D45).
 #45 is on `main`; every lane rebases. A PR that closes a state no longer touches the test figures #45
 unpinned; the census figures #45 kept stay pinned until #58 merges, and only after that does such a PR

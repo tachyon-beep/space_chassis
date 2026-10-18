@@ -107,10 +107,11 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   GitHub's Codex bot reviews every push, so each fix invites another round: once a governance batch's verdict is
   clear, its head is frozen, and a further record-only Codex finding is answered on its thread and carried to the next
   batch, not pushed (coordinator, 01:11 on 2026-10-18, first on #69).
-- **Sprint lane PRs carry no README round section** (01:22 on 2026-10-18). `vehicle/AGENTS.md:153-175` asks a
-  configuration round for a `vehicle/README.md` section; the sprint's lane PRs land under its runtime capability clause ("one
-  coherent, independently tested outcome per PR") and add none (#46, #58, #67 and #47 did not), and no check enforces it. A lane may add one
-  anyway (#44's follow-up does). Raised by the reviewer in `pr-44.md`.
+- **README round sections in the sprint** (01:22 on 2026-10-18). `vehicle/AGENTS.md:153-175` asks a configuration
+  round for a `vehicle/README.md` section. The sprint's lane PRs have landed as runtime capability work ("one coherent,
+  independently tested outcome per PR") and added none (#46, #58, #67 and #47 did not); no check enforces the section.
+  This records what happened, not an exemption: a PR that is a configuration/refusal round still owes its section under
+  `vehicle/AGENTS.md`, which the vehicle line owns (#44's follow-up adds one). Raised by the reviewer in `pr-44.md`.
 - **A guard reads truth, not a channel made for it** (D61, from 23:45). A guard on a state the crew cannot see uses
   the state-condition form of `interlocks_when`; a lane publishes a derived channel only for a quantity the crew would
   actually see.
