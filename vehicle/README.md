@@ -19651,9 +19651,10 @@ of mass, and the CM's own propellant coefficient on `E-RCSP-RCS`, which debits C
 
 | figure | before | after |
 |---|---:|---:|
-| `test_vehicle_config.py` tests | 575 | **576** |
-| declared debts | 261 | **262** |
+| RCS jet-table refusal cases (one test) | 0 | **15** |
+| declared debts (main before this follow-up) | 263 | **264** |
 | thruster articles | 1 | **2** |
+| declared frames | 2 | **3** (`CM_XC`) |
 
 ## The invariants, and which of them are enforced
 
