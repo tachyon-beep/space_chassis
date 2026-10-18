@@ -32,15 +32,57 @@ commands:
     gate:
       kind: preference
       variable: o2_flow_<vehicle>_enable
-    interlocks: [cabin_pressure_high, o2_supply_low, ppo2_fire_risk]
+    interlocks: [cabin_pressure_high, ppo2_fire_risk, lm_ppo2_fire_risk,
+                 eclss.cabin_pressure_caution, eclss.lm_cabin_pressure_caution]
+    # `o2_reserve_10` and `o2_supply_low` are not on this verb, on purpose. Re-opening the CSM's band spends the S/M
+    # tanks only while `eclss.o2_source` has the CSM on `primary`, and a condition over this verb's
+    # arguments cannot see that: guarding every CSM flow-on would refuse the surge tank, the
+    # recovery after a primary-supply loss or on a leak with a low reserve. They land with the fault-injection lane's state
+    # condition on `interlocks_when` ({state: o2_source, key: vehicle, values: [primary]}), its
+    # third PR after #47; until then the reserve is guarded at `set_o2_source`.
     interlocks_when:
-      argument: flow
-      values: [low, nominal, high]
-      why: >-
-        each guard is a hazard that oxygen entering the cabin feeds (ADR 0004 §Direction): a cabin
-        already over pressure (`cabin_pressure_high`), a supply already low (`o2_supply_low`), and an
-        oxygen partial pressure already past the fire threshold (`ppo2_fire_risk`). Any flow adds to
-        all three, and `flow=off` is the recovery from each, so it is never refused by them
+      - interlocks: [cabin_pressure_high, ppo2_fire_risk]
+        argument: [vehicle, flow]
+        values:
+          - [csm, low]
+          - [csm, nominal]
+          - [csm, high]
+        why: >-
+          each guard is a hazard that oxygen entering the cabin feeds (ADR 0004 §Direction): a cabin
+          already over pressure (`cabin_pressure_high`) and an oxygen partial pressure already past
+          the fire threshold (`ppo2_fire_risk`). Any flow adds to both, and `flow=off` is the
+          recovery from each, so it is never refused by them. Both read the CSM's cabin, so they
+          guard the CSM's band. `o2_supply_low` is not here: it reads the S/M supply, which a flow
+          spends only from `primary`, so it guards `set_o2_source`'s choice of `primary`, as
+          `o2_reserve_10` does; on this verb it refused the surge tank after a primary-supply loss
+      - interlocks: [lm_ppo2_fire_risk]
+        argument: [vehicle, flow]
+        values:
+          - [lm, low]
+          - [lm, nominal]
+          - [lm, high]
+        why: >-
+          the fire hazard in the LM's cabin, which any LM flow feeds and `flow=off` is the recovery
+          from. The LM has no over-pressure or supply-low threshold yet, so its band carries only
+          this one; a CSM hazard neither licenses nor blocks it
+      - interlocks: [eclss.cabin_pressure_caution]
+        argument: [vehicle, flow]
+        values:
+          - [csm, "off"]
+        why: >-
+          a cabin below its 4.5 psia caution is losing gas, and what makes it worse is cutting its
+          oxygen, as `set_o2_source`'s guard on an isolated supply says: `flow=off` stops the
+          regulator's flow from whichever store is selected (`eclss.o2_flow`). Any other band admits
+          oxygen and is the recovery, so it is never refused by this guard; the emergency regulator's
+          published job is exactly that, holding the cabin above 3.5 psia for as long as the supply
+          lasts (`apollo_diode.md:84`). The guard reads the CSM's cabin, so it guards the CSM's band
+      - interlocks: [eclss.lm_cabin_pressure_caution]
+        argument: [vehicle, flow]
+        values:
+          - [lm, "off"]
+        why: >-
+          the same hazard in the LM's cabin, which `eclss.cabin_o2_supply_lm_kg_s` stops feeding at
+          `off`; a CSM caution neither licenses nor blocks it
     conflict_domain: eclss.<vehicle>.o2_flow
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]

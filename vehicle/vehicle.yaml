@@ -1135,13 +1135,13 @@ propulsion:
   rcs_cm:
     name: "Command Module reaction control"
     thrusters: 12
-    thrust_n: 445
-    isp_s: 277.8
+    thrust_n: 427
+    isp_s: 272.0
     propellant: "MMH / N2O4"
     mass_kg: 112
     provenance:
       basis: historical
-      source: "NR: two systems of six thrusters; load 245.9 lb = 112 kg from A11 Tbl 8-XI. Isp 277.8 s as `rcs_sm`: all forty-four thrusters are the same 100 lbf article"
+      source: "NR: two systems of six thrusters; load 245.9 lb = 112 kg from A11 Tbl 8-XI. Thrust 96.0 lb = 427 N and Isp 272.0 s from CSM Data Book SNA-8-D-027(I) Rev 3, Table 4.4-1, printed p. 4.4-9 (vacuum steady state, Rocketdyne qualification data): the CM engine is its own ablative 9:1 article, not the SM's 40:1 radiation-cooled one (domains/rcs/components.yaml:thruster_cm, docs/evidence/wp03-rcs-geometry.md G-7)"
   rcs_lm:
     name: "LM reaction control"
     thrusters: 16

@@ -366,17 +366,27 @@ eclss:
     precision: 1
     rate_hz: 0.5
     priority: P3
-    range: [750, 950]
+    # The band is the AOH's caution pair, 800 psia low (SM2A-03-BLOCK II-(1) p. 2.6-14) and 975 psia
+    # high (A13RB p. 5-22, CSM-109, the Apollo 13 target), so CRYO PRESS fires at its edges. It was
+    # apollo's 750-950 (`apollo_diode.md:91`), which put the AOH's 800 psia caution inside the band.
+    range: [800, 975]
     # `band` is an acceptable operating region and every alarm fires outside it; `scale` is the
     # quantity's full span, and a reserve alarm inside it is normal. The two are indistinguishable
     # from the numbers alone, which is why this is declared rather than inferred.
     range_kind: band
-    events: ["low pressure", "fall >5 psi/min"]
+    events: ["low pressure", "<800 CRYO PRESS", ">975 CRYO PRESS", "fall >5 psi/min"]
     event_class: alarm
     provenance:
-      basis: apollo
-      ref: "apollo_diode.md:91"
-      note: "C-06: eclss_diode.md:736 removes this; apollo wins"
+      basis: historical
+      source: >-
+        the band is the cryogenic oxygen caution pair: 800 psia low, SM2A-03-BLOCK II-(1) Vol. 1
+        p. 2.6-14 ("alarm when oxygen pressure in either tank ... falls below 800 psia"), and 975
+        psia high, Apollo 13 Review Board report PDF p. 195, printed p. 5-22 ("exceeded the master
+        caution and warning trip level of 975 psia", CSM-109 as flown)
+      note: >-
+        the channel itself is apollo's (`apollo_diode.md:91`; C-06: `eclss_diode.md:736` removes
+        it, apollo wins), whose 750-950 band put the AOH's 800 psia caution inside the band. The
+        point is one aggregate pressure over both tanks (`domains/eclss/rules.py` `_tank_pressure`)
   - id: eclss.lm_cabin_pressure_psia
     unit: psia
     layer: measurement
