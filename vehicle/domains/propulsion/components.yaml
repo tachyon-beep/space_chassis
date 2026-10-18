@@ -38,7 +38,7 @@ natural_rate_hz: 10
 # because the executive can still command the mode directly. `nav_state` was declared in their place
 # and is one hop upstream of the mode that actually arrives here.
 reads: [prop_main, pressurant_he, nav_state, structure_config, guidance, command_executive]
-writes: [engine_main, thrust_main]
+writes: [engine_main, thrust_main, sps_thrust]
 
 # The order these states advance in. **Nothing on the sentinel advances today** — no edge
 # can target it and the rules that would move these states are domain code — so this is a
@@ -165,8 +165,8 @@ state:
     # zero while none is. The DPS has no rated figure here, because its thrust at a throttle setting
     # is `thrust_curve`'s owed law, so a firing DPS is a gap rather than a number; two engines firing
     # at once is a gap too, because no configuration of this vehicle does it. `E-PROP-ENG` and
-    # `E-PRESS-PROP` drain the SPS's tanks from this state, so a firing APS would spend them: a known
-    # gap (the SPS's own share wants a node of its own, which waits on the engine's node count).
+    # `E-PRESS-PROP` drain the SPS's tanks from `sps_thrust_n`, the SPS's share, not from this state:
+    # read from here they spent the SPS's propellant and helium on an ascent-engine burn.
     method: dynamics
     unit: N
     tau_s: 0.5
@@ -181,6 +181,28 @@ state:
         rule and held equal to them by `tests/test_propulsion_rules.py`; their provenance is there.
         `firing_states` counts `ignition` as firing because the build-up is this lag's job: an
         engine in ignition is producing a rising thrust, and the half-second constant is the rise
+
+  - id: sps_thrust_n
+    initial: 0
+    initial_provenance:
+      basis: chosen
+      reason: "as `thrust_main_n`: the SPS is not firing at MET 0"
+    node: sps_thrust
+    # **The SPS's own thrust, for the edges that drain its tanks.** The same half-second relaxation as
+    # `thrust_main_n`, toward the SPS's rated thrust while `sps_state` is in `firing_states` and zero
+    # otherwise, so it equals `thrust_main_n` whenever the SPS is the engine firing (tail-off
+    # included) and stays at zero through a descent or ascent burn. It is a state of its own because
+    # a drain is read off a node, and `thrust_main` carries every engine's thrust for the dynamics.
+    method: dynamics
+    unit: N
+    tau_s: 0.5
+    firing_states: [ignition, mainstage]
+    engine_state: sps_state
+    rated_thrust_n: 91188
+    provenance:
+      basis: chosen
+      reason: "as `thrust_main_n`, whose constant and firing states this copies; `tests/test_propulsion_rules.py` holds the copies equal"
+      note: "`rated_thrust_n` is `components.sps.thrust_n`"
 
   - id: dps_throttle_pct
     initial: 0

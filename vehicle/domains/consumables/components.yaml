@@ -45,7 +45,7 @@ natural_rate_hz: 1
 # figures and
 # `load_budget.csm_total_demand_w` rather than quoted. It was UNCONFIGURED for as long as the
 # corpus believed the kg-per-kWh figure was unpublished.
-reads: [fuel_cell, fc_o2_draw, radiator_reject, crew_state, thrust_main, rcs_thrust,
+reads: [fuel_cell, fc_o2_draw, radiator_reject, crew_state, sps_thrust, rcs_thrust,
         battery_energy, co2_removal_csm, co2_removal_lm]
 writes: [o2_csm, o2_lm, h2_csm, water_potable, water_cooling, prop_main, prop_rcs,
          pressurant_he, absorber_capacity_csm, absorber_capacity_lm]

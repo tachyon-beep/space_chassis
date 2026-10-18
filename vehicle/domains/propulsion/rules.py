@@ -50,6 +50,13 @@ def _thrust_main(inputs, params, dt):
     return _relax(target, float(inputs["thrust_main_n"]), float(params["tau_s"]), dt)
 
 
+def _sps_thrust(inputs, params, dt):
+    """The SPS's share of main-engine thrust: the drain on its own propellant and helium."""
+    firing = str(inputs[params["engine_state"]]) in params["firing_states"]
+    target = float(params["rated_thrust_n"]) if firing else 0.0
+    return _relax(target, float(inputs["sps_thrust_n"]), float(params["tau_s"]), dt)
+
+
 def _chamber_pressure(inputs, params, dt):
     engine, why = firing_engine(inputs, params)
     if why:
@@ -97,6 +104,7 @@ def _feed_pressure(inputs, params, dt):
 
 RULES = {
     "thrust_main_n": _thrust_main,
+    "sps_thrust_n": _sps_thrust,
     "chamber_pressure_pct": _chamber_pressure,
     "pressurant_pressure_psi": _pressurant_pressure,
     "feed_pressure_pct": _feed_pressure,

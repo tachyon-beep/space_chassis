@@ -570,6 +570,10 @@ nodes:
       between them is the propellant they all draw — which is an edge to a consumables node rather
       than a state here
   thrust_main:       {domain: propulsion, kind: flow,     unit: N,    apollo: "135-137"}
+  # The SPS's share of the main-engine thrust, which is what drains the SPS's propellant and helium
+  # (`E-PROP-ENG`, `E-PRESS-PROP`). `thrust_main` is every engine's and pushes the vehicle; read as a
+  # drain it spent the SPS's tanks on an ascent-engine burn.
+  sps_thrust:        {domain: propulsion, kind: flow,     unit: N,    apollo: "135-137"}
   # Both of these nodes hold a single state whose `unit` is a `map[...]`, so their values are maps
   # of elements rather than one scalar — `key_space: by_state` says so rather than leaving it to be
   # read off the state's unit. `thruster_valve` is `map[thruster_id,bool]` and `thruster_thrust` is
@@ -1510,7 +1514,7 @@ edges:
         engine rather than of the propellant, and `domains/propulsion/` refuses to interpolate
         across it
     from: prop_main
-    to: thrust_main
+    to: sps_thrust
     kind: rate
   - id: E-PRESS-PROP
     # **The helium a burn spends, and it is a drain on the bottles rather than an inflow to the
@@ -1519,9 +1523,9 @@ edges:
     # called it a displacement held by a bladder; the SPS has none (AOH p. 2.4-1), and what the
     # helium does is fill the volume the propellant leaves, at the regulated pressure. So it drains
     # the bottles in proportion to the propellant expelled, and the propellant expelled is the SPS's
-    # thrust over `Isp g0` — the same driver `E-PROP-ENG` reads, on the same node, `thrust_main`.
+    # thrust over `Isp g0` — the same driver `E-PROP-ENG` reads, on the same node, `sps_thrust`.
     from: pressurant_he
-    to: thrust_main
+    to: sps_thrust
     kind: rate
     sensitivity:
       value: 5.797339737652208e-07

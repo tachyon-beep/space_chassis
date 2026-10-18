@@ -101,7 +101,7 @@ that are not there and refuses schedules that exist.
 
 So the schedule is over **nodes**, and a domain with states on several nodes appears at several
 points in it. That is what Gauss-Seidel does anyway: the domain is an authoring unit, not a
-scheduling unit. The derived order is 64 nodes and `check_vehicle.py` reports its tail on every
+scheduling unit. The derived order is 65 nodes and `check_vehicle.py` reports its tail on every
 run.
 
 **An edge names the state it acts on at each end, and the three fields are not

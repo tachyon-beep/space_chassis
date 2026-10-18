@@ -30,7 +30,13 @@ COMPONENTS = {row["id"]: row for row in _PROP["components"]}
 STATES = {row["id"]: row for row in _PROP["state"]}
 SPS_N = COMPONENTS["sps"]["thrust_n"]
 APS_N = COMPONENTS["aps"]["thrust_n"]
-RULED = ("thrust_main_n", "chamber_pressure_pct", "pressurant_pressure_psi", "feed_pressure_pct")
+RULED = (
+    "thrust_main_n",
+    "chamber_pressure_pct",
+    "pressurant_pressure_psi",
+    "feed_pressure_pct",
+    "sps_thrust_n",
+)
 _CONSUMABLES = yaml.safe_load((VEHICLE / "domains/consumables/components.yaml").read_text())
 HELIUM = next(row for row in _CONSUMABLES["state"] if row["id"] == "pressurant_he_kg")
 _COUPLING = yaml.safe_load((VEHICLE / "coupling.yaml").read_text())
@@ -198,6 +204,34 @@ def test_an_ascent_engine_burn_does_not_pressurize_the_sps_tanks(world):
     values, gaps = run(world, firing(world, aps="mainstage"), 250)
     assert not gaps
     assert values["pressurant_pressure_psi"] == STATES["pressurant_pressure_psi"]["initial"]
+
+
+def test_the_sps_share_copies_the_main_thrust_s_constants():
+    share, main = STATES["sps_thrust_n"], STATES["thrust_main_n"]
+    assert share["rated_thrust_n"] == SPS_N
+    assert share["engine_state"] == main["engine_states"]["sps"]
+    assert (share["tau_s"], share["firing_states"]) == (main["tau_s"], main["firing_states"])
+
+
+def test_the_sps_share_is_the_main_thrust_while_the_sps_fires(world):
+    values, gaps = run(world, firing(world, sps="mainstage"), 40)
+    assert not gaps, [(g.state.id, g.owed) for g in gaps]
+    assert values["sps_thrust_n"] == pytest.approx(values["thrust_main_n"], rel=1e-9)
+    values["sps_state"] = "shutdown"
+    values, _ = run(world, values, 20)
+    assert 0 < values["sps_thrust_n"] == pytest.approx(values["thrust_main_n"], rel=1e-9)
+
+
+def test_an_ascent_engine_burn_spends_none_of_the_sps_s_propellant_or_helium(world):
+    """The drain edges read the SPS's share, so an APS burn pushes the vehicle and leaves the SPS's
+    tanks and bottles where they were loaded."""
+    start = firing(world, aps="mainstage")
+    values, gaps = run(world, start, 250)
+    assert not gaps
+    assert values["thrust_main_n"] > 0.9 * APS_N
+    assert values["sps_thrust_n"] == 0
+    assert values["prop_main_kg"] == start["prop_main_kg"]
+    assert values["pressurant_he_kg"] == start["pressurant_he_kg"]
 
 
 def test_bottles_below_the_regulator_blow_the_tanks_down_to_the_sps_press_light(world):
