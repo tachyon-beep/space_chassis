@@ -287,6 +287,10 @@ def effect_owned_movers(state: dict[str, Any]) -> list[str]:
     the same shape of transition, because an irreversible event is not a per-tick computation either.
     The plant holds such a state between transitions and the effect path carries them, so both the
     hold and the initial-value rule ask this one predicate rather than a second spelling of it.
+
+    **And a `fault:` mover whose onset the state declares (`fault_value`), since WP09.** A fault's
+    onset lands on the same sub-tick queue a command's effect does (`plant.apply_fault`), and what it
+    leaves is held between onsets exactly as a command's value is held between commands.
     """
     movers = [str(m) for m in state.get("moved_by") or []]
     if not movers:
@@ -296,13 +300,189 @@ def effect_owned_movers(state: dict[str, Any]) -> list[str]:
         for row in state.get("event_value") or []
         if isinstance(row, dict)
     }
+    faulted = {
+        str(row.get("fault"))
+        for row in state.get("fault_value") or []
+        if isinstance(row, dict)
+    }
     for mover in movers:
         if mover.startswith("command:"):
             continue
         if mover.startswith("event:") and mover.split(":", 1)[1] in declared:
             continue
+        if mover.startswith("fault:") and mover.split(":", 1)[1] in faulted:
+            continue
         return []
     return movers
+
+
+def numeric_bounds(declared: dict[str, Any]) -> tuple[Any, Any]:
+    """A numeric argument's closed bounds, from `range: [lo, hi]` or `minimum` / `maximum`.
+
+    Both spellings are the corpus's: `range` is the one a carried argument declares, and most verbs
+    wrote `minimum` and `maximum`, often only one of them, which bounds one side.
+    """
+    span = declared.get("range")
+    if isinstance(span, list) and len(span) == 2:
+        return span[0], span[1]
+    return declared.get("minimum"), declared.get("maximum")
+
+
+# A refused band is a hole inside an argument's range: `set_throttle`'s 65 % up to but not including
+# 92.5 % is a region the descent engine is not run in, while 92.5 % itself is its full-throttle
+# position. Each band names one lower and one upper edge, and which edges are open is spelled out
+# rather than left to a convention a reader has to know.
+BAND_LOWER = {"at_or_above": "[", "above": "("}
+BAND_UPPER = {"below": ")", "at_or_below": "]"}
+
+
+def band_holds(band: dict[str, Any], value: float) -> bool:
+    """Whether `value` lies inside one `refused_bands` entry."""
+    inside = value >= band["at_or_above"] if "at_or_above" in band else value > band["above"]
+    if "below" in band:
+        return inside and value < band["below"]
+    return inside and value <= band["at_or_below"]
+
+
+def band_text(band: dict[str, Any]) -> str:
+    """A refused band in interval notation, open and closed edges as declared: `[65, 92.5)`."""
+    lower = next(key for key in BAND_LOWER if key in band)
+    upper = next(key for key in BAND_UPPER if key in band)
+    return f"{BAND_LOWER[lower]}{band[lower]}, {band[upper]}{BAND_UPPER[upper]}"
+
+
+# --------------------------------------------------------------------------------------------------
+# **WP09: what a fault's onset does to the truth, declared on the state it moves.**
+#
+# A fault policy says what breaks (`component`, `mechanism`) and what the evidence looks like
+# (`perturbs`), and until WP09 nothing said what the *truth* becomes: the scheduler could place a
+# fault in time and the plant had nowhere to put it. The answer is declared where `event_value`
+# declares an event's — on the state the fault moves — because the state owns its vocabulary and its
+# unit, and an edge in this folder belongs to the lane that owns its target state. A row is
+#
+#     moved_by: ["fault:PWR-02-fuel-cell-degradation"]
+#     fault_value:
+#       - fault: PWR-02-fuel-cell-degradation
+#         scale: 1.5                # or `becomes: <value>`, or `becomes_from: magnitude`
+#         provenance: {basis: ..., ...} # `key: <element>` on a keyed state
+#
+# `becomes_from: magnitude` takes the value from the fault's own `seeding.magnitude`, in its
+# `magnitude_unit`, which must be the state's unit (a keyed state's element unit): the policy already
+# declares the size with its provenance, and a copy here would be a second declaration to drift.
+#
+# Only a state with memory can take one. An `algebraic` state is recomputed from its inputs every
+# segment, so an onset written into it would be gone before anything read it — the silent no-op this
+# folder refuses everywhere else; a `stock` moves only by ledgered transfers (WP10), and a jump in its
+# level is a conservation violation by definition; `lag`, `delay` and `hazard` are the plant's own
+# integrators. A `discrete` state is held by the effect path, and a `dynamics` state's rule carries
+# its own previous value, so the onset becomes the value the next segment starts from.
+# --------------------------------------------------------------------------------------------------
+FAULT_HELD_METHODS = ("discrete", "dynamics")
+
+
+def fault_magnitude_unit(unit: str) -> str:
+    """The unit a fault magnitude has to carry to land in a state: a keyed state's element unit."""
+    match = re.fullmatch(r"map\[[^,\]]+,(.+)\]", unit.strip())
+    return (match.group(1) if match else unit).strip()
+
+
+def check_fault_value(
+    where: str,
+    sid: str,
+    state: dict[str, Any],
+    row: dict[str, Any],
+    report: Report,
+    fault: dict[str, Any] | None = None,
+) -> None:
+    """One `fault_value` row against the state it moves: one effect, a value the state can hold."""
+    method = state.get("method")
+    if method not in FAULT_HELD_METHODS:
+        report.refuse(
+            where,
+            f"declares a fault onset on {sid}, {'an' if str(method)[:1] in 'aeiou' else 'a'} "
+            f"`{method}` state. An onset is a jump in a state's "
+            f"value, and only a state with memory keeps one ({', '.join(FAULT_HELD_METHODS)}): an "
+            "`algebraic` state is recomputed before anything reads it, a `stock` moves only by "
+            "ledgered transfers, and the integrators are the plant's",
+        )
+        return
+    effects = [name for name in ("becomes", "scale", "becomes_from") if name in row]
+    if len(effects) != 1:
+        report.refuse(
+            where,
+            f"declares {effects or 'no effect'}; a fault onset says exactly one of `becomes` (the "
+            "value the state takes), `scale` (the factor its value is multiplied by) or "
+            "`becomes_from: magnitude` (the fault's own declared magnitude)",
+        )
+        return
+    unit = str(state.get("unit") or "")
+    keyed = unit.startswith("map[")
+    key = row.get("key")
+    if keyed and key is None:
+        report.refuse(
+            where,
+            f"moves {sid}, a keyed state ({unit!r}), and names no `key`. A fault breaks a component, "
+            "so its onset moves one element; writing the whole map would reset every sibling",
+        )
+        return
+    if not keyed and key is not None:
+        report.refuse(
+            where, f"names `key` {key!r} on {sid}, which is not a keyed state ({unit!r})"
+        )
+        return
+    vocabulary = unit_vocabulary(state.get("unit"))
+    if "becomes_from" in row:
+        seeding = (fault or {}).get("seeding") or {}
+        magnitude = seeding.get("magnitude")
+        carried = str(seeding.get("magnitude_unit"))
+        if row.get("becomes_from") != "magnitude":
+            report.refuse(
+                where, f"takes its value from {row.get('becomes_from')!r}; the one source is `magnitude`"
+            )
+        elif isinstance(magnitude, bool) or not isinstance(magnitude, int | float):
+            report.refuse(
+                where,
+                f"takes the fault's magnitude, which its policy declares as {magnitude!r}: a fault "
+                "whose size is owed cannot set one",
+            )
+        elif carried != fault_magnitude_unit(unit):
+            report.refuse(
+                where,
+                f"takes the fault's magnitude in {carried!r} into {sid}, which holds "
+                f"{fault_magnitude_unit(unit)!r}. A converted figure is a separate declaration "
+                "(`becomes`, with the relation in its provenance), not a silent conversion",
+            )
+        # The provenance is the policy's, beside the magnitude it describes.
+        return
+    if "scale" in row:
+        factor = row.get("scale")
+        if (
+            isinstance(factor, bool)
+            or not isinstance(factor, int | float)
+            or not math.isfinite(factor)
+            or factor <= 0
+        ):
+            report.refuse(where, f"scales by {factor!r}; a scale is a finite positive number")
+        if vocabulary is not None:
+            report.refuse(
+                where,
+                f"scales {sid}, whose unit ({unit!r}) is a vocabulary rather than a quantity",
+            )
+    elif vocabulary is not None and str(row.get("becomes")) not in vocabulary:
+        report.refuse(
+            where,
+            f"makes {sid} {row.get('becomes')!r}, which its `unit` ({unit!r}) cannot hold — the "
+            f"vocabulary is {sorted(vocabulary)}",
+        )
+    provenance = row.get("provenance")
+    if not isinstance(provenance, dict):
+        report.refuse(
+            where,
+            "carries no `provenance`. The size of a fault is a value that matters — it is what the "
+            "fleet will have to diagnose — and an unsourced magnitude is a guess",
+        )
+        return
+    check_basis(f"{where}.provenance", provenance.get("basis"), provenance, report)
 
 
 def unit_vocabulary(unit: Any) -> set[str] | None:
@@ -5538,6 +5718,48 @@ def check_domain(
                 f"argument_schema is {verb.get('argument_schema')!r}, not a mapping; an empty "
                 "schema advertises a verb with no arguments",
             )
+        # A numeric argument's refused bands are holes in its range, refused at the window and in
+        # the plant the way a value outside the range is. Each names exactly one lower and one
+        # upper edge so which ends are open is declared, and each sits inside the bounds it is a
+        # hole in: a band past the range refuses nothing the range had not already refused.
+        for arg_name, spec in (verb.get("argument_schema") or {}).items() if isinstance(verb.get("argument_schema"), dict) else ():
+            if not isinstance(spec, dict) or spec.get("refused_bands") is None:
+                continue
+            bwhere = f"{vwhere}.argument_schema.{arg_name}.refused_bands"
+            bands = spec["refused_bands"]
+            if spec.get("type") not in ("integer", "number") or not isinstance(bands, list):
+                report.refuse(
+                    bwhere,
+                    f"is declared on {arg_name!r}, a {spec.get('type')!r} argument, or is not a list; a "
+                    "refused band is a hole in a numeric argument's range",
+                )
+                continue
+            low, high = numeric_bounds(spec)
+            for band_index, band in enumerate(bands):
+                lowers = [k for k in BAND_LOWER if isinstance(band, dict) and k in band]
+                uppers = [k for k in BAND_UPPER if isinstance(band, dict) and k in band]
+                if len(lowers) != 1 or len(uppers) != 1:
+                    report.refuse(
+                        f"{bwhere}[{band_index}]",
+                        f"is {band!r}; a band names exactly one lower edge ({sorted(BAND_LOWER)}) "
+                        f"and one upper edge ({sorted(BAND_UPPER)}), so which ends are open is "
+                        "declared rather than assumed",
+                    )
+                    continue
+                lo, hi = band[lowers[0]], band[uppers[0]]
+                if not all(isinstance(v, int | float) and not isinstance(v, bool) for v in (lo, hi)) or not lo < hi:
+                    report.refuse(
+                        f"{bwhere}[{band_index}]",
+                        f"runs from {lo!r} to {hi!r}, which is not two ordered numbers",
+                    )
+                    continue
+                if (low is not None and lo < low) or (high is not None and hi > high):
+                    report.refuse(
+                        f"{bwhere}[{band_index}]",
+                        f"is {band_text(band)}, which reaches past {arg_name!r}'s declared bounds "
+                        f"[{low}, {high}]; the part outside them is refused already, so the band "
+                        "says something the range does not mean",
+                    )
         # A gate *template* is a name a fleet never sees. `presentation.yaml#mirror` says so and
         # gives the reason §9's check 5 depends on it: "a refusal that named the template rather
         # than the instantiation — `reserve_floor_<resource>_enable` instead of
@@ -6625,12 +6847,34 @@ def check_domain(
     # say what changes it is an omission, while an `algebraic` state whose rule is domain code may
     # have no command mover at all and be complete.
     # --------------------------------------------------------------------------------------
+    # WP09: the faults a `fault:` mover may name, which are this domain's own.
+    faults_here = {
+        str(f.get("id")): f
+        for f in (docs.get("fault_policy.yaml") or {}).get("faults") or []
+        if isinstance(f, dict) and f.get("id")
+    }
     for state in components.get("state") or []:
         if not isinstance(state, dict):
             continue
         sid = str(state.get("id"))
         mwhere = f"{where}:state {sid}.moved_by"
         movers = state.get("moved_by")
+        # A `fault_value` row with no `fault:` mover is an onset nothing fires, which reads exactly
+        # like one that does: refused here, before the mover rules, because a state with no movers
+        # at all leaves the loop below early.
+        named = {
+            str(m).split(":", 1)[1]
+            for m in (movers if isinstance(movers, list) else [])
+            if str(m).startswith("fault:")
+        }
+        for row in state.get("fault_value") or []:
+            fault = str(row.get("fault")) if isinstance(row, dict) else repr(row)
+            if fault not in named:
+                report.refuse(
+                    f"{where}:state {sid}.fault_value",
+                    f"declares an onset for {fault!r}, which `moved_by` does not name as "
+                    f"`fault:{fault}`, so nothing would ever fire it",
+                )
         if movers is None:
             if state.get("method") == "discrete":
                 report.debt(
@@ -6692,11 +6936,42 @@ def check_domain(
                             "record of what starts it",
                         )
                 continue
-            if kind not in ("command", "event", "trigger"):
+            if kind not in ("command", "event", "trigger", "fault"):
                 report.refuse(
                     f"{mwhere}",
                     f"declares {text!r}; a mover is `command:<verb>`, `trigger:<verb>`, "
-                    "`event:<id>` or `logic:<reason>`",
+                    "`event:<id>`, `fault:<id>` or `logic:<reason>`",
+                )
+                continue
+            if kind == "fault":
+                # WP09: a fault this domain declares, whose onset the state declares. Same-domain,
+                # because a fault breaks a component of its own domain and reaches the others
+                # through the coupling, as every other change in the truth does (`plant.md` §8).
+                if name not in faults_here:
+                    report.refuse(
+                        f"{mwhere}",
+                        f"names fault {name!r}, which this domain's `fault_policy.yaml` does not "
+                        "declare. A fault moves the truth of its own domain and reaches the others "
+                        "through the coupling",
+                    )
+                    continue
+                onset = next(
+                    (
+                        row
+                        for row in state.get("fault_value") or []
+                        if isinstance(row, dict) and str(row.get("fault")) == name
+                    ),
+                    None,
+                )
+                if onset is None:
+                    report.refuse(
+                        f"{mwhere}",
+                        f"names fault {name!r} and nothing says what its onset makes this state: "
+                        f"a `fault_value` entry for {name!r}",
+                    )
+                    continue
+                check_fault_value(
+                    f"{where}:state {sid}.fault_value", sid, state, onset, report, faults_here[name]
                 )
                 continue
             if kind == "event":
@@ -6813,6 +7088,15 @@ def check_domain(
             # the vocabulary test for real: `load_burn`'s arguments are trajectory names against a
             # lifecycle enum, and `set_docking_latch` offers `engage` while the latch reports
             # `engaged`.
+            # A `constant` effect sets its value whatever the arguments are (`start_burn engine=sps`
+            # opens `ignition`), so the value it names is what the verb expresses for this state.
+            offered.update(
+                str(row.get("constant"))
+                for row in state.get("command_value") or []
+                if isinstance(row, dict)
+                and str(row.get("verb")) == name
+                and row.get("constant") is not None
+            )
             if kind == "command" and values and not (values & offered):
                 report.refuse(
                     f"{mwhere}",
@@ -6919,14 +7203,75 @@ def check_domain(
                 spec2 = command_movers[verb_name]
                 argument = str(entry.get("argument"))
                 arg_spec = (spec2.get("argument_schema") or {}).get(argument)
-                if not isinstance(arg_spec, dict) or arg_spec.get("type") != "enum":
+                # **A numeric argument with a declared range is carried as its value**, which is
+                # the identity form with numbers rather than words: `set_heater`'s `duty` is a
+                # percentage the zone's commanded-duty state holds. It has no values to `maps` from,
+                # and without a range the plant would have nothing to refuse it against.
+                numeric = isinstance(arg_spec, dict) and arg_spec.get("type") in ("integer", "number")
+                if numeric:
+                    span = list(numeric_bounds(arg_spec))
+                    if not (
+                        isinstance(span, list)
+                        and len(span) == 2
+                        and all(
+                            isinstance(v, int | float) and not isinstance(v, bool) for v in span
+                        )
+                        and span[0] <= span[1]
+                    ):
+                        report.refuse(
+                            f"{cwhere2}.argument",
+                            f"names {argument!r}, a numeric argument of {verb_name!r} with no "
+                            f"`range` (or `minimum` and `maximum`) of two ordered numbers ({span!r}). A carried number is "
+                            "refused outside the verb's range, so the range is what makes it a value",
+                        )
+                    if entry.get("maps") is not None:
+                        report.refuse(
+                            f"{cwhere2}.maps",
+                            f"maps {argument!r}, a numeric argument: it has no vocabulary to map "
+                            "from, so its value is carried as the number it is",
+                        )
+                elif not isinstance(arg_spec, dict) or arg_spec.get("type") != "enum":
                     report.refuse(
                         f"{cwhere2}.argument",
                         f"names {argument!r}, which is not an enum argument of {verb_name!r} (it "
                         f"has {sorted(spec2.get('argument_schema') or {})}). An effect is a mapping "
                         "from an argument's values, and an argument with no vocabulary has no "
-                        "values to map from",
+                        "values to map from, unless it is an `integer` or `number` with a `range`",
                     )
+                # `when`: the entry applies only at these values of the verb's arguments, so one
+                # verb can move one of several sibling states (`arm_engine engine=sps`). Each name
+                # is an enum argument of the verb and each value one it takes; an argument whose
+                # value is carried cannot also route (a `constant` carries none).
+                when = entry.get("when")
+                if when is not None:
+                    schema2 = spec2.get("argument_schema") or {}
+                    if not isinstance(when, dict) or not when:
+                        report.refuse(
+                            f"{cwhere2}.when",
+                            f"is {when!r}; `when` maps an argument of {verb_name!r} to the value "
+                            "the entry applies at",
+                        )
+                    else:
+                        for name, value in when.items():
+                            routed = schema2.get(str(name))
+                            if str(name) == argument and entry.get("constant") is None:
+                                report.refuse(
+                                    f"{cwhere2}.when.{name}",
+                                    f"routes on {argument!r}, the argument the entry carries; a "
+                                    "value that selects itself is a `maps` entry",
+                                )
+                            elif not isinstance(routed, dict) or routed.get("type") != "enum":
+                                report.refuse(
+                                    f"{cwhere2}.when.{name}",
+                                    f"names {name!r}, which is not an enum argument of "
+                                    f"{verb_name!r} (it has {sorted(schema2)})",
+                                )
+                            elif str(value) not in {str(v) for v in routed.get("values") or []}:
+                                report.refuse(
+                                    f"{cwhere2}.when.{name}",
+                                    f"is {value!r}, which {name!r} cannot take; it takes "
+                                    f"{[str(v) for v in routed.get('values') or []]}",
+                                )
                 if not str(entry.get("why") or "").strip():
                     report.refuse(
                         f"{cwhere2}.why",
@@ -8010,12 +8355,23 @@ COMMS_STRUCTURAL = {
 # and evaluated in none of them.
 IDEAL_APERTURE_PRODUCT = 41253.0
 
+# What a zone's `cooled_by` says when no coolant loop serves it and it rejects its heat by radiation
+# through its own structure. Such a zone is in no loop's collected load.
+RADIATIVE_COOLING = "space"
+
 # What an antenna's `pattern` may say. `aperture` means the two published figures are one figure:
 # the half-power beamwidth is the gain's own consequence, so a change to either re-derives the
 # other. `near_isotropic` means they are independent — a flush omni's 180 degrees is a nominal
 # coverage figure rather than a half-power width this close to isotropic — and the claim carries a
-# `pattern_note`, the way `state_order: independent` carries a `state_order_note`.
-ANTENNA_PATTERNS = {"aperture", "near_isotropic"}
+# `pattern_note`, the way `state_order: independent` carries a `state_order_note`. `measured` means
+# both figures are published for the real antenna, so neither is derived from the other: a real
+# aperture's illumination taper and losses put its gain *below* the ideal product's, never above it,
+# so the pair is held to the bound `G <= 41253 / theta^2` rather than to equality. The CSM S-band
+# HGA's 25.7 dB with a 4.4-degree beam (TN D-6723 Table I) is such a pair, at about 17 % of the
+# ideal product. Its provenance is `historical`, because the claim is that both numbers came from a
+# source and the bound alone would let a guess through; the source that names both is its reason,
+# so it needs no `pattern_note` beside it.
+ANTENNA_PATTERNS = {"aperture", "measured", "near_isotropic"}
 
 # How far a declared beamwidth may sit from the one a gain implies, in degrees. The corpus declares
 # beamwidths to one decimal place, so half a unit in the last place is the widest two figures can
@@ -8123,6 +8479,29 @@ def check_antenna_patterns(root: Path, vehicle: dict[str, Any], report: Report) 
                     "held to, and an exemption without a reason is how a rule stops being one — the "
                     "same discipline `state_order: independent` carries",
                 )
+            continue
+        if pattern == "measured":
+            basis = (antenna.get("provenance") or {}).get("basis")
+            if basis != "historical":
+                report.refuse(
+                    where,
+                    f"declares its pattern measured on a {basis!r} provenance. A measured pair is "
+                    "two published figures, so its basis is `historical`; anything else is a gain "
+                    "and a width held only to the bound `G <= 41253 / theta^2`, which a guess "
+                    "satisfies as easily as a measurement",
+                )
+            for label, gain, width in pairs:
+                derived = math.sqrt(IDEAL_APERTURE_PRODUCT / (10 ** (float(gain) / 10.0)))
+                if float(width) - derived > BEAMWIDTH_TOLERANCE_DEG:
+                    product = (10 ** (float(gain) / 10.0)) * float(width) * float(width)
+                    report.refuse(
+                        f"{where}{label}",
+                        f"declares {gain} dB with a {width}-degree beamwidth, wider than the "
+                        f"{derived:.2f} degrees an ideal aperture of that gain has (the declared "
+                        f"pair gives {product:,.0f} against 41,253). A measured pair may fall below "
+                        "the ideal product, never above it: that gain from that beam would need "
+                        "more directivity than the beam's solid angle allows",
+                    )
             continue
         for label, gain, width in pairs:
             fwhere = f"{where}{label}"
@@ -15143,12 +15522,31 @@ def check_thermal_heat_inputs(root: Path, report: Report) -> None:
         zone_row = zones_by_id.get(zone) or {}
         zone_where = f"vehicle.yaml#thermal.zones.{zone}"
         cooled = zone_row.get("cooled_by")
-        if cooled not in loops:
+        if cooled == RADIATIVE_COOLING:
+            # A zone no loop serves — the SM service bays, which reject heat through their own skin
+            # — is a heat rate with somewhere to go that is not a loop's collected load. It is the
+            # one exemption from naming a loop, so it carries its reason.
+            if not zone_row.get("cooled_by_note"):
+                report.refuse(
+                    f"{zone_where}.cooled_by",
+                    f"is {RADIATIVE_COOLING!r} without a `cooled_by_note`. A zone outside every "
+                    "loop's collected load is exempt from the sum that holds the others, and an "
+                    "exemption without a reason is how a rule stops being one: the note says what "
+                    "surface radiates the heat and where the claim that no loop serves it comes from",
+                )
+        elif cooled not in loops:
             report.refuse(
                 f"{zone_where}.cooled_by",
                 f"names {cooled!r}, which is not a loop `vehicle.yaml#thermal.loops` declares "
-                f"({sorted(loops)}). A zone whose heat has no loop is a heat rate with nowhere to "
-                "go, and a loop's collected load is the sum over the zones that name it",
+                f"({sorted(loops)}), nor {RADIATIVE_COOLING!r}. A zone whose heat has no loop and "
+                "no radiating skin is a heat rate with nowhere to go, and a loop's collected load is "
+                "the sum over the zones that name it",
+            )
+        if cooled == RADIATIVE_COOLING and RADIATIVE_COOLING in loops:
+            report.refuse(
+                f"{zone_where}.cooled_by",
+                f"is {RADIATIVE_COOLING!r}, which is also a declared loop's id, so whether this zone "
+                "is in that loop's collected load is not readable",
             )
         declared = sum(
             int(loads[str(load_id)].get("demand_w") or 0)
