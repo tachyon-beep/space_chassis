@@ -104,6 +104,9 @@ in [`status.md`](status.md). While the sprint runs these rules add to the loop a
   the hold lifts when the re-issued verdict is non-blocking (as on #48, #49 and #51, all three non-blocking, #49 with a
   debt-note condition). The raw Codex outputs are kept under
   `vehicle-status/reviews/codex/` in the shared folder.
+- **A guard reads truth, not a channel made for it** (D61, from 23:45). A guard on a state the crew cannot see uses
+  the state-condition form of `interlocks_when`; a lane publishes a derived channel only for a quantity the crew would
+  actually see.
 - **Shared decision records take one dated section per verb.** ADR 0004
   (`vehicle/docs/decisions/0004-interlock-evaluation.md`) is being amended by ECLSS (#46), structure
   (#51) and possibly propulsion (#50): each lane adds its own dated, verb-named section and rebases
