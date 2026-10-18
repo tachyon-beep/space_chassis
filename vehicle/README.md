@@ -15822,9 +15822,11 @@ with a loaded gun in it.
 Adding a per-cycle generation to `publish()` made the contract probe fail two checks —
 *"published state is rewritten, not read back"* — and the reason is worth recording because it is a
 **timing** bug that read as a correctness one. `generate_readme` costs about 20 ms; a console cycle
-went from 0.095 s to 0.45 s; and `check_state_is_a_mirror` doctors `state.json` and waits
-`1.5 × poll_seconds` for a republish. A console slower than the probe's patience is a console that
-*looks like it reads its own mirror back*.
+went from 0.095 s to 0.45 s; and `check_state_is_a_mirror` doctored `state.json` and waited
+`1.5 × poll_seconds` for a republish. A console slower than the probe's patience was a console that
+*looked like it read its own mirror back*. The probe has since stopped judging by the clock: it waits
+for the next publication of `state.json`, bounded by its own timeout, and judges that one, so a late
+cycle is no longer read as state read back (aurora PR #61).
 
 The fix is the one the file should have had anyway: **the configuration does not change while a
 console runs**, so `HELP.md` and `README.md` are generated once and written from the cached text. That
