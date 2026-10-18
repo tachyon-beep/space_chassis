@@ -68,6 +68,8 @@ before it, which offered an earlier paid run of the agent container against the 
 
 ## 2026-10-17 — the vehicle sprint
 
+The sprint ran past midnight: D62 onward are dated 2026-10-18 in their own text.
+
 John opened a sprint to build out the vehicle on 2026-10-17, run as parallel subsystem lanes. The
 lanes, their file ownership and merge order are in
 [`records/2026-10-17-vehicle-sprint.md`](records/2026-10-17-vehicle-sprint.md); the rules that bind
