@@ -655,6 +655,24 @@ def test_a_command_value_with_when_moves_only_the_state_its_call_names(tmp_path)
     # A call that omits the routing argument is refused, not taken as moving no state.
     with pytest.raises(plant.EffectRefused, match=r"routes its effect on \['engine'\], which this call omits"):
         plant.apply_command(routed, values, "arm_engine", {"state": "armed"})
+    # And at the window, it is that command's refusal: the batch it came in still gets its results
+    # (sol on #74: the refusal escaped the console's staging and dropped the claimed batch).
+    import console
+
+    executive = console.Executive(routed, tmp_path / "diode", phase="translunar_coast")
+    try:
+        executive.attach("alpha")
+        window = tmp_path / "diode" / "alpha"
+        (window / "console.json").write_text(
+            json.dumps({"commands": ["arm_engine state=safe", "arm_engine engine=sps state=safe"], "variables": {}})
+        )
+        executive.cycle()
+        bodies = [path.read_text() for path in sorted((window / "output").glob("*.txt"))]
+    finally:
+        executive.close()
+    assert len(bodies) == 2, bodies
+    assert "which this call omits" in bodies[0] and "state=refused" in bodies[0], bodies[0]
+    assert "state=accepted" in bodies[1], bodies[1]
     # A route on a value the argument cannot take is refused by name.
     components.write_text(text.replace("when: {engine: aps}", "when: {engine: lmde}", 1))
     assert "is 'lmde', which 'engine' cannot take" in run_linter(copy).stdout

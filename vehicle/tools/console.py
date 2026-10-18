@@ -4854,6 +4854,10 @@ class Executive:
                 staged = apply_command(self.world, probe, verb, arguments)
             except Unconfigured as exc:
                 unconfigured = exc
+            except EffectRefused as exc:
+                # A call the plant refuses outright (one that omits the argument its `when` routes
+                # on) is this command's verdict. Escaping here dropped the whole claimed batch.
+                return refused(f"refused: {exc}. Nothing has been staged.\n")
         guard = self.dwell_refusal(verb, staged, arguments)
         if guard is not None:
             return refused(guard)
