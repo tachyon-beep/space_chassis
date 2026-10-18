@@ -253,6 +253,9 @@ def test_the_lm_draws_on_its_own_store_and_surge_is_a_gap_that_says_why(world):
     }
     assert rule(inputs, params, DT) is None
     assert "does not have" in params.why
+    # `off` still stops it (Codex, PR #64): the safing band is never held behind the gap.
+    inputs["o2_flow"] = {"csm": "nominal", "lm": "off"}
+    assert rule(inputs, params, DT) == 0.0
 
 
 def test_set_o2_flow_refuses_the_bands_whose_rates_are_unsourced(world):

@@ -60,6 +60,10 @@ def _o2_supply(inputs, params, dt):
         if switch["element"] not in inputs[switch["state"]]:
             return params.no_value(f"{switch['state']} names no {switch['element']!r}")
     source, flow = params["source_switch"], params["flow_switch"]
+    # `off` first: it stops the flow whatever the source names, including a store the vehicle
+    # does not have, so the safing command is never held behind that gap.
+    if inputs[flow["state"]][flow["element"]] == "off":
+        return 0.0
     selected = inputs[source["state"]][source["element"]]
     # Optional: `RuleParams` refuses a missing key rather than raising `KeyError`, so ask by name.
     if "no_store" in list(params) and selected in params["no_store"]:
@@ -70,8 +74,6 @@ def _o2_supply(inputs, params, dt):
     if isinstance(draws_on, str):
         draws_on = [draws_on]
     if selected not in draws_on:
-        return 0.0
-    if inputs[flow["state"]][flow["element"]] == "off":
         return 0.0
     demand = float(params["nominal_kg_s"])
     if float(inputs[params["stock_state"]]) < demand * dt:
