@@ -248,16 +248,25 @@ def test_tier_1_holds_over_gate_runs_with_instrumented_early_returns(mode, tmp_p
             time.sleep(CYCLE)
         time.sleep(20 * CYCLE)
 
-        # Quiet cycles write nothing: the consoles stay put while the executive keeps cycling.
+        # Quiet cycles write nothing: the consoles stay put while the executive keeps cycling. The
+        # watch is at least twenty cycles long, and then lasts until every window has published
+        # again, so a stall on a loaded host (a slow fsync at a checkpoint) lengthens the watch
+        # rather than reading as an executive that stopped; one that never publishes again still
+        # fails, at the deadline.
         consoles = {slug: stamp(diode / slug / "console.json") for slug in slugs}
         states = {slug: stamp(diode / slug / "state.json") for slug in slugs}
         time.sleep(20 * CYCLE)
+        deadline = time.monotonic() + 30
+        while True:
+            cycled = [slug for slug in slugs if stamp(diode / slug / "state.json") != states[slug]]
+            if len(cycled) == WINDOWS or time.monotonic() >= deadline:
+                break
+            time.sleep(CYCLE)
         moved = [
             slug
             for slug in slugs
             if consoles[slug] is None or stamp(diode / slug / "console.json") != consoles[slug]
         ]
-        cycled = [slug for slug in slugs if stamp(diode / slug / "state.json") != states[slug]]
         assert executive.poll() is None, "the executive stopped"
     finally:
         executive.terminate()
