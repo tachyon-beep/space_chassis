@@ -119,15 +119,16 @@ capability:
     unit: N*s
     values:
       rcs_sm: 1656367
-      rcs_cm: 305120
+      rcs_cm: 298750
       rcs_lm: 784595
     provenance:
       basis: derived
       relation: "load * Isp * g0, loads from vehicle.yaml#propulsion.rcs_* (A11 Tbl 8-XI, 9-XV)"
       note: >-
-        the total impulse each load can produce if every kilogram is burned through a 100 lbf
-        thruster — 1.656e6 N*s for the service module, 3.051e5 for the command module, 7.846e5
-        for the LM, at C-26's 277.8 s (they were 1.729e6 / 3.185e5 / 8.191e5 at the unsourced
+        the total impulse each load can produce if every kilogram is burned through its own
+        thrusters — 1.656e6 N*s for the service module and 7.846e5 for the LM at C-26's 277.8 s,
+        and 2.987e5 for the command module at its own engine's 272.0 s (it was 3.051e5 while the
+        CM engine was taken to be the SM article) (they were 1.729e6 / 3.185e5 / 8.191e5 at the unsourced
         290 s: **the same tanks now price 4.2 % less impulse**, which is the direction the
         decision moves the tightest load in the mission). It is an upper bound and the ceiling of `rcs.total_impulse_ns`, which is
         what makes the published total impulse checkable against the published load: a total
@@ -194,7 +195,8 @@ capability:
         0.24 lb/s and fuel 0.12 lb/s, expansion ratio 40:1 and weight 6 lb
       note: >-
         declared here rather than in `domains/propulsion/` because these are the *thruster's*
-        qualifications and all forty-four are the same article. The two life limits are separate
+        qualifications. They are the SM and LM article's (`thruster_100lbf`); the CM engine
+        (`thruster_cm`) is a different engine whose life limits are not declared here. The two life limits are separate
         numbers rather than one: 500 s of steady-state operation and 500 s of pulse-mode operation
         are different duty, and a total of 1,000 s is their sum rather than a third allowance. What
         spends them is the mission's own firing time, which is not declared yet — the RCS budget is
@@ -203,6 +205,188 @@ capability:
         thruster now declares **277.8 s**: the page's two numbers — that Isp and the 0.36 lb/s flow
         at 100 lbf — agree on 277.78 s, and C-26 was put to the operator and closed on the guide's
         side rather than on this domain's unsourced 290 s
+
+# --------------------------------------------------------------------------------------
+# Geometry. Where each jet is and which way it pushes, for the SM and LM systems; the CM's
+# is still owed. The research record is `docs/evidence/wp03-rcs-geometry.md`; this block is
+# the canonical home of every value it lands, and `check_rcs_geometry` holds it together.
+# --------------------------------------------------------------------------------------
+geometry:
+
+  # The SM's sixteen jets, as the CSM digital autopilot selects them. Positions are the
+  # GSOP simulator's averaged model (all four jets of a quad act at one centreline
+  # intersection); each figure it uses is corroborated by a flight-hardware document, which
+  # is what lets a verification-simulator number stand here (see the evidence record, G-1).
+  rcs_sm:
+    frame: APOLLO_XA
+    quad_station_xa_in: 958.97
+    pitch_yaw_radius_in: 82.36
+    roll_radius_in: 83.00
+    quad_offset_deg: -7.25
+    cant_deg: 10.0
+    provenance:
+      basis: historical
+      source: >-
+        SNA-8-D-027(I) Rev 3 Figure 4.3-2 (printed p. 4.3-31) and SNA-8-D-027(III) Rev 2 Figure
+        2-5 (printed p. 2-6), "Service Module RCS Thrust Chamber Locations", rendered: pitch and
+        yaw thrust line intersection at X_A 958.97, radius 82.36 in; roll thrust line
+        intersection radius 83.00 in; "10 deg (TYP)"; "7 deg 15' (TYP) (4 PLACES)":
+        https://www.ibiblio.org/apollo/Documents/HSI-41539.pdf
+        GSOP R-577 s. 6.4.1.3 states the same station, the offset "by a negative rotation about
+        the +X axis", CANT 10.0 deg with the exhaust "directed away from the spacecraft surface",
+        and RCRAD 82.68 in, the mean of the two radii:
+        https://www.ibiblio.org/apollo/NARA-SW/R-577-sec6-rev1.pdf
+        AOH SM2A-03-BLOCK II-(1) s. 2.5, printed p. 2.5-1: "offset from the S/C Y and Z axis by
+        7 degrees 15 minutes", "canted approximately 10 degrees away from the panel structure"
+      note: >-
+        Block II CSM. On the one quad the drawing details, each roll thrust line also sits 0.94 in
+        fore or aft of X_A 958.97; that moves each roll firing's cross-axis torque by about 1 %
+        and adds no decision, so it is a documented approximation (G-5). The 3.125 in and 6.750 in
+        dimensions lie along lines of action and change no torque
+    # Control axes are the APOLLO_XA axes rotated by `quad_offset_deg` about +X: quad B on
+    # +Y_c, C on +Z_c, D on -Y_c, A on -Z_c. `axis` is the jet's nominal thrust direction in
+    # control axes before the cant; the cant tilts it by `cant_deg` towards the X axis (the
+    # exhaust leans outward, so the thrust leans inward). `torque` and `translation` are the
+    # DAP tables' own entries, so the linter can re-derive each from r x F and refuse a jet
+    # whose geometry would fire the wrong way.
+    jets:
+      - {id: 1,  quad: C, axis: "+X", torque: "+pitch", translation: "+X", aoh_name: C3}
+      - {id: 2,  quad: A, axis: "+X", torque: "-pitch", translation: "+X", aoh_name: A4}
+      - {id: 3,  quad: A, axis: "-X", torque: "+pitch", translation: "-X", aoh_name: A3}
+      - {id: 4,  quad: C, axis: "-X", torque: "-pitch", translation: "-X", aoh_name: C4}
+      - {id: 5,  quad: D, axis: "+X", torque: "+yaw",   translation: "+X", aoh_name: D3}
+      - {id: 6,  quad: B, axis: "+X", torque: "-yaw",   translation: "+X", aoh_name: B4}
+      - {id: 7,  quad: B, axis: "-X", torque: "+yaw",   translation: "-X", aoh_name: B3}
+      - {id: 8,  quad: D, axis: "-X", torque: "-yaw",   translation: "-X", aoh_name: D4}
+      - {id: 9,  quad: B, axis: "+Z", torque: "+roll",  translation: "+Z", aoh_name: B1}
+      - {id: 10, quad: D, axis: "+Z", torque: "-roll",  translation: "+Z", aoh_name: D2}
+      - {id: 11, quad: D, axis: "-Z", torque: "+roll",  translation: "-Z", aoh_name: D1}
+      - {id: 12, quad: B, axis: "-Z", torque: "-roll",  translation: "-Z", aoh_name: B2}
+      - {id: 13, quad: A, axis: "+Y", torque: "+roll",  translation: "+Y", aoh_name: A1}
+      - {id: 14, quad: C, axis: "+Y", torque: "-roll",  translation: "+Y", aoh_name: C2}
+      - {id: 15, quad: C, axis: "-Y", torque: "+roll",  translation: "-Y", aoh_name: C1}
+      - {id: 16, quad: A, axis: "-Y", torque: "-roll",  translation: "-Y", aoh_name: A2}
+    jets_provenance:
+      basis: derived
+      source: >-
+        GSOP R-577 Section 3 (Digital Autopilots) Rev. 3, Dec 1968, COLOSSUS 1/1A, Tables
+        3.2-III to 3.2-X, printed pp. 3.2-33 to 3.2-35 (jet selection for pitch, yaw, roll AC,
+        roll BD and X, Y, Z translation, each with quad-fail rows), and p. 3.2-28 / footnote p.
+        3.2-1 ("Quads A and C are aligned with the yaw-control (Z) axis", "Quads B and D ... the
+        pitch-control (Y) axis", control axes rotated -7.25 deg from the navigation base axes):
+        https://ibiblio.org/apollo/NARA-SW/R-577-sec3-rev3.pdf
+      relation: >-
+        quad membership from the quad-fail rows (a jet still selected with quad A failed is not
+        on A); force sign from the translation tables; which end of each axis a quad sits on
+        from the torque sign, by tau = r x F with right-handed pitch, yaw and roll about the
+        control Y, Z and X axes. The result (A on -Z_c, B on +Y_c, C on +Z_c, D on -Y_c) is the
+        one assignment under which all eight tables agree
+      note: >-
+        flight software, not a simulator: the DAP that flew from Apollo 8. Jet numbers are the
+        DAP's; `aoh_name` is the engine name SNA-8-D-027(I) Rev 3 Table 4.3-12 "Service Module RCS
+        Control Definitions" (printed p. 4.3-28, rendered) lists in the same order with quad,
+        translation and rotation, matching this table on every jet. AOH Figure 2.5-1 "CM-SM Engine
+        Locations" draws quad A on -Z, B on +Y, C on +Z and D on -Y, the placement the DAP tables
+        above give independently, and AOH Figure 2.3-14 "SM Jet Functions" repeats the map (G-2)
+
+  # The CM's twelve jets by the AOH's engine numbers: subsystem, function, where the thrust line
+  # meets the outer mould line (the roll pairs at their centrelines' intersection), and the unit
+  # thrust in CM axes. `check_rcs_geometry` rebuilds every vector from the drawing's angles and
+  # refuses one that disagrees, or whose torque about `torque_check_point_in` turns the CM the
+  # wrong way. Thrust and Isp are the CM article's, `thruster_cm` (G-7).
+  rcs_cm:
+    frame: CM_XC
+    aft_engine_angle_deg: 47.0
+    roll_alpha_deg: 46.402778
+    roll_beta_deg: 56.374444
+    roll_point_theta_deg: {H: 315.916667, G: 224.083333}
+    torque_check_point_in: [41.7, -0.4, 5.6]
+    jets:
+      - {id: 11, subsystem: 1, torque: "+roll",  point: H, position_in: [32.3000,  51.9826, -50.3454], thrust_unit: [0.0,  0.1815,  0.9834]}
+      - {id: 12, subsystem: 1, torque: "-roll",  point: H, position_in: [32.3000,  51.9826, -50.3454], thrust_unit: [0.0, -0.9992, -0.0405]}
+      - {id: 13, subsystem: 1, torque: "+pitch", point: F, position_in: [27.6750,   4.4211, -72.2846], thrust_unit: [-0.7314, -0.0416,  0.6807]}
+      - {id: 14, subsystem: 1, torque: "-pitch", point: N, position_in: [85.1200,   3.929,  -35.5743], thrust_unit: [0.0, 0.0, 1.0]}
+      - {id: 15, subsystem: 1, torque: "+yaw",   point: A, position_in: [27.6750,  72.2846,  -4.4211], thrust_unit: [-0.7314, -0.6807,  0.0416]}
+      - {id: 16, subsystem: 1, torque: "-yaw",   point: C, position_in: [27.6750, -72.2846,   4.4211], thrust_unit: [-0.7314,  0.6807, -0.0416]}
+      - {id: 21, subsystem: 2, torque: "+roll",  point: G, position_in: [32.3000, -51.9826, -50.3454], thrust_unit: [0.0,  0.9992, -0.0405]}
+      - {id: 22, subsystem: 2, torque: "-roll",  point: G, position_in: [32.3000, -51.9826, -50.3454], thrust_unit: [0.0, -0.1815,  0.9834]}
+      - {id: 23, subsystem: 2, torque: "+pitch", point: E, position_in: [27.6750,  -4.4211, -72.2846], thrust_unit: [-0.7314,  0.0416,  0.6807]}
+      - {id: 24, subsystem: 2, torque: "-pitch", point: M, position_in: [85.1200,  -3.929,  -35.5743], thrust_unit: [0.0, 0.0, 1.0]}
+      - {id: 25, subsystem: 2, torque: "+yaw",   point: B, position_in: [27.6750,  72.2846,   4.4211], thrust_unit: [-0.7314, -0.6807, -0.0416]}
+      - {id: 26, subsystem: 2, torque: "-yaw",   point: D, position_in: [27.6750, -72.2846,  -4.4211], thrust_unit: [-0.7314,  0.6807,  0.0416]}
+    provenance:
+      basis: historical
+      source: >-
+        CSM/LM Spacecraft Operational Data Book Vol. I, SNA-8-D-027(I) Rev 3, Figure 4.4-2
+        "Command Module RCS Thrust Chamber Locations", printed p. 4.4-15, CSM 101 and subs,
+        rendered (`/mnt/project-files/sources/rcs/`): the thrust-exit-plane points A-N with RCS
+        system A/B, note (1) "intersection point of roll engine centerline", Section M-M "47 deg
+        TRUE" for the yaw and aft pitch engines, alpha 46 24' 10" and beta 56 22' 28" for the roll
+        engines at H (theta_c 315 55') and G (224 05'):
+        https://www.ibiblio.org/apollo/Documents/HSI-41539.pdf
+        Functions and subsystems from AOH s. 2.5 Figure 2.5-1 and s. 2.3 Figure 2.3-14 (+pitch
+        13/23, -pitch 14/24, +yaw 15/25, -yaw 16/26, +roll 11/21, -roll 12/22), corroborated by
+        AOH p. 2.3-32 (direct coils on all CM engines "except 13 and 23"). The same twelve
+        positions are R-577 s. 6.5.1.2's (printed pp. 6-42, 6-43), rendered
+      thrust_unit_relation: >-
+        thrust = -exhaust. Yaw and aft pitch: exhaust = sin 47 X + cos 47 r_hat(point). Forward
+        pitch (14, 24): exhaust -Z, drawn perpendicular to X, with an in-plane tilt the drawing
+        does not dimension and that is taken as zero. Roll: exhaust in the X_C 32.3 plane at
+        theta_H + alpha (12), theta_H - beta (11), theta_G - alpha (21), theta_G + beta (22). The
+        vectors reproduce R-577 s. 6.11.2's hybrid-simulator moment arms to 0.05 ft on ten of
+        twelve jets; the two rows that differ disagree with their own mirrors, and the
+        flight-hardware drawing wins
+      note: >-
+        `torque_check_point_in` is R-577 s. 6.5.2's simulator CM centre of gravity, used only to
+        check torque signs, never as a mass property. The nozzle extensions' alignment angles
+        (SNA-8-D-027(I) Table 4.4-3, 0.74-8.23 deg in vacuum) are not modelled. Every pitch and
+        yaw jet also turns the CM a little about the other two axes, and the two subsystems'
+        couplings cancel only when both fire: the confounder a single-subsystem entry shows (G-6)
+
+  # The LM's sixteen jets, from the LUMINARY simulator's control data, whose three printed
+  # dimensions the Operational Data Book's flight-hardware figure states independently.
+  rcs_lm:
+    frame: LM_XE
+    unit: "m, N"
+    thrust_n: 444.82
+    jets:
+      - {id: 1,  name: IV-U,  position_m: [6.57352,  1.67894,  1.67894], force_axis: "-X"}
+      - {id: 2,  name: IV-D,  position_m: [6.31698,  1.67894,  1.67894], force_axis: "+X"}
+      - {id: 3,  name: IV-F,  position_m: [6.4516,   1.5621,   1.68529], force_axis: "-Z"}
+      - {id: 4,  name: IV-S,  position_m: [6.4516,   1.68529,  1.5621],  force_axis: "-Y"}
+      - {id: 5,  name: III-U, position_m: [6.57352,  1.67894, -1.67894], force_axis: "-X"}
+      - {id: 6,  name: III-D, position_m: [6.31698,  1.67894, -1.67894], force_axis: "+X"}
+      - {id: 7,  name: III-F, position_m: [6.4516,   1.5621,  -1.68529], force_axis: "+Z"}
+      - {id: 8,  name: III-S, position_m: [6.4516,   1.68529, -1.5621],  force_axis: "-Y"}
+      - {id: 9,  name: II-U,  position_m: [6.57352, -1.67894, -1.67894], force_axis: "-X"}
+      - {id: 10, name: II-D,  position_m: [6.31698, -1.67894, -1.67894], force_axis: "+X"}
+      - {id: 11, name: II-F,  position_m: [6.4516,  -1.5621,  -1.68529], force_axis: "+Z"}
+      - {id: 12, name: II-S,  position_m: [6.4516,  -1.68529, -1.5621],  force_axis: "+Y"}
+      - {id: 13, name: I-U,   position_m: [6.57352, -1.67894,  1.67894], force_axis: "-X"}
+      - {id: 14, name: I-D,   position_m: [6.31698, -1.67894,  1.67894], force_axis: "+X"}
+      - {id: 15, name: I-F,   position_m: [6.4516,  -1.5621,   1.68529], force_axis: "-Z"}
+      - {id: 16, name: I-S,   position_m: [6.4516,  -1.68529,  1.5621],  force_axis: "+Y"}
+    odb_check_in:
+      cluster_plane_xe: 254.0
+      up_down_arm: 66.1
+      fore_side_arm: 61.5
+    provenance:
+      basis: historical
+      source: >-
+        GSOP R-567 Section 6 (Control Data), Nov 1968, LUMINARY, LM-6 digital simulator,
+        s. 6.4.1 (origin "254 inches (6.4516 meters) below the RCS reference plane"), s. 6.4.1.4
+        jet positions, s. 6.4.5.2 force vectors (printed pp. 6-22, 6-23, 444.82 N each):
+        https://ibiblio.org/apollo/NARA-SW/R-567-sec6.pdf
+        Corroborated by SNA-8-D-027(III) Rev 2, Figure 2-12 (printed p. 2-13), "RCS PITCH AND
+        ROLL JETS ZE AND YE = +/-66.1" and "RCS YAW JETS ZE AND YE = +/-61.5" (effective
+        geometric moment arms), and Figure 2-13 (printed p. 2-14), "XE = 254.0"
+      note: >-
+        `odb_check_in` holds the flight-hardware figure's three dimensions, which
+        `check_rcs_geometry` requires the simulator positions to reproduce to their printed
+        precision. All sixteen force vectors were read from the rendered pages 6-22 and 6-23
+        (`/mnt/project-files/sources/rcs/`): jet 4 prints "-444.82" on Y and jets 1 and 13
+        "-444.82" on X. The text layer had lost those minus signs; the rule that a jet exhausts
+        away from its own cluster, which `check_rcs_geometry` enforces, had predicted all three
 
 # --------------------------------------------------------------------------------------
 # State. Twelve, of which only two advance a coupling node — the rest are the service.
@@ -575,21 +759,43 @@ components:
     class: thruster
     thrust_n: 445
     isp_s: 277.8
-    count: 44
-    vehicle_keys: [rcs_sm, rcs_cm, rcs_lm]
+    count: 32
+    vehicle_keys: [rcs_sm, rcs_lm]
     provenance:
       basis: historical
-      source: "vehicle.yaml#propulsion.rcs_sm/rcs_cm/rcs_lm — 16 SM + 12 CM + 16 LM = 44 thrusters, all 100 lbf, from A11 Tbl 8-XI and 9-XV"
+      source: "vehicle.yaml#propulsion.rcs_sm/rcs_lm — 16 SM + 16 LM = 32 thrusters, all 100 lbf, from A11 Tbl 8-XI and 9-XV"
       note: >-
-        one component for all forty-four because they are the same article at the same
-        throttle, and forty-four near-identical entries would be forty-four places for the
-        arithmetic to differ. **C-26 is closed and this article carries the guide's figure now**:
+        one component for the thirty-two SM and LM thrusters because they are the same article at
+        the same throttle, and thirty-two near-identical entries would be thirty-two places for the
+        arithmetic to differ. The twelve CM engines were in this article until the CSM Data Book
+        showed them to be a different engine; they are `thruster_cm`. **C-26 is closed and this article carries the guide's figure now**:
         the 290 s that stood here was sourced to nothing, `lm_propulsion_rcs_study_guide.pdf` PDF
         p. 90 states both an Isp (275 s approx) and the flow rates of the same thruster
         (0.24 + 0.12 lb/s at 100 lbf), and those two agree with each other on 277.78 s. The
         operator's decision is recorded in `../integration/reconciliation/01-conflict-register.md`;
         what it moved is `E-RCSP-RCS`, `mass_flow_per_thruster` and the three `impulse_capacity`
         figures, together and in one round
+
+  - id: thruster_cm
+    kind: flow
+    class: thruster
+    thrust_n: 427
+    isp_s: 272.0
+    count: 12
+    vehicle_keys: [rcs_cm]
+    provenance:
+      basis: historical
+      source: >-
+        CSM/LM Spacecraft Operational Data Book, Vol. I CSM Data Book, SNA-8-D-027(I) Rev 3,
+        Table 4.4-1 "Command Module RCS Engine Vacuum Steady-State Performance", printed p. 4.4-9:
+        thrust 96.0 lb (+3.6/-3.7) = 427 N, Isp 272.0 +/- 6.9 s, expansion ratio 9.00
+        (https://www.ibiblio.org/apollo/Documents/HSI-41539.pdf)
+      note: >-
+        the CM engine is its own article: ablatively cooled at 9:1 where the SM engine is
+        radiation-cooled at 40:1 (TN D-7151 pp. 3, 9-10; AOH printed p. 2.5-47 "nominal thrust 93
+        pounds"). The Data Book's qualification figures are the ones taken, as its Table 4.3-1 is
+        for the SM. A declaration only: the jets are `geometry.rcs_cm.jets` and the decision is
+        docs/evidence/wp03-rcs-geometry.md G-7
 
   - id: pulse_generator
     kind: discrete
@@ -668,10 +874,10 @@ components:
 # What is still owed, in the domain's own words rather than the linter's.
 # --------------------------------------------------------------------------------------
 open_debts:
-  - "**A string is not a thruster.** `thruster_valve` is keyed by `thruster_id` and `set_rcs_quad` names a `group` — `sm_primary`, `sm_secondary`, `cm`, `lm` — so the key declaration says which argument selects the elements and the argument cannot name them. `rcs_string_sm_primary` and its siblings carry a `thrusters: 8` count and a `vehicle_keys` link; what none of them declares is *membership*, which is the same list the allocator needs for its wrench matrix. `isolate_rcs_manifold` is the other half: `branch` names a feed branch, and which thrusters a branch feeds is owed with the thruster geometry."
+  - "**A string is not a thruster.** `thruster_valve` is keyed by `thruster_id` and `set_rcs_quad` names a `group` — `sm_primary`, `sm_secondary`, `cm`, `lm` — so the key declaration says which argument selects the elements and the argument cannot name them. `rcs_string_sm_primary` and its siblings carry a `thrusters: 8` count and a `vehicle_keys` link; what none of them declares is *membership*, which is the same list the allocator needs for its wrench matrix. `isolate_rcs_manifold` is the other half: `branch` names a feed branch, and which thrusters a branch feeds is owed with the thruster geometry. **Quad membership is now declared** (`geometry.rcs_sm.jets[].quad`, four jets on each of A-D) and it does not fit the two eight-jet SM strings: the SM flew four independent quads (TN D-7151 p. 3, \"four independent assemblies, each of which was composed of a four-engine cluster\"), so the strings are a model decision for the RCS lane, not a transcription."
 
   - "The per-thruster minimum command-ON floor is owed until each thruster has SM, CM or LM membership and the controller path is named. Group enable/inhibit has a chosen zero policy dwell in both directions so inhibit and deliberate re-enable remain available; it is not an injector-pulse qualification. LM pulse-mode 10 ms and SM automatic-controller earliest OFF 12 ms are separately sourced under `capability.minimum_command_on_s`; CM hardware command timing remains unpublished in the sources reached. None is a delivered impulse bit or a universal qualification. The maximum ON time and duty cycle remain owed."
   - "Thrust rise and tailoff time constants. The asymmetry between them is what a total-impulse gauge misreads, and no source gives either."
   - "Inertia tensor and centre of mass, owed by `vehicle.yaml` and owed *to* this domain before the deadband, the allocator's wrench matrix and E-RCS-DYN can exist. Three of this domain's twelve states are waiting on it. **The docked stack's tensor landed in round 9** (`vehicle.yaml#mass_properties`) and four configurations' are still owed there by name; what this domain still cannot build is the wrench matrix, which needs the thrusters' own lever arms rather than the vehicle's tensor."
-  - "Thruster geometry: the unit thrust direction and lever arm of each of the 44 thrusters. Without it the allocator has no B matrix (rcs_dode.md:685-693)."
+  - "Thruster geometry: what is left after WP03. **All three tables have landed** (`geometry`: SM jets 1-16 on quads A-D with their AOH engine names, CM engines 11-26 with positions and thrust directions, LM jets 1-16), so the allocator can build `B = [F_i d_i ; r_i x F_i d_i]` (rcs_dode.md:685-693) once each configuration supplies its centre of mass. What stays approximate, each recorded in `docs/evidence/wp03-rcs-geometry.md`: the SM roll thrust lines' 0.94 in fore-aft offset, the CM forward pitch engines' undimensioned tilt and the CM nozzle extensions' alignment angles. The CM article split (G-7) has landed as `thruster_cm`; this entry stays open for those three approximations."
   - "The mission's RCS propellant allocation. `rcs.total_impulse_ns` can be checked against the load (capability.impulse_capacity) but the mission declares no RCS budget, so the three systems still carry the linter's 'no mission burn' note while their loads are flown by attitude control, which no budget line can price."

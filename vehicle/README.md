@@ -28,11 +28,11 @@ interpreted afterwards. Nothing here reads across the boundary: the corpus is *c
 | `plant.md` | The core contract: what `step()` is, the seven integrator classes, determinism, the event queue, and what the plant may never do. |
 | `vehicle.yaml` | Globals: the frame registry and the four scalar conventions, environment, configurations and their mass closure, propulsion, consumable loads, thermal zones, antennas. |
 | `mission.yaml` | The profile: eight phases summing to 192.0 h, the ten-posture execution machine, the freshness manifest, the derived lunar occultation, MET epoch, crew, the Δv budget, objectives, the three scenario postures. |
-| `coupling.yaml` | apollo's coupling graph as data, with typed edges, crisis-point sensitivities, seven declared cycles and the fifteen failure chains. The linter derives the 63-node tick order from it. |
+| `coupling.yaml` | apollo's coupling graph as data, with typed edges, crisis-point sensitivities, seven declared cycles and the fifteen failure chains. The linter derives the 65-node tick order from it. |
 | `presentation.yaml` | The vehicle's side of the frozen window: the epistemic mapping, the six files, the frame envelope, the mirror and its bound, the ring's cadence classes, and which of `diode_probe.py`'s twelve checks the configuration satisfies. |
 | `channels.yaml` | The point dictionary: 148 canonical channels with units, precision, rate, priority, events **and an event class**, a derived maximum decision age and the crew perception bound, plus the registry's own `coverage` block. |
 | `domains/<name>/` | One landed subsystem: `components` · `points` · `profiles` · `commands` · `fault_policy`. |
-| `tools/check_vehicle.py` | The linter. `--order` prints the derived 63-node tick order with the states at each node; `--phases` prints the verb-by-phase view derived from the registries. |
+| `tools/check_vehicle.py` | The linter. `--order` prints the derived 65-node tick order with the states at each node; `--phases` prints the verb-by-phase view derived from the registries. |
 | `tools/generate_help.py` | Emits the vehicle's `HELP.md` from the command registries — §8's only place a verb name may appear, so it is generated rather than written. |
 | `tools/plant.py` | A **reference plant**: loads the world from the configuration, builds the tick order, emits a frame, and runs until it reaches something it cannot compute — where it names what is missing instead of guessing. `--readiness` prints the build order. |
 
@@ -220,7 +220,7 @@ because the claim spans every domain. The phase
 ladder sums to exactly 192.0 h, so the 34,560,000-tick figure `review-findings.md` §13 has been
 pricing is now derived from a phase list rather than assumed.
 
-**All eleven domains have landed** — 148 channels, 165 states over 63 scheduled nodes, 139
+**All eleven domains have landed** — 148 channels, 169 states over 65 scheduled nodes, 141
 thresholds, 59 verbs and 127 classified events across the eleven directories, with every debt
 named. Those are the corpus's declarations, and the linter holds each of them against the files
 (`check_readme_figures`); they move when a domain adds a channel, a state or a verb, not when one
@@ -306,7 +306,7 @@ are the vehicle's only two-step verbs (C-16: a burn is interruptible, so requiri
 one adds a delay rather than a safety).
 
 `domains/eclss/` is the one where a fault has minutes rather than hours.
-It declares 25 states, 20 thresholds, 6 verbs, 21 faults — four conserved gases in each of
+It declares 29 states, 22 thresholds, 6 verbs, 21 faults — four conserved gases in each of
 **two** compartments. Three things in it are worth reading:
 
 - **The atmosphere is modelled as gas masses, not as a pressure.** Pressure is `nRT/V`, so a
@@ -15822,9 +15822,11 @@ with a loaded gun in it.
 Adding a per-cycle generation to `publish()` made the contract probe fail two checks —
 *"published state is rewritten, not read back"* — and the reason is worth recording because it is a
 **timing** bug that read as a correctness one. `generate_readme` costs about 20 ms; a console cycle
-went from 0.095 s to 0.45 s; and `check_state_is_a_mirror` doctors `state.json` and waits
-`1.5 × poll_seconds` for a republish. A console slower than the probe's patience is a console that
-*looks like it reads its own mirror back*.
+went from 0.095 s to 0.45 s; and `check_state_is_a_mirror` doctored `state.json` and waited
+`1.5 × poll_seconds` for a republish. A console slower than the probe's patience was a console that
+*looked like it read its own mirror back*. The probe has since stopped judging by the clock: it waits
+for the next publication of `state.json`, bounded by its own timeout, and judges that one, so a late
+cycle is no longer read as state read back (aurora PR #61).
 
 The fix is the one the file should have had anyway: **the configuration does not change while a
 console runs**, so `HELP.md` and `README.md` are generated once and written from the cached text. That
@@ -18422,6 +18424,11 @@ compares the clean definition with broken copies. At this round's baseline, no t
 changed: **272 debts at that round**, **194 literal unset scalars**, and **52** states advanced.
 The vehicle
 referee grows from **342 to 343 tests**.
+
+That check has since been retired. It pinned one evidence state, LM-5 effectivity and both bay
+values owed, and the thermal lane is replacing that state: the service bay and the LM descent stage
+radiate to space, and the modelled LM is LM-7. A pin on the old audit would refuse the correction.
+Any bay value still `UNCONFIGURED` is counted by the debt walk, as every other owed scalar is.
 
 ## The docked LM station axis was reversed in the figure
 
