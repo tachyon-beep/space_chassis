@@ -28,15 +28,39 @@ def link_ok(inputs, params, dt):
     """The episode's link boundary (ADR 0003 item 8): the high-gain antenna, the high-rate S-band
     mode at the high profile's rate, the power amplifier on, and the Earth not behind the Moon.
 
-    The occultation is evaluated here from this tick's orbit, by the function `blackout` calls,
-    rather than read from `blackout`: that state is on the sentinel, which advances after
-    `ground_received`, and it has no value before the first tick."""
+    The occultation is evaluated here, by the function `blackout` calls, rather than read from
+    `blackout`: that state is on the sentinel, which advances after `ground_received`, and it has no
+    value before the first tick. The orbit it reads is this tick's because `E-DYN-RECV` schedules
+    `vehicle_dynamics` before `ground_received`; without the edge the tiebreak put the predicate a
+    tick behind the orbit."""
     if not (
         inputs["antenna_selection"] == "high_gain"
         and inputs["comm_mode"] == "sband_high"
         and inputs["telemetry_rate"] == params["high_rate_bps"]
         and inputs["transmitter_on"] == "on"
     ):
+        return False
+    orbit = inputs["orbital_state"]
+    hidden = occulted(orbit["position_m"], orbit["moon_position_m"], float(params["moon_radius_m"]))
+    if hidden is None:
+        return params.no_value(
+            "the vehicle is inside the Moon's mean radius, where the trajectory has no meaning"
+        )
+    return not hidden
+
+
+def carrier_lock(inputs, params, dt):
+    """Whether the ground receiver holds the downlink carrier (`comm.carrier_lock`): an S-band mode
+    is selected and the Moon is not between the vehicle and the Earth.
+
+    These are the no-carrier cases, and they live here rather than as gaps in `link_margin_db`: a gap
+    keeps the state's last value, so a margin that went missing in VHF or behind the Moon would go on
+    publishing the last S-band figure. The margin is the configured link's budget in every case, and
+    this is whether any carrier reaches the ground at all. The carrier loop's own threshold
+    (CR-125670 eq. 46, Pmin(dc)) is not tabulated in the report, so lock does not yet fall with
+    received power; that term is owed (`components.yaml` debts).
+    """
+    if inputs["comm_mode"] not in ("sband_high", "sband_low"):
         return False
     orbit = inputs["orbital_state"]
     hidden = occulted(orbit["position_m"], orbit["moon_position_m"], float(params["moon_radius_m"]))
@@ -144,5 +168,6 @@ RULES = {
     "blackout": blackout,
     "light_time_s": light_time_s,
     "link_margin_db": link_margin_db,
+    "carrier_lock": carrier_lock,
     "playback_rate": playback_rate,
 }

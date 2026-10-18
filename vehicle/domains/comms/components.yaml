@@ -224,14 +224,16 @@ components:
 # can target it and the rules that would move these states are domain code — so this is a
 # decision about the rules rather than a consequence of them, and it is declared so the
 # frozen lexicographic tiebreak is not what decides. See `internal_order_note`.
-internal_order: [blackout, light_time_s, comm_mode, antenna_selection, carrier_lock, telemetry_rate, recorder_play, frame_loss]
+internal_order: [blackout, light_time_s, comm_mode, antenna_selection, telemetry_rate, recorder_play, frame_loss]
 internal_order_note: >-
   the geometry, then the link chain: whether the Moon hides the Earth, and how long light takes
   to cross the range, come first because both are read off this tick's orbit and nothing on the
-  sentinel moves them, and a carrier cannot lock through the Moon; then the mode selects the antenna, the antenna decides whether the carrier locks, the
-  lock decides the rate, and the playback switch follows the rate it plays at; the frame-loss
-  counter is what the chain costs, last because it counts the states above it. The recorder left the sentinel for `data_recorder` when playback made it a stock
-  with an edge, because no edge can reach the sentinel.
+  sentinel moves them; then the mode selects the antenna, the rate follows the mode, and the
+  playback switch follows the rate it plays at; the frame-loss counter is what the chain costs,
+  last because it counts the states above it. The recorder left the sentinel for `data_recorder`
+  when playback made it a stock with an edge, because no edge can reach the sentinel, and
+  `carrier_lock` left it for `link` so that another domain can read it: a sentinel state is
+  readable only inside its own domain, and GNC's uplink navigation reset needs the lock.
 
 state:
 
@@ -516,14 +518,16 @@ state:
         descent and is invisible in a single "comms is up" boolean
 
   - id: carrier_lock
-    node: internal
-    method: discrete
+    node: link
+    method: algebraic
     unit: bool
     moved_by:
-      - "logic:the receiver's own statement that it holds the carrier"
-    dwell:
-      min_on_s: 2
-      min_off_s: 2
+      - "logic:an S-band mode is selected and the Moon does not hide the Earth"
+    # The rule's parameter (`domains/comms/rules.py:carrier_lock`).
+    moon_radius_m: 1737400
+    parameter_provenance:
+      basis: historical
+      source: "vehicle.yaml#environment.moon_mean_radius_km (1,737.4 km), `blackout`'s and `link_ok`'s own parameter; `tests/test_comms_rules.py` holds the copies equal"
     provenance:
       basis: apollo
       ref: "apollo_diode.md:162"
@@ -531,10 +535,15 @@ state:
         apollo's `comm.carrier_lock`, "true nominal", with a "lock loss" event. The receiver's
         statement that it has found the signal, which is a *different* fact from having a usable
         link: a carrier can lock at a power far too low to carry data, so this channel and
-        `comm.link_margin_db` together separate "the receiver has lost the vehicle" from "the receiver
-        can hear it and cannot read it". Two seconds of dwell in both directions because lock
-        acquisition is a search rather than an instant, and a lock bit that flickered on every
-        acquisition would make every pointing maneuver look like a comms fault
+        `comm.link_margin_db` together separate "the receiver has lost the vehicle" from "the
+        receiver can hear it and cannot read it". It carries the no-carrier cases — `vhf`, `none`,
+        and the Moon between the vehicle and the Earth — so that the margin can stay defined in all
+        of them rather than going stale behind a gap. **It is on `link` rather than the sentinel**
+        because GNC's uplink navigation reset reads it, and a sentinel state is readable only inside
+        its own domain. It is algebraic, a function of this tick's mode and orbit, for the reason
+        `blackout` is non-latching: no frame is read, so there is nothing to debounce. The two
+        seconds of dwell it carried were a command guard on a state no command moves, and the
+        acquisition search they stood for is owed with the carrier loop's own threshold
 
   - id: telemetry_rate
     node: internal
@@ -804,6 +813,7 @@ state:
 # --------------------------------------------------------------------------------------
 open_debts:
 
+  - "The carrier loop's own threshold and its acquisition time. `carrier_lock` is the mode and the occultation, so a carrier that is transmitted and not occulted locks at any received power. CR-125670 defines the down-carrier's minimum power (eq. 46, Pmin(dc), the power at which the carrier channel's circuit margin is zero) and tabulates only the data channels' Pmin (Table II), so what is owed is that figure for the 85-ft station's carrier loop, and the receiver's acquisition search time, which the two-second dwell this state used to carry stood in for."
   - "**The occultation the phase table says cannot happen.** `blackout` is computed from the orbit, and on the declared free return it is `occulted` from MET 72.78 h to 73.23 h — 27 minutes at closest approach, which is where Apollo flew its lunar-orbit insertion burns, out of contact (`tests/test_comms_rules.py`). `translunar_coast` ends at 73.0 h, and `mission.yaml#comms_blackout.not_affected` lists it. The block budgets a circular 100 km orbit per phase (`plant.py --blackout`), so it cannot see a flyby, and adding the phase to `phases_affected` would budget 73 hours of revolutions that are not flown. What is owed is the LOI timing against the arrival: whether the coast ends before, at or after loss of signal is the ladder's choice, and the burn that ends it is the propulsion lane's."
   - "Gimbal range and slew rate. Both owed, and both needed to separate a pointing error the gimbal can still fix from one it cannot — which is the difference between `point_hga` being a control action and being a message nobody can act on."
   - "`E-BUS-COMM`'s dB per volt, and `E-PLATE-COMM`'s dB per kelvin. Both need the amplifier's gain-versus-supply and gain-versus-temperature curves, which are not published. They stay UNCONFIGURED and they are the two edges that make the flagship cycle quantitative rather than qualitative."

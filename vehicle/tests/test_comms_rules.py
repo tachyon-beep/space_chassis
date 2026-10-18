@@ -225,7 +225,7 @@ def _moon_radius_m(world) -> float:
 
 
 def test_the_moon_radius_the_occultation_uses_is_the_one_the_trajectory_uses(world):
-    """Four declarations of one radius: the two rule parameters, the environment row the
+    """Five declarations of one radius: the three rule parameters, the environment row the
     trajectory's flyby check reads, and the figure `mission.yaml#comms_blackout` derives its
     half-angle from. A rule parameter is a literal on its state, so this is what joins it."""
     vehicle = yaml.safe_load((VEHICLE / "vehicle.yaml").read_text())
@@ -234,6 +234,7 @@ def test_the_moon_radius_the_occultation_uses_is_the_one_the_trajectory_uses(wor
     expected = float(environment["moon_mean_radius_km"]) * 1e3
     assert _moon_radius_m(world) == expected
     assert float(_state(world, "link_ok").spec["moon_radius_m"]) == expected
+    assert float(_state(world, "carrier_lock").spec["moon_radius_m"]) == expected
     assert float(mission["comms_blackout"]["moon_radius_km"]) * 1e3 == expected
 
 
@@ -517,3 +518,51 @@ def test_through_the_step_loop_the_omni_budget_closes_and_the_hga_waits_on_point
     values, gaps = first_tick({})
     margin_gaps = [g for g in gaps if g.state.id == "link_margin_db"]
     assert margin_gaps and "antenna_pointing" in margin_gaps[0].owed
+
+
+# ------------------------------------------------------------------------------------------------
+# Carrier lock (`state carrier_lock`, `comm.carrier_lock`): the no-carrier cases the margin does not
+# gap on, on a node another domain can read.
+# ------------------------------------------------------------------------------------------------
+
+
+def _lock(world, *, mode="sband_high", behind=False):
+    spec = _state(world, "carrier_lock").spec
+    moon = [384_400e3, 0.0, 0.0]
+    position = [moon[0] + _moon_radius_m(world) + 100e3, 0.0, 0.0] if behind else [-7.0e6, 0.0, 0.0]
+    inputs = {"comm_mode": mode, "orbital_state": {"position_m": position, "moon_position_m": moon}}
+    params = plant.RuleParams(spec, "domains/comms/components.yaml:state carrier_lock")
+    return _comms_rules().carrier_lock(inputs, params, DT)
+
+
+def test_the_carrier_locks_on_s_band_and_not_through_the_moon_or_in_vhf(world):
+    assert _lock(world) is True and _lock(world, mode="sband_low") is True
+    for kwargs in ({"behind": True}, {"mode": "vhf"}, {"mode": "none"}):
+        assert _lock(world, **kwargs) is False, kwargs
+
+
+def test_the_lock_is_on_a_node_another_domain_can_read(world):
+    """A sentinel state is readable only inside its own domain (`plant.rule_readable`); GNC's uplink
+    navigation reset reads the lock, so it is on `link`, which a domain reads by declaring it."""
+    assert _state(world, "carrier_lock").node == "link"
+    # `power` and `thermal` declare `link` in `reads:` and have rules, so they stand in for GNC;
+    # `eclss` declares neither and is refused, which is the rule the move answers.
+    assert "carrier_lock" in world.rule_reads["power"] and "carrier_lock" in world.rule_reads["thermal"]
+    assert "carrier_lock" not in world.rule_reads["eclss"]
+
+
+def test_the_link_predicate_reads_this_tick_s_orbit(world):
+    """`E-DYN-RECV` schedules the orbit before `ground_received`, so loss and acquisition of signal
+    land on the tick the geometry says rather than one tick after."""
+    order = list(world.advance_order)
+    assert order.index("vehicle_dynamics") < order.index("ground_received")
+    assert order.index("vehicle_dynamics") < order.index("link")
+
+
+def test_through_the_step_loop_the_carrier_is_locked_at_met_0(world, tmp_path):
+    seen = []
+    scen = scenario(world, tmp_path, [])
+    plant.run_scenario(world, scen, 1, on_tick=lambda tick, values, ledger, gaps: seen.append((values, gaps)))
+    values, gaps = seen[0]
+    assert not [g for g in gaps if g.state.id == "carrier_lock"]
+    assert values["carrier_lock"] is True

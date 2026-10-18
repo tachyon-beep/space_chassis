@@ -353,7 +353,7 @@ faults:
     provenance:
       basis: apollo
       ref: "apollo_diode.md:903"
-      note: "the recorder is the mechanism that makes an occultation survivable; its capacity is not published and is recorded as a debt rather than invented"
+      note: "the recorder is the mechanism that makes an occultation survivable; its capacity is the AOH's 92.16 Mbit (`components.yaml#recorder.capacity_bit`, §2.8: 30 minutes of 51.2 kbit/s tape), so the fill a fleet watches has a sourced ceiling"
 
   - id: COM-10-occultation-longer-than-predicted
     fleet_class: precursor

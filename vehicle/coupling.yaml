@@ -539,7 +539,7 @@ nodes:
     # every thermal edge on the vehicle.
     unit: dB
     apollo: "164"
-    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_margin_db]
+    state_order: [transmitter_on, tx_power, amp_dissipation_w, link_margin_db, carrier_lock]
     state_order_note: >-
       **the case that made this check worth writing.** Transmit power is a term in the link
       budget, so the link margin has to be computed from the power of this tick — and
@@ -549,7 +549,8 @@ nodes:
       transient a fleet is watching for. `transmitter_on` is first because the draw and the
       amplifier's dissipation are both functions of the switch: it is on this node rather than the
       sentinel so that `power` and `thermal`, which both declare `link` in `reads:`, can gate the
-      amplifier's load and heat on it
+      amplifier's load and heat on it. `carrier_lock` is last because nothing on the node reads it,
+      and it is here for the same reason `transmitter_on` is: another domain (GNC) reads it
 
   # --- propulsion and RCS -------------------------------------------------------------
   engine_main:
@@ -2260,6 +2261,27 @@ edges:
         `comm.hga_pointing_error_deg` — the quantity the 2 deg threshold actually watches.
         Collapsing the two would have made a gimbal failure indistinguishable from a vehicle
         pointing the wrong way.
+  - id: E-DYN-RECV
+    # **An ordering edge with a value.** `link_ok` evaluates the occultation from the orbit, and
+    # without an edge the frozen tiebreak scheduled `ground_received` before `vehicle_dynamics`, so
+    # the predicate read last tick's orbit while its docstring said this tick's.
+    reads: orbital_state
+    advances: link_ok
+    from: vehicle_dynamics
+    to: ground_received
+    kind: algebraic
+    sensitivity:
+      value: 1.0
+      computation: "1.0"
+      unit: "-"
+      basis: derived
+      relation: "the coupling is the signal itself; the edge carries the orbit one for one, and `domains/comms/rules.py:link_ok` turns it into the occultation term of the predicate"
+      at: nominal
+      note: >-
+        the orbit into the episode's link predicate. One for one because the edge carries a
+        position rather than transforming one, as `E-DYN-GNC` carries it into the estimator; what
+        the predicate does with it is the rule's. What the edge buys is the schedule: loss and
+        acquisition of signal land on the tick the geometry says, not one tick after
   - id: E-GEOM-LINK
     advances: link_margin_db   # antenna geometry is a pointing loss, and the loss lands in the link margin
     from: antenna_geometry
