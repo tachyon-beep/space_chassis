@@ -1567,6 +1567,7 @@ def test_the_linter_reaches_every_node_a_command_moves(tmp_path):
     assert commanded == {
         "bus_tie", "cabin_regulator", "engine_main", "rcs_valves", "link",
         "nav_state", "guidance", "coolant_flow", "instrumentation", "structure_config", "load_shed_state",
+        "overboard_vent",
     }, sorted(commanded)
     # Every state that says a command moves it lives on one of those nodes.
     for path in sorted((VEHICLE / "domains").glob("*/components.yaml")):
@@ -4504,7 +4505,8 @@ def test_the_linter_refuses_a_keyed_state_on_a_node_that_does_not_declare_its_ke
     text = (VEHICLE / coupling).read_text()
     on_nodes = re.findall(r"(?:^[ ]+|[,{][ ]*)key_space: by_state\b", text, re.M)
     # 5 -> 6: `load_shed_state` carries power's `load_enabled` switch map beside the ladder's class.
-    assert len(on_nodes) == 6, (
+    # 7 with ECLSS's `overboard_vent`, keyed by dump path.
+    assert len(on_nodes) == 7, (
         f"{len(on_nodes)} nodes declare a key space; a keyed node lost its declaration, or gained "
         "one it does not need"
     )
@@ -15287,8 +15289,9 @@ def test_every_command_edge_lands_where_a_state_says_a_command_writes():
             if verbs and state.get("node") != "internal":
                 written.setdefault(str(state["node"]), []).append(f"{path.parent.name}.{state['id']}")
 
-    # 10 -> 11: power's `E-CMD-LOAD` (`set_load` onto `load_shed_state`), ADR 0003.
-    assert len(commanded) == 11, f"the E-CMD family changed size: {sorted(commanded.values())}"
+    # 10 -> 11: power's `E-CMD-LOAD` (`set_load` onto `load_shed_state`), ADR 0003. 12 with ECLSS's
+    # `E-CMD-VENT` (`set_overboard_dump` onto `overboard_vent`).
+    assert len(commanded) == 12, f"the E-CMD family changed size: {sorted(commanded.values())}"
     assert sorted(commanded) == sorted(written), (
         "a node the executive reaches with no state declaring a command mover is the signal "
         "arriving where nothing is commanded, and a state declaring one on a node no edge reaches "
@@ -15837,8 +15840,9 @@ def test_a_command_value_says_which_argument_carries_the_value():
     # nothing but its key. 17 -> 21 with ADR 0003: thermal's `coolant_pump`, `evaporator_feed` and
     # `radiator_bypass` and power's `load_enabled`, each keyed; 22 with ECLSS's `suit_fan`.
     # 22 -> 24 with `o2_source`, which `set_o2_source`'s `source` moves, and `o2_flow`, which
-    # `set_o2_flow`'s `flow` moves.
-    assert declared == 24, declared
+    # `set_o2_flow`'s `flow` moves. 25 with `overboard_vent`, which `set_overboard_dump`'s `state`
+    # moves.
+    assert declared == 25, declared
     assert sorted(constants) == [
         "rcs.thruster_valve.isolate_rcs_manifold",
         "structure.pyro_fired.execute_event",
@@ -16281,8 +16285,9 @@ def test_every_command_that_writes_a_state_can_be_applied_or_refuses_by_name():
     # 14 -> 20 with ADR 0003: `set_coolant_pump`, `set_evaporator_feed`, `set_radiator_bypass`
     # (thermal), `set_load` (power), `set_power_amplifier` and `play_recorder` (comms); 21 with
     # `set_suit_fan` (ECLSS).
-    # 21 -> 23 with `set_o2_source` and `set_o2_flow`, which move `o2_source` and `o2_flow` now.
-    assert len(applied) == 23, applied
+    # 21 -> 23 with `set_o2_source` and `set_o2_flow`, which move `o2_source` and `o2_flow` now;
+    # 24 with `set_overboard_dump`.
+    assert len(applied) == 24, applied
     assert "select_antenna" in applied
     # 7 -> 5: `set_coolant_pump` and `set_power_amplifier` stopped owing (ADR 0003): the pump's speed
     # selects `coolant_pump` (thermal) and the amplifier's power selects `transmitter_on` (comms).
