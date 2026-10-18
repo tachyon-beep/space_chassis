@@ -18587,7 +18587,8 @@ def test_the_linter_refuses_an_rcs_jet_table_that_breaks_its_cross_check(tmp_pat
     table turned 180 deg about X, which keeps every arm and every exhaust direction. And the
     breaks that keep every relation but lose identity or shape: a CM engine renumbered, a
     two-element position (which crashed the rule rather than refusing), a frame the vehicle does
-    not declare, and an LM table whose thruster_ids collide with the SM's.
+    not declare or a declared but wrong one, an LM jet renumbered, an LM table whose thruster_ids
+    collide with the SM's, a second CM_XC transform, and a mass_properties that is not a mapping.
     """
 
     def rotate_lm(doc):
@@ -18633,6 +18634,16 @@ def test_the_linter_refuses_an_rcs_jet_table_that_breaks_its_cross_check(tmp_pat
             "lm-frame-undeclared",
             lambda doc: doc["geometry"]["rcs_lm"].update(frame="LM_XX"),
             "rcs_lm.frame: is 'LM_XX', which vehicle.yaml:mass_properties.frames does not declare",
+        ),
+        (
+            "lm-frame-wrong-declared",
+            lambda doc: doc["geometry"]["rcs_lm"].update(frame="APOLLO_XA"),
+            "rcs_lm.frame: is 'APOLLO_XA'; the rcs_lm jet positions are read in LM_XE",
+        ),
+        (
+            "lm-jet-renumbered",
+            lambda doc: doc["geometry"]["rcs_lm"]["jets"][5].update(id=17),
+            "rcs_lm: must list jets 1 to 16 in order",
         ),
         (
             "lm-ids-collide-with-sm",
@@ -18682,6 +18693,32 @@ def test_the_linter_refuses_an_rcs_jet_table_that_breaks_its_cross_check(tmp_pat
         rcs = yaml.safe_load(path.read_text())
         break_entry(rcs)
         path.write_text(yaml.safe_dump(rcs, sort_keys=False))
+        result = run_linter(broken)
+        assert result.returncode == 1
+        assert expected in result.stdout, result.stdout[-1500:]
+
+    # The frames the tables are read in live in vehicle.yaml, so the frame relation breaks there.
+    def second_transform(doc):
+        frame = next(f for f in doc["mass_properties"]["frames"] if f["id"] == "CM_XC")
+        frame["axial_transforms"].append({**frame["axial_transforms"][0], "origin_in": 0.0})
+
+    for name, break_vehicle, expected in (
+        (
+            "cm-frame-second-transform",
+            second_transform,
+            "CM_XC: must carry exactly one axial transform",
+        ),
+        (
+            "mass-properties-not-a-mapping",
+            lambda doc: doc.update(mass_properties=["frames"]),
+            "rcs_sm.frame: is 'APOLLO_XA', which vehicle.yaml:mass_properties.frames does not declare",
+        ),
+    ):
+        broken = copy_definition(tmp_path / name)
+        path = broken / "vehicle.yaml"
+        vehicle = yaml.safe_load(path.read_text())
+        break_vehicle(vehicle)
+        path.write_text(yaml.safe_dump(vehicle, sort_keys=False))
         result = run_linter(broken)
         assert result.returncode == 1
         assert expected in result.stdout, result.stdout[-1500:]

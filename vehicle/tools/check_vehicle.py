@@ -13298,6 +13298,8 @@ RCS_CM_FRAME = {"x_offset_in": 1000.0, "axes": "parallel"}
 # The CM engines by their AOH Figure 2.5-1 numbers, and each table's thruster_id prefix.
 RCS_CM_ENGINE_IDS = [11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26]
 RCS_THRUSTER_ID_PREFIX = {"rcs_sm": "SM", "rcs_cm": "CM", "rcs_lm": "LM"}
+RCS_TABLE_FRAME = {"rcs_sm": "APOLLO_XA", "rcs_cm": "CM_XC", "rcs_lm": "LM_XE"}
+RCS_CM_FRAME_TRANSFORM = {"configuration": "all", "scale": 1, "origin_in": 1000.0, "lateral_rotation": "none"}
 RCS_LM_QUAD_SIGNS = {"I": (False, True), "II": (False, False), "III": (True, False), "IV": (True, True)}
 
 
@@ -13421,9 +13423,11 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
 
     # Every table's frame is one the vehicle declares, and every jet has a thruster_id that no
     # other table's jet shares.
-    mass_properties = (documents.get("vehicle.yaml") or {}).get("mass_properties") or {}
+    raw_vehicle = documents.get("vehicle.yaml")
+    mass_properties = raw_vehicle.get("mass_properties") if isinstance(raw_vehicle, dict) else None
+    raw_frames = mass_properties.get("frames") if isinstance(mass_properties, dict) else None
     declared_frames = {
-        str(f.get("id")): f for f in mass_properties.get("frames") or [] if isinstance(f, dict)
+        str(f.get("id")): f for f in (raw_frames if isinstance(raw_frames, list) else []) if isinstance(f, dict)
     }
     thruster_ids: dict[str, str] = {}
     for key, prefix in RCS_THRUSTER_ID_PREFIX.items():
@@ -13435,6 +13439,12 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
                 f"{where}.{key}.frame",
                 f"is {table.get('frame')!r}, which vehicle.yaml:mass_properties.frames does not "
                 f"declare ({sorted(declared_frames)}); a position in it is a number against nothing",
+            )
+        elif table.get("frame") != RCS_TABLE_FRAME[key]:
+            report.refuse(
+                f"{where}.{key}.frame",
+                f"is {table.get('frame')!r}; the {key} jet positions are read in "
+                f"{RCS_TABLE_FRAME[key]}, and a declared but different frame moves every jet",
             )
         if table.get("thruster_id_prefix") != prefix:
             report.refuse(
@@ -13450,12 +13460,18 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
                 report.refuse(f"{where}.{key}.jets.{jet.get('id')}", f"repeats thruster_id {tid!r}")
             thruster_ids[tid] = key
     cm_frame = declared_frames.get("CM_XC") or {}
-    transforms = [t for t in cm_frame.get("axial_transforms") or [] if isinstance(t, dict)]
-    if not any(t.get("scale") == 1 and t.get("origin_in") == RCS_CM_FRAME["x_offset_in"] for t in transforms):
+    transforms = cm_frame.get("axial_transforms")
+    if (
+        not isinstance(transforms, list)
+        or len(transforms) != 1
+        or not isinstance(transforms[0], dict)
+        or {k: transforms[0].get(k) for k in RCS_CM_FRAME_TRANSFORM} != RCS_CM_FRAME_TRANSFORM
+    ):
         report.refuse(
             "vehicle.yaml:mass_properties.frames CM_XC",
-            f"must carry X_A = X_C + {RCS_CM_FRAME['x_offset_in']} in, the relation the CM jet table "
-            "is combined with SM positions by",
+            f"must carry exactly one axial transform, {RCS_CM_FRAME_TRANSFORM!r}: X_A = X_C + "
+            f"{RCS_CM_FRAME['x_offset_in']} in for every configuration with parallel axes, the relation "
+            "the CM jet table is combined with SM positions by",
         )
 
     sm = geometry.get("rcs_sm")
@@ -13568,8 +13584,13 @@ def check_rcs_geometry(documents: dict[str, Any], report: Report) -> None:
     lm_where = f"{where}.rcs_lm"
     lm_jets = lm.get("jets") if isinstance(lm, dict) else None
     odb = lm.get("odb_check_in") if isinstance(lm, dict) else None
-    if not isinstance(lm_jets, list) or len(lm_jets) != 16 or not isinstance(odb, dict):
-        report.refuse(lm_where, "must list sixteen jets and the ODB figure's check dimensions")
+    if (
+        not isinstance(lm_jets, list)
+        or not all(isinstance(j, dict) for j in lm_jets)
+        or [j.get("id") for j in lm_jets] != list(range(1, 17))
+        or not isinstance(odb, dict)
+    ):
+        report.refuse(lm_where, "must list jets 1 to 16 in order and the ODB figure's check dimensions")
         return
     in_per_m = 1 / 0.0254
     clusters: dict[tuple[int, int], list[dict[str, Any]]] = {}
