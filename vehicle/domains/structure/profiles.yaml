@@ -31,8 +31,15 @@ profiles:
         only number in this file that is a safety parameter rather than a physical limit
 
 thresholds:
+
+# `acts` (the cross-lane rule of 2026-10-17: Apollo's — a hardware-protecting trip inside seconds is
+# automatic, and anything that spends a resource or closes an option waits for a command). Every
+# threshold here is `crew`. None trips hardware: the four interlocks refuse a command rather than
+# act, the relief valve's own opening is the valve's mechanism and not this file's, and the arm
+# token's expiry is the arm rule's (`arm_state`), which the `arm_expiry` threshold only reads.
   # --- the pressure vessel ------------------------------------------------------------------
   - id: cabin_dp_low
+    acts: crew
     point: structure.cabin_dp_psi
     comparator: below
     assert: 3.5
@@ -50,6 +57,7 @@ thresholds:
         differential rather than as a cabin pressure, because it is the vessel that has to hold
         it. No assert dwell: this is the level at which a crew have minutes.
   - id: cabin_dp_high
+    acts: crew
     point: structure.cabin_dp_psi
     comparator: above
     assert: 6.0
@@ -68,6 +76,7 @@ thresholds:
 
   # --- latches and hatches ------------------------------------------------------------------
   - id: latch_disagreement
+    acts: crew
     point: structure.docking_latches
     comparator: below
     assert: 12
@@ -88,6 +97,7 @@ thresholds:
         threshold that bands, it is a readiness condition — the interface is either fully seated
         or it is not, and there is nothing in between to debounce.
   - id: hatch_open_with_pressure
+    acts: crew
     point: structure.cabin_dp_psi
     comparator: above
     assert: 0.5
@@ -97,8 +107,11 @@ thresholds:
     latched: false
     interlock: true
     severity: EMERGENCY
-    point_units: "psid, evaluated only while a hatch is not closed"
-    gated_by: "any hatch in the `open` or `latched` position"
+    point_units: "psid, evaluated only while a hatch is not latched"
+    # `latched` is the sealed position — the CSM side hatch's gear box is driven to LATCH and locked
+    # for launch (`hatch_state.initial_note`) — so the hatches the gate is about are the ones that
+    # are *not* latched. This read "open or latched", which named the sealed hatch as the unsafe one.
+    gated_by: "any hatch not in the `latched` position"
     provenance:
       basis: apollo
       ref: "apollo_diode.md:207"
@@ -108,8 +121,75 @@ thresholds:
         pressurised cabin — which is a life-safety interlock and therefore service-owned, never
         an agent-writable gate (D-03).
 
+  # The two guards `set_hatch_valve` evaluates, one per hatch. `hatch_open_with_pressure` above is
+  # the vehicle-wide condition other verbs name, and it is gated on hatch positions no field
+  # declares, so it cannot be read; these are the same 0.5 psid on the differential behind *one*
+  # hatch, which a command to open that hatch is asking about whatever the hatch reads now.
+  - id: hatch_csm_open_with_pressure
+    acts: crew
+    point: structure.cabin_dp_psi
+    comparator: above
+    assert: 0.5
+    clear: 0.5
+    dwell_assert_ms: 0
+    dwell_clear_s: 0
+    latched: false
+    interlock: true
+    severity: EMERGENCY
+    point_units: "psi, the differential behind the CSM side hatch: the CSM cabin against vacuum"
+    provenance:
+      basis: derived
+      relation: >-
+        `hatch_open_with_pressure`'s 0.5 psid (apollo_diode.md:207, "incompatible with pressure"),
+        read on the one compartment the CSM side hatch closes. The hatch opens onto vacuum, so the
+        differential across it is the cabin's own, which `structure.cabin_dp_psi` is
+  - id: hatch_lm_open_with_pressure
+    acts: crew
+    point: eclss.lm_cabin_pressure_psia
+    comparator: above
+    assert: 0.5
+    clear: 0.5
+    dwell_assert_ms: 0
+    dwell_clear_s: 0
+    latched: false
+    interlock: true
+    severity: EMERGENCY
+    point_units: "psia, the LM cabin, which is the differential behind the forward hatch"
+    provenance:
+      basis: derived
+      relation: >-
+        the same 0.5 psid on the LM: the forward hatch opens onto the surface or onto space, so the
+        differential across it is the LM cabin's absolute pressure, which ECLSS publishes. The LM's
+        differential has no structure channel of its own (this domain's debts), and the absolute
+        pressure is that number. The hatch swings inboard and cabin pressure seats it, so it cannot
+        be opened against pressure in any case; what the guard refuses is the command, which is
+        the vehicle stating the interlock rather than relying on the hinge
+
+  # The tunnel hatches' guard while the tunnel is open to space. Docked on a sealed ring a tunnel
+  # hatch opens onto the tunnel, whose pressure is the tunnel-pressure work's; this guard covers only
+  # the case where the tunnel is vacuum, which `structure.tunnel_vent_dp_psi` reads as zero otherwise.
+  - id: hatch_tunnel_open_to_space_with_pressure
+    acts: crew
+    point: structure.tunnel_vent_dp_psi
+    comparator: above
+    assert: 0.5
+    clear: 0.5
+    dwell_assert_ms: 0
+    dwell_clear_s: 0
+    latched: false
+    interlock: true
+    severity: EMERGENCY
+    point_units: "psi, the cabin behind a tunnel hatch while the tunnel is open to space"
+    provenance:
+      basis: derived
+      relation: >-
+        `hatch_open_with_pressure`'s 0.5 psid (apollo_diode.md:207, "incompatible with pressure"),
+        read on a tunnel hatch whose far side is space: undocked, or docked with fewer ring latches
+        engaged than seal the tunnel
+
   # --- pyro and relief ----------------------------------------------------------------------
   - id: pyro_continuity_loss
+    acts: crew
     point: "structure.pyro_continuity_[n]"
     comparator: below
     assert: 1
@@ -129,6 +209,7 @@ thresholds:
         for a device whose state it cannot establish. The distinction between the two causes is
         made against the command record, which is the record's job.
   - id: relief_valve_unexpected
+    acts: crew
     point: structure.relief_valve_state
     comparator: above
     assert: 1
@@ -147,6 +228,7 @@ thresholds:
 
   # --- the arm window ------------------------------------------------------------------------
   - id: arm_expiry
+    acts: crew
     point: "structure.arm_state_[event]"
     comparator: above
     assert: 120
@@ -166,6 +248,7 @@ thresholds:
         and an arm that outlived its queue age would be an arm issued against a world that has
         moved. It is the one threshold in the vehicle whose *expiry* is the safety property.
   - id: arm_reuse
+    acts: crew
     point: "structure.arm_state_[event]"
     comparator: above
     assert: 1
@@ -185,6 +268,7 @@ thresholds:
         anti-replay property at the level of a single agent's own commands.
 
   - id: uncommanded_acceleration
+    acts: crew
     point: structure.accel_xyz_g
     comparator: above
     assert: 0.3248

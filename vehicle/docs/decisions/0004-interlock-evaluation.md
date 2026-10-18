@@ -242,3 +242,53 @@ their batch classes through the window (`aurora/tests/test_quiet_coast_window.py
   (WP05)" sentence (`set_bus_tie`'s `tie_dv_limit`, `set_relief_valve`'s `cabin_dp_low`) now assert
   the link this decision names: a difference between buses, and `psid` against `psi`. The arm and
   fire refusals list only the unreadable interlocks, which for both verbs is all of them.
+
+## Amendment 2026-10-17: `set_hatch_valve` and `set_docking_latch` (structure lane)
+
+Both verbs were guarded whole by interlocks that could not be read, so both were refused
+UNEVALUATED in every direction, including the one that seals the vehicle. They now follow
+§Direction.
+
+| verb | interlock | guards | always admitted |
+|---|---|---|---|
+| set_hatch_valve | `hatch_csm_open_with_pressure` | `hatch=hatch_crew_csm` with `state=open` | every other hatch and state |
+| set_hatch_valve | `hatch_lm_open_with_pressure` | `hatch=hatch_crew_lm` with `state=open` | every other hatch and state |
+| set_docking_latch | `cabin_dp_low`, `hatch_open_with_pressure` (both unreadable) | `state=release` | `state=engage` |
+
+`set_hatch_valve` dropped `hatch_open_with_pressure` and `cabin_dp_low`. The first is gated on "any
+hatch not in the `latched` position", which no point carries, so it could never be read; the second
+watches a low differential, which is the opposite hazard to opening a hatch against pressure. In
+their place each crew hatch has its own threshold on the pressure behind it, both at
+`hatch_open_with_pressure`'s 0.5 psid: the CSM side hatch on `structure.cabin_dp_psi` and the LM
+forward hatch on `eclss.lm_cabin_pressure_psia`, since that hatch opens onto vacuum and the LM's
+differential is its absolute pressure. Each guard is a two-argument condition, so it applies to
+opening its own hatch and to nothing else: closing or latching a hatch is the remedy for a cabin
+losing gas through it, and a command to one hatch does not touch the other compartment. The LM
+hatch's guard is what makes the cabin dump come before an EVA. `set_vent_valve` keeps
+`hatch_open_with_pressure` unconditional and unreadable, as declared above.
+
+The two tunnel hatches (`hatch_tunnel_csm`, `hatch_tunnel_lm`) are guarded only while the tunnel is
+open to space. The differential across a tunnel hatch is cabin minus tunnel, and the vehicle does
+not yet carry the tunnel's pressure (`domains/structure/components.yaml#open_debts`). What it can
+tell is when the tunnel is vacuum: undocked, or docked with fewer ring latches engaged than seal
+it. `hatch_tunnel_open_to_space_with_pressure` refuses opening either tunnel hatch then with more
+than 0.5 psid in the cabins, reading `structure.tunnel_vent_dp_psi`, an interim channel that is the
+higher cabin's pressure in that case and zero on a sealed docked tunnel. So crew transfer through a
+docked tunnel is admitted here, and the tunnel pressure state replaces this reading with the
+cabin-to-tunnel differential. Being a rule's value, the reading has none before the first tick, so
+on tick 0 the guard is unevaluated and opening a tunnel hatch is refused.
+
+`set_docking_latch` guards only `release`. Engaging re-seats the interface, which is the remedy for
+a latch disagreement and for a leaking tunnel alike. Releasing is still refused UNEVALUATED, and
+that includes the normal undocking procedure, in which the CM crewman cocks all twelve ring latches
+with both tunnel hatches closed (CSM News Reference, docking, printed p. 88). The guard that
+procedure needs is the tunnel's pressure against the cabin (the LM/CM ΔP meter on the CM), which
+arrives with the tunnel pressure state, not before.
+
+Acceptance: `tests/test_structure_rules.py` asserts that each crew-hatch guard applies only to
+opening its own hatch, and the tunnel hatches' guard only to opening a tunnel hatch; that the three
+guards are readable; that the tunnel reading is zero on a sealed docked ring and the cabin's
+pressure undocked or with the ring cocked;
+that, through the executive, a hatch whose guard is tripped is refused `open` by name and is
+admitted `latched`; and that `set_docking_latch engage` names no guard while `release` names the
+two unreadable ones.

@@ -7395,6 +7395,14 @@ def check_domain(
                         "declares a constant with no `argument`, so nothing says which element of a "
                         "keyed state the command sets",
                     )
+                vocabulary = unit_vocabulary(state.get("unit"))
+                if constant is not None and vocabulary is not None and str(constant) not in vocabulary:
+                    report.refuse(
+                        f"{cwhere2}.constant",
+                        f"is {constant!r}, which {sid}'s `unit` ({state.get('unit')!r}) cannot hold — "
+                        f"the vocabulary is {sorted(vocabulary)}. A command that writes a value its "
+                        "state cannot report is a transition the vehicle cannot describe afterwards",
+                    )
                 if not isinstance(becomes, dict):
                     continue
                 allowed_args = [str(v) for v in (arg_spec or {}).get("values") or []]
@@ -14600,8 +14608,8 @@ def check_channel_derivations(
     """The window's channels: how many are their source state, and how many are a sentence.
 
     Round 23 built the frame's `values` from the points registry and found, by refusing to publish a
-    channel whose unit is not its source state's, that **only 63 of the 135 channels read from a state
-    are the state itself**. The other 72 are *derived* — a partial pressure from a mass and a volume,
+    channel whose unit is not its source state's, that **only 66 of the 137 channels read from a state
+    are the state itself**. The other 71 are *derived* — a partial pressure from a mass and a volume,
     a flow in litres per minute from a mass flow and a density — and their `derivation` is prose,
     which nothing can evaluate. The frame omits them, the debt says so, and the two figures lived in
     a sentence: exactly the shape this folder spends its rounds removing.

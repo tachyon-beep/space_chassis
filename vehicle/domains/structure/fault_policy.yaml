@@ -18,9 +18,20 @@
 # window. That is `apollo_diode.md:342`'s information problem in its purest form, and it is the
 # reason `structure.stage_state` reports the vehicle's *configuration* rather than its intent.
 
+# ## Who can be held to which fault
+#
+# `fleet_class` (the cross-lane fault classification of 2026-10-17): `precursor` where published
+# evidence leads the consequence by minutes or more — a leak rate, a latch count read before a
+# docked burn, a silent relief valve under a rising differential, a bias against the burn record;
+# `onboard` where the crew's checklist or the vehicle's own service acts first — a latch that will
+# not release is found by the crewman cocking it, a hung stage by the commander at the STAGE switch,
+# and the two `service` faults by their service; and `out_of_scope` for the premature pyro, which
+# leaves nothing to see before it has happened.
+
 domain: structure
 faults:
   - id: STR-01-hatch-seal-leak
+    fleet_class: precursor
     component: hatch_crew_lm
     mechanism: "a hatch seal degrades: the cabin loses gas through the seal rather than through a hull breach"
     kind: continuous_degradation
@@ -58,14 +69,15 @@ faults:
         three are separated by *where* the gas is going rather than by how fast
 
   - id: STR-02-latch-fails-to-engage
+    fleet_class: precursor
     component: docking_interface
     mechanism: "one latch does not seat: the interface is mechanically connected and not pressure-tight"
     kind: discrete
     seeding:
       on_demand_p: 5.0e-4
       trigger: "any docking or re-docking attempt"
-    perturbs: [structure.docking_latches, eclss.cabin_pressure_psia, eclss.lm_cabin_pressure_psia,
-               structure.leak_estimate_g_s]
+    perturbs: [structure.docking_latches, structure.docking_talkbacks, eclss.cabin_pressure_psia,
+               eclss.lm_cabin_pressure_psia, structure.leak_estimate_g_s]
     detection:
       evidence: >-
         a count below the full complement after an engage command, and — if the crew press on —
@@ -86,13 +98,15 @@ faults:
         domain declares it is owed
 
   - id: STR-03-latch-fails-to-release
+    fleet_class: onboard
     component: docking_interface
     mechanism: "a latch will not release: the interface is stuck closed"
     kind: discrete
     seeding:
       on_demand_p: 2.0e-4
       trigger: "any undocking attempt"
-    perturbs: [structure.docking_latches, structure.stage_state, eclss.cabin_pressure_psia]
+    perturbs: [structure.docking_latches, structure.docking_talkbacks, structure.stage_state,
+               eclss.cabin_pressure_psia]
     detection:
       evidence: "a release command, a count that does not fall, and a stage state that does not change. The absence of a transition is the whole signature"
       latency: "seconds, and unambiguous"
@@ -117,6 +131,12 @@ faults:
         reversible problem, which is exactly the situation a two-step exists for
 
   - id: STR-04-pyro-premature
+    fleet_class: out_of_scope
+    fleet_class_note: >-
+      the initiator fires and the stage is gone in the same instant: no published channel
+      changes before the separation, and continuity loss afterwards is the consequence, not a
+      warning. The review of 2026-10-17 names it among the six. A run that reaches it scores the
+      apparatus, and what the fleet is still held to is the aftermath on the other domains
     component: pyro_lm_separation
     mechanism: "a separation initiator fires without a command: an electrostatic or thermal path closes the circuit"
     kind: discrete
@@ -145,6 +165,7 @@ faults:
         in the corpus whose consequence no command can address
 
   - id: STR-05-pyro-fails-to-fire
+    fleet_class: onboard
     component: pyro_lm_separation
     mechanism: "the initiator circuit is intact and the device does not fire: the stage will not separate"
     kind: discrete
@@ -175,6 +196,7 @@ faults:
         meaning, and the pair is what makes the continuity channel worth publishing honestly
 
   - id: STR-06-relief-valve-stuck-open
+    fleet_class: onboard
     component: relief_valve
     mechanism: "the valve does not reseat: the cabin vents through the relief path"
     kind: latent_then_acute
@@ -196,6 +218,7 @@ faults:
       note: "the valve's 'unexpected opening' event, with the consequence a relief valve's failure has: it was there to save the vessel and it is now emptying it"
 
   - id: STR-07-relief-valve-stuck-closed
+    fleet_class: precursor
     component: relief_valve
     mechanism: "the valve will not open: the relief path is blocked and the pressure behind it has nowhere to go"
     kind: latent_then_acute
@@ -222,6 +245,7 @@ faults:
         would not have opened is that event with nowhere for the energy to go
 
   - id: STR-08-tunnel-volume-leak
+    fleet_class: precursor
     component: tunnel
     mechanism: "the docking tunnel's seal weeps while the tunnel is pressurised: an intermittent loss that only appears during crew transfers"
     kind: continuous_degradation
@@ -252,6 +276,7 @@ faults:
         kind of problem from one whose signature is a level
 
   - id: STR-09-accel-sensor-bias
+    fleet_class: precursor
     component: pressure_vessel_csm
     mechanism: "the accelerometer develops a bias: the vehicle reads a structural load that is not there"
     kind: instrument
@@ -286,6 +311,7 @@ faults:
         mechanism for your experiment'
 
   - id: STR-10-hatch-indication-failure
+    fleet_class: onboard
     component: hatch_crew_lm
     mechanism: "the hatch position switch sticks: the channel reports closed while the hatch is not"
     kind: instrument
@@ -311,6 +337,7 @@ faults:
         for an interlock being evaluated on consequence rather than on indication
 
   - id: STR-11-structural-thermal-cycling
+    fleet_class: precursor
     component: pressure_vessel_csm
     mechanism: "repeated thermal cycling works a seal: the leak grows slowly with each lunar day-night transition"
     kind: continuous_degradation
@@ -339,7 +366,10 @@ faults:
 coverage:
   note: >-
     Every structure channel is perturbed by at least one fault above except the two arm/commit
-    service channels, which are the executive's state rather than the structure's.
-  unperturbed: ["structure.arm_state_[event]", "structure.event_count_[event]"]
+    service channels, which are the executive's state rather than the structure's, and the interim
+    tunnel-vent reading, which no fault writes because it is computed from the cabins and the ring
+    that the faults above do move.
+  unperturbed: ["structure.arm_state_[event]", "structure.event_count_[event]", structure.tunnel_vent_dp_psi]
   unperturbed_reason: >-
-    a commanded state: the crew or an agent sets it and no fault writes it
+    a commanded state: the crew or an agent sets it and no fault writes it; and a reading of other
+    states, which a fault moves only through them

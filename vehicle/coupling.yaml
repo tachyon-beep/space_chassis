@@ -590,15 +590,18 @@ nodes:
     kind: discrete
     unit: enum
     apollo: "211"
-    # `pyro_fired`'s value is a map — `unit: map[device_id,bool]` — so this node's values are one
-    # level deeper under the state's own id than the three scalars beside it. See `key_space` below.
+    # `events_fired` and `pyro_fired` are maps — `map[event,bool]` and `map[device_id,bool]` — so
+    # this node's values are one level deeper under the state's own id than the three scalars beside
+    # them. See `key_space` below.
     key_space: by_state
-    state_order: [pyro_fired, lm_separation_state, descent_stage_state, configuration]
+    state_order: [events_fired, pyro_fired, lm_separation_state, descent_stage_state, configuration]
     state_order_note: >-
-      the three mechanisms and then the configuration they produce. `configuration` is a
-      projection of the separation and descent-stage machines — its own provenance says so — and
-      therefore has to read them after they have advanced. `pyro_fired` leads because a pyro event
-      causes a separation rather than the reverse
+      the record of executed events, then the devices they fire, then the three mechanisms and the
+      configuration they produce. `pyro_fired` is computed from `events_fired`, so it reads it after
+      the command has written it. `configuration` is a projection of the separation and
+      descent-stage machines — its own provenance says so — and therefore has to read them after
+      they have advanced. The pyros lead the mechanisms because a pyro event causes a separation
+      rather than the reverse
   crew_state:
     domain: crew
     kind: state
