@@ -18584,7 +18584,10 @@ def test_the_linter_refuses_an_rcs_jet_table_that_breaks_its_cross_check(tmp_pat
 
     Signs cannot see scale or placement, so the breaks that keep every sign are here too: a wrong
     SM station or cant, a CM table with no stated relation to the Apollo frame, and the whole LM
-    table turned 180 deg about X, which keeps every arm and every exhaust direction.
+    table turned 180 deg about X, which keeps every arm and every exhaust direction. And the
+    breaks that keep every relation but lose identity or shape: a CM engine renumbered, a
+    two-element position (which crashed the rule rather than refusing), a frame the vehicle does
+    not declare, and an LM table whose thruster_ids collide with the SM's.
     """
 
     def rotate_lm(doc):
@@ -18615,6 +18618,26 @@ def test_the_linter_refuses_an_rcs_jet_table_that_breaks_its_cross_check(tmp_pat
             "lm-table-rotated-180",
             rotate_lm,
             "rcs_lm.jets.1: is 'IV-U' and sits at Y, Z signs",
+        ),
+        (
+            "cm-engine-renumbered",
+            lambda doc: doc["geometry"]["rcs_cm"]["jets"][2].update(id=33),
+            "must list the CM's twelve engines by their AOH numbers",
+        ),
+        (
+            "cm-position-short",
+            lambda doc: doc["geometry"]["rcs_cm"]["jets"][0].update(position_in=[32.3, 51.9]),
+            "rcs_cm.jets.11: needs a numeric three-vector position_in",
+        ),
+        (
+            "lm-frame-undeclared",
+            lambda doc: doc["geometry"]["rcs_lm"].update(frame="LM_XX"),
+            "rcs_lm.frame: is 'LM_XX', which vehicle.yaml:mass_properties.frames does not declare",
+        ),
+        (
+            "lm-ids-collide-with-sm",
+            lambda doc: doc["geometry"]["rcs_lm"].update(thruster_id_prefix="SM"),
+            "rcs_lm.thruster_id_prefix: is 'SM'",
         ),
         (
             "sm-jet-on-wrong-quad",

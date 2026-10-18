@@ -420,6 +420,20 @@ mass_properties:
       note: >-
         the figures settle the axial station convention at their stated configurations,
         not a full three-dimensional rotation or the J-2 docking clocking
+  - id: CM_XC
+    definition: >-
+      the Command Module X_C station axis: APOLLO_XA moved 1000 in along X, with the same Y and
+      Z axes and handedness, so X_A = X_C + 1000 in. The CM RCS jet table
+      (`domains/rcs/components.yaml#geometry.rcs_cm`) is in this frame.
+    axial_transforms:
+      - configuration: all
+        scale: 1
+        origin_in: 1000.0
+        lateral_rotation: none
+        source: "GSOP R-577 Section 6 Rev. 1, s. 6.11.2, printed pp. 6-71/6-72: the hybrid simulator's CG X 1045.1 in 'Apollo coordinates', against which the CM jet vectors reproduce the moment-arm table at X_C 45.1 with no rotation (docs/evidence/wp03-rcs-geometry.md G-6)"
+    provenance:
+      basis: derived
+      relation: "X_A = X_C + 1000 in, Y_A = Y_C, Z_A = Z_C, from R577-6 s. 6.11.2's CG in Apollo coordinates and the CM moment arms it reproduces"
   - id: LM_XE
     definition: >-
       the LM X_E station axis, with origin at the descent-stage base. Its axial relation
@@ -1827,5 +1841,5 @@ open_debts:
   - "Node heat capacities and conductances for the six thermal zones. thermal_diode.md:965 declares every thermal constant UNSPECIFIED and refuses to infer them; without them the thermal edges have no tau and the thermal domain cannot be integrated. This is the largest single debt in the vehicle."
   - "LM sublimator rejection capacity and water consumption rate: genuinely unpublished, and it is half of the thermal water budget."
   - "Minimum delivered impulse bit for all three RCS systems and CM hardware minimum command-ON time remain owed. The LM guide gives 10 ms pulse-mode command ON; the SM AOH gives 12 ms earliest OFF from its automatic controller; neither is a universal qualified minimum or a delivered impulse. The 14 ms SM/CM R-577 limits are simulator settings and the 4 ms Voyager figure in rcs_diode.md:91 is hardware-specific to Voyager. The per-thruster pulse floor needs a thruster-to-system and command-path map. rcs_diode.md:800-825's residual accumulator preserves mean requested impulse in its ideal accounting, while RCS-11 names the case where it grows and the thruster stops complying."
-  - "Thruster geometry for the forty-four RCS thrusters: each unit thrust direction and lever arm from the centre of mass. rcs_diode.md:685-693 builds the allocator's wrench matrix B from them, so without them the allocator cannot select jets and the deadband has no derivation."
+  - "Thruster geometry for the forty-four RCS thrusters, now landed in `domains/rcs/components.yaml#geometry` (SM, CM and LM tables, each in a declared frame). What the allocator's wrench matrix B (rcs_diode.md:685-693) still lacks is each configuration's centre of mass in those frames and the J-2 LM lateral clocking (`mass_properties.frames LM_XE`), so the allocator still cannot select jets and the deadband still has no derivation."
   - "Retrograde and ullage motor behaviour, and the LM descent engine's 65-92.5 % non-operating region: both named in the sources and neither yet modelled. The non-operating region matters because it makes a throttle command between 65 % and 92.5 % impossible rather than merely unwise."

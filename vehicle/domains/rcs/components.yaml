@@ -214,12 +214,18 @@ capability:
 # --------------------------------------------------------------------------------------
 geometry:
 
+  # Each table keeps its source's own jet numbers in `id`, and the three overlap (SM and LM both
+  # run 1-16, and all three have an 11). A `thruster_id` in the domain's per-thruster maps is the
+  # table's `thruster_id_prefix`, a hyphen and that number (`SM-1`, `CM-11`, `LM-1`), unique across
+  # the forty-four, so a docked stack's maps cannot overwrite one physical jet with another.
+
   # The SM's sixteen jets, as the CSM digital autopilot selects them. Positions are the
   # GSOP simulator's averaged model (all four jets of a quad act at one centreline
   # intersection); each figure it uses is corroborated by a flight-hardware document, which
   # is what lets a verification-simulator number stand here (see the evidence record, G-1).
   rcs_sm:
     frame: APOLLO_XA
+    thruster_id_prefix: SM
     quad_station_xa_in: 958.97
     pitch_yaw_radius_in: 82.36
     roll_radius_in: 83.00
@@ -305,6 +311,7 @@ geometry:
     # before it is combined with a CM one; the CM's engines are placed by their own theta angles
     # from Data Book Fig 4.4-2.
     frame_to_apollo_xa: {x_offset_in: 1000.0, axes: parallel}
+    thruster_id_prefix: CM
     aft_engine_angle_deg: 47.0
     roll_alpha_deg: 46.402778
     roll_beta_deg: 56.374444
@@ -359,6 +366,7 @@ geometry:
   # dimensions the Operational Data Book's flight-hardware figure states independently.
   rcs_lm:
     frame: LM_XE
+    thruster_id_prefix: LM
     unit: "m, N"
     thrust_n: 444.82
     jets:
@@ -886,6 +894,7 @@ components:
 # What is still owed, in the domain's own words rather than the linter's.
 # --------------------------------------------------------------------------------------
 open_debts:
+  - "**The CM engine drains at the SM and LM engine's coefficient.** `E-RCSP-RCS` debits `prop_rcs` at 1 / (277.8 s * g0) per newton for every `rcs_thrust`, and the CM's own engine (`thruster_cm`, 427 N at 272.0 s, DB1 Table 4.4-1) needs 1 / (272.0 s * g0) = 3.7490e-4 kg/s per N, so every CM firing under-debits the tank by 2.1 %. `rcs_thrust` is one node for all forty-four thrusters, so the fix is a per-system thrust path, which is the GNC and RCS lane's (it owns the propellant debit); until then a propellant gauge read after CM firings drifts from the debit by that much."
   - "**A string is not a thruster.** `thruster_valve` is keyed by `thruster_id` and `set_rcs_quad` names a `group` — `sm_primary`, `sm_secondary`, `cm`, `lm` — so the key declaration says which argument selects the elements and the argument cannot name them. `rcs_string_sm_primary` and its siblings carry a `thrusters: 8` count and a `vehicle_keys` link; what none of them declares is *membership*, which is the same list the allocator needs for its wrench matrix. `isolate_rcs_manifold` is the other half: `branch` names a feed branch, and which thrusters a branch feeds is owed with the thruster geometry. **Quad membership is now declared** (`geometry.rcs_sm.jets[].quad`, four jets on each of A-D) and it does not fit the two eight-jet SM strings: the SM flew four independent quads (TN D-7151 p. 3, \"four independent assemblies, each of which was composed of a four-engine cluster\"), so the strings are a model decision for the RCS lane, not a transcription."
 
   - "The per-thruster minimum command-ON floor is owed until each thruster has SM, CM or LM membership and the controller path is named. Group enable/inhibit has a chosen zero policy dwell in both directions so inhibit and deliberate re-enable remain available; it is not an injector-pulse qualification. LM pulse-mode 10 ms and SM automatic-controller earliest OFF 12 ms are separately sourced under `capability.minimum_command_on_s`; CM hardware command timing remains unpublished in the sources reached. None is a delivered impulse bit or a universal qualification. The maximum ON time and duty cycle remain owed."
