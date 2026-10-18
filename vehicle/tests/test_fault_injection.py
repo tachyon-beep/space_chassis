@@ -267,6 +267,19 @@ def test_the_scheduled_onsets_join_the_scripted_ones_and_fire(world, tmp_path):
     last = plant.run_scenario(world, both, 5)
     assert last[plant.FAULT_ONSETS] == {TRIP: 1, HEAT: 1}
     assert lighting(last) == "off"
+    # A Poisson schedule can draw one fault twice, and a guaranteed seed can land on a fault the
+    # rate also drew: the first onset is the failure, so the merge keeps it and drops the rest. The
+    # scripted HEAT at tick 4 is earlier than the scheduled one, so the script's stands.
+    repeated, _ = faults.injections(
+        world,
+        [{"met_h": 0.000006, "fault": TRIP}, {"met_h": 0.00006, "fault": TRIP}, {"met_h": 0.00003, "fault": HEAT}],
+    )
+    once = faults.with_schedule(run, repeated)
+    assert once.faults == {
+        1: [plant.FaultOnset(offset_us=1_600, fault=TRIP)],
+        4: [plant.FaultOnset(offset_us=0, fault=HEAT)],
+    }
+    assert plant.run_scenario(world, once, 12)[plant.FAULT_ONSETS] == {TRIP: 1, HEAT: 1}
 
 
 def test_a_window_run_breaks_the_vehicle_on_the_step_batch_mode_does_and_replays_it(tmp_path):
@@ -388,13 +401,24 @@ def test_every_onset_row_is_held_to_its_state_and_a_quantity_takes_a_number(tmp_
         + second.format(key="csm_lighting", becomes='"off"')
         + second.format(key="csm_lighting_2", becomes='"tripped"'),
     )
+    # YAML's `7` and `"7"` are one element to the plant, which reads every key as text.
+    replace(
+        power,
+        anchor,
+        anchor + second.format(key="7", becomes='"off"') + second.format(key='"7"', becomes='"off"'),
+    )
     out = run_linter(broken).stdout
     for needle in (
         "makes environment_heat_w 'warm', and its `unit` ('W') is a quantity",
+        "declares 'PWR-03-lcl-nuisance-trip' twice on element '7'",
         "declares 'PWR-03-lcl-nuisance-trip' twice on element 'csm_lighting'",
         "makes load_enabled 'tripped', which its `unit`",
     ):
         assert needle in out, f"{needle!r} did not fire:\n{out[-3000:]}"
+    # Nothing that is not a finite number: `null` composed and staged `None` for the next rule.
+    nulled = faulted_copy(tmp_path / "nulled")
+    replace(nulled / "domains" / "thermal" / "components.yaml", "        scale: 1.5\n", "        becomes: null\n")
+    assert "makes environment_heat_w None, and its `unit` ('W') is a quantity" in run_linter(nulled).stdout
 
 
 def test_a_discrete_state_a_domain_rule_advances_starts_from_its_declared_initial(tmp_path):
@@ -467,6 +491,20 @@ def test_a_numeric_argument_is_carried_as_its_number_and_refused_outside_its_ran
         "internal_order: [heater_duty_commanded, heater_bank_duty,",
     )
     assert "declares no `key` for 'set_heater'" in run_linter(unkeyed).stdout
+    # A flag holds no number either, though its unit is not a vocabulary (Codex on #74).
+    flagged = faulted_copy(tmp_path / "flagged")
+    flagged_components = flagged / "domains" / "thermal" / "components.yaml"
+    replace(
+        flagged_components,
+        "\nstate:\n",
+        "\n" + HEATER_DUTY.replace("map[zone_id,%]", "map[zone_id,bool]").replace("{csm_cabin: 0}", "{csm_cabin: false}"),
+    )
+    replace(
+        flagged_components,
+        "internal_order: [heater_bank_duty,",
+        "internal_order: [heater_duty_commanded, heater_bank_duty,",
+    )
+    assert "and heater_duty_commanded holds only true or false" in run_linter(flagged).stdout
     heated = plant.load_world(copy)
     values = plant.initial_values(heated)
     staged = plant.apply_command(

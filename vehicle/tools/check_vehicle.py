@@ -485,9 +485,10 @@ def check_fault_value(
             report.refuse(
                 where, f"makes {sid} {becomes!r}, and its `unit` ({unit!r}) holds true or false"
             )
-        elif not flag and (
-            isinstance(becomes, bool | str)
-            or (isinstance(becomes, float) and not math.isfinite(becomes))
+        elif not flag and not (
+            isinstance(becomes, int | float)
+            and not isinstance(becomes, bool)
+            and math.isfinite(becomes)
         ):
             report.refuse(
                 where,
@@ -6993,7 +6994,9 @@ def check_domain(
                 # first left.
                 keys_seen: set[str] = set()
                 for onset in onsets:
-                    element = repr(onset.get("key"))
+                    # In the plant's key space: `apply_fault` reads every key as `str`, so YAML's
+                    # `1` and `"1"` are one element.
+                    element = repr(str(onset.get("key")))
                     if element in keys_seen:
                         report.refuse(
                             f"{where}:state {sid}.fault_value",
@@ -7528,11 +7531,18 @@ def check_domain(
                     # for the gap below to compare. What it can still get wrong is the state: one
                     # with a vocabulary cannot hold a number, and a keyed one must say which
                     # element the number sets.
-                    if values:
+                    unit_text = str(state.get("unit") or "")
+                    element_unit = (
+                        unit_text[4:-1].split(",", 1)[-1].strip()
+                        if unit_text.startswith("map[") and unit_text.endswith("]")
+                        else unit_text
+                    )
+                    if values or element_unit.strip().lower() in ("bool", "boolean"):
                         report.refuse(
                             f"{where}:state {sid}.command_value",
                             f"carries {verb_name!r}'s numeric {str(entry.get('argument'))!r} as its "
-                            f"number, and {sid} holds only {sorted(values)}",
+                            f"number, and {sid} holds only "
+                            f"{sorted(values) if values else 'true or false'}",
                         )
                     elif "map[" in str(state.get("unit") or "") and entry.get("key") is None:
                         report.refuse(

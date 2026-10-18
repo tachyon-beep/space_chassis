@@ -526,10 +526,27 @@ def with_schedule(
 
     Scripted first within a tick, then scheduled; the plant sorts a tick's onsets by stamp, stably,
     so only two onsets at one microsecond keep this order.
+
+    **A fault happens once, so only its first onset is kept.** `arrivals` draws a Poisson process,
+    and a guaranteed seed can land on a fault the hazard rate also drew, so a schedule can name one
+    fault twice. A component already broken does not break again; the plant refuses a repeat
+    rather than compound a `scale`, so the repeat is dropped here, at the one place a schedule
+    and a scenario's own `faults:` meet.
     """
-    merged = {tick: list(rows) for tick, rows in scenario.faults.items()}
-    for tick, rows in sorted(onsets.items()):
-        merged.setdefault(tick, []).extend(rows)
+    rows = [
+        (tick, onset.offset_us, order, onset)
+        for order, (tick, onset) in enumerate(
+            [(tick, onset) for tick, listed in sorted(scenario.faults.items()) for onset in listed]
+            + [(tick, onset) for tick, listed in sorted(onsets.items()) for onset in listed]
+        )
+    ]
+    merged: dict[int, list[plant.FaultOnset]] = {}
+    fired: set[str] = set()
+    for tick, _offset, _order, onset in sorted(rows, key=lambda row: row[:3]):
+        if onset.fault in fired:
+            continue
+        fired.add(onset.fault)
+        merged.setdefault(tick, []).append(onset)
     return dataclasses.replace(scenario, faults=merged)
 
 
