@@ -6261,6 +6261,7 @@ def resume_executive(
     multiplier: Fraction | int | str | None = None,
     cycle_ticks: int | None = None,
     pacer: Pacer | None = None,
+    scenario: Scenario | None = None,
 ) -> tuple[Executive, Resumption]:
     """An executive resumed from a verified checkpoint (`checkpoint.choose_generation`) and the record after it.
 
@@ -6320,6 +6321,10 @@ def resume_executive(
         raise ResumeRefused(str(exc)) from exc
     except OSError as exc:
         raise ResumeRefused(_io_refusal(exc, Path(state_dir) if state_dir is not None else Path(diode_dir))) from exc
+    # **The named scenario, before the replay.** Its faults are part of the history the record holds:
+    # a checkpoint taken before an onset and a record past it replay to the record's hashes only
+    # with the onset in the step, so the overlay is installed here rather than after `_resume`.
+    executive.scenario_overlay = scenario
     named = (
         multiplier_text(parse_multiplier(multiplier) if isinstance(multiplier, str) else multiplier) if multiplier is not None else None,
         cycle_ticks,
@@ -7201,12 +7206,13 @@ def main(argv: list[str] | None = None, *, pacer: Pacer | None = None) -> int:
                         cycle_ticks=args.cycle_ticks,
                         checkpoint_every=args.checkpoint_ticks,
                         pacer=pacer,
+                        # The named file was held to the checkpoint's identity above; its allow-list
+                        # and its faults hold again, from the replay on.
+                        scenario=scenario_file.scenario if scenario_file is not None else None,
                     )
                 except ResumeRefused as exc:
                     return refuse(f"{exc}. The executive does not start a fresh world over a saved one (ADR 0002 K)")
                 starting.closing(executive.close, state_path or diode_canonical.path)
-                # The named file was held to the checkpoint's identity above; its allow-list holds again.
-                executive.scenario_overlay = scenario_file.scenario if scenario_file is not None else None
                 # Addendum B3: a checkpoint at the recovered tick before anything is claimed — it makes the
                 # named run inputs durable and bounds the next resume's replay and re-publication.
                 try:

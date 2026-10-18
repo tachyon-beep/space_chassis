@@ -320,6 +320,29 @@ def test_a_window_run_breaks_the_vehicle_on_the_step_batch_mode_does_and_replays
     # A replay that does not carry the file's faults is not this world's history.
     with pytest.raises(console.RecordRefused, match="compare-point"):
         console.replay_record(world, snapshot, console.read_record(state))
+    # And a restart from a checkpoint taken before the onset replays the record past it (Codex on
+    # #74: the overlay used to be installed only after the replay, which then refused the record).
+    restart = tmp_path / "restart"
+    first = console.Executive(
+        world, restart / "diode", phase="translunar_coast", state_dir=restart / "state", scenario_file=named
+    )
+    try:
+        first.attach("alpha")
+        first.checkpoint()
+        for _ in range(6):
+            first.cycle()
+        ended = plant.state_hash(first.truth)
+    finally:
+        first.close()
+    loaded = checkpoint.choose_generation(restart / "state", checkpoint.Compatibility.current(world))
+    resumed, resumption = console.resume_executive(
+        world, restart / "diode", loaded, state_dir=restart / "state", scenario=named.scenario
+    )
+    try:
+        assert resumption.tick == 6 and plant.state_hash(resumed.truth) == ended
+        assert resumed.truth[plant.FAULT_ONSETS] == {TRIP: 1}
+    finally:
+        resumed.close()
 
 
 def run_linter(directory: Path) -> subprocess.CompletedProcess[str]:
