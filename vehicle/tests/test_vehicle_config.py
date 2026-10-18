@@ -15679,7 +15679,7 @@ def test_a_guard_over_two_arguments_names_their_combinations(tmp_path):
         text=True,
         check=False,
     ).stdout
-    assert "`o2_reserve_10` — only when (`vehicle`, `source`) is one of (`csm`, `primary`)" in generated, generated[-800:]
+    assert "`o2_reserve_10`, `eclss.o2_supply_low` — only when (`vehicle`, `source`) is one of (`csm`, `primary`)" in generated, generated[-800:]
 
     block = "        argument: [vehicle, source]\n        values:\n          - [csm, primary]\n"
 

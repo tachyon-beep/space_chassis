@@ -374,7 +374,7 @@ def test_a_guard_over_two_arguments_applies_to_the_combinations_it_names(world):
 
     assert guards("csm", "isolated") == ["eclss.cabin_pressure_caution"]
     assert guards("lm", "isolated") == ["eclss.lm_cabin_pressure_caution"]
-    assert guards("csm", "primary") == ["o2_reserve_10"]
+    assert guards("csm", "primary") == ["o2_reserve_10", "eclss.o2_supply_low"]
     assert guards("csm", "surge") == []
     assert guards("lm", "primary") == guards("lm", "surge") == []
     band = world.verbs["set_o2_flow"]
@@ -387,12 +387,28 @@ def test_a_guard_over_two_arguments_applies_to_the_combinations_it_names(world):
     assert "eclss.lm_cabin_pressure_caution" in band_guards("lm", "off")
     assert "eclss.cabin_pressure_caution" not in band_guards("lm", "off")
     cautions = {"eclss.cabin_pressure_caution", "eclss.lm_cabin_pressure_caution"}
-    csm_hazards = ["cabin_pressure_high", "o2_supply_low", "ppo2_fire_risk"]
+    csm_hazards = ["cabin_pressure_high", "ppo2_fire_risk"]
     for flow in ("low", "nominal", "high"):
         assert band_guards("csm", flow) == csm_hazards, flow
         assert band_guards("lm", flow) == ["lm_ppo2_fire_risk"], flow
         for vehicle in ("csm", "lm"):
             assert not cautions & set(band_guards(vehicle, flow)), (vehicle, flow)
+
+
+def test_a_failed_primary_supply_leaves_the_surge_tank_open(world, tmp_path):
+    """Codex, PR #64: with the S/M supply below 750 psi, re-opening the band is the surge tank's
+    recovery, so `set_o2_flow` takes it while `set_o2_source source=primary` is refused."""
+    built = console.Executive(world, tmp_path / "diode", phase="translunar_coast")
+    built.attach("alpha")
+    try:
+        trip(world, built, {"o2_supply_pressure_psi": 600.0}, "o2_supply_low")
+        taken = run(built, tmp_path, "set_o2_flow vehicle=csm flow=nominal")
+        trip(world, built, {"o2_supply_pressure_psi": 600.0}, "o2_supply_low")
+        refused = run(built, tmp_path, "set_o2_source vehicle=csm source=primary")
+    finally:
+        built.close()
+    assert "state=accepted" in taken and "INTERLOCK" not in taken, taken
+    assert "refused: INTERLOCK TRIPPED" in refused and "o2_supply_low" in refused, refused
 
 
 def test_an_lm_fire_refuses_lm_oxygen_and_a_csm_fire_does_not(world, tmp_path):

@@ -112,7 +112,8 @@ commands:
       source: {type: enum, values: [primary, surge, isolated]}
     authority: A2
     gate: {kind: preference, variable: o2_<vehicle>_<source>_enable}
-    interlocks: [eclss.cabin_pressure_caution, eclss.lm_cabin_pressure_caution, o2_reserve_10]
+    interlocks: [eclss.cabin_pressure_caution, eclss.lm_cabin_pressure_caution, o2_reserve_10,
+                 eclss.o2_supply_low]
     # Two arguments together (ADR 0004 §Direction, amended 2026-10-17): which way a command moves
     # each hazard depends on the vehicle *and* the source, so each guard names the combinations it
     # applies to. The flow band is `set_o2_flow`'s (`eclss.o2_flow`), not an argument here. Owned by
@@ -135,7 +136,7 @@ commands:
         why: >-
           the same hazard in the LM's cabin, which `eclss.cabin_o2_supply_lm_kg_s` stops feeding
           when its source is `isolated`; a CSM caution neither licenses nor blocks it
-      - interlocks: [o2_reserve_10]
+      - interlocks: [o2_reserve_10, eclss.o2_supply_low]
         argument: [vehicle, source]
         values:
           - [csm, primary]
@@ -150,7 +151,9 @@ commands:
           `eclss.o2_surge_csm_kg` (`eclss.o2_source`), so the S/M tanks stop feeding the cabin.
           `primary` is refused whatever the band, because the band is `set_o2_flow`'s;
           `set_o2_flow flow=off` is the other recovery. The LM draws on its own store
-          (`consumables.o2_lm_kg`), which this guard does not watch
+          (`consumables.o2_lm_kg`), which this guard does not watch. `eclss.o2_supply_low` is the
+          same store read as pressure (the S/M supply below 750 psi), so it guards the same choice;
+          it moved here from `set_o2_flow`, where it refused the surge tank after a primary loss
     conflict_domain: res.<vehicle>.o2_source
     allowed_phases: [translunar_coast, lunar_orbit, descent, surface, ascent_rendezvous,
                      lunar_orbit_docked, transearth_coast, entry]

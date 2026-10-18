@@ -32,16 +32,16 @@ commands:
     gate:
       kind: preference
       variable: o2_flow_<vehicle>_enable
-    interlocks: [cabin_pressure_high, o2_supply_low, ppo2_fire_risk, lm_ppo2_fire_risk,
+    interlocks: [cabin_pressure_high, ppo2_fire_risk, lm_ppo2_fire_risk,
                  eclss.cabin_pressure_caution, eclss.lm_cabin_pressure_caution]
-    # `o2_reserve_10` is not on this verb, on purpose. Re-opening the CSM's band spends the S/M
+    # `o2_reserve_10` and `o2_supply_low` are not on this verb, on purpose. Re-opening the CSM's band spends the S/M
     # tanks only while `eclss.o2_source` has the CSM on `primary`, and a condition over this verb's
     # arguments cannot see that: guarding every CSM flow-on would refuse the surge tank, the
-    # recovery on a leak with a low reserve. It lands with the fault-injection lane's state
+    # recovery after a primary-supply loss or on a leak with a low reserve. They land with the fault-injection lane's state
     # condition on `interlocks_when` ({state: o2_source, key: vehicle, values: [primary]}), its
     # third PR after #47; until then the reserve is guarded at `set_o2_source`.
     interlocks_when:
-      - interlocks: [cabin_pressure_high, o2_supply_low, ppo2_fire_risk]
+      - interlocks: [cabin_pressure_high, ppo2_fire_risk]
         argument: [vehicle, flow]
         values:
           - [csm, low]
@@ -49,10 +49,12 @@ commands:
           - [csm, high]
         why: >-
           each guard is a hazard that oxygen entering the cabin feeds (ADR 0004 §Direction): a cabin
-          already over pressure (`cabin_pressure_high`), a supply already low (`o2_supply_low`), and an
-          oxygen partial pressure already past the fire threshold (`ppo2_fire_risk`). Any flow adds to
-          all three, and `flow=off` is the recovery from each, so it is never refused by them. All
-          three read the CSM's cabin or its S/M supply, so they guard the CSM's band
+          already over pressure (`cabin_pressure_high`) and an oxygen partial pressure already past
+          the fire threshold (`ppo2_fire_risk`). Any flow adds to both, and `flow=off` is the
+          recovery from each, so it is never refused by them. Both read the CSM's cabin, so they
+          guard the CSM's band. `o2_supply_low` is not here: it reads the S/M supply, which a flow
+          spends only from `primary`, so it guards `set_o2_source`'s choice of `primary`, as
+          `o2_reserve_10` does; on this verb it refused the surge tank after a primary-supply loss
       - interlocks: [lm_ppo2_fire_risk]
         argument: [vehicle, flow]
         values:
