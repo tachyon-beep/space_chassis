@@ -12897,6 +12897,8 @@ def test_every_stock_declares_where_it_starts():
         "msfn_arc_s",
         "nav_vector_arc_s",
         "nav_coast_s",
+        # The slew law's held-target record, seeded from its declared record since #47.
+        "held_target",
     }, sorted(seeded_integrators["internal"])
     # **And the five `algebraic` states the resolver adds**, the sentinel's half of the declared
     # arithmetic: the bay heat rate, the cabin pressure differential, the two loops' collected loads
@@ -12909,7 +12911,9 @@ def test_every_stock_declares_where_it_starts():
         "loop_primary_load_w",
         "loop_lm_load_w",
         "propellant_estimate",
-        # ADR 0005: the deadband the profile means, and the two navigation sigmas.
+        # ADR 0005: the deadband the profile means, and the two navigation sigmas; and since #47's
+        # record seed, the attitude error against the held target.
+        "attitude_error",
         "deadband_deg",
         "nav_velocity_sigma",
         "nav_position_sigma",
@@ -12917,9 +12921,10 @@ def test_every_stock_declares_where_it_starts():
     # Zero everywhere except the supply tank's pressure, which is the one seeded sentinel value that
     # is not an accumulator's origin — and, from round 67, `auto`, which is not a number at all and
     # is the reason the value assertions below name their states rather than ranging over the map.
-    # The four switch maps are maps, which a set cannot hold, so they are asserted by name below.
+    # The four switch maps are maps, which a set cannot hold, so they are asserted by name below. So
+    # is the slew law's held-target record (ADR 0005), seeded since #47.
     switch_maps = {k for k, v in seeded_integrators["internal"].items() if isinstance(v, dict)}
-    assert switch_maps == {"coolant_pump", "evaporator_feed", "radiator_bypass", "suit_fan"}, (
+    assert switch_maps == {"coolant_pump", "evaporator_feed", "held_target", "radiator_bypass", "suit_fan"}, (
         switch_maps
     )
     assert {v for k, v in seeded_integrators["internal"].items() if k not in switch_maps} == {
@@ -20229,7 +20234,8 @@ def test_the_plant_evaluates_the_arithmetic_the_corpus_already_declares():
     # 28 -> 27 with the power rules: `bus_a_load_w` left the sentinel for the cells' node.
     # 27 -> 28 with ECLSS's `suit_fan`; 28 -> 40 with ADR 0005: the nine seeded slew-law and
     # navigation states, and `deadband_deg` and the two navigation sigmas, which resolve from them.
-    assert len(values["internal"]) == 40, sorted(values["internal"])
+    # 40 -> 42 with #47's record seed: `held_target`, and `attitude_error`, which resolves from it.
+    assert len(values["internal"]) == 42, sorted(values["internal"])
     # The loads are summed over what `load_enabled` has on: the CSM's 1,723 W less the amplifier's
     # 72 W (its heat is `amp_dissipation_w`, zero with the transmitter off), and the LM's loads off.
     assert values["loop_primary_load_w"] == 1651.0 and values["loop_lm_load_w"] == 0.0

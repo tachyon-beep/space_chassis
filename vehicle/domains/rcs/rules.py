@@ -178,7 +178,9 @@ def _held_target(inputs, params, dt):
         and previous.get("frame") == frame
         and float(previous.get("roll", 0.0)) == roll
     ):
-        return dict(previous)
+        # A fresh record with the quaternion as a list: the plant hands a rule its inputs frozen, and
+        # the truth holds what JSON gives back, so a checkpoint restores the same value.
+        return {**previous, "q": list(previous["q"])}
     present = tuple(float(c) for c in inputs["attitude"])
     resolved = {"source": text, "frame": frame, "roll": roll, "q": list(previous["q"])}
     if text == "current":
